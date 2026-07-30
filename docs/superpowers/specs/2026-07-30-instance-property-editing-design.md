@@ -25,7 +25,7 @@
 
 新增两个管理员专用的 `PATCH` 路由：
 
-- `/api/instances/entities/:elementId` 接收 `{ targetId, properties }`，读取目标的已发布实体类型，验证字段集合、必填属性和数据类型后，执行 `MATCH (n) WHERE elementId(n) = $elementId SET n += $properties`。
+- `/api/instances/entities/:elementId` 仅接收 `{ properties }`；路径参数唯一标识待更新实例。路由读取目标的已发布实体类型，验证字段集合、必填属性和数据类型后，执行 `MATCH (n) WHERE elementId(n) = $elementId SET n += $properties`。
 - `/api/instances/relationships/:elementId` 接收同样的请求结构，读取关系实例 Type 对应的已发布关系类型，验证后执行 `MATCH ()-[r]->() WHERE elementId(r) = $elementId SET r += $properties`。
 
 两个路由都必须验证目标存在、会话角色为管理员、实例存在且实例类型属于目标的已发布本体。它们不得接受 Cypher 片段、Label、关系 Type 或端点 ID 的变更。响应返回更新后的标准化实例记录，供前端直接刷新选中状态。
