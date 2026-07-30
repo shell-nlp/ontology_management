@@ -11,3 +11,4 @@ node_modules/
 # Local tooling
 .DS_Store
 *.log
+.superpowers/
