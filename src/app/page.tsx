@@ -1,5 +1,5 @@
-import { OntologyWorkbench } from "@/components/ontology-workbench";
+import { FunctionalWorkbench } from "@/components/functional-workbench";
 
 export default function HomePage() {
-  return <OntologyWorkbench />;
+  return <FunctionalWorkbench />;
 }
