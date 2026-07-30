@@ -2,6 +2,9 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, Eye, FileCheck2, GitBranch, Link2, LogOut, Network, Plus, Play, ShieldCheck, TableProperties, TerminalSquare, UserRound, X } from "lucide-react";
+import { Background, Controls, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import "./graph-canvas.css";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; uri: string; databaseName: string; username: string };
@@ -11,6 +14,8 @@ type RelationType = { id: string; name: string; sourceEntityTypeId: string; targ
 type Definition = { entityTypes: EntityType[]; relationshipTypes: RelationType[] };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition };
 type View = "overview" | "ontology" | "entities" | "relations" | "properties" | "runtime" | "cypher" | "targets";
+type GraphData = { nodes: { id: string; labels: string[]; properties: Record<string, unknown> }[]; relationships: { id: string; type: string; source: string; target: string; properties: Record<string, unknown> }[] };
+type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [] };
 const typeOptions: Property["dataType"][] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
 
@@ -166,5 +171,55 @@ function RelationshipManager({ target, published, fail, notify }: { target: Targ
   return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={async (event) => { event.preventDefault(); try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: form.relationshipType, sourceId: form.sourceId, targetIdValue: form.targetIdValue, properties: JSON.parse(form.properties) }) }); notify("关系已写入 Neo4j，并已校验端点契约。"); await load(); } catch (reason) { fail(reason); } }}><span className="eyebrow">关系管理</span><h2>创建关系实例</h2>{published ? <><label>已发布关系类型<select value={form.relationshipType} onChange={(event) => setForm({ ...form, relationshipType: event.target.value })} required><option value="">选择关系</option>{published.definition.relationshipTypes.map((item) => <option value={item.name} key={item.id}>{item.name}</option>)}</select></label><label>起始实体 elementId<input value={form.sourceId} onChange={(event) => setForm({ ...form, sourceId: event.target.value })} required /></label><label>终止实体 elementId<input value={form.targetIdValue} onChange={(event) => setForm({ ...form, targetIdValue: event.target.value })} required /></label><label>属性 JSON<textarea value={form.properties} onChange={(event) => setForm({ ...form, properties: event.target.value })} /></label><button className="action primary"><Plus size={16} />创建关系</button></> : <p className="empty">请先发布本体。</p>}</form><div className="panel functional-panel result-list"><span className="eyebrow">目标图数据</span><h2>{rows.length} 条关系</h2><button className="action compact" onClick={load}>刷新</button>{rows.map((row) => <div className="result-row" key={row.id}><Link2 size={16} /><span><b>{row.type}</b><small>{row.sourceId} <ArrowIcon /> {row.targetId}</small></span></div>)}</div></section>;
 }
 
-function RuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) { const [result, setResult] = useState<unknown>(null); return <section className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>CALL db.schema.visualization()</h2></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取 Schema</button></div><pre className="json-result">{result ? JSON.stringify(result, null, 2) : "点击“获取 Schema”读取目标 Neo4j 的运行时 Schema。"}</pre></section>; }
-function CypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) { const [cypher, setCypher] = useState("MATCH (n) RETURN labels(n) AS labels, count(n) AS count LIMIT 20"); const [result, setResult] = useState<unknown>(null); const [running, setRunning] = useState(false); const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher); return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行"}</button></div></div><pre className="panel functional-panel json-result">{result ? JSON.stringify(result, null, 2) : "结果会显示在这里。"}</pre></section>; }
+function LegacyRuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) { const [result, setResult] = useState<unknown>(null); return <section className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>CALL db.schema.visualization()</h2></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取 Schema</button></div><pre className="json-result">{result ? JSON.stringify(result, null, 2) : "点击“获取 Schema”读取目标 Neo4j 的运行时 Schema。"}</pre></section>; }
+function LegacyCypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) { const [cypher, setCypher] = useState("MATCH (n) RETURN labels(n) AS labels, count(n) AS count LIMIT 20"); const [result, setResult] = useState<unknown>(null); const [running, setRunning] = useState(false); const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher); return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行"}</button></div></div><pre className="panel functional-panel json-result">{result ? JSON.stringify(result, null, 2) : "结果会显示在这里。"}</pre></section>; }
+
+function graphLabel(node: GraphData["nodes"][number]) {
+  const preferred = ["name", "名称", "title", "id"].map((key) => node.properties[key]).find((value) => typeof value === "string" || typeof value === "number");
+  return String(preferred ?? node.labels[0] ?? "节点");
+}
+
+function GraphCanvas({ graph }: { graph: GraphData }) {
+  const nodes = useMemo<Node[]>(() => graph.nodes.map((node, index) => {
+    const radius = Math.max(150, Math.min(300, 78 * graph.nodes.length));
+    const angle = (Math.PI * 2 * index) / Math.max(graph.nodes.length, 1) - Math.PI / 2;
+    return {
+      id: node.id,
+      position: { x: 390 + Math.cos(angle) * radius, y: 275 + Math.sin(angle) * radius },
+      data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b><small>{node.labels.join(" · ") || "未标注"}</small></div> },
+      style: { width: 112, minHeight: 72, borderRadius: "50%", border: "2px solid #caa64f", background: "#e7c66b", color: "#3e3517", display: "grid", placeItems: "center", textAlign: "center", padding: "8px", boxShadow: "0 4px 12px rgba(89,73,25,.16)" },
+      draggable: true,
+    };
+  }), [graph.nodes]);
+  const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => graph.nodes.some((node) => node.id === relationship.source) && graph.nodes.some((node) => node.id === relationship.target)).map((relationship) => ({
+    id: relationship.id,
+    source: relationship.source,
+    target: relationship.target,
+    label: relationship.type,
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#809198" },
+    style: { stroke: "#809198", strokeWidth: 1.3 },
+    labelStyle: { fill: "#52666a", fontSize: 10 },
+    labelBgStyle: { fill: "#f9fbf9", fillOpacity: 0.9 },
+  })), [graph]);
+  if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>查询结果中没有可绘制的节点或关系</b><span>使用例如 <code>MATCH p=()-[]-&gt;() RETURN p LIMIT 25</code> 的路径查询，即可切换到图谱视图。</span></div>;
+  return <div className="graph-canvas"><ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.24 }} minZoom={0.2} maxZoom={2} nodesConnectable={false}><Background color="#d8ddd6" gap={19} size={1} /><Controls showInteractive={false} /></ReactFlow></div>;
+}
+
+function ResultViewer({ result }: { result: QueryResult | null }) {
+  const [mode, setMode] = useState<"graph" | "table" | "raw">("graph");
+  if (!result) return <div className="graph-empty"><TerminalSquare size={27} /><b>尚未执行查询</b><span>运行返回节点、关系或路径的 Cypher 后将在此展示可交互图谱。</span></div>;
+  return <section className="panel functional-panel result-viewer"><div className="result-tabs"><button className={mode === "graph" ? "active" : ""} onClick={() => setMode("graph")}>Graph <b>{result.graph.nodes.length}</b></button><button className={mode === "table" ? "active" : ""} onClick={() => setMode("table")}>Table <b>{result.records.length}</b></button><button className={mode === "raw" ? "active" : ""} onClick={() => setMode("raw")}>RAW</button><span>{result.graph.relationships.length} 条关系</span></div>{mode === "graph" && <GraphCanvas graph={result.graph} />}{mode === "table" && <div className="result-table-view">{result.records.map((row, index) => <pre key={index}>{JSON.stringify(row, null, 2)}</pre>)}</div>}{mode === "raw" && <pre className="json-result">{JSON.stringify(result, null, 2)}</pre>}</section>;
+}
+
+function RuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) {
+  const [result, setResult] = useState<QueryResult | null>(null);
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>运行时图谱可视化</h2><p className="subtle">由 <code>CALL db.schema.visualization()</code> 返回的节点标签与关系类型绘制。</p></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api<QueryResult>(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取并绘制</button></div></div><ResultViewer result={result} /></section>;
+}
+
+function CypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) {
+  const [cypher, setCypher] = useState("MATCH p=()-[]->() RETURN p LIMIT 25");
+  const [result, setResult] = useState<QueryResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
+  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行并可视化"}</button></div></div><ResultViewer result={result} /></section>;
+}

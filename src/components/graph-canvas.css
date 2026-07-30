@@ -1,0 +1,18 @@
+.result-viewer { padding: 0; overflow: hidden; }
+.result-tabs { min-height: 48px; display: flex; align-items: center; gap: 4px; padding: 7px 11px; border-bottom: 1px solid #e2e8e4; background: #fbfcfa; }
+.result-tabs button { border: 1px solid transparent; background: transparent; color: #657778; padding: 6px 9px; border-radius: 3px; font-size: 11px; }
+.result-tabs button.active { color: #18738c; background: #eaf8fb; border-color: #91d3e0; font-weight: 700; }
+.result-tabs b { font-size: 10px; margin-left: 3px; }
+.result-tabs > span { margin-left: auto; color: #83908e; font-size: 11px; }
+.graph-canvas { height: 570px; background: #f9fbf9; }
+.graph-node-label { display: grid; gap: 3px; line-height: 1.05; max-width: 92px; overflow: hidden; }
+.graph-node-label b { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-label small { font-size: 9px; color: #665d36; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-empty { min-height: 270px; display: grid; align-content: center; justify-items: center; gap: 9px; padding: 24px; text-align: center; color: #7b8987; background: #fbfdfb; }
+.graph-empty svg { color: #80a69a; }
+.graph-empty b { color: #556968; font-size: 13px; }
+.graph-empty span { font-size: 11px; max-width: 420px; line-height: 1.6; }
+.graph-empty code { padding: 2px 4px; background: #eef3ef; color: #366663; border-radius: 2px; }
+.result-table-view { max-height: 570px; overflow: auto; padding: 14px; background: #fbfcfb; }
+.result-table-view pre { margin: 0 0 10px; padding: 10px; color: #41585a; background: #fff; border: 1px solid #e0e6e2; border-radius: 3px; font: 11px/1.55 ui-monospace, "Cascadia Code", monospace; white-space: pre-wrap; word-break: break-word; }
+@media (max-width: 550px) { .graph-canvas { height: 440px; }.result-tabs > span { display: none; } }
