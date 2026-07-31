@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, Eye, FileCheck2, GitBranch, Link2, LogOut, Network, Plus, Play, ShieldCheck, TableProperties, TerminalSquare, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, Eye, FileCheck2, GitBranch, Link2, LocateFixed, LogOut, Network, Plus, Play, Search, ShieldCheck, TableProperties, TerminalSquare, UserRound, X } from "lucide-react";
 import { Background, Controls, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./graph-canvas.css";
@@ -179,36 +179,80 @@ function graphLabel(node: GraphData["nodes"][number]) {
   return String(preferred ?? node.labels[0] ?? "节点");
 }
 
-function GraphCanvas({ graph }: { graph: GraphData }) {
+const graphPalette = ["#2e9b8f", "#d97757", "#5b8def", "#a47acb", "#c89137", "#4b9f69"];
+
+function graphColor(label: string) {
+  let hash = 0;
+  for (const character of label) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  return graphPalette[Math.abs(hash) % graphPalette.length];
+}
+
+function propertyValue(value: unknown) {
+  if (value === null) return "null";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function GraphCanvas({ graph, onExpand }: { graph: GraphData; onExpand?: (nodeId: string) => Promise<void> }) {
+  const [search, setSearch] = useState("");
+  const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const labels = useMemo(() => [...new Set(graph.nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b, "zh-CN")), [graph.nodes]);
+  const selectedNode = graph.nodes.find((node) => node.id === selectedId) ?? null;
+  const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
+    const haystack = `${graphLabel(node)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
+    const labelMatches = !activeLabels.length || node.labels.some((label) => activeLabels.includes(label));
+    return labelMatches && haystack.includes(search.trim().toLocaleLowerCase());
+  }).map((node) => node.id)), [activeLabels, graph.nodes, search]);
+  const toggleLabel = (label: string) => setActiveLabels((current) => current.includes(label) ? current.filter((item) => item !== label) : [...current, label]);
+  const expand = async () => {
+    if (!selectedNode || !onExpand) return;
+    try { setExpandError(null); setExpanding(true); await onExpand(selectedNode.id); } catch (reason) { setExpandError(reason instanceof Error ? reason.message : "无法扩展该节点的邻居。"); } finally { setExpanding(false); }
+  };
+
   const nodes = useMemo<Node[]>(() => graph.nodes.map((node, index) => {
     const radius = Math.max(150, Math.min(300, 78 * graph.nodes.length));
     const angle = (Math.PI * 2 * index) / Math.max(graph.nodes.length, 1) - Math.PI / 2;
+    const color = graphColor(node.labels[0] ?? "未标注");
+    const selected = node.id === selectedId;
     return {
       id: node.id,
       position: { x: 390 + Math.cos(angle) * radius, y: 275 + Math.sin(angle) * radius },
       data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b><small>{node.labels.join(" · ") || "未标注"}</small></div> },
-      style: { width: 112, minHeight: 72, borderRadius: "50%", border: "2px solid #caa64f", background: "#e7c66b", color: "#3e3517", display: "grid", placeItems: "center", textAlign: "center", padding: "8px", boxShadow: "0 4px 12px rgba(89,73,25,.16)" },
+      hidden: !visibleNodeIds.has(node.id),
+      style: { width: 122, minHeight: 76, borderRadius: 14, border: `2px solid ${color}`, background: "#ffffff", color: "#173536", display: "grid", placeItems: "center", textAlign: "center", padding: "9px", boxShadow: selected ? `0 0 0 4px ${color}33, 0 12px 28px rgba(19, 57, 55, .20)` : "0 5px 15px rgba(19, 57, 55, .11)", transition: "box-shadow .18s ease, transform .18s ease" },
       draggable: true,
     };
-  }), [graph.nodes]);
-  const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => graph.nodes.some((node) => node.id === relationship.source) && graph.nodes.some((node) => node.id === relationship.target)).map((relationship) => ({
+  }), [graph.nodes, selectedId, visibleNodeIds]);
+  const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => visibleNodeIds.has(relationship.source) && visibleNodeIds.has(relationship.target)).map((relationship) => ({
     id: relationship.id,
     source: relationship.source,
     target: relationship.target,
     label: relationship.type,
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#809198" },
-    style: { stroke: "#809198", strokeWidth: 1.3 },
-    labelStyle: { fill: "#52666a", fontSize: 10 },
-    labelBgStyle: { fill: "#f9fbf9", fillOpacity: 0.9 },
-  })), [graph]);
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#718f8c" },
+    style: { stroke: "#718f8c", strokeWidth: 1.35 },
+    labelStyle: { fill: "#496361", fontSize: 10, fontWeight: 650 },
+    labelBgStyle: { fill: "#f9fcfa", fillOpacity: 0.94 },
+    labelBgPadding: [4, 3],
+    labelBgBorderRadius: 3,
+  })), [graph.relationships, visibleNodeIds]);
   if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>查询结果中没有可绘制的节点或关系</b><span>使用例如 <code>MATCH p=()-[]-&gt;() RETURN p LIMIT 25</code> 的路径查询，即可切换到图谱视图。</span></div>;
-  return <div className="graph-canvas"><ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.24 }} minZoom={0.2} maxZoom={2} nodesConnectable={false}><Background color="#d8ddd6" gap={19} size={1} /><Controls showInteractive={false} /></ReactFlow></div>;
+  return <div className="graph-canvas">
+    <ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.24 }} minZoom={0.2} maxZoom={2} nodesConnectable={false} onNodeClick={(_, node) => setSelectedId(node.id)} onPaneClick={() => setSelectedId(null)}><Background color="#c9d8d3" gap={22} size={1} /><Controls showInteractive={false} /></ReactFlow>
+    <div className="graph-explorer-toolbar"><label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label><span>{visibleNodeIds.size}/{graph.nodes.length} 个节点</span></div>
+    <div className="graph-legend" aria-label="节点类型筛选">{labels.map((label) => <button key={label} className={activeLabels.includes(label) ? "active" : ""} onClick={() => toggleLabel(label)}><i style={{ background: graphColor(label) }} />{label}</button>)}</div>
+    <aside className={selectedNode ? "graph-inspector open" : "graph-inspector"} aria-live="polite">
+      {selectedNode ? <><div className="graph-inspector-head"><div><span style={{ background: graphColor(selectedNode.labels[0] ?? "未标注") }} />节点事实</div><button aria-label="关闭节点详情" onClick={() => setSelectedId(null)}><X size={15} /></button></div><h3>{graphLabel(selectedNode)}</h3><p>{selectedNode.labels.join(" · ") || "未标注类型"}</p><div className="graph-properties">{Object.entries(selectedNode.properties).length ? Object.entries(selectedNode.properties).map(([key, value]) => <div key={key}><span>{key}</span><b title={propertyValue(value)}>{propertyValue(value)}</b></div>) : <small>该节点没有可显示的属性。</small>}</div>{onExpand && <button className="graph-expand" disabled={expanding} onClick={() => void expand()}><LocateFixed size={15} />{expanding ? "正在扩展…" : "扩展一度邻居"}</button>}{expandError && <p className="graph-expand-error">{expandError}</p>}<small className="graph-inspector-hint">点击其他节点可切换检查对象；拖拽节点可整理当前视图。</small></> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个节点</b><span>查看节点属性，或在 Cypher 结果中继续扩展关联实体。</span></div>}
+    </aside>
+  </div>;
 }
 
-function ResultViewer({ result }: { result: QueryResult | null }) {
+function ResultViewer({ result, onExpand }: { result: QueryResult | null; onExpand?: (nodeId: string) => Promise<void> }) {
   const [mode, setMode] = useState<"graph" | "table" | "raw">("graph");
   if (!result) return <div className="graph-empty"><TerminalSquare size={27} /><b>尚未执行查询</b><span>运行返回节点、关系或路径的 Cypher 后将在此展示可交互图谱。</span></div>;
-  return <section className="panel functional-panel result-viewer"><div className="result-tabs"><button className={mode === "graph" ? "active" : ""} onClick={() => setMode("graph")}>Graph <b>{result.graph.nodes.length}</b></button><button className={mode === "table" ? "active" : ""} onClick={() => setMode("table")}>Table <b>{result.records.length}</b></button><button className={mode === "raw" ? "active" : ""} onClick={() => setMode("raw")}>RAW</button><span>{result.graph.relationships.length} 条关系</span></div>{mode === "graph" && <GraphCanvas graph={result.graph} />}{mode === "table" && <div className="result-table-view">{result.records.map((row, index) => <pre key={index}>{JSON.stringify(row, null, 2)}</pre>)}</div>}{mode === "raw" && <pre className="json-result">{JSON.stringify(result, null, 2)}</pre>}</section>;
+  return <section className="panel functional-panel result-viewer"><div className="result-tabs"><button className={mode === "graph" ? "active" : ""} onClick={() => setMode("graph")}>图谱 <b>{result.graph.nodes.length}</b></button><button className={mode === "table" ? "active" : ""} onClick={() => setMode("table")}>记录 <b>{result.records.length}</b></button><button className={mode === "raw" ? "active" : ""} onClick={() => setMode("raw")}>原始结果</button><span>{result.graph.relationships.length} 条关系</span></div>{mode === "graph" && <GraphCanvas graph={result.graph} onExpand={onExpand} />}{mode === "table" && <div className="result-table-view">{result.records.map((row, index) => <pre key={index}>{JSON.stringify(row, null, 2)}</pre>)}</div>}{mode === "raw" && <pre className="json-result">{JSON.stringify(result, null, 2)}</pre>}</section>;
 }
 
 function RuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) {
@@ -221,5 +265,10 @@ function CypherManager({ target, user, fail }: { target: Target | null; user: Us
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
   const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
-  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行并可视化"}</button></div></div><ResultViewer result={result} /></section>;
+  const expandNode = async (nodeId: string) => {
+    if (!target) throw new Error("请先选择 Neo4j 目标。");
+    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: "MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT 60", parameters: { nodeId } }) });
+    setResult((current) => current ? { ...expanded, graph: { nodes: [...new Map([...current.graph.nodes, ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.graph.relationships, ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }, records: [...current.records, ...expanded.records] } : expanded);
+  };
+  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行并可视化"}</button></div></div><ResultViewer result={result} onExpand={expandNode} /></section>;
 }
