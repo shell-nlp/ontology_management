@@ -53,3 +53,55 @@
 .result-table-view pre { margin: 0 0 10px; padding: 10px; color: #41585a; background: #fff; border: 1px solid #e0e6e2; border-radius: 3px; font: 11px/1.55 ui-monospace, "Cascadia Code", monospace; white-space: pre-wrap; word-break: break-word; }
 @media (max-width: 780px) { .graph-canvas { height: 620px; }.graph-inspector { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 250px; transform: translateY(calc(100% + 24px)); }.graph-inspector.open { transform: translateY(0); }.graph-properties { max-height: 112px; }.graph-legend { max-width: calc(100% - 32px); }.graph-explorer-toolbar > span { display: none; } }
 @media (max-width: 550px) { .graph-canvas { height: 510px; }.result-tabs > span { display: none; }.graph-explorer-toolbar { right: 12px; left: 12px; }.graph-explorer-toolbar input { width: 100%; }.graph-explorer-toolbar label { flex: 1; }.graph-legend { top: 59px; }.graph-inspector { max-height: 218px; }.graph-properties { max-height: 82px; } }
+
+/* Editable graph canvas */
+.graph-tool-action { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 9px; border: 1px solid #7fb09e; border-radius: 5px; color: #ffffff; background: #28786e; font-size: 10px; font-weight: 700; }
+.graph-tool-action:hover { background: #185e56; }
+.graph-inspector-body { display: grid; gap: 10px; align-content: start; }
+.graph-element-id { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; color: #5b7571; background: #f1f6f3; border: 1px solid #e0e9e4; border-radius: 4px; font: 10px/1.5 ui-monospace, "Cascadia Code", monospace; }
+.graph-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; border: 1px solid #cbdad4; border-radius: 5px; color: #345c55; background: #ffffff; font-size: 11px; font-weight: 700; }
+.graph-action:hover { border-color: #6f9d8e; background: #f2f9f6; }
+.graph-action.primary { color: #ffffff; background: #28786e; border-color: #28786e; }
+.graph-action.primary:hover { background: #185e56; }
+.graph-action.danger { color: #b04f3d; border-color: #e0bdb4; }
+.graph-action.danger:hover { background: #fff1ed; }
+.graph-inspector-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.property-editor { display: grid; gap: 8px; max-height: 250px; overflow: auto; padding-right: 2px; }
+.property-field { display: grid; gap: 4px; color: #54706b; font-size: 10px; font-weight: 700; }
+.property-field > span em { color: #c2573f; font-style: normal; margin-left: 3px; }
+.property-field input, .property-field select, .property-field textarea { border: 1px solid #d2ddd7; border-radius: 4px; outline: 0; min-height: 30px; padding: 5px 8px; color: #28403d; background: #fff; font: 11px/1.5 ui-monospace, "Cascadia Code", monospace; }
+.property-field input:focus, .property-field select:focus, .property-field textarea:focus { border-color: #5b9687; box-shadow: 0 0 0 3px rgba(91, 150, 135, .11); }
+.property-field textarea { resize: vertical; }
+.property-add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding-top: 3px; }
+.property-add input { min-height: 28px; border: 1px dashed #c9d7d1; border-radius: 4px; padding: 4px 7px; outline: 0; color: #3a5c56; background: #fbfdfb; font: 11px ui-monospace, "Cascadia Code", monospace; }
+.property-add button { border: 1px solid #c9d7d1; border-radius: 4px; color: #2f5f56; background: #fff; font-size: 11px; }
+.property-empty { margin: 0; color: #7b918c; font-size: 10px; }
+.graph-dialog-custom { margin: 4px 0 2px; align-self: start; border: 0; padding: 0; color: #2c7a6c; background: transparent; font-size: 10px; }
+.graph-dialog-custom:hover { text-decoration: underline; }
+.graph-dialog .property-editor { max-height: 190px; }
+.graph-head-panel .title-row { align-items: flex-end; }
+.graph-head-filter { display: flex; align-items: center; gap: 7px; color: #52615f; font-size: 11px; font-weight: 700; }
+.graph-head-filter select { min-height: 30px; border: 1px solid #cdd9d4; border-radius: 4px; color: #26373a; background: #fff; padding: 0 8px; }
+.manager-toolbar { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(120px, 1fr) auto auto; gap: 7px; margin: 4px 0 10px; }
+.manager-toolbar select, .manager-toolbar input { min-height: 32px; border: 1px solid #cdd9d4; border-radius: 4px; color: #26373a; background: #fff; padding: 0 9px; font-size: 12px; }
+.manager-rows { max-height: 560px; overflow: auto; display: grid; align-content: start; }
+.manager-row { border: 1px solid transparent; border-radius: 5px; display: flex; gap: 9px; align-items: flex-start; width: 100%; padding: 10px 9px; background: transparent; color: #567071; text-align: left; }
+.manager-row:hover { background: #f4f9f6; }
+.manager-row.selected { border-color: #8cc3ac; background: #edf7f1; }
+.manager-row > svg { flex: none; margin-top: 1px; color: #6a9c88; }
+.manager-row span { min-width: 0; flex: 1; }
+.manager-row b, .manager-row small { display: block; }
+.manager-row b { color: #293a3c; font-size: 12px; }
+.manager-row small { margin-top: 4px; color: #738282; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-panel { overflow: hidden; }
+.detail-meta { display: grid; gap: 6px; margin: 2px 0 14px; }
+.detail-meta span { color: #5c6e6a; font-size: 12px; }
+.detail-meta code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; color: #5b7571; background: #f1f6f3; border: 1px solid #e0e9e4; border-radius: 4px; font: 10px/1.5 ui-monospace, "Cascadia Code", monospace; }
+.detail-panel .functional-actions { margin-top: 12px; }
+.action.danger { color: #b04f3d; border-color: #e0bdb4; }
+.action.danger:hover { background: #fff1ed; }
+.settings-grid { display: grid; gap: 13px; margin-top: 2px; }
+.settings-field { display: grid; gap: 6px; font-size: 12px; font-weight: 650; color: #3f5052; }
+.settings-field input { border: 1px solid #cdd7d3; border-radius: 4px; outline: 0; height: 38px; padding: 0 10px; font: 12px ui-monospace, "Cascadia Code", monospace; }
+.settings-field input:focus { border-color: #599787; box-shadow: 0 0 0 3px rgba(89, 151, 135, .12); }
+.settings-field small { color: #7b8786; font-weight: 400; font-size: 11px; line-height: 1.5; }

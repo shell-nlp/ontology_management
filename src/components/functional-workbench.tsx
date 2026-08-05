@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, Eye, FileCheck2, GitBranch, Link2, LocateFixed, LogOut, Network, Plus, Play, Search, ShieldCheck, TableProperties, TerminalSquare, UserRound, X } from "lucide-react";
-import { Background, Controls, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import "./graph-canvas.css";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, Eye, FileCheck2, GitBranch, Link2, LogOut, Network, Pencil, Plus, Search, Settings2, ShieldCheck, TableProperties, TerminalSquare, Trash2, UserRound, X } from "lucide-react";
+import { GraphCanvas } from "@/components/graph-canvas";
+import { PropertyEditor } from "@/components/property-editor";
+import type { GraphData } from "@/lib/neo4j";
+import type { RuntimeTypeSet } from "@/lib/instances";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; uri: string; databaseName: string; username: string };
@@ -13,9 +14,11 @@ type EntityType = { id: string; name: string; description: string; properties: P
 type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 type Definition = { entityTypes: EntityType[]; relationshipTypes: RelationType[] };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition };
-type View = "overview" | "ontology" | "entities" | "relations" | "properties" | "runtime" | "cypher" | "targets";
-type GraphData = { nodes: { id: string; labels: string[]; properties: Record<string, unknown> }[]; relationships: { id: string; type: string; source: string; target: string; properties: Record<string, unknown> }[] };
+type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "properties" | "runtime" | "cypher" | "targets";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
+type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
+type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown> };
+
 const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [] };
 const typeOptions: Property["dataType"][] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
 
@@ -31,12 +34,97 @@ function Notice({ message, error }: { message: string | null; error?: boolean })
   return <div className={error ? "notice error" : "notice"}>{error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{message}</div>;
 }
 
+function entityTitle(node: Pick<EntityRow, "labels" | "properties">) {
+  const preferred = ["name", "名称", "title", "id"].map((key) => node.properties[key]).find((value) => typeof value === "string" || typeof value === "number");
+  return String(preferred ?? node.labels[0] ?? "未命名");
+}
+
+function propertySummary(properties: Record<string, unknown>, limit = 3) {
+  const entries = Object.entries(properties).filter(([key]) => key !== "fx" && key !== "fy");
+  return entries.slice(0, limit).map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`).join(" · ");
+}
+
+type GraphSettings = { nodeLimit: number; maxNeighbors: number; recordLimit: number };
+const DEFAULT_GRAPH_SETTINGS: GraphSettings = { nodeLimit: 300, maxNeighbors: 200, recordLimit: 5000 };
+const GRAPH_SETTINGS_KEY = "atlas.graph-settings";
+
+function clampLimit(value: unknown, fallback: number, min: number, max: number) {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function loadGraphSettings(): GraphSettings {
+  if (typeof window === "undefined") return DEFAULT_GRAPH_SETTINGS;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(GRAPH_SETTINGS_KEY) ?? "{}") as Partial<GraphSettings>;
+    return {
+      nodeLimit: clampLimit(parsed.nodeLimit, DEFAULT_GRAPH_SETTINGS.nodeLimit, 1, 10000),
+      maxNeighbors: clampLimit(parsed.maxNeighbors, DEFAULT_GRAPH_SETTINGS.maxNeighbors, 1, 10000),
+      recordLimit: clampLimit(parsed.recordLimit, DEFAULT_GRAPH_SETTINGS.recordLimit, 1, 100000),
+    };
+  } catch { return DEFAULT_GRAPH_SETTINGS; }
+}
+
+function useGraphSettings() {
+  const [settings, setSettings] = useState<GraphSettings>(loadGraphSettings);
+  const update = useCallback((patch: Partial<GraphSettings>) => {
+    setSettings((current) => {
+      const next: GraphSettings = {
+        nodeLimit: clampLimit(patch.nodeLimit, current.nodeLimit, 1, 10000),
+        maxNeighbors: clampLimit(patch.maxNeighbors, current.maxNeighbors, 1, 10000),
+        recordLimit: clampLimit(patch.recordLimit, current.recordLimit, 1, 100000),
+      };
+      try { window.localStorage.setItem(GRAPH_SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const reset = useCallback(() => { try { window.localStorage.removeItem(GRAPH_SETTINGS_KEY); } catch { /* ignore */ } setSettings(DEFAULT_GRAPH_SETTINGS); }, []);
+  return { settings, update, reset };
+}
+
+function capResult(result: QueryResult, recordLimit: number): QueryResult {
+  return { ...result, records: result.records.slice(0, recordLimit), graph: { nodes: result.graph.nodes.slice(0, recordLimit), relationships: result.graph.relationships.slice(0, recordLimit) } };
+}
+
+function GraphSettingsDialog({ settings, onSave, onReset, onClose }: { settings: GraphSettings; onSave: (next: GraphSettings) => void; onReset: () => void; onClose: () => void }) {
+  const [draft, setDraft] = useState(settings);
+  const field = (key: keyof GraphSettings, label: string, note: string, max: number) => (
+    <label className="settings-field" key={key}>
+      <span>{label}</span>
+      <input type="number" min={1} max={max} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: Number(event.target.value) })} />
+      <small>{note}</small>
+    </label>
+  );
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); onSave(draft); onClose(); }}>
+        <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
+        <div className="dialog-icon"><Settings2 size={22} /></div>
+        <span className="eyebrow">可视化配置</span>
+        <h2>图谱渲染限制</h2>
+        <p>默认不会一次性加载全部图数据，按下述上限控制每次取数规模。</p>
+        <div className="settings-grid">
+          {field("nodeLimit", "可视化节点上限", "首次加载与刷新时最多渲染的节点数。", 10000)}
+          {field("maxNeighbors", "最大新增邻居数", "扩展一度邻居时最多加入的邻居数量。", 10000)}
+          {field("recordLimit", "单次记录上限", "单条 Cypher 查询最多获取并展示的记录条数。", 100000)}
+        </div>
+        <div className="dialog-actions">
+          <button type="button" className="quiet-button" onClick={onReset}>恢复默认</button>
+          <button type="button" className="quiet-button" onClick={onClose}>取消</button>
+          <button className="primary-button" type="submit">保存配置</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function FunctionalWorkbench() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState("");
   const [draft, setDraft] = useState<Version | null>(null);
   const [published, setPublished] = useState<Version | null>(null);
+  const [runtimeTypes, setRuntimeTypes] = useState<RuntimeTypeSet | null>(null);
   const [view, setView] = useState<View>("overview");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +161,7 @@ export function FunctionalWorkbench() {
       setDraft(versions.find((item) => item.status === "DRAFT") ?? null);
       setPublished(versions.find((item) => item.status === "PUBLISHED") ?? null);
     }).catch(fail);
+    void api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(targetId)}`).then(setRuntimeTypes).catch(() => setRuntimeTypes(null));
   }, [targetId]);
 
   const ensureDraft = async () => {
@@ -103,19 +192,22 @@ export function FunctionalWorkbench() {
   if (user === undefined) return <div className="loading-screen">正在加载 Atlas Ontology...</div>;
   if (!user) return <Login onSuccess={async (next) => { setUser(next); await loadTargets(); }} />;
 
+  const userProp = user;
+
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ATLAS</b><small>ONTOLOGY CONTROL</small></span></div><label className="target-picker"><span>当前 Neo4j 目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label><nav>{([
-      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["properties", "属性", TableProperties], ["runtime", "运行时 Schema", Network], ["cypher", "Cypher 工作台", TerminalSquare], ["targets", "连接目标", Database],
+      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["properties", "属性", TableProperties], ["runtime", "运行时 Schema", Eye], ["cypher", "Cypher 工作台", TerminalSquare], ["targets", "连接目标", Database],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => setView(id)}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />已选择目标</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} />
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} onNavigate={setView} />}
       {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} onSelect={(id) => { setTargetId(id); setView("overview"); }} notify={notify} fail={fail} />}
-      {view === "ontology" && <OntologyManager definition={definition} draft={draft} user={user} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
+      {view === "ontology" && <OntologyManager definition={definition} draft={draft} user={userProp} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
       {view === "properties" && <PropertyManager definition={definition} draft={draft} save={saveDefinition} fail={fail} />}
-      {view === "entities" && <EntityManager target={selectedTarget} published={published} fail={fail} notify={notify} />}
-      {view === "relations" && <RelationshipManager target={selectedTarget} published={published} fail={fail} notify={notify} />}
+      {view === "graph" && <GraphManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} notify={notify} fail={fail} />}
+      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} notify={notify} fail={fail} />}
+      {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} notify={notify} fail={fail} />}
       {view === "runtime" && <RuntimeSchema target={selectedTarget} fail={fail} />}
-      {view === "cypher" && <CypherManager target={selectedTarget} user={user} fail={fail} />}
+      {view === "cypher" && <CypherManager target={selectedTarget} user={userProp} fail={fail} />}
     </section>
   </main>;
 }
@@ -125,8 +217,7 @@ function Login({ onSuccess }: { onSuccess: (user: User) => Promise<void> }) {
   return <main className="login-screen"><form className="login-card" onSubmit={async (event) => { event.preventDefault(); try { setError(""); const user = await api<User>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }); await onSuccess(user); } catch (reason) { setError(reason instanceof Error ? reason.message : "登录失败"); } }}><div className="login-mark"><GitBranch size={25} /></div><p>ATLAS ONTOLOGY CONTROL</p><h1>登录本体平台</h1><label>邮箱<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required /></label><label>密码<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required autoFocus /></label><Notice message={error || null} error /><button className="action primary" type="submit">登录</button></form></main>;
 }
 
-function Overview({ target, draft, published, onNavigate }: { target: Target | null; draft: Version | null; published: Version | null; onNavigate: (view: View) => void }) { return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个目标"}</h2>{target ? <div className="status-grid"><div><b>{draft ? `v${draft.version_number}` : "无"}</b><span>当前草稿</span></div><div><b>{published ? `v${published.version_number}` : "无"}</b><span>已发布版本</span></div><div><b>{published?.definition.entityTypes.length ?? 0}</b><span>已发布实体类型</span></div><div><b>{published?.definition.relationshipTypes.length ?? 0}</b><span>已发布关系类型</span></div></div> : <p>先在“连接目标”登记 Neo4j URI、数据库、用户名与密码。密码会加密保存。</p>}<div className="functional-actions">{target && <button className="action" onClick={() => onNavigate("ontology")}><BookOpen size={16} />配置本体草稿</button>}<button className="action primary" onClick={() => onNavigate(target ? "runtime" : "targets")}><ArrowIcon />{target ? "查看运行时 Schema" : "登记 Neo4j 目标"}</button></div></section>; }
-function ArrowIcon() { return <span className="arrow">→</span>; }
+function Overview({ target, draft, published, onNavigate }: { target: Target | null; draft: Version | null; published: Version | null; onNavigate: (view: View) => void }) { return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个目标"}</h2>{target ? <div className="status-grid"><div><b>{draft ? `v${draft.version_number}` : "无"}</b><span>当前草稿</span></div><div><b>{published ? `v${published.version_number}` : "无"}</b><span>已发布版本</span></div><div><b>{published?.definition.entityTypes.length ?? 0}</b><span>已发布实体类型</span></div><div><b>{published?.definition.relationshipTypes.length ?? 0}</b><span>已发布关系类型</span></div></div> : <p>先在“连接目标”登记 Neo4j URI、数据库、用户名与密码。密码会加密保存。</p>}<div className="functional-actions">{target && <button className="action" onClick={() => onNavigate("graph")}><Network size={16} />打开图谱管理</button>}{target && <button className="action" onClick={() => onNavigate("ontology")}><BookOpen size={16} />配置本体草稿</button>}<button className="action primary" onClick={() => onNavigate(target ? "runtime" : "targets")}><span className="arrow">→</span>{target ? "查看运行时 Schema" : "登记 Neo4j 目标"}</button></div></section>; }
 
 function TargetManager({ targets, refresh, onSelect, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; onSelect: (id: string) => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
   const [form, setForm] = useState({ name: "", uri: "bolt://", databaseName: "neo4j", username: "neo4j", password: "" }); const [testing, setTesting] = useState("");
@@ -138,137 +229,220 @@ function OntologyManager({ definition, draft, user, save, validate, publish, not
   const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [rel, setRel] = useState({ name: "", source: "", target: "" });
   const addEntity = async (event: FormEvent) => { event.preventDefault(); try { if (!name.trim()) return; if (definition.entityTypes.some((item) => item.name === name.trim())) throw new Error("实体类型名称已存在。"); await save({ ...definition, entityTypes: [...definition.entityTypes, { id: crypto.randomUUID(), name: name.trim(), description: description.trim(), properties: [] }] }); setName(""); setDescription(""); } catch (reason) { fail(reason); } };
   const addRelation = async (event: FormEvent) => { event.preventDefault(); try { if (!rel.name || !rel.source || !rel.target) throw new Error("请填写关系类型和两个端点。"); await save({ ...definition, relationshipTypes: [...definition.relationshipTypes, { id: crypto.randomUUID(), name: rel.name, sourceEntityTypeId: rel.source, targetEntityTypeId: rel.target, properties: [] }] }); setRel({ name: "", source: "", target: "" }); } catch (reason) { fail(reason); } };
-  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div><p className="subtle">类型修改会先保存为草稿；发布前将检查既有 Neo4j 数据、端点契约和必填属性。</p></div><div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addEntity}><span className="eyebrow">实体类型</span><h2>新增实体类型</h2><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="业务含义" /></label><button className="action primary"><Plus size={16} />加入草稿</button></form><form className="panel functional-panel form-panel" onSubmit={addRelation}><span className="eyebrow">关系契约</span><h2>新增关系类型</h2><label>关系名称<input value={rel.name} onChange={(event) => setRel({ ...rel, name: event.target.value })} placeholder="例如：负责" required /></label><label>起始实体类型<select value={rel.source} onChange={(event) => setRel({ ...rel, source: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>终止实体类型<select value={rel.target} onChange={(event) => setRel({ ...rel, target: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><button className="action primary"><Plus size={16} />加入草稿</button></form></div><div className="panel functional-panel type-list"><span className="eyebrow">草稿内容</span><h2>{definition.entityTypes.length} 个实体类型 / {definition.relationshipTypes.length} 个关系类型</h2>{definition.entityTypes.map((item) => <div className="type-row" key={item.id}><CircleDot size={17} /><b>{item.name}</b><span>{item.description || "无说明"}</span><em>{item.properties.length} 项属性</em></div>)}{definition.relationshipTypes.map((item) => <div className="type-row" key={item.id}><Link2 size={17} /><b>{item.name}</b><span>{definition.entityTypes.find((x) => x.id === item.sourceEntityTypeId)?.name ?? "?"} <ArrowIcon /> {definition.entityTypes.find((x) => x.id === item.targetEntityTypeId)?.name ?? "?"}</span><em>{item.properties.length} 项属性</em></div>)}{!definition.entityTypes.length && <p className="empty">创建草稿后，从新增实体类型开始。</p>}</div></section>;
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div><p className="subtle">类型修改会先保存为草稿；发布前将检查既有 Neo4j 数据、端点契约和必填属性。</p></div><div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addEntity}><span className="eyebrow">实体类型</span><h2>新增实体类型</h2><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="业务含义" /></label><button className="action primary"><Plus size={16} />加入草稿</button></form><form className="panel functional-panel form-panel" onSubmit={addRelation}><span className="eyebrow">关系契约</span><h2>新增关系类型</h2><label>关系名称<input value={rel.name} onChange={(event) => setRel({ ...rel, name: event.target.value })} placeholder="例如：负责" required /></label><label>起始实体类型<select value={rel.source} onChange={(event) => setRel({ ...rel, source: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>终止实体类型<select value={rel.target} onChange={(event) => setRel({ ...rel, target: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><button className="action primary"><Plus size={16} />加入草稿</button></form></div><div className="panel functional-panel type-list"><span className="eyebrow">类型清单</span><h2>实体类型与关系契约</h2>{definition.entityTypes.map((item) => <div className="type-row" key={item.id}><CircleDot size={17} /><b>{item.name}</b><span>{item.description || "未填写说明"}</span><em>{item.properties.length} 属性</em></div>)}{definition.relationshipTypes.map((item) => <div className="type-row" key={item.id}><Link2 size={17} /><b>{item.name}</b><span>关系契约</span><em>{item.properties.length} 属性</em></div>)}{!definition.entityTypes.length && !definition.relationshipTypes.length && <p className="empty">尚未创建类型。</p>}</div></section>;
 }
 
 function PropertyManager({ definition, draft, save, fail }: { definition: Definition; draft: Version | null; save: (definition: Definition) => Promise<void>; fail: (reason: unknown) => void }) {
   const [owner, setOwner] = useState(""); const [name, setName] = useState(""); const [dataType, setDataType] = useState<Property["dataType"]>("TEXT"); const [required, setRequired] = useState(false);
   const choices = useMemo(() => [...definition.entityTypes.map((item) => ({ key: `entity:${item.id}`, label: `实体 · ${item.name}`, type: "entity" as const, item })), ...definition.relationshipTypes.map((item) => ({ key: `relation:${item.id}`, label: `关系 · ${item.name}`, type: "relation" as const, item }))], [definition]);
-  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">属性规则</span><h2>在类型上定义属性，在实例上填写属性值</h2>{!draft && <p className="empty">请先在本体草稿中创建类型。</p>}<form className="inline-form" onSubmit={async (event) => { event.preventDefault(); try { const selected = choices.find((item) => item.key === owner); if (!selected || !name.trim()) throw new Error("请选择所属类型并填写属性名称。"); const prop: Property = { name: name.trim(), dataType, required, unique: false, indexed: false }; const next = structuredClone(definition); if (selected.type === "entity") next.entityTypes.find((item) => item.id === selected.item.id)!.properties.push(prop); else next.relationshipTypes.find((item) => item.id === selected.item.id)!.properties.push(prop); await save(next); setName(""); } catch (reason) { fail(reason); } }}><select value={owner} onChange={(event) => setOwner(event.target.value)}><option value="">所属类型</option>{choices.map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select><input value={name} onChange={(event) => setName(event.target.value)} placeholder="属性名称" /><select value={dataType} onChange={(event) => setDataType(event.target.value as Property["dataType"])}>{typeOptions.map((item) => <option key={item}>{item}</option>)}</select><label className="check-label"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />必填</label><button className="action primary"><Plus size={16} />添加属性</button></form></div><div className="panel functional-panel property-list">{[...definition.entityTypes, ...definition.relationshipTypes].flatMap((item) => item.properties.map((property) => <div className="type-row" key={`${item.id}-${property.name}`}><TableProperties size={17} /><b>{item.name}.{property.name}</b><span>{property.dataType}</span><em>{property.required ? "必填" : "可选"}</em></div>))}{!choices.some((item) => item.item.properties.length) && <p className="empty">尚未定义属性。</p>}</div></section>;
+  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">属性规则</span><h2>在类型上定义属性，在实例上填写属性值</h2>{!draft && <p className="empty">请先在本体草稿中创建类型。</p>}<form className="inline-form" onSubmit={async (event) => { event.preventDefault(); try { const selected = choices.find((item) => item.key === owner); if (!selected || !name.trim()) throw new Error("请选择所属类型并填写属性名称。"); const prop: Property = { name: name.trim(), dataType, required, unique: false, indexed: false }; const next = structuredClone(definition); if (selected.type === "entity") next.entityTypes.find((item) => item.id === selected.item.id)!.properties.push(prop); else next.relationshipTypes.find((item) => item.id === selected.item.id)!.properties.push(prop); await save(next); setName(""); } catch (reason) { fail(reason); } }}><select value={owner} onChange={(event) => setOwner(event.target.value)}><option value="">所属类型</option>{choices.map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select><input value={name} onChange={(event) => setName(event.target.value)} placeholder="属性名称" /><select value={dataType} onChange={(event) => setDataType(event.target.value as Property["dataType"])}>{typeOptions.map((item) => <option key={item}>{item}</option>)}</select><label className="check-label"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />必填</label><button className="action primary"><Plus size={16} />添加属性</button></form></div><div className="panel functional-panel property-list"><span className="eyebrow">属性定义</span><h2>全部属性</h2>{[...definition.entityTypes, ...definition.relationshipTypes].flatMap((item) => item.properties.map((property) => <div className="type-row" key={`${item.id}-${property.name}`}><TableProperties size={17} /><b>{item.name}.{property.name}</b><span>{property.dataType}</span><em>{property.required ? "必填" : "可选"}</em></div>))}{!choices.some((item) => item.item.properties.length) && <p className="empty">尚未定义属性。</p>}</div></section>;
 }
 
-function EntityManager({ target, published, fail, notify }: { target: Target | null; published: Version | null; fail: (reason: unknown) => void; notify: (text: string) => void }) {
-  const [rows, setRows] = useState<{ id: string; labels: string[]; properties: Record<string, unknown> }[]>([]); const [entityType, setEntityType] = useState(""); const [properties, setProperties] = useState("{}");
-  const load = async () => { try { if (!target) throw new Error("请先选择 Neo4j 目标。"); const data = await api<{ rows: typeof rows }>(`/api/instances/entities?targetId=${target.id}`); setRows(data.rows); } catch (reason) { fail(reason); } };
-  useEffect(() => {
-    if (!target?.id) return;
-    void api<{ rows: typeof rows }>(`/api/instances/entities?targetId=${target.id}`).then((data) => setRows(data.rows)).catch(fail);
-    // The request is intentionally refreshed only when the selected target changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.id]);
-  return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={async (event) => { event.preventDefault(); try { if (!target) throw new Error("请先选择目标。"); const result = await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, entityType, properties: JSON.parse(properties) }) }); notify("实体已写入 Neo4j。"); setProperties("{}"); await load(); return result; } catch (reason) { fail(reason); } }}><span className="eyebrow">实体管理</span><h2>创建实体实例</h2>{published ? <><label>已发布实体类型<select value={entityType} onChange={(event) => setEntityType(event.target.value)} required><option value="">选择类型</option>{published.definition.entityTypes.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><label>属性 JSON<textarea value={properties} onChange={(event) => setProperties(event.target.value)} /></label><button className="action primary"><Plus size={16} />创建实体</button></> : <p className="empty">该目标尚无已发布本体，不能创建实体。</p>}</form><div className="panel functional-panel result-list"><span className="eyebrow">目标图数据</span><h2>{rows.length} 个实体</h2><button className="action compact" onClick={load}>刷新</button>{rows.map((row) => <div className="result-row" key={row.id}><CircleDot size={16} /><span><b>{row.labels.join(", ") || "无标签"}</b><small>{JSON.stringify(row.properties)}</small></span></div>)}</div></section>;
-}
-
-function RelationshipManager({ target, published, fail, notify }: { target: Target | null; published: Version | null; fail: (reason: unknown) => void; notify: (text: string) => void }) {
-  const [rows, setRows] = useState<{ id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown> }[]>([]); const [form, setForm] = useState({ relationshipType: "", sourceId: "", targetIdValue: "", properties: "{}" });
-  const load = async () => { try { if (!target) throw new Error("请先选择 Neo4j 目标。"); const data = await api<{ rows: typeof rows }>(`/api/instances/relationships?targetId=${target.id}`); setRows(data.rows); } catch (reason) { fail(reason); } };
-  useEffect(() => {
-    if (!target?.id) return;
-    void api<{ rows: typeof rows }>(`/api/instances/relationships?targetId=${target.id}`).then((data) => setRows(data.rows)).catch(fail);
-    // The request is intentionally refreshed only when the selected target changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.id]);
-  return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={async (event) => { event.preventDefault(); try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: form.relationshipType, sourceId: form.sourceId, targetIdValue: form.targetIdValue, properties: JSON.parse(form.properties) }) }); notify("关系已写入 Neo4j，并已校验端点契约。"); await load(); } catch (reason) { fail(reason); } }}><span className="eyebrow">关系管理</span><h2>创建关系实例</h2>{published ? <><label>已发布关系类型<select value={form.relationshipType} onChange={(event) => setForm({ ...form, relationshipType: event.target.value })} required><option value="">选择关系</option>{published.definition.relationshipTypes.map((item) => <option value={item.name} key={item.id}>{item.name}</option>)}</select></label><label>起始实体 elementId<input value={form.sourceId} onChange={(event) => setForm({ ...form, sourceId: event.target.value })} required /></label><label>终止实体 elementId<input value={form.targetIdValue} onChange={(event) => setForm({ ...form, targetIdValue: event.target.value })} required /></label><label>属性 JSON<textarea value={form.properties} onChange={(event) => setForm({ ...form, properties: event.target.value })} /></label><button className="action primary"><Plus size={16} />创建关系</button></> : <p className="empty">请先发布本体。</p>}</form><div className="panel functional-panel result-list"><span className="eyebrow">目标图数据</span><h2>{rows.length} 条关系</h2><button className="action compact" onClick={load}>刷新</button>{rows.map((row) => <div className="result-row" key={row.id}><Link2 size={16} /><span><b>{row.type}</b><small>{row.sourceId} <ArrowIcon /> {row.targetId}</small></span></div>)}</div></section>;
-}
-
-function LegacyRuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) { const [result, setResult] = useState<unknown>(null); return <section className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>CALL db.schema.visualization()</h2></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取 Schema</button></div><pre className="json-result">{result ? JSON.stringify(result, null, 2) : "点击“获取 Schema”读取目标 Neo4j 的运行时 Schema。"}</pre></section>; }
-function LegacyCypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) { const [cypher, setCypher] = useState("MATCH (n) RETURN labels(n) AS labels, count(n) AS count LIMIT 20"); const [result, setResult] = useState<unknown>(null); const [running, setRunning] = useState(false); const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher); return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行"}</button></div></div><pre className="panel functional-panel json-result">{result ? JSON.stringify(result, null, 2) : "结果会显示在这里。"}</pre></section>; }
-
-function graphLabel(node: GraphData["nodes"][number]) {
-  const preferred = ["name", "名称", "title", "id"].map((key) => node.properties[key]).find((value) => typeof value === "string" || typeof value === "number");
-  return String(preferred ?? node.labels[0] ?? "节点");
-}
-
-const graphPalette = ["#2e9b8f", "#d97757", "#5b8def", "#a47acb", "#c89137", "#4b9f69"];
-
-function graphColor(label: string) {
-  let hash = 0;
-  for (const character of label) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
-  return graphPalette[Math.abs(hash) % graphPalette.length];
-}
-
-function propertyValue(value: unknown) {
-  if (value === null) return "null";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-function GraphCanvas({ graph, onExpand }: { graph: GraphData; onExpand?: (nodeId: string) => Promise<void> }) {
+function GraphManager({ target, user, published, runtimeTypes, notify, fail }: { target: Target | null; user: User; published: Version | null; runtimeTypes: RuntimeTypeSet | null; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [graph, setGraph] = useState<GraphData>({ nodes: [], relationships: [] });
+  const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
-  const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const { settings, update, reset } = useGraphSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const load = useCallback(async (nextLabel: string, nextSearch: string, nodeLimit: number) => {
+    if (!target) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ targetId: target.id });
+      if (nextLabel) params.set("label", nextLabel);
+      if (nextSearch) params.set("search", nextSearch);
+      params.set("nodeLimit", String(nodeLimit));
+      setGraph(await api<GraphData>(`/api/instances/graph?${params.toString()}`));
+    } catch (reason) { fail(reason); } finally { setLoading(false); }
+  }, [target, fail]);
+
+  useEffect(() => {
+    if (!target) return;
+    void api<GraphData>(`/api/instances/graph?targetId=${encodeURIComponent(target.id)}&nodeLimit=${settings.nodeLimit}`).then(setGraph).catch(fail);
+    // Graph is re-fetched when the selected target or the node limit changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id, settings.nodeLimit]);
+
+  const expand = useCallback(async (nodeId: string) => {
+    if (!target) return;
+    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: `MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT ${Math.max(1, settings.maxNeighbors)}`, parameters: { nodeId } }) });
+    setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
+  }, [target, settings.maxNeighbors]);
+
+  return <section className="stack">
+    <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">图谱管理</span><h2>画布编辑并写回 Neo4j</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { setLabel(event.target.value); void load(event.target.value, search, settings.nodeLimit); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">管理员：拖拽节点保存位置、拖出连线新建关系、在详情面板编辑属性或删除元素。当前按“可视化节点上限”{settings.nodeLimit} 个节点加载，可在“可视化配置”中调整。未发布本体时按运行时类型直接管理。</p></div>
+    <GraphCanvas graph={graph} targetId={target?.id} user={user} editable definition={published?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={expand} onRefresh={() => load(label, search, settings.nodeLimit)} notify={notify} fail={fail} />
+    {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
+  </section>;
+}
+
+function EntityManager({ target, user, published, runtimeTypes, notify, fail }: { target: Target | null; user: User; published: Version | null; runtimeTypes: RuntimeTypeSet | null; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [rows, setRows] = useState<EntityRow[]>([]);
+  const [label, setLabel] = useState("");
+  const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expanding, setExpanding] = useState(false);
-  const [expandError, setExpandError] = useState<string | null>(null);
-  const labels = useMemo(() => [...new Set(graph.nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b, "zh-CN")), [graph.nodes]);
-  const selectedNode = graph.nodes.find((node) => node.id === selectedId) ?? null;
-  const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
-    const haystack = `${graphLabel(node)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
-    const labelMatches = !activeLabels.length || node.labels.some((label) => activeLabels.includes(label));
-    return labelMatches && haystack.includes(search.trim().toLocaleLowerCase());
-  }).map((node) => node.id)), [activeLabels, graph.nodes, search]);
-  const toggleLabel = (label: string) => setActiveLabels((current) => current.includes(label) ? current.filter((item) => item !== label) : [...current, label]);
-  const expand = async () => {
-    if (!selectedNode || !onExpand) return;
-    try { setExpandError(null); setExpanding(true); await onExpand(selectedNode.id); } catch (reason) { setExpandError(reason instanceof Error ? reason.message : "无法扩展该节点的邻居。"); } finally { setExpanding(false); }
+  const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
+  const [createOpen, setCreateOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (nextLabel: string, nextSearch: string) => {
+    if (!target) return;
+    try {
+      const params = new URLSearchParams({ targetId: target.id });
+      if (nextLabel) params.set("label", nextLabel);
+      if (nextSearch) params.set("search", nextSearch);
+      setRows(await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows));
+    } catch (reason) { fail(reason); }
+  }, [target, fail]);
+
+  useEffect(() => {
+    if (!target) return;
+    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}`).then((data) => setRows(data.rows)).catch(fail);
+    // Entity list is re-fetched only when the selected target changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id]);
+
+  const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const definitions = selected ? (published?.definition.entityTypes.find((item) => selected.labels.includes(item.name))?.properties ?? null) : null;
+  const managed = Boolean(definitions);
+
+  const save = async () => {
+    if (!target || !selected) return;
+    try { setBusy(true); const updated = await api<EntityRow>(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((current) => current.map((row) => row.id === updated.id ? updated : row)); notify("属性已保存到 Neo4j。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  const nodes = useMemo<Node[]>(() => graph.nodes.map((node, index) => {
-    const radius = Math.max(150, Math.min(300, 78 * graph.nodes.length));
-    const angle = (Math.PI * 2 * index) / Math.max(graph.nodes.length, 1) - Math.PI / 2;
-    const color = graphColor(node.labels[0] ?? "未标注");
-    const selected = node.id === selectedId;
-    return {
-      id: node.id,
-      position: { x: 390 + Math.cos(angle) * radius, y: 275 + Math.sin(angle) * radius },
-      data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b><small>{node.labels.join(" · ") || "未标注"}</small></div> },
-      hidden: !visibleNodeIds.has(node.id),
-      style: { width: 122, minHeight: 76, borderRadius: 14, border: `2px solid ${color}`, background: "#ffffff", color: "#173536", display: "grid", placeItems: "center", textAlign: "center", padding: "9px", boxShadow: selected ? `0 0 0 4px ${color}33, 0 12px 28px rgba(19, 57, 55, .20)` : "0 5px 15px rgba(19, 57, 55, .11)", transition: "box-shadow .18s ease, transform .18s ease" },
-      draggable: true,
-    };
-  }), [graph.nodes, selectedId, visibleNodeIds]);
-  const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => visibleNodeIds.has(relationship.source) && visibleNodeIds.has(relationship.target)).map((relationship) => ({
-    id: relationship.id,
-    source: relationship.source,
-    target: relationship.target,
-    label: relationship.type,
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#718f8c" },
-    style: { stroke: "#718f8c", strokeWidth: 1.35 },
-    labelStyle: { fill: "#496361", fontSize: 10, fontWeight: 650 },
-    labelBgStyle: { fill: "#f9fcfa", fillOpacity: 0.94 },
-    labelBgPadding: [4, 3],
-    labelBgBorderRadius: 3,
-  })), [graph.relationships, visibleNodeIds]);
-  if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>查询结果中没有可绘制的节点或关系</b><span>使用例如 <code>MATCH p=()-[]-&gt;() RETURN p LIMIT 25</code> 的路径查询，即可切换到图谱视图。</span></div>;
-  return <div className="graph-canvas">
-    <ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.24 }} minZoom={0.2} maxZoom={2} nodesConnectable={false} onNodeClick={(_, node) => setSelectedId(node.id)} onPaneClick={() => setSelectedId(null)}><Background color="#c9d8d3" gap={22} size={1} /><Controls showInteractive={false} /></ReactFlow>
-    <div className="graph-explorer-toolbar"><label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label><span>{visibleNodeIds.size}/{graph.nodes.length} 个节点</span></div>
-    <div className="graph-legend" aria-label="节点类型筛选">{labels.map((label) => <button key={label} className={activeLabels.includes(label) ? "active" : ""} onClick={() => toggleLabel(label)}><i style={{ background: graphColor(label) }} />{label}</button>)}</div>
-    <aside className={selectedNode ? "graph-inspector open" : "graph-inspector"} aria-live="polite">
-      {selectedNode ? <><div className="graph-inspector-head"><div><span style={{ background: graphColor(selectedNode.labels[0] ?? "未标注") }} />节点事实</div><button aria-label="关闭节点详情" onClick={() => setSelectedId(null)}><X size={15} /></button></div><h3>{graphLabel(selectedNode)}</h3><p>{selectedNode.labels.join(" · ") || "未标注类型"}</p><div className="graph-properties">{Object.entries(selectedNode.properties).length ? Object.entries(selectedNode.properties).map(([key, value]) => <div key={key}><span>{key}</span><b title={propertyValue(value)}>{propertyValue(value)}</b></div>) : <small>该节点没有可显示的属性。</small>}</div>{onExpand && <button className="graph-expand" disabled={expanding} onClick={() => void expand()}><LocateFixed size={15} />{expanding ? "正在扩展…" : "扩展一度邻居"}</button>}{expandError && <p className="graph-expand-error">{expandError}</p>}<small className="graph-inspector-hint">点击其他节点可切换检查对象；拖拽节点可整理当前视图。</small></> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个节点</b><span>查看节点属性，或在 Cypher 结果中继续扩展关联实体。</span></div>}
-    </aside>
-  </div>;
+  const remove = async () => {
+    if (!target || !selected) return;
+    if (!window.confirm("删除该节点及其所有关系？")) return;
+    try { setBusy(true); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
+  return <section className="manager-grid">
+    <div className="panel functional-panel result-list">
+      <span className="eyebrow">实体</span>
+      <h2>{rows.length} 条</h2>
+      <div className="manager-toolbar">
+        <select value={label} onChange={(event) => { setLabel(event.target.value); void load(event.target.value, search); }}><option value="">全部标签</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(label, search); }} placeholder="搜索属性" />
+        <button className="action compact" onClick={() => void load(label, search)}><Search size={14} /></button>
+        <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
+      </div>
+      <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(Object.fromEntries(Object.entries(row.properties).filter(([key]) => key !== "fx" && key !== "fy"))); }}><CircleDot size={15} /><span><b>{entityTitle(row)}</b><small>{row.labels.join(", ")} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的实体。</p>}</div>
+    </div>
+    <div className="panel functional-panel detail-panel">
+      {selected ? <><span className="eyebrow">选中实体</span><h2>{entityTitle(selected)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除节点</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条实体</b><span>点击左侧列表中的实体查看与编辑属性。</span></div>}
+    </div>
+    {user.role === "ADMIN" && createOpen && <EntityCreateDialog published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, entityType: label, properties }) }); notify("实体已写入 Neo4j。"); setCreateOpen(false); await load(label, search); } catch (reason) { fail(reason); } }} />}
+  </section>;
 }
 
-function ResultViewer({ result, onExpand }: { result: QueryResult | null; onExpand?: (nodeId: string) => Promise<void> }) {
-  const [mode, setMode] = useState<"graph" | "table" | "raw">("graph");
-  if (!result) return <div className="graph-empty"><TerminalSquare size={27} /><b>尚未执行查询</b><span>运行返回节点、关系或路径的 Cypher 后将在此展示可交互图谱。</span></div>;
-  return <section className="panel functional-panel result-viewer"><div className="result-tabs"><button className={mode === "graph" ? "active" : ""} onClick={() => setMode("graph")}>图谱 <b>{result.graph.nodes.length}</b></button><button className={mode === "table" ? "active" : ""} onClick={() => setMode("table")}>记录 <b>{result.records.length}</b></button><button className={mode === "raw" ? "active" : ""} onClick={() => setMode("raw")}>原始结果</button><span>{result.graph.relationships.length} 条关系</span></div>{mode === "graph" && <GraphCanvas graph={result.graph} onExpand={onExpand} />}{mode === "table" && <div className="result-table-view">{result.records.map((row, index) => <pre key={index}>{JSON.stringify(row, null, 2)}</pre>)}</div>}{mode === "raw" && <pre className="json-result">{JSON.stringify(result, null, 2)}</pre>}</section>;
+function RelationshipManager({ target, user, published, runtimeTypes, notify, fail }: { target: Target | null; user: User; published: Version | null; runtimeTypes: RuntimeTypeSet | null; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [rows, setRows] = useState<RelationshipRow[]>([]);
+  const [type, setType] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
+  const [createOpen, setCreateOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (nextType: string, nextSearch: string) => {
+    if (!target) return;
+    try {
+      const params = new URLSearchParams({ targetId: target.id });
+      if (nextType) params.set("type", nextType);
+      if (nextSearch) params.set("search", nextSearch);
+      setRows(await api<{ rows: RelationshipRow[] }>(`/api/instances/relationships?${params.toString()}`).then((data) => data.rows));
+    } catch (reason) { fail(reason); }
+  }, [target, fail]);
+
+  useEffect(() => {
+    if (!target) return;
+    void api<{ rows: RelationshipRow[] }>(`/api/instances/relationships?targetId=${encodeURIComponent(target.id)}`).then((data) => setRows(data.rows)).catch(fail);
+    // Relationship list is re-fetched only when the selected target changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id]);
+
+  const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const definitions = selected ? (published?.definition.relationshipTypes.find((item) => item.name === selected.type)?.properties ?? null) : null;
+  const managed = Boolean(definitions);
+
+  const save = async () => {
+    if (!target || !selected) return;
+    try { setBusy(true); const updated = await api<RelationshipRow>(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((current) => current.map((row) => row.id === updated.id ? updated : row)); notify("属性已保存到 Neo4j。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!target || !selected) return;
+    if (!window.confirm("删除该关系？")) return;
+    try { setBusy(true); await api(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
+  return <section className="manager-grid">
+    <div className="panel functional-panel result-list">
+      <span className="eyebrow">关系</span>
+      <h2>{rows.length} 条</h2>
+      <div className="manager-toolbar">
+        <select value={type} onChange={(event) => { setType(event.target.value); void load(event.target.value, search); }}><option value="">全部类型</option>{(runtimeTypes?.relationshipTypes ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(type, search); }} placeholder="搜索属性" />
+        <button className="action compact" onClick={() => void load(type, search)}><Search size={14} /></button>
+        <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
+      </div>
+      <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(row.properties); }}><Link2 size={15} /><span><b>{row.type}</b><small>{row.sourceId} <span className="arrow">→</span> {row.targetId} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的关系。</p>}</div>
+    </div>
+    <div className="panel functional-panel detail-panel">
+      {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selected.sourceId} <span className="arrow">→</span> {selected.targetId}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
+    </div>
+    {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已写入 Neo4j。"); setCreateOpen(false); await load(type, search); } catch (reason) { fail(reason); } }} />}
+  </section>;
+}
+
+function EntityCreateDialog({ published, runtimeTypes, onClose, onCreate }: { published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {
+  const [label, setLabel] = useState("");
+  const [customMode, setCustomMode] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+  const [properties, setProperties] = useState<Record<string, unknown>>({});
+  const [busy, setBusy] = useState(false);
+  const value = customMode ? customLabel : label;
+  const definitions = published?.definition.entityTypes.find((item) => item.name === value)?.properties ?? null;
+  const options = useMemo(() => [...new Set([...(published?.definition.entityTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.labels.map((item) => item.name) ?? [])])], [published, runtimeTypes]);
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!value.trim()) return; setBusy(true); void onCreate(value.trim(), properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><CircleDot size={22} /></div><span className="eyebrow">新建实体</span><h2>选择节点标签</h2><label>标签{customMode ? <input autoFocus value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="输入新的标签" /> : <select value={label} onChange={(event) => setLabel(event.target.value)} required><option value="">选择标签</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select>}</label><button type="button" className="graph-dialog-custom" onClick={() => setCustomMode((current) => !current)}>{customMode ? "改为从列表选择" : "使用自定义标签"}</button><PropertyEditor definitions={definitions ?? []} values={properties} mode={definitions ? "managed" : "raw"} onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!value.trim() || busy}>{busy ? "创建中…" : "创建实体"}</button></div></form></div>;
+}
+
+function RelationshipCreateDialog({ published, runtimeTypes, onClose, onCreate }: { published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (type: string, sourceId: string, targetId: string, properties: Record<string, unknown>) => Promise<void> }) {
+  const [type, setType] = useState("");
+  const [sourceId, setSourceId] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [customMode, setCustomMode] = useState(false);
+  const [customType, setCustomType] = useState("");
+  const [properties, setProperties] = useState<Record<string, unknown>>({});
+  const [busy, setBusy] = useState(false);
+  const value = customMode ? customType : type;
+  const definitions = published?.definition.relationshipTypes.find((item) => item.name === value)?.properties ?? null;
+  const options = useMemo(() => [...new Set([...(published?.definition.relationshipTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.relationshipTypes.map((item) => item.name) ?? [])])], [published, runtimeTypes]);
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!value.trim() || !sourceId.trim() || !targetId.trim()) return; setBusy(true); void onCreate(value.trim(), sourceId.trim(), targetId.trim(), properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Link2 size={22} /></div><span className="eyebrow">新建关系</span><h2>选择关系类型</h2><label>关系类型{customMode ? <input autoFocus value={customType} onChange={(event) => setCustomType(event.target.value)} placeholder="输入新的关系类型" /> : <select value={type} onChange={(event) => setType(event.target.value)} required><option value="">选择类型</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select>}</label><button type="button" className="graph-dialog-custom" onClick={() => setCustomMode((current) => !current)}>{customMode ? "改为从列表选择" : "使用自定义类型"}</button><label>起始实体 elementId<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="从实体管理页复制 elementId" required /></label><label>终止实体 elementId<input value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder="从实体管理页复制 elementId" required /></label><PropertyEditor definitions={definitions ?? []} values={properties} mode={definitions ? "managed" : "raw"} onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!value.trim() || !sourceId.trim() || !targetId.trim() || busy}>{busy ? "创建中…" : "创建关系"}</button></div></form></div>;
 }
 
 function RuntimeSchema({ target, fail }: { target: Target | null; fail: (reason: unknown) => void }) {
   const [result, setResult] = useState<QueryResult | null>(null);
-  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>运行时图谱可视化</h2><p className="subtle">由 <code>CALL db.schema.visualization()</code> 返回的节点标签与关系类型绘制。</p></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api<QueryResult>(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取并绘制</button></div></div><ResultViewer result={result} /></section>;
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">运行时事实</span><h2>运行时图谱可视化</h2><p className="subtle">由 <code>CALL db.schema.visualization()</code> 返回的节点标签与关系类型绘制。</p></div><button className="action primary" onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); setResult(await api<QueryResult>(`/api/targets/${target.id}/schema`)); } catch (reason) { fail(reason); } }}><Eye size={16} />获取并绘制</button></div></div>{result ? <GraphCanvas graph={result.graph} /> : <div className="graph-empty"><Network size={27} /><b>尚未获取 Schema</b><span>点击“获取并绘制”读取目标 Neo4j 的运行时 Schema。</span></div>}</section>;
 }
 
 function CypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) {
   const [cypher, setCypher] = useState("MATCH p=()-[]->() RETURN p LIMIT 25");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { settings, update, reset } = useGraphSettings();
   const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
   const expandNode = async (nodeId: string) => {
     if (!target) throw new Error("请先选择 Neo4j 目标。");
-    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: "MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT 60", parameters: { nodeId } }) });
-    setResult((current) => current ? { ...expanded, graph: { nodes: [...new Map([...current.graph.nodes, ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.graph.relationships, ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }, records: [...current.records, ...expanded.records] } : expanded);
+    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: `MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT ${Math.max(1, settings.maxNeighbors)}`, parameters: { nodeId } }) });
+    const merged: QueryResult = { ...expanded, graph: { nodes: [...new Map([...result?.graph.nodes ?? [], ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...(result?.graph.relationships ?? []), ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }, records: [...(result?.records ?? []), ...expanded.records] };
+    setResult(capResult(merged, settings.recordLimit));
   };
-  return <section className="stack"><div className="panel functional-panel"><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) })); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><Play size={16} />{running ? "执行中" : "运行并可视化"}</button></div></div><ResultViewer result={result} onExpand={expandNode} /></section>;
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2></div><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(capResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) }), settings.recordLimit)); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div><GraphCanvas graph={result?.graph ?? { nodes: [], relationships: [] }} onExpand={expandNode} />{settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}</section>;
 }
+
+function PlayIcon() { return <span className="arrow">▶</span>; }
