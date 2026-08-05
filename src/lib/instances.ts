@@ -131,18 +131,33 @@ export async function updateNodePositions(target: Neo4jTarget, items: { elementI
 
 export async function readGraph(
   target: Neo4jTarget,
-  options: { label?: string | null; search?: string | null; nodeLimit?: number } = {},
+  options: { label?: string | null; labels?: string[]; relationshipTypes?: string[]; search?: string | null; nodeLimit?: number } = {},
 ): Promise<GraphData> {
-  const { label = null, search = null, nodeLimit = 300 } = options;
+  const { label = null, labels = [], relationshipTypes = [], search = null, nodeLimit = 300 } = options;
   const limit = neo4j.int(Number.isFinite(nodeLimit) ? Math.max(0, Math.floor(nodeLimit)) : 300);
+  const selectedLabels = [...new Set([...(label ? [label] : []), ...labels])];
+  const selectedRelationshipTypes = [...new Set(relationshipTypes)];
+  if (selectedRelationshipTypes.length) {
+    const result = await executeCypher(
+      target,
+      `MATCH (source)-[r]->(target)
+       WHERE type(r) IN $relationshipTypes
+         AND ($labels = [] OR any(label IN labels(source) WHERE label IN $labels) OR any(label IN labels(target) WHERE label IN $labels))
+         AND ($search IS NULL OR any(k IN keys(source) WHERE toString(source[k]) CONTAINS $search) OR any(k IN keys(target) WHERE toString(target[k]) CONTAINS $search))
+       RETURN source, r, target
+       LIMIT $limit`,
+      { relationshipTypes: selectedRelationshipTypes, labels: selectedLabels, search, limit },
+    );
+    return result.graph;
+  }
   const nodesResult = await executeCypher(
     target,
     `MATCH (n)
-     WHERE ($label IS NULL OR $label IN labels(n))
+     WHERE ($labels = [] OR any(label IN labels(n) WHERE label IN $labels))
        AND ($search IS NULL OR any(k IN keys(n) WHERE toString(n[k]) CONTAINS $search))
      RETURN n
      LIMIT $limit`,
-    { label, search, limit },
+    { labels: selectedLabels, search, limit },
   );
   const nodes = nodesResult.graph.nodes;
   const ids = nodes.map((node) => node.id);

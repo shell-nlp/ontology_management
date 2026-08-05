@@ -1,20 +1,18 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { Background, Controls, MarkerType, ReactFlow, type Connection, type Edge, type Node, type ReactFlowInstance } from "@xyflow/react";
+import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { CircleDot, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
-import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum } from "d3-force";
 import { PropertyEditor } from "@/components/property-editor";
+import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
 import type { GraphData, GraphNode, GraphRelationship } from "@/lib/neo4j";
 import type { RuntimeTypeSet } from "@/lib/instances";
-import "@xyflow/react/dist/style.css";
 import "./graph-canvas.css";
 
-type User = { role: "ADMIN" | "VIEWER" } | null;
+const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 
-type SimNode = { id: string; x: number; y: number; fx?: number | null; fy?: number | null };
-type LinkDatum = SimulationLinkDatum<SimNode>;
+type User = { role: "ADMIN" | "VIEWER" } | null;
 
 type ManagedDefinition = {
   entityTypes: { name: string; properties: PropertyDefinition[] }[];
@@ -79,35 +77,6 @@ function hubNodeId(nodes: GraphNode[], relationships: GraphRelationship[]) {
   return hubId ?? nodes[0].id;
 }
 
-function forceLayout(nodes: GraphNode[], relationships: GraphRelationship[]) {
-  if (!nodes.length) return {};
-  const width = 1600;
-  const height = 1000;
-  const cx = width / 2;
-  const cy = height / 2;
-  const nodeIds = new Set(nodes.map((node) => node.id));
-  const simNodes: SimNode[] = nodes.map((node, index) => {
-    const stored = storedPosition(node);
-    if (stored) return { id: node.id, x: stored.x, y: stored.y };
-    const angle = (2 * Math.PI * index) / Math.max(nodes.length, 1) - Math.PI / 2;
-    const radius = Math.max(280, Math.min(560, nodes.length * 22));
-    return { id: node.id, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
-  });
-  const links = relationships
-    .filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target))
-    .map((relationship) => ({ source: relationship.source, target: relationship.target }));
-  const simulation = forceSimulation<SimNode>(simNodes)
-    .force("link", forceLink<SimNode, LinkDatum>().id((datum) => datum.id).distance(260).strength(0.56).links(links))
-    .force("charge", forceManyBody<SimNode>().strength(-1150).distanceMax(1000))
-    .force("collide", forceCollide<SimNode>(68).strength(0.95))
-    .force("x", forceX<SimNode>(cx).strength(0.018))
-    .force("y", forceY<SimNode>(cy).strength(0.018))
-    .stop();
-  const iterations = Math.min(190, Math.max(45, Math.ceil(9000 / nodes.length)));
-  for (let index = 0; index < iterations; index++) simulation.tick();
-  return Object.fromEntries(simNodes.map((node) => [node.id, { x: Math.round(node.x), y: Math.round(node.y) }]));
-}
-
 type EditTarget = { kind: "node"; id: string } | { kind: "edge"; id: string } | null;
 
 export function GraphCanvas({
@@ -119,6 +88,7 @@ export function GraphCanvas({
   runtimeTypes,
   onExpand,
   onRefresh,
+  onTypeFilterChange,
   notify,
   fail,
 }: {
@@ -130,31 +100,45 @@ export function GraphCanvas({
   runtimeTypes?: RuntimeTypeSet;
   onExpand?: (nodeId: string) => Promise<void>;
   onRefresh?: () => Promise<void>;
+  onTypeFilterChange?: (filters: { labels: string[]; relationshipTypes: string[] }) => void;
   notify?: (text: string) => void;
   fail?: (reason: unknown) => void;
 }) {
   const admin = editable && user?.role === "ADMIN" && Boolean(targetId);
   const [search, setSearch] = useState("");
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  const [activeRelationshipTypes, setActiveRelationshipTypes] = useState<string[]>([]);
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
-  const [moved, setMoved] = useState<Record<string, { x: number; y: number }>>({});
   const [pendingConnection, setPendingConnection] = useState<{ source: string; target: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null);
+  const [layoutRequest, setLayoutRequest] = useState(0);
 
-  const { layoutPositions, hubId } = useMemo(() => {
-    if (!graph.nodes.length) return { layoutPositions: null, hubId: null };
-    return { layoutPositions: forceLayout(graph.nodes, graph.relationships), hubId: hubNodeId(graph.nodes, graph.relationships) };
-  }, [graph.nodes, graph.relationships]);
-
-  const labels = useMemo(() => [...new Set(graph.nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b, "zh-CN")), [graph.nodes]);
+  const nodeTypes = useMemo(() => {
+    const types = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
+    for (const node of graph.nodes) for (const label of node.labels) if (!types.has(label)) types.set(label, 0);
+    return [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+  }, [graph.nodes, runtimeTypes?.labels]);
+  const relationshipTypes = useMemo(() => {
+    const types = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
+    for (const relationship of graph.relationships) if (!types.has(relationship.type)) types.set(relationship.type, 0);
+    return [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+  }, [graph.relationships, runtimeTypes?.relationshipTypes]);
+  const totalNodeCount = runtimeTypes ? runtimeTypes.labels.reduce((total, item) => total + item.count, 0) : graph.nodes.length;
+  const totalRelationshipCount = runtimeTypes ? runtimeTypes.relationshipTypes.reduce((total, item) => total + item.count, 0) : graph.relationships.length;
   const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
     const haystack = `${graphLabel(node)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
     const labelMatches = !activeLabels.length || node.labels.some((label) => activeLabels.includes(label));
     return labelMatches && haystack.includes(search.trim().toLocaleLowerCase());
   }).map((node) => node.id)), [activeLabels, graph.nodes, search]);
+  const visibleRelationships = useMemo(() => graph.relationships.filter((relationship) => {
+    return visibleNodeIds.has(relationship.source)
+      && visibleNodeIds.has(relationship.target)
+      && (!activeRelationshipTypes.length || activeRelationshipTypes.includes(relationship.type));
+  }), [activeRelationshipTypes, graph.relationships, visibleNodeIds]);
 
   const selectedNode = editTarget?.kind === "node" ? graph.nodes.find((node) => node.id === editTarget.id) ?? null : null;
   const selectedEdge = editTarget?.kind === "edge" ? graph.relationships.find((relationship) => relationship.id === editTarget.id) ?? null : null;
@@ -162,38 +146,32 @@ export function GraphCanvas({
   const nodeDefinitions = selectedNode ? (definition?.entityTypes.find((item) => selectedNode.labels.includes(item.name))?.properties ?? null) : null;
   const edgeDefinitions = selectedEdge ? (definition?.relationshipTypes.find((item) => item.name === selectedEdge.type)?.properties ?? null) : null;
 
-  const nodes = useMemo<Node[]>(() => graph.nodes.map((node) => {
-    const color = graphColor(node.labels[0] ?? "未标注");
-    const selected = editTarget?.kind === "node" && node.id === editTarget.id;
-    const isHub = hubId !== null && node.id === hubId;
-    const shadow = selected ? `0 0 0 4px ${color}33, 0 12px 28px rgba(19, 57, 55, .20)` : isHub ? "0 0 0 3px rgba(200, 145, 55, .55), 0 8px 20px rgba(19, 57, 55, .16)" : "0 5px 15px rgba(19, 57, 55, .11)";
-    return {
-      id: node.id,
-      position: moved[node.id] ?? layoutPositions?.[node.id] ?? storedPosition(node) ?? { x: 390 + Math.cos((Math.PI * 2 * graph.nodes.indexOf(node)) / graph.nodes.length) * 300, y: 275 + Math.sin((Math.PI * 2 * graph.nodes.indexOf(node)) / graph.nodes.length) * 300 },
-      data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b>{isHub && <small>· 中心</small>}</div> },
-      hidden: !visibleNodeIds.has(node.id),
-      style: { width: isHub ? 116 : 96, height: isHub ? 116 : 96, borderRadius: "50%", border: `2.5px solid ${isHub ? "#c89137" : color}`, background: isHub ? "#fffaf0" : "#ffffff", color: "#173536", display: "grid", placeItems: "center", textAlign: "center", padding: "12px", boxShadow: shadow, transition: "box-shadow .18s ease, transform .18s ease" },
-      draggable: true,
-      selectable: false,
-    };
-  }), [editTarget, graph.nodes, hubId, layoutPositions, moved, visibleNodeIds]);
+  const graphData = useMemo(() => {
+    const hubId = hubNodeId(graph.nodes, graph.relationships);
+    const positionedNodeCount = graph.nodes.filter((node) => storedPosition(node)).length;
+    // A partially persisted legacy layout mixes unrelated coordinate systems and creates sparse, uneven graphs.
+    const useStoredPositions = positionedNodeCount / graph.nodes.length >= 0.8;
+    const nodes: SigmaNode[] = graph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
+      const position = useStoredPositions ? storedPosition(node) : null;
+      return { id: node.id, label: graphLabel(node), color: graphColor(node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
+    });
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges: SigmaEdge[] = visibleRelationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target)).map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.source, target: relationship.target }));
+    return { nodes, edges };
+  }, [graph.nodes, graph.relationships, visibleNodeIds, visibleRelationships]);
 
-  const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => visibleNodeIds.has(relationship.source) && visibleNodeIds.has(relationship.target)).map((relationship) => ({
-    id: relationship.id,
-    source: relationship.source,
-    target: relationship.target,
-    label: relationship.type,
-    type: "straight",
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#6f8292" },
-    style: { stroke: "#6f8292", strokeWidth: 1.5 },
-    labelStyle: { fill: "#4a5d6d", fontSize: 10, fontWeight: 650 },
-    labelBgStyle: { fill: "#f8fafb", fillOpacity: 0.96 },
-    labelBgPadding: [4, 3],
-    labelBgBorderRadius: 3,
-  })), [graph.relationships, visibleNodeIds]);
-  const flowKey = useMemo(() => `${graph.nodes.map((node) => node.id).join("|")}:${graph.relationships.map((relationship) => relationship.id).join("|")}:${search}:${activeLabels.join("|")}`, [activeLabels, graph.nodes, graph.relationships, search]);
-
-  const toggleLabel = (label: string) => setActiveLabels((current) => current.includes(label) ? current.filter((item) => item !== label) : [...current, label]);
+  const toggleLabel = (label: string) => {
+    const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
+    setActiveLabels(labels);
+    setActiveRelationshipTypes([]);
+    onTypeFilterChange?.({ labels, relationshipTypes: [] });
+  };
+  const toggleRelationshipType = (type: string) => {
+    const relationshipTypes = activeRelationshipTypes.includes(type) ? activeRelationshipTypes.filter((item) => item !== type) : [...activeRelationshipTypes, type];
+    setActiveRelationshipTypes(relationshipTypes);
+    setActiveLabels([]);
+    onTypeFilterChange?.({ labels: [], relationshipTypes });
+  };
 
   const refresh = async () => {
     setEditTarget(null);
@@ -241,18 +219,20 @@ export function GraphCanvas({
     }
   };
 
-  const handleConnect = (connection: Connection) => {
-    if (!connection.source || !connection.target) return;
-    setPendingConnection({ source: connection.source, target: connection.target });
+  const savePositions = (positions: Record<string, { x: number; y: number }>) => {
+    if (!admin || !targetId) return;
+    const items = Object.entries(positions).filter(([, point]) => Number.isFinite(point.x) && Number.isFinite(point.y)).map(([elementId, point]) => ({ elementId, x: point.x, y: point.y }));
+    if (items.length) void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items }) }).catch(() => {});
   };
 
-  const flowRef = useRef<ReactFlowInstance | null>(null);
-
-  const handleDragStop = (_: unknown, node: Node) => {
-    if (!admin) return;
-    const position = { x: node.position.x, y: node.position.y };
-    setMoved((current) => ({ ...current, [node.id]: position }));
-    void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items: [{ elementId: node.id, x: node.position.x, y: node.position.y }] }) }).catch(() => {});
+  const handleNodeClick = (nodeId: string) => {
+    if (admin && connectionSourceId) {
+      if (nodeId !== connectionSourceId) setPendingConnection({ source: connectionSourceId, target: nodeId });
+      setConnectionSourceId(null);
+      return;
+    }
+    setEditTarget({ kind: "node", id: nodeId });
+    setEditing(false);
   };
 
   const expand = async () => {
@@ -260,54 +240,45 @@ export function GraphCanvas({
     try { setBusy(true); await onExpand(selectedNode.id); } catch (reason) { fail?.(reason); } finally { setBusy(false); }
   };
 
-  const organize = async () => {
+  const organize = () => {
     if (!graph.nodes.length) return;
-    const positions = forceLayout(graph.nodes, graph.relationships);
-    flowRef.current?.setNodes((current) => current.map((node) => positions[node.id] ? { ...node, position: positions[node.id] } : node));
-    setMoved(positions);
-    if (admin && targetId) {
-      const items: { elementId: string; x: number; y: number }[] = [];
-      for (const node of graph.nodes) {
-        const point = positions[node.id];
-        if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) items.push({ elementId: node.id, x: point.x, y: point.y });
-      }
-      await api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items }) }).catch((reason) => fail?.(reason));
-    }
-    notify?.("已按关系重新整理布局。");
+    setLayoutRequest((request) => request + 1);
   };
 
   if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>画布上没有可绘制的节点</b><span>运行返回节点、关系或路径的 Cypher 后即可切换图谱视图；在“图谱”页可管理现有图数据。</span></div>;
 
   return (
     <div className="graph-canvas">
-      <ReactFlow
-        key={flowKey}
-        defaultNodes={nodes}
-        defaultEdges={edges}
-        onInit={(instance) => { flowRef.current = instance; }}
-        fitView
-        fitViewOptions={{ padding: 0.24 }}
-        minZoom={0.2}
-        maxZoom={2}
-        nodesConnectable={admin}
-        nodesDraggable={admin}
-        deleteKeyCode={null}
-        onNodeClick={(_, node) => { setEditTarget({ kind: "node", id: node.id }); setEditing(false); }}
-        onEdgeClick={(_, edge) => { setEditTarget({ kind: "edge", id: edge.id }); setEditing(false); }}
-        onPaneClick={() => { setEditTarget(null); setEditing(false); }}
-        onConnect={handleConnect}
-        onNodeDragStop={handleDragStop}
-      >
-        <Background color="#c9d8d3" gap={22} size={1} />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+      <SigmaGraph
+        nodes={graphData.nodes}
+        edges={graphData.edges}
+        selectedNodeId={editTarget?.kind === "node" ? editTarget.id : null}
+        selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
+        connectionSourceId={connectionSourceId}
+        draggable={admin}
+        layoutRequest={layoutRequest}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
+        onStageClick={() => { setEditTarget(null); setEditing(false); setConnectionSourceId(null); }}
+        onDragEnd={(nodeId, point) => savePositions({ [nodeId]: point })}
+        onLayoutEnd={(positions) => { savePositions(positions); notify?.("已按关系重新整理布局。"); }}
+      />
       <div className="graph-explorer-toolbar">
         <label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label>
-        <span>{visibleNodeIds.size}/{graph.nodes.length} 个节点</span>
+        <span>{visibleNodeIds.size}/{graph.nodes.length} 个节点 · {visibleRelationships.length}/{graph.relationships.length} 条关系</span>
         {graph.nodes.length > 1 && <button className="graph-tool-action" onClick={() => void organize()} title="以关联最多的节点为中心重新排列，其余节点分层环绕"><Wand2 size={14} />自动整理</button>}
         {admin && <button className="graph-tool-action" onClick={() => setCreateOpen(true)}><Plus size={14} />新增节点</button>}
       </div>
-      <div className="graph-legend" aria-label="节点类型筛选">{labels.map((label) => <button key={label} className={activeLabels.includes(label) ? "active" : ""} onClick={() => toggleLabel(label)}><i style={{ background: graphColor(label) }} />{label}</button>)}</div>
+      <div className="graph-legend" aria-label="图谱类型筛选">
+        <section className="graph-filter-group" aria-label="节点类型筛选">
+          <b>节点 ({visibleNodeIds.size}/{totalNodeCount})</b>
+          <div>{nodeTypes.map((item) => <button key={item.name} className={activeLabels.includes(item.name) ? "active" : ""} onClick={() => toggleLabel(item.name)} title={`${item.name}：全图 ${item.count} 个节点`}><i style={{ background: graphColor(item.name) }} />{item.name}</button>)}</div>
+        </section>
+        <section className="graph-filter-group" aria-label="关系类型筛选">
+          <b>关系 ({visibleRelationships.length}/{totalRelationshipCount})</b>
+          <div>{relationshipTypes.map((item) => <button key={item.name} className={activeRelationshipTypes.includes(item.name) ? "active" : ""} onClick={() => toggleRelationshipType(item.name)} title={`${item.name}：全图 ${item.count} 条关系`}><i className="relationship-mark" />{item.name}</button>)}</div>
+        </section>
+      </div>
 
       <aside className="graph-inspector open">
         {selectedNode && (
@@ -328,6 +299,7 @@ export function GraphCanvas({
                   <>
                     <div className="graph-properties">{Object.entries(selectedNode.properties).filter(([key]) => key !== "fx" && key !== "fy").length ? Object.entries(selectedNode.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b title={propertyValue(value)}>{propertyValue(value)}</b></div>) : <small>该节点没有可显示的属性。</small>}</div>
                     {admin && <button className="graph-action" onClick={() => openEdit("node", selectedNode.id)}><Pencil size={14} />编辑属性</button>}
+                    {admin && <button className={connectionSourceId === selectedNode.id ? "graph-action primary" : "graph-action"} title="从此节点创建关系" onClick={() => setConnectionSourceId(selectedNode.id)}><Link2 size={14} />新建关系</button>}
                   </>
                 )}
             {onExpand && <button className="graph-expand" disabled={busy} onClick={() => void expand()}><LocateFixed size={15} />{busy ? "正在扩展…" : "扩展一度邻居"}</button>}
@@ -358,7 +330,7 @@ export function GraphCanvas({
           </div>
         )}
         {!selectedNode && !selectedEdge && (
-          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置，拖出连线可新建关系。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</span></div>
+          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</span></div>
         )}
       </aside>
 

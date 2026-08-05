@@ -242,21 +242,24 @@ function GraphManager({ target, user, published, runtimeTypes, notify, fail }: {
   const [graph, setGraph] = useState<GraphData>({ nodes: [], relationships: [] });
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
+  const [typeFilters, setTypeFilters] = useState({ labels: [] as string[], relationshipTypes: [] as string[] });
   const [loading, setLoading] = useState(false);
   const { settings, update, reset } = useGraphSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const load = useCallback(async (nextLabel: string, nextSearch: string, nodeLimit: number) => {
+  const load = useCallback(async (nextLabel: string, nextSearch: string, nodeLimit: number, filters = typeFilters) => {
     if (!target) return;
     setLoading(true);
     try {
       const params = new URLSearchParams({ targetId: target.id });
       if (nextLabel) params.set("label", nextLabel);
       if (nextSearch) params.set("search", nextSearch);
+      for (const type of filters.labels) params.append("graphLabel", type);
+      for (const type of filters.relationshipTypes) params.append("relationshipType", type);
       params.set("nodeLimit", String(nodeLimit));
       setGraph(await api<GraphData>(`/api/instances/graph?${params.toString()}`));
     } catch (reason) { fail(reason); } finally { setLoading(false); }
-  }, [target, fail]);
+  }, [target, fail, typeFilters]);
 
   useEffect(() => {
     if (!target) return;
@@ -272,8 +275,8 @@ function GraphManager({ target, user, published, runtimeTypes, notify, fail }: {
   }, [target, settings.maxNeighbors]);
 
   return <section className="stack">
-    <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">图谱管理</span><h2>画布编辑并写回 Neo4j</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { setLabel(event.target.value); void load(event.target.value, search, settings.nodeLimit); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">管理员：拖拽节点保存位置、拖出连线新建关系、在详情面板编辑属性或删除元素。当前按“可视化节点上限”{settings.nodeLimit} 个节点加载，可在“可视化配置”中调整。未发布本体时按运行时类型直接管理。</p></div>
-    <GraphCanvas graph={graph} targetId={target?.id} user={user} editable definition={published?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={expand} onRefresh={() => load(label, search, settings.nodeLimit)} notify={notify} fail={fail} />
+    <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">图谱管理</span><h2>画布编辑并写回 Neo4j</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">管理员：拖拽节点保存位置，从节点详情发起新建关系后选择目标节点；可在详情面板编辑属性或删除元素。当前按“可视化节点上限”{settings.nodeLimit} 个节点加载，可在“可视化配置”中调整。未发布本体时按运行时类型直接管理。</p></div>
+    <GraphCanvas graph={graph} targetId={target?.id} user={user} editable definition={published?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={expand} onRefresh={() => load(label, search, settings.nodeLimit)} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
     {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
   </section>;
 }

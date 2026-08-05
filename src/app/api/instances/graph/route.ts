@@ -12,6 +12,8 @@ export async function GET(request: NextRequest) {
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     const graph = await readGraph(target, {
       label: request.nextUrl.searchParams.get("label"),
+      labels: request.nextUrl.searchParams.getAll("graphLabel"),
+      relationshipTypes: request.nextUrl.searchParams.getAll("relationshipType"),
       search: request.nextUrl.searchParams.get("search"),
       nodeLimit: Number(request.nextUrl.searchParams.get("nodeLimit") ?? 300),
     });
