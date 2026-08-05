@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, FileCheck2, GitBranch, Link2, LogOut, Network, Pencil, Plus, Search, Settings2, ShieldCheck, TableProperties, TerminalSquare, Trash2, UserRound, X } from "lucide-react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, FileCheck2, GitBranch, Link2, Loader2, LogOut, Network, Pencil, Plus, Search, Settings2, ShieldCheck, TableProperties, TerminalSquare, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { PropertyEditor } from "@/components/property-editor";
 import type { GraphData } from "@/lib/neo4j";
@@ -456,8 +456,58 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
     <div className="panel functional-panel detail-panel">
       {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selected.sourceId} <span className="arrow">→</span> {selected.targetId}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
     </div>
-    {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已写入 Neo4j。"); setCreateOpen(false); await load(type, search); } catch (reason) { fail(reason); } }} />}
+    {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog targetId={target?.id ?? ""} published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已写入 Neo4j。"); setCreateOpen(false); await load(type, search); } catch (reason) { fail(reason); } }} />}
   </section>;
+}
+
+type EntitySearchResult = { id: string; labels: string[]; properties: Record<string, unknown>; matched: string[]; rank: number };
+
+function entityDisplayName(node: EntitySearchResult, definition: Definition | null): string {
+  const entityType = definition?.entityTypes.find((item) => node.labels.includes(item.name));
+  const primary = entityType?.displayProperty;
+  if (primary && node.properties[primary] != null) return String(node.properties[primary]);
+  for (const key of ["name", "名称", "title", "label"]) if (node.properties[key] != null) return String(node.properties[key]);
+  return node.id;
+}
+
+function EntitySearchPicker({ targetId, labels, definition, placeholder, value, onChange }: { targetId: string; labels: string[]; definition: Definition | null; placeholder: string; value: EntitySearchResult | null; onChange: (node: EntitySearchResult | null) => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<EntitySearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const labelKey = labels.join("|");
+  const runSearch = useCallback(async (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) { setResults([]); setSearched(false); setLoading(false); setError(null); return; }
+    setLoading(true); setError(null);
+    try {
+      const params = new URLSearchParams({ targetId, q: trimmed, limit: "12" });
+      if (labelKey) params.set("labels", JSON.stringify(labelKey.split("|")));
+      const data = await api<{ results: EntitySearchResult[] }>(`/api/instances/search?${params.toString()}`);
+      setResults(data.results); setSearched(true); setHighlight(0);
+    } catch (reason) {
+      setResults([]); setSearched(true); setError(reason instanceof Error ? reason.message : "搜索失败。");
+    } finally { setLoading(false); }
+  }, [targetId, labelKey]);
+  useEffect(() => { const handle = window.setTimeout(() => { void runSearch(query); }, 250); return () => window.clearTimeout(handle); }, [query, runSearch]);
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+  const select = (node: EntitySearchResult) => { onChange(node); setQuery(""); setResults([]); setOpen(false); setSearched(false); };
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { setOpen(true); setHighlight((h) => Math.min(h + 1, results.length - 1)); } }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
+    else if (event.key === "Enter") { event.preventDefault(); const candidate = results[highlight] ?? results[0]; if (candidate) select(candidate); }
+    else if (event.key === "Escape") { setOpen(false); }
+  };
+  const menuOpen = open && !value && query.trim().length > 0;
+  return <div className="entity-picker" ref={boxRef}>{value ? <div className="entity-picker-selected"><span className="entity-chip"><span className="entity-chip-label">{value.labels[0] ?? "?"}</span><b>{entityDisplayName(value, definition)}</b></span><span className="entity-chip-id">{value.id}</span><button type="button" className="entity-chip-clear" title="移除" onClick={() => onChange(null)}><X size={13} /></button></div> : <div className="entity-picker-input"><Search size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onKeyDown={onKeyDown} onFocus={() => { if (query.trim() && results.length) setOpen(true); }} placeholder={placeholder} autoComplete="off" spellCheck={false} />{loading && <Loader2 size={14} className="entity-spinner" />}</div>}{menuOpen && <div className="entity-picker-menu">{loading && !results.length && !error ? <div className="entity-picker-empty"><Loader2 size={14} className="entity-spinner" />正在搜索…</div> : error ? <div className="entity-picker-empty">{error}</div> : results.length ? results.map((node, index) => <button type="button" className={index === highlight ? "entity-result selected" : "entity-result"} key={node.id} onMouseEnter={() => setHighlight(index)} onClick={() => select(node)}><span className="entity-result-label">{node.labels.slice(0, 2).join(" · ") || "?"}</span><span className="entity-result-name">{entityDisplayName(node, definition)}</span><span className="entity-result-id">{node.id.slice(0, 12)}</span></button>) : <div className="entity-picker-empty"><Search size={14} />没有匹配的实体</div>}</div>}</div>;
 }
 
 function EntityCreateDialog({ published, runtimeTypes, onClose, onCreate }: { published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {
@@ -469,15 +519,21 @@ function EntityCreateDialog({ published, runtimeTypes, onClose, onCreate }: { pu
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!label.trim()) return; setBusy(true); void onCreate(label.trim(), properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><CircleDot size={22} /></div><span className="eyebrow">新建实体</span><h2>选择节点标签</h2><label>标签<select value={label} onChange={(event) => setLabel(event.target.value)} required><option value="">选择标签</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><PropertyEditor definitions={definitions ?? []} values={properties} mode="managed" onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!label.trim() || busy}>{busy ? "创建中…" : "创建实体"}</button></div></form></div>;
 }
 
-function RelationshipCreateDialog({ published, runtimeTypes, onClose, onCreate }: { published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (type: string, sourceId: string, targetId: string, properties: Record<string, unknown>) => Promise<void> }) {
+function RelationshipCreateDialog({ targetId, published, runtimeTypes, onClose, onCreate }: { targetId: string; published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (type: string, sourceId: string, targetId: string, properties: Record<string, unknown>) => Promise<void> }) {
   const [type, setType] = useState("");
-  const [sourceId, setSourceId] = useState("");
-  const [targetId, setTargetId] = useState("");
+  const [source, setSource] = useState<EntitySearchResult | null>(null);
+  const [target, setTarget] = useState<EntitySearchResult | null>(null);
   const [properties, setProperties] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const definitions = published?.definition.relationshipTypes.find((item) => item.name === type)?.properties ?? null;
+  const relationDef = published?.definition.relationshipTypes.find((item) => item.name === type) ?? null;
+  const sourceName = relationDef ? published?.definition.entityTypes.find((item) => item.id === relationDef.sourceEntityTypeId)?.name : undefined;
+  const targetName = relationDef ? published?.definition.entityTypes.find((item) => item.id === relationDef.targetEntityTypeId)?.name : undefined;
+  const sourceLabels = sourceName ? [sourceName] : [];
+  const targetLabels = targetName ? [targetName] : [];
   const options = useMemo(() => [...new Set([...(published?.definition.relationshipTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.relationshipTypes.map((item) => item.name) ?? [])])], [published, runtimeTypes]);
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!type.trim() || !sourceId.trim() || !targetId.trim()) return; setBusy(true); void onCreate(type.trim(), sourceId.trim(), targetId.trim(), properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Link2 size={22} /></div><span className="eyebrow">新建关系</span><h2>选择关系类型</h2><label>关系类型<select value={type} onChange={(event) => setType(event.target.value)} required><option value="">选择类型</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><label>起始实体 elementId<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="从实体管理页复制 elementId" required /></label><label>终止实体 elementId<input value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder="从实体管理页复制 elementId" required /></label><PropertyEditor definitions={definitions ?? []} values={properties} mode="managed" onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!type.trim() || !sourceId.trim() || !targetId.trim() || busy}>{busy ? "创建中…" : "创建关系"}</button></div></form></div>;
+  const selfLoop = Boolean(source && target && source.id === target.id);
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog dialog-wide" onSubmit={(event) => { event.preventDefault(); if (!type.trim() || !source || !target) return; setBusy(true); void onCreate(type.trim(), source.id, target.id, properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Link2 size={22} /></div><span className="eyebrow">新建关系</span><h2>选择关系类型</h2><label>关系类型<select value={type} onChange={(event) => { setType(event.target.value); setSource(null); setTarget(null); }} required><option value="">选择类型</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><div className="dialog-field"><span>起始实体</span><EntitySearchPicker targetId={targetId} labels={sourceLabels} definition={published?.definition ?? null} placeholder="按名称搜索起始实体…" value={source} onChange={setSource} /></div><div className="dialog-field"><span>终止实体</span><EntitySearchPicker targetId={targetId} labels={targetLabels} definition={published?.definition ?? null} placeholder="按名称搜索终止实体…" value={target} onChange={setTarget} /></div>{selfLoop && <p className="dialog-hint">起始与终止为同一实体（自环关系）。</p>}<PropertyEditor definitions={definitions ?? []} values={properties} mode="managed" onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!type.trim() || !source || !target || busy}>{busy ? "创建中…" : "创建关系"}</button></div></form></div>;
 }
 
 function CypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) {
