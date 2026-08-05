@@ -5,19 +5,22 @@ import { parsePropertyValues, type PropertyDefinition } from "@/lib/instance-pro
 import type { Neo4jTarget } from "@/lib/platform-db";
 
 export type RuntimeTypeInfo = { name: string; count: number };
-export type RuntimeTypeSet = { labels: RuntimeTypeInfo[]; relationshipTypes: RuntimeTypeInfo[] };
+export type RuntimeTypeSet = { labels: RuntimeTypeInfo[]; relationshipTypes: RuntimeTypeInfo[]; entityCount: number; relationshipCount: number };
 
 export type EntityRecord = { id: string; labels: string[]; properties: Record<string, unknown> };
 export type RelationshipRecord = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
 
 export async function readRuntimeTypes(target: Neo4jTarget): Promise<RuntimeTypeSet> {
-  const [labelsResult, relationshipsResult] = await Promise.all([
+  const [labelsResult, relationshipsResult, countsResult] = await Promise.all([
     executeCypher(target, "MATCH (n) UNWIND labels(n) AS label RETURN label AS name, count(*) AS count ORDER BY count DESC"),
     executeCypher(target, "MATCH ()-[r]->() RETURN type(r) AS name, count(*) AS count ORDER BY count DESC"),
+    executeCypher(target, "MATCH (n) WITH count(n) AS nodes OPTIONAL MATCH ()-[r]->() RETURN nodes AS nodeCount, count(r) AS relationshipCount"),
   ]);
   return {
     labels: labelsResult.records.map((row) => ({ name: String(row.name), count: Number(row.count) })),
     relationshipTypes: relationshipsResult.records.map((row) => ({ name: String(row.name), count: Number(row.count) })),
+    entityCount: Number(countsResult.records[0]?.nodeCount ?? 0),
+    relationshipCount: Number(countsResult.records[0]?.relationshipCount ?? 0),
   };
 }
 
