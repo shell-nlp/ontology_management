@@ -4,15 +4,17 @@
 .result-tabs button.active { color: #12645e; background: #e9f5f1; border-color: #b4dbcf; font-weight: 700; }
 .result-tabs b { font-size: 10px; margin-left: 3px; }
 .result-tabs > span { margin-left: auto; color: #83908e; font-size: 11px; }
-.graph-canvas { position: relative; height: 610px; overflow: hidden; background: radial-gradient(circle at 45% 30%, #ffffff 0, #f5faf7 42%, #eaf2ee 100%); }
+.graph-canvas { position: relative; height: 610px; overflow: hidden; background: #f8fafb; }
 .graph-canvas .react-flow__node { cursor: pointer; }
 .graph-canvas .react-flow__node:hover { transform: translateY(-2px); }
+.graph-canvas .react-flow__edge-path { stroke-linecap: round; }
+.graph-canvas .react-flow__edge-text { paint-order: stroke; stroke: #f8fafb; stroke-width: 3px; stroke-linejoin: round; }
 .graph-canvas .react-flow__controls { left: 16px; bottom: 16px; overflow: hidden; border: 1px solid #c8d9d2; border-radius: 7px; box-shadow: 0 7px 18px rgba(29, 69, 64, .15); }
 .graph-canvas .react-flow__controls-button { width: 29px; height: 29px; color: #35615c; background: #ffffff; border-color: #dce8e3; }
 .graph-canvas .react-flow__controls-button:hover { background: #edf7f3; }
-.graph-node-label { display: grid; gap: 4px; line-height: 1.1; max-width: 100px; overflow: hidden; }
-.graph-node-label b { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.graph-node-label small { font-size: 9px; color: #58716e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-label { display: grid; gap: 3px; line-height: 1.15; max-width: 68px; overflow: hidden; }
+.graph-node-label b { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-label small { font-size: 9px; color: #a0761f; font-weight: 700; }
 .graph-explorer-toolbar { position: absolute; z-index: 4; top: 14px; left: 16px; display: flex; align-items: center; gap: 11px; padding: 7px 10px; background: rgba(255, 255, 255, .94); border: 1px solid #cfdfd8; border-radius: 8px; box-shadow: 0 8px 20px rgba(29, 69, 64, .12); backdrop-filter: blur(8px); }
 .graph-explorer-toolbar label { display: flex; align-items: center; gap: 7px; color: #60807a; }
 .graph-explorer-toolbar input { width: 196px; border: 0; outline: 0; color: #244744; background: transparent; font-size: 11px; }

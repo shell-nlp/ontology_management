@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Background, Controls, MarkerType, ReactFlow, type Connection, type Edge, type Node } from "@xyflow/react";
+import { useMemo, useRef, useState } from "react";
+import { Background, Controls, MarkerType, ReactFlow, type Connection, type Edge, type Node, type ReactFlowInstance } from "@xyflow/react";
 import { CircleDot, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
+import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum } from "d3-force";
 import { PropertyEditor } from "@/components/property-editor";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
 import type { GraphData, GraphNode, GraphRelationship } from "@/lib/neo4j";
@@ -11,6 +12,9 @@ import "@xyflow/react/dist/style.css";
 import "./graph-canvas.css";
 
 type User = { role: "ADMIN" | "VIEWER" } | null;
+
+type SimNode = { id: string; x: number; y: number; fx?: number | null; fy?: number | null };
+type LinkDatum = SimulationLinkDatum<SimNode>;
 
 type ManagedDefinition = {
   entityTypes: { name: string; properties: PropertyDefinition[] }[];
@@ -50,41 +54,9 @@ function storedPosition(node: GraphNode) {
   return null;
 }
 
-function layoutJitter(id: string, salt: number) {
-  let hash = 0;
-  const text = `${id}${salt}`;
-  for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-  return hash;
-}
-
-function graphLayoutSeed(nodes: GraphNode[], moved: Record<string, { x: number; y: number }>) {
-  const seed: Record<string, { x: number; y: number }> = {};
-  for (const node of nodes) {
-    if (moved[node.id]) seed[node.id] = moved[node.id];
-    else {
-      const stored = storedPosition(node);
-      if (stored) seed[node.id] = stored;
-    }
-  }
-  return Object.keys(seed).length ? seed : null;
-}
-
-function autoLayout(nodes: GraphNode[], relationships: GraphRelationship[], seed: Record<string, { x: number; y: number }> | null): Record<string, { x: number; y: number }> {
-  const count = nodes.length;
-  if (!count) return {};
-  const width = 1600;
-  const height = 1000;
-  const positions = new Map<string, { x: number; y: number }>();
-  nodes.forEach((node, index) => {
-    const stored = seed?.[node.id];
-    positions.set(node.id, stored ? { x: stored.x, y: stored.y } : {
-      x: width / 2 + Math.cos((2 * Math.PI * index) / count) * Math.min(width, height) * 0.42,
-      y: height / 2 + Math.sin((2 * Math.PI * index) / count) * Math.min(width, height) * 0.42,
-    });
-  });
+function buildAdjacency(relationships: GraphRelationship[]) {
   const adjacency = new Map<string, string[]>();
   for (const relationship of relationships) {
-    if (!positions.has(relationship.source) || !positions.has(relationship.target)) continue;
     let sourceList = adjacency.get(relationship.source);
     if (!sourceList) adjacency.set(relationship.source, sourceList = []);
     sourceList.push(relationship.target);
@@ -92,65 +64,48 @@ function autoLayout(nodes: GraphNode[], relationships: GraphRelationship[], seed
     if (!targetList) adjacency.set(relationship.target, targetList = []);
     targetList.push(relationship.source);
   }
-  const area = width * height;
-  const k = Math.sqrt(area / Math.max(count, 1));
-  const repulsive = (k * k) / 1.15;
-  const idealEdge = Math.min(190, k * 1.4);
-  let temperature = Math.max(50, width / 14);
-  const iterations = 140;
-  const ids = nodes.map((node) => node.id);
-  for (let iteration = 0; iteration < iterations; iteration++) {
-    const displacement = new Map<string, { x: number; y: number }>(ids.map((id) => [id, { x: 0, y: 0 }]));
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const a = positions.get(ids[i])!;
-        const b = positions.get(ids[j])!;
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        let distance = Math.hypot(dx, dy);
-        if (distance < 1) { dx = (layoutJitter(ids[i] + ids[j], iteration) % 4) || 1; dy = 1; distance = Math.hypot(dx, dy); }
-        const force = repulsive / (distance * distance);
-        const fx = (dx / distance) * force;
-        const fy = (dy / distance) * force;
-        const left = displacement.get(ids[i])!;
-        const right = displacement.get(ids[j])!;
-        left.x += fx; left.y += fy;
-        right.x -= fx; right.y -= fy;
-      }
-    }
-    for (const [id, neighbors] of adjacency) {
-      for (const neighbor of neighbors) {
-        if (id >= neighbor) continue;
-        const a = positions.get(id)!;
-        const b = positions.get(neighbor)!;
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const distance = Math.max(1, Math.hypot(dx, dy));
-        const force = (distance * distance) / idealEdge;
-        const fx = (dx / distance) * force;
-        const fy = (dy / distance) * force;
-        const left = displacement.get(id)!;
-        const right = displacement.get(neighbor)!;
-        left.x -= fx; left.y -= fy;
-        right.x += fx; right.y += fy;
-      }
-    }
-    for (const id of ids) {
-      const point = positions.get(id)!;
-      const disp = displacement.get(id)!;
-      const length = Math.max(1, Math.hypot(disp.x, disp.y));
-      const step = Math.min(temperature, length);
-      point.x = Math.max(30, Math.min(width - 30, point.x + (disp.x / length) * step));
-      point.y = Math.max(30, Math.min(height - 30, point.y + (disp.y / length) * step));
-    }
-    temperature *= 0.9;
+  return adjacency;
+}
+
+function hubNodeId(nodes: GraphNode[], relationships: GraphRelationship[]) {
+  if (!nodes.length) return null;
+  const adjacency = buildAdjacency(relationships);
+  let hubId: string | null = null;
+  let maxDegree = -1;
+  for (const node of nodes) {
+    const degree = adjacency.get(node.id)?.length ?? 0;
+    if (degree > maxDegree || (degree === maxDegree && (hubId === null || node.id < hubId))) { maxDegree = degree; hubId = node.id; }
   }
-  const result: Record<string, { x: number; y: number }> = {};
-  for (const id of ids) {
-    const point = positions.get(id)!;
-    result[id] = { x: Math.round(point.x), y: Math.round(point.y) };
-  }
-  return result;
+  return hubId ?? nodes[0].id;
+}
+
+function forceLayout(nodes: GraphNode[], relationships: GraphRelationship[]) {
+  if (!nodes.length) return {};
+  const width = 1600;
+  const height = 1000;
+  const cx = width / 2;
+  const cy = height / 2;
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const simNodes: SimNode[] = nodes.map((node, index) => {
+    const stored = storedPosition(node);
+    if (stored) return { id: node.id, x: stored.x, y: stored.y };
+    const angle = (2 * Math.PI * index) / Math.max(nodes.length, 1) - Math.PI / 2;
+    const radius = Math.max(280, Math.min(560, nodes.length * 22));
+    return { id: node.id, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+  });
+  const links = relationships
+    .filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target))
+    .map((relationship) => ({ source: relationship.source, target: relationship.target }));
+  const simulation = forceSimulation<SimNode>(simNodes)
+    .force("link", forceLink<SimNode, LinkDatum>().id((datum) => datum.id).distance(260).strength(0.56).links(links))
+    .force("charge", forceManyBody<SimNode>().strength(-1150).distanceMax(1000))
+    .force("collide", forceCollide<SimNode>(68).strength(0.95))
+    .force("x", forceX<SimNode>(cx).strength(0.018))
+    .force("y", forceY<SimNode>(cy).strength(0.018))
+    .stop();
+  const iterations = Math.min(190, Math.max(45, Math.ceil(9000 / nodes.length)));
+  for (let index = 0; index < iterations; index++) simulation.tick();
+  return Object.fromEntries(simNodes.map((node) => [node.id, { x: Math.round(node.x), y: Math.round(node.y) }]));
 }
 
 type EditTarget = { kind: "node"; id: string } | { kind: "edge"; id: string } | null;
@@ -188,17 +143,11 @@ export function GraphCanvas({
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [layoutForce, setLayoutForce] = useState<Record<string, { x: number; y: number }> | null>(null);
 
-  const layoutPositions = useMemo(() => {
-    if (!graph.nodes.length) return null;
-    const manualSeed = { ...(layoutForce ?? {}), ...moved };
-    const automaticSeed = graphLayoutSeed(graph.nodes, moved);
-    const seed = layoutForce ? (Object.keys(manualSeed).length ? manualSeed : null) : automaticSeed;
-    return autoLayout(graph.nodes, graph.relationships, seed);
-    // The layout re-runs when the loaded graph changes; dragging only updates `moved`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph.nodes, graph.relationships, layoutForce]);
+  const { layoutPositions, hubId } = useMemo(() => {
+    if (!graph.nodes.length) return { layoutPositions: null, hubId: null };
+    return { layoutPositions: forceLayout(graph.nodes, graph.relationships), hubId: hubNodeId(graph.nodes, graph.relationships) };
+  }, [graph.nodes, graph.relationships]);
 
   const labels = useMemo(() => [...new Set(graph.nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b, "zh-CN")), [graph.nodes]);
   const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
@@ -213,34 +162,36 @@ export function GraphCanvas({
   const nodeDefinitions = selectedNode ? (definition?.entityTypes.find((item) => selectedNode.labels.includes(item.name))?.properties ?? null) : null;
   const edgeDefinitions = selectedEdge ? (definition?.relationshipTypes.find((item) => item.name === selectedEdge.type)?.properties ?? null) : null;
 
-  const nodes = useMemo<Node[]>(() => graph.nodes.map((node, index) => {
-    const radius = Math.max(150, Math.min(300, 78 * graph.nodes.length));
-    const angle = (Math.PI * 2 * index) / Math.max(graph.nodes.length, 1) - Math.PI / 2;
+  const nodes = useMemo<Node[]>(() => graph.nodes.map((node) => {
     const color = graphColor(node.labels[0] ?? "未标注");
     const selected = editTarget?.kind === "node" && node.id === editTarget.id;
+    const isHub = hubId !== null && node.id === hubId;
+    const shadow = selected ? `0 0 0 4px ${color}33, 0 12px 28px rgba(19, 57, 55, .20)` : isHub ? "0 0 0 3px rgba(200, 145, 55, .55), 0 8px 20px rgba(19, 57, 55, .16)" : "0 5px 15px rgba(19, 57, 55, .11)";
     return {
       id: node.id,
-      position: moved[node.id] ?? layoutPositions?.[node.id] ?? storedPosition(node) ?? { x: 390 + Math.cos(angle) * radius, y: 275 + Math.sin(angle) * radius },
-      data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b><small>{node.labels.join(" · ") || "未标注"}</small></div> },
+      position: moved[node.id] ?? layoutPositions?.[node.id] ?? storedPosition(node) ?? { x: 390 + Math.cos((Math.PI * 2 * graph.nodes.indexOf(node)) / graph.nodes.length) * 300, y: 275 + Math.sin((Math.PI * 2 * graph.nodes.indexOf(node)) / graph.nodes.length) * 300 },
+      data: { label: <div className="graph-node-label"><b>{graphLabel(node)}</b>{isHub && <small>· 中心</small>}</div> },
       hidden: !visibleNodeIds.has(node.id),
-      style: { width: 132, minHeight: 84, borderRadius: 14, border: `2px solid ${color}`, background: "#ffffff", color: "#173536", display: "grid", placeItems: "center", textAlign: "center", padding: "9px", boxShadow: selected ? `0 0 0 4px ${color}33, 0 12px 28px rgba(19, 57, 55, .20)` : "0 5px 15px rgba(19, 57, 55, .11)", transition: "box-shadow .18s ease, transform .18s ease" },
+      style: { width: isHub ? 116 : 96, height: isHub ? 116 : 96, borderRadius: "50%", border: `2.5px solid ${isHub ? "#c89137" : color}`, background: isHub ? "#fffaf0" : "#ffffff", color: "#173536", display: "grid", placeItems: "center", textAlign: "center", padding: "12px", boxShadow: shadow, transition: "box-shadow .18s ease, transform .18s ease" },
       draggable: true,
       selectable: false,
     };
-  }), [editTarget, graph.nodes, layoutPositions, moved, visibleNodeIds]);
+  }), [editTarget, graph.nodes, hubId, layoutPositions, moved, visibleNodeIds]);
 
   const edges = useMemo<Edge[]>(() => graph.relationships.filter((relationship) => visibleNodeIds.has(relationship.source) && visibleNodeIds.has(relationship.target)).map((relationship) => ({
     id: relationship.id,
     source: relationship.source,
     target: relationship.target,
     label: relationship.type,
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#718f8c" },
-    style: { stroke: "#718f8c", strokeWidth: 1.35 },
-    labelStyle: { fill: "#496361", fontSize: 10, fontWeight: 650 },
-    labelBgStyle: { fill: "#f9fcfa", fillOpacity: 0.94 },
+    type: "straight",
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#6f8292" },
+    style: { stroke: "#6f8292", strokeWidth: 1.5 },
+    labelStyle: { fill: "#4a5d6d", fontSize: 10, fontWeight: 650 },
+    labelBgStyle: { fill: "#f8fafb", fillOpacity: 0.96 },
     labelBgPadding: [4, 3],
     labelBgBorderRadius: 3,
   })), [graph.relationships, visibleNodeIds]);
+  const flowKey = useMemo(() => `${graph.nodes.map((node) => node.id).join("|")}:${graph.relationships.map((relationship) => relationship.id).join("|")}:${search}:${activeLabels.join("|")}`, [activeLabels, graph.nodes, graph.relationships, search]);
 
   const toggleLabel = (label: string) => setActiveLabels((current) => current.includes(label) ? current.filter((item) => item !== label) : [...current, label]);
 
@@ -295,9 +246,12 @@ export function GraphCanvas({
     setPendingConnection({ source: connection.source, target: connection.target });
   };
 
+  const flowRef = useRef<ReactFlowInstance | null>(null);
+
   const handleDragStop = (_: unknown, node: Node) => {
     if (!admin) return;
-    setMoved((current) => ({ ...current, [node.id]: { x: node.position.x, y: node.position.y } }));
+    const position = { x: node.position.x, y: node.position.y };
+    setMoved((current) => ({ ...current, [node.id]: position }));
     void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items: [{ elementId: node.id, x: node.position.x, y: node.position.y }] }) }).catch(() => {});
   };
 
@@ -308,17 +262,18 @@ export function GraphCanvas({
 
   const organize = async () => {
     if (!graph.nodes.length) return;
-    const fresh = autoLayout(graph.nodes, graph.relationships, null);
-    setLayoutForce(fresh);
+    const positions = forceLayout(graph.nodes, graph.relationships);
+    flowRef.current?.setNodes((current) => current.map((node) => positions[node.id] ? { ...node, position: positions[node.id] } : node));
+    setMoved(positions);
     if (admin && targetId) {
       const items: { elementId: string; x: number; y: number }[] = [];
       for (const node of graph.nodes) {
-        const point = fresh[node.id];
+        const point = positions[node.id];
         if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) items.push({ elementId: node.id, x: point.x, y: point.y });
       }
       await api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items }) }).catch((reason) => fail?.(reason));
     }
-    notify?.("已整理布局。");
+    notify?.("已按关系重新整理布局。");
   };
 
   if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>画布上没有可绘制的节点</b><span>运行返回节点、关系或路径的 Cypher 后即可切换图谱视图；在“图谱”页可管理现有图数据。</span></div>;
@@ -326,21 +281,16 @@ export function GraphCanvas({
   return (
     <div className="graph-canvas">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={(changes) => setMoved((current) => {
-          let next = current;
-          for (const change of changes) {
-            if (change.type === "position" && change.position) next = { ...next, [change.id]: { x: change.position.x, y: change.position.y } };
-          }
-          return next;
-        })}
+        key={flowKey}
+        defaultNodes={nodes}
+        defaultEdges={edges}
+        onInit={(instance) => { flowRef.current = instance; }}
         fitView
         fitViewOptions={{ padding: 0.24 }}
         minZoom={0.2}
         maxZoom={2}
         nodesConnectable={admin}
-        nodesDraggable
+        nodesDraggable={admin}
         deleteKeyCode={null}
         onNodeClick={(_, node) => { setEditTarget({ kind: "node", id: node.id }); setEditing(false); }}
         onEdgeClick={(_, edge) => { setEditTarget({ kind: "edge", id: edge.id }); setEditing(false); }}
@@ -354,7 +304,7 @@ export function GraphCanvas({
       <div className="graph-explorer-toolbar">
         <label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label>
         <span>{visibleNodeIds.size}/{graph.nodes.length} 个节点</span>
-        {graph.nodes.length > 1 && <button className="graph-tool-action" onClick={() => void organize()} title="按力导向重新计算所有节点的位置"><Wand2 size={14} />自动整理</button>}
+        {graph.nodes.length > 1 && <button className="graph-tool-action" onClick={() => void organize()} title="以关联最多的节点为中心重新排列，其余节点分层环绕"><Wand2 size={14} />自动整理</button>}
         {admin && <button className="graph-tool-action" onClick={() => setCreateOpen(true)}><Plus size={14} />新增节点</button>}
       </div>
       <div className="graph-legend" aria-label="节点类型筛选">{labels.map((label) => <button key={label} className={activeLabels.includes(label) ? "active" : ""} onClick={() => toggleLabel(label)}><i style={{ background: graphColor(label) }} />{label}</button>)}</div>
