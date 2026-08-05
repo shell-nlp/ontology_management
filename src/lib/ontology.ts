@@ -11,7 +11,7 @@ const propertySchema = z.object({
 });
 
 export const ontologyDefinitionSchema = z.object({
-  entityTypes: z.array(z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(100), description: z.string().max(500).default(""), properties: z.array(propertySchema).default([]) })).default([]),
+  entityTypes: z.array(z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(100), description: z.string().max(500).default(""), displayProperty: z.string().max(120).optional().default(""), properties: z.array(propertySchema).default([]) })).default([]),
   relationshipTypes: z.array(z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(100), sourceEntityTypeId: z.string().uuid(), targetEntityTypeId: z.string().uuid(), properties: z.array(propertySchema).default([]) })).default([]),
 });
 

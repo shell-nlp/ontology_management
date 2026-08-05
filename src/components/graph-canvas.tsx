@@ -17,7 +17,7 @@ type User = { role: "ADMIN" | "VIEWER" } | null;
 type OntologyPropertyDefinition = PropertyDefinition & { unique?: boolean; indexed?: boolean };
 
 type ManagedDefinition = {
-  entityTypes: { id?: string; name: string; description?: string; properties: OntologyPropertyDefinition[] }[];
+  entityTypes: { id?: string; name: string; description?: string; displayProperty?: string; properties: OntologyPropertyDefinition[] }[];
   relationshipTypes: { id?: string; name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string; properties: OntologyPropertyDefinition[] }[];
 };
 
@@ -28,7 +28,16 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function graphLabel(node: GraphNode) {
+function graphLabel(node: GraphNode, displayProps?: Map<string, string>) {
+  if (displayProps) {
+    for (const label of node.labels) {
+      const key = displayProps.get(label);
+      if (key) {
+        const value = node.properties[key];
+        if (typeof value === "string" || typeof value === "number") return String(value);
+      }
+    }
+  }
   const preferred = ["name", "名称", "title", "id"].map((key) => node.properties[key]).find((value) => typeof value === "string" || typeof value === "number");
   return String(preferred ?? node.labels[0] ?? "节点");
 }
@@ -141,11 +150,18 @@ export function GraphCanvas({
   }, [graph.relationships, runtimeTypes?.relationshipTypes]);
   const totalNodeCount = runtimeTypes ? runtimeTypes.labels.reduce((total, item) => total + item.count, 0) : graph.nodes.length;
   const totalRelationshipCount = runtimeTypes ? runtimeTypes.relationshipTypes.reduce((total, item) => total + item.count, 0) : graph.relationships.length;
+  const displayProps = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of definition?.entityTypes ?? []) {
+      if (item.displayProperty) map.set(item.name, item.displayProperty);
+    }
+    return map;
+  }, [definition]);
   const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
-    const haystack = `${graphLabel(node)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
+    const haystack = `${graphLabel(node, displayProps)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
     const labelMatches = !activeLabels.length || node.labels.some((label) => activeLabels.includes(label));
     return labelMatches && haystack.includes(search.trim().toLocaleLowerCase());
-  }).map((node) => node.id)), [activeLabels, graph.nodes, search]);
+  }).map((node) => node.id)), [activeLabels, displayProps, graph.nodes, search]);
   const visibleRelationships = useMemo(() => graph.relationships.filter((relationship) => {
     return visibleNodeIds.has(relationship.source)
       && visibleNodeIds.has(relationship.target)
@@ -171,12 +187,12 @@ export function GraphCanvas({
     const useStoredPositions = positionedNodeCount / graph.nodes.length >= 0.8;
     const nodes: SigmaNode[] = graph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
-      return { id: node.id, label: graphLabel(node), color: graphColor(viewMode === "ontology" ? graphLabel(node) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
+      return { id: node.id, label: graphLabel(node, displayProps), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
     });
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges: SigmaEdge[] = visibleRelationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target)).map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.source, target: relationship.target }));
     return { nodes, edges };
-  }, [graph.nodes, graph.relationships, viewMode, visibleNodeIds, visibleRelationships]);
+  }, [displayProps, graph.nodes, graph.relationships, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -302,7 +318,7 @@ export function GraphCanvas({
         {selectedNode && (
           <div className="graph-inspector-body">
             <div className="graph-inspector-head"><div><span style={{ background: graphColor(ontologyEntity ? ontologyEntity.name : selectedNode.labels[0] ?? "未标注") }} />{viewMode === "ontology" ? "实体类型" : "节点事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
-            <h3>{graphLabel(selectedNode)}</h3>
+            <h3>{graphLabel(selectedNode, displayProps)}</h3>
             <p>{viewMode === "ontology" ? ontologyEntity?.description || "数据库架构中已存在的实体类型" : selectedNode.labels.join(" · ") || "未标注类型"}</p>
             {viewMode !== "ontology" && <code className="graph-element-id">{selectedNode.id}</code>}
                 {viewMode === "ontology" ? (
@@ -356,8 +372,8 @@ export function GraphCanvas({
         )}
       </aside>
 
-      {admin && pendingConnection && <RelationshipDialog typeOptions={relationshipTypeOptions(runtimeTypes, definition)} onClose={() => setPendingConnection(null)} onCreate={async (type, properties) => { try { setBusy(true); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId, relationshipType: type, sourceId: pendingConnection.source, targetIdValue: pendingConnection.target, properties }) }); notify?.("关系已写入 Neo4j。"); setPendingConnection(null); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
-      {admin && createOpen && <NodeDialog labelOptions={labelOptions(runtimeTypes, definition)} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { setBusy(true); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId, entityType: label, properties }) }); notify?.("节点已写入 Neo4j。"); setCreateOpen(false); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
+      {admin && pendingConnection && <RelationshipDialog typeOptions={relationshipTypeOptions(runtimeTypes, definition)} definition={definition} onClose={() => setPendingConnection(null)} onCreate={async (type, properties) => { try { setBusy(true); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId, relationshipType: type, sourceId: pendingConnection.source, targetIdValue: pendingConnection.target, properties }) }); notify?.("关系已写入 Neo4j。"); setPendingConnection(null); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
+      {admin && createOpen && <NodeDialog labelOptions={labelOptions(runtimeTypes, definition)} definition={definition} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { setBusy(true); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId, entityType: label, properties }) }); notify?.("节点已写入 Neo4j。"); setCreateOpen(false); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
     </div>
   );
 }
@@ -374,44 +390,40 @@ function labelOptions(runtimeTypes?: RuntimeTypeSet, definition?: ManagedDefinit
   return [...new Set([...fromDefinition, ...fromRuntime])];
 }
 
-function RelationshipDialog({ typeOptions, onClose, onCreate }: { typeOptions: string[]; onClose: () => void; onCreate: (type: string, properties: Record<string, unknown>) => Promise<void> }) {
+function RelationshipDialog({ typeOptions, definition, onClose, onCreate }: { typeOptions: string[]; definition?: ManagedDefinition | null; onClose: () => void; onCreate: (type: string, properties: Record<string, unknown>) => Promise<void> }) {
   const [type, setType] = useState("");
-  const [customMode, setCustomMode] = useState(false);
-  const [customType, setCustomType] = useState("");
   const [properties, setProperties] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const value = customMode ? customType : type;
+  const definitions = definition?.relationshipTypes.find((item) => item.name === type)?.properties ?? [];
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!value.trim()) return; setBusy(true); void onCreate(value.trim(), properties).finally(() => setBusy(false)); }}>
+      <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!type.trim()) return; setBusy(true); void onCreate(type.trim(), properties).finally(() => setBusy(false)); }}>
         <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
         <div className="dialog-icon"><Link2 size={22} /></div>
         <span className="eyebrow">新建关系</span>
         <h2>选择关系类型</h2>
         <p>在已选择的两个节点之间创建一条关系。</p>
         <label>关系类型
-          {customMode ? <input autoFocus value={customType} onChange={(event) => setCustomType(event.target.value)} placeholder="输入新的关系类型" /> : (
-            <select value={type} onChange={(event) => setType(event.target.value)} required>
-              <option value="">选择类型</option>
-              {typeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          )}
+          <select value={type} onChange={(event) => setType(event.target.value)} required>
+            <option value="">选择类型</option>
+            {typeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
         </label>
-        <button type="button" className="graph-dialog-custom" onClick={() => setCustomMode((current) => !current)}>{customMode ? "改为从列表选择" : "使用自定义类型"}</button>
-        <PropertyEditor definitions={[]} values={properties} mode="raw" onChange={setProperties} />
+        <PropertyEditor definitions={definitions} values={properties} mode="managed" onChange={setProperties} />
         <div className="dialog-actions">
           <button type="button" className="quiet-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={!value.trim() || busy}>{busy ? "创建中…" : "创建关系"}</button>
+          <button className="primary-button" disabled={!type.trim() || busy}>{busy ? "创建中…" : "创建关系"}</button>
         </div>
       </form>
     </div>
   );
 }
 
-function NodeDialog({ labelOptions, onClose, onCreate }: { labelOptions: string[]; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {
+function NodeDialog({ labelOptions, definition, onClose, onCreate }: { labelOptions: string[]; definition?: ManagedDefinition | null; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {
   const [label, setLabel] = useState("");
   const [properties, setProperties] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const definitions = definition?.entityTypes.find((item) => item.name === label)?.properties ?? [];
   return (
     <div className="dialog-backdrop" role="presentation">
       <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!label.trim()) return; setBusy(true); void onCreate(label.trim(), properties).finally(() => setBusy(false)); }}>
@@ -426,7 +438,7 @@ function NodeDialog({ labelOptions, onClose, onCreate }: { labelOptions: string[
             {labelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         </label>
-        <PropertyEditor definitions={[]} values={properties} mode="raw" onChange={setProperties} />
+        <PropertyEditor definitions={definitions} values={properties} mode="managed" onChange={setProperties} />
         <div className="dialog-actions">
           <button type="button" className="quiet-button" onClick={onClose}>取消</button>
           <button className="primary-button" disabled={!label.trim() || busy}>{busy ? "创建中…" : "创建节点"}</button>
