@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const properties = definitions
       ? parsePropertyValues(definitions, input.properties)
       : parsePropertyValues([], input.properties, { allowArbitrary: true });
-    const labelPart = labels.map((label) => `\`${label.replaceAll("`", "``")}\``).join("");
+    const labelPart = labels.map((label) => `:\`${label.replaceAll("`", "``")}\``).join("");
     const result = await executeCypher(
       target,
       `CREATE (n${labelPart}) SET n += $properties RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties`,

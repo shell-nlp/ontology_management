@@ -69,14 +69,25 @@ function ruleName(kind: string, typeName: string, propertyName: string) {
   return quote(`ontology_${kind}_${typeName}_${propertyName}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 55));
 }
 
+export async function supportsExistenceConstraints(target: Neo4jTarget) {
+  try {
+    const result = await executeCypher(target, "CALL dbms.components() YIELD edition RETURN edition LIMIT 1");
+    const edition = result.records[0]?.edition;
+    return typeof edition === "string" && edition.toLowerCase().includes("enterprise");
+  } catch {
+    return false;
+  }
+}
+
 export async function applyStrongRules(target: Neo4jTarget, input: OntologyDefinition) {
+  const canEnforceRequired = await supportsExistenceConstraints(target);
   for (const entity of input.entityTypes) {
     for (const property of entity.properties) {
       const label = quote(entity.name);
       const key = quote(property.name);
       if (property.unique) await executeCypher(target, `CREATE CONSTRAINT ${ruleName("unique", entity.name, property.name)} IF NOT EXISTS FOR (n:${label}) REQUIRE n.${key} IS UNIQUE`);
       else if (property.indexed) await executeCypher(target, `CREATE INDEX ${ruleName("index", entity.name, property.name)} IF NOT EXISTS FOR (n:${label}) ON (n.${key})`);
-      if (property.required) await executeCypher(target, `CREATE CONSTRAINT ${ruleName("required", entity.name, property.name)} IF NOT EXISTS FOR (n:${label}) REQUIRE n.${key} IS NOT NULL`);
+      if (property.required && canEnforceRequired) await executeCypher(target, `CREATE CONSTRAINT ${ruleName("required", entity.name, property.name)} IF NOT EXISTS FOR (n:${label}) REQUIRE n.${key} IS NOT NULL`);
     }
   }
 }

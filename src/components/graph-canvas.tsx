@@ -410,32 +410,26 @@ function RelationshipDialog({ typeOptions, onClose, onCreate }: { typeOptions: s
 
 function NodeDialog({ labelOptions, onClose, onCreate }: { labelOptions: string[]; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {
   const [label, setLabel] = useState("");
-  const [customMode, setCustomMode] = useState(false);
-  const [customLabel, setCustomLabel] = useState("");
   const [properties, setProperties] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const value = customMode ? customLabel : label;
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!value.trim()) return; setBusy(true); void onCreate(value.trim(), properties).finally(() => setBusy(false)); }}>
+      <form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!label.trim()) return; setBusy(true); void onCreate(label.trim(), properties).finally(() => setBusy(false)); }}>
         <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
         <div className="dialog-icon"><CircleDot size={22} /></div>
         <span className="eyebrow">新建节点</span>
         <h2>选择节点标签</h2>
-        <p>按已发布本体或运行时类型选择标签，并填写属性。</p>
+        <p>只能选择已发布本体或运行时已有的标签，并填写属性。</p>
         <label>标签
-          {customMode ? <input autoFocus value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="输入新的标签" /> : (
-            <select value={label} onChange={(event) => setLabel(event.target.value)} required>
-              <option value="">选择标签</option>
-              {labelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          )}
+          <select value={label} onChange={(event) => setLabel(event.target.value)} required>
+            <option value="">选择标签</option>
+            {labelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
         </label>
-        <button type="button" className="graph-dialog-custom" onClick={() => setCustomMode((current) => !current)}>{customMode ? "改为从列表选择" : "使用自定义标签"}</button>
         <PropertyEditor definitions={[]} values={properties} mode="raw" onChange={setProperties} />
         <div className="dialog-actions">
           <button type="button" className="quiet-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={!value.trim() || busy}>{busy ? "创建中…" : "创建节点"}</button>
+          <button className="primary-button" disabled={!label.trim() || busy}>{busy ? "创建中…" : "创建节点"}</button>
         </div>
       </form>
     </div>

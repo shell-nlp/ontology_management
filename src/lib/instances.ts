@@ -64,7 +64,7 @@ export async function createEntity(target: Neo4jTarget, labels: string[], rawPro
   const properties = definitions
     ? parsePropertyValues(definitions, rawProperties)
     : parsePropertyValues([], rawProperties, { allowArbitrary: true });
-  const labelPart = labels.map(quoteCypherIdentifier).join("");
+  const labelPart = labels.map((label) => `:${quoteCypherIdentifier(label)}`).join("");
   const result = await executeCypher(target, `CREATE (n${labelPart}) SET n += $properties ${entityReturn()}`, { properties });
   return result.records[0] ?? null;
 }
