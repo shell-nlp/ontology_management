@@ -7,6 +7,8 @@
 .graph-canvas { position: relative; height: 610px; overflow: hidden; background: #f8fafb; }
 .graph-sigma-canvas { position: absolute; inset: 0; overflow: hidden; background: #f8fafb; }
 .graph-sigma-canvas canvas { display: block; outline: none; }
+.graph-sigma-canvas .sigma-self-loops { position: absolute; inset: 0; z-index: 2; overflow: visible; pointer-events: none; }
+.graph-sigma-canvas .sigma-self-loops text { font: 600 10px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: #f8fafb; stroke-width: 3px; stroke-linejoin: round; }
 .graph-sigma-canvas .sigma-mouse { cursor: grab; }
 .graph-sigma-canvas .sigma-mouse:active { cursor: grabbing; }
 .graph-sigma-canvas .react-sigma-controls { overflow: hidden; border: 1px solid #c8d9d2; border-radius: 7px; box-shadow: 0 7px 18px rgba(29, 69, 64, .15); }
@@ -39,6 +41,13 @@
 .graph-properties span { color: #78908c; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
 .graph-properties b { overflow: hidden; color: #345753; font-size: 11px; font-weight: 600; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .graph-properties small { padding: 12px 0; color: #7b918c; font-size: 11px; }
+.ontology-property-title { margin: 2px 0 -3px !important; color: #4d6b66 !important; font-size: 11px !important; font-weight: 700; }
+.ontology-property-list { display: grid; max-height: 280px; overflow: auto; border-top: 1px solid #e5ede9; }
+.ontology-property-rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 9px 0; border-bottom: 1px solid #e8efeb; }
+.ontology-property-rule b { overflow: hidden; color: #345753; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.ontology-property-rule span { color: #36746c; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; font-weight: 700; }
+.ontology-property-rule small { grid-column: 1 / -1; color: #758b86; font-size: 10px; }
+.ontology-missing-definition { margin: 4px 0 !important; padding: 9px 10px; color: #756b4a !important; background: #fff9e9; border: 1px solid #ead7a7; border-radius: 4px; font-size: 11px !important; line-height: 1.5; }
 .graph-expand { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 33px; border: 1px solid #28786e; border-radius: 5px; color: #ffffff; background: #28786e; font-size: 11px; font-weight: 700; }
 .graph-expand:hover { background: #185e56; }
 .graph-expand-error { margin: -3px 0 0; color: #a54b3e !important; font-size: 10px !important; line-height: 1.45; }

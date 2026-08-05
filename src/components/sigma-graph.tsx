@@ -35,7 +35,7 @@ type Props = {
 };
 
 type NodeAttributes = { x: number; y: number; size: number; label: string; color: string; forceLabel: boolean; zIndex: number; type: "internal" };
-type EdgeAttributes = { label: string; color: string; size: number; type: "arrow" };
+type EdgeAttributes = { label: string; relationshipType: string; color: string; size: number; type: "arrow"; hidden: boolean };
 
 function initialPoint(index: number, total: number) {
   const ordinal = index + 1;
@@ -70,13 +70,67 @@ function nodeFillColor(color: string) {
   return `#${lighten(red)}${lighten(green)}${lighten(blue)}`;
 }
 
+function pairKey(source: string, target: string) {
+  return source < target ? `${source}\u0000${target}` : `${target}\u0000${source}`;
+}
+
+function parallelEdgeOffsets(graph: Graph<NodeAttributes, EdgeAttributes>) {
+  const groups = new Map<string, string[]>();
+  graph.forEachEdge((edge, _attributes, source, target) => {
+    if (source === target) return;
+    const key = pairKey(source, target);
+    const group = groups.get(key) ?? [];
+    group.push(edge);
+    groups.set(key, group);
+  });
+  const offsets = new Map<string, number>();
+  groups.forEach((edges) => {
+    if (edges.length < 2) return;
+    edges.sort();
+    edges.forEach((edge, index) => {
+      const source = graph.source(edge);
+      const target = graph.target(edge);
+      // Use a stable pair direction so opposite relationships occupy opposite sides of the same connection.
+      const direction = source < target ? 1 : -1;
+      offsets.set(edge, (index - (edges.length - 1) / 2) * 26 * direction);
+    });
+  });
+  return offsets;
+}
+
 function closestEdgeAt(sigma: ReturnType<typeof useSigma<NodeAttributes, EdgeAttributes>>, point: { x: number; y: number }) {
   let closest: string | null = null;
   let closestDistance = 9;
   const graph = sigma.getGraph();
+  const offsets = parallelEdgeOffsets(graph);
   graph.forEachEdge((edge, _attributes, source, target) => {
     const sourcePoint = sigma.graphToViewport(graph.getNodeAttributes(source));
     const targetPoint = sigma.graphToViewport(graph.getNodeAttributes(target));
+    if (source === target) {
+      const radius = Math.max(16, (sigma.getNodeDisplayData(source)?.size ?? 18) * 0.55 + 8);
+      const distance = Math.hypot(point.x - sourcePoint.x, point.y - sourcePoint.y);
+      if (point.y < sourcePoint.y + radius * 0.2 && Math.abs(distance - radius * 1.35) < 12) {
+        closest = edge;
+        closestDistance = 0;
+      }
+      return;
+    }
+    const offset = offsets.get(edge);
+    if (offset !== undefined) {
+      const dx = targetPoint.x - sourcePoint.x;
+      const dy = targetPoint.y - sourcePoint.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const controlX = (sourcePoint.x + targetPoint.x) / 2 - dy / length * offset;
+      const controlY = (sourcePoint.y + targetPoint.y) / 2 + dx / length * offset;
+      for (let step = 0; step <= 12; step += 1) {
+        const t = step / 12;
+        const x = (1 - t) ** 2 * sourcePoint.x + 2 * (1 - t) * t * controlX + t ** 2 * targetPoint.x;
+        const y = (1 - t) ** 2 * sourcePoint.y + 2 * (1 - t) * t * controlY + t ** 2 * targetPoint.y;
+        const distance = Math.hypot(point.x - x, point.y - y);
+        if (distance < closestDistance) { closest = edge; closestDistance = distance; }
+      }
+      return;
+    }
     const dx = targetPoint.x - sourcePoint.x;
     const dy = targetPoint.y - sourcePoint.y;
     const lengthSquared = dx * dx + dy * dy;
@@ -108,12 +162,106 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
       zIndex: node.isHub ? 2 : 1,
     });
   });
+  const parallelIds = new Set<string>();
+  const groups = new Map<string, SigmaEdge[]>();
+  edges.forEach((edge) => {
+    if (edge.source === edge.target) return;
+    const key = pairKey(edge.source, edge.target);
+    const group = groups.get(key) ?? [];
+    group.push(edge);
+    groups.set(key, group);
+  });
+  groups.forEach((group) => { if (group.length > 1) group.forEach((edge) => parallelIds.add(edge.id)); });
   edges.forEach((edge) => {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
-      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: edge.type, color: "#718692", size: 1.2, type: "arrow" });
+      const hidden = edge.source === edge.target || parallelIds.has(edge.id);
+      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: hidden ? "" : edge.type, relationshipType: edge.type, color: "#718692", size: 1.2, type: "arrow", hidden });
     }
   });
   return graph;
+}
+
+function EdgeDecorationLayer({ selectedEdgeId }: { selectedEdgeId: string | null }) {
+  const sigma = useSigma<NodeAttributes, EdgeAttributes>();
+
+  useEffect(() => {
+    const namespace = "http://www.w3.org/2000/svg";
+    const layer = document.createElementNS(namespace, "svg");
+    const markerId = `sigma-edge-arrow-${crypto.randomUUID()}`;
+    layer.classList.add("sigma-self-loops");
+    layer.setAttribute("aria-hidden", "true");
+    sigma.getContainer().appendChild(layer);
+
+    const append = (parent: SVGElement, tag: string, attributes: Record<string, string>) => {
+      const element = document.createElementNS(namespace, tag);
+      Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+      parent.appendChild(element);
+      return element;
+    };
+
+    const update = () => {
+      const graph = sigma.getGraph();
+      const offsets = parallelEdgeOffsets(graph);
+      const dimensions = sigma.getDimensions();
+      if (!layer.isConnected) sigma.getContainer().appendChild(layer);
+      layer.setAttribute("width", String(dimensions.width));
+      layer.setAttribute("height", String(dimensions.height));
+      layer.replaceChildren();
+      const defs = append(layer, "defs", {});
+      const marker = append(defs, "marker", { id: markerId, viewBox: "0 0 8 8", refX: "6.2", refY: "4", markerWidth: "6", markerHeight: "6", orient: "auto" });
+      append(marker, "path", { d: "M 0 0 L 8 4 L 0 8 z", fill: "#718692" });
+
+      graph.edges().forEach((edge) => {
+        const [source, target] = graph.extremities(edge);
+        if (source !== target) return;
+        const point = sigma.graphToViewport(graph.getNodeAttributes(source));
+        const radius = Math.max(16, (sigma.getNodeDisplayData(source)?.size ?? 18) * 0.55 + 8);
+        const data = graph.getEdgeAttributes(edge);
+        const color = edge === selectedEdgeId ? "#c89137" : "#718692";
+        const startX = point.x - radius * 0.54;
+        const startY = point.y - radius * 0.48;
+        const endX = point.x - radius * 0.08;
+        const endY = point.y - radius * 0.76;
+        const topY = point.y - radius * 1.68;
+        const group = append(layer, "g", { color });
+        append(group, "path", { d: `M ${startX} ${startY} C ${point.x - radius * 1.55} ${topY}, ${point.x + radius * 0.05} ${topY}, ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": "1.5", "marker-end": `url(#${markerId})` });
+        const label = append(group, "text", { x: String(point.x - radius * 0.9), y: String(topY - 4), fill: color, "text-anchor": "middle" });
+        label.textContent = (data as EdgeAttributes).relationshipType;
+      });
+
+      graph.edges().forEach((edge) => {
+        const offset = offsets.get(edge);
+        if (offset === undefined) return;
+        const [source, target] = graph.extremities(edge);
+        const sourcePoint = sigma.graphToViewport(graph.getNodeAttributes(source));
+        const targetPoint = sigma.graphToViewport(graph.getNodeAttributes(target));
+        const dx = targetPoint.x - sourcePoint.x;
+        const dy = targetPoint.y - sourcePoint.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const controlX = (sourcePoint.x + targetPoint.x) / 2 - dy / length * offset;
+        const controlY = (sourcePoint.y + targetPoint.y) / 2 + dx / length * offset;
+        const data = graph.getEdgeAttributes(edge);
+        const color = edge === selectedEdgeId ? "#c89137" : "#718692";
+        const labelX = (sourcePoint.x + 2 * controlX + targetPoint.x) / 4;
+        const labelY = (sourcePoint.y + 2 * controlY + targetPoint.y) / 4;
+        const group = append(layer, "g", { color });
+        append(group, "path", { d: `M ${sourcePoint.x} ${sourcePoint.y} Q ${controlX} ${controlY} ${targetPoint.x} ${targetPoint.y}`, fill: "none", stroke: color, "stroke-width": "1.35", "marker-end": `url(#${markerId})` });
+        const label = append(group, "text", { x: String(labelX), y: String(labelY - 5), fill: color, "text-anchor": "middle" });
+        label.textContent = (data as EdgeAttributes).relationshipType;
+      });
+    };
+    update();
+    sigma.on("afterRender", update);
+    sigma.on("resize", update);
+    sigma.getCamera().on("updated", update);
+    return () => {
+      sigma.off("afterRender", update);
+      sigma.off("resize", update);
+      sigma.getCamera().off("updated", update);
+      layer.remove();
+    };
+  }, [selectedEdgeId, sigma]);
+  return null;
 }
 
 function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId, draggable, layoutRequest, onNodeClick, onEdgeClick, onStageClick, onDragEnd, onLayoutEnd }: Props & { graph: Graph<NodeAttributes, EdgeAttributes> }) {
@@ -257,7 +405,7 @@ export function SigmaGraph(props: Props) {
         labelColor: { color: "#274548" },
         edgeLabelColor: { color: "#536975" },
         edgeLabelSize: 10,
-        stagePadding: 0.16,
+        stagePadding: 72,
         zIndex: true,
         enableEdgeEvents: true,
         minCameraRatio: 0.04,
@@ -269,6 +417,7 @@ export function SigmaGraph(props: Props) {
       }}
     >
       <SigmaScene {...props} graph={graph} />
+      <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} />
     </SigmaContainer>
   );
 }

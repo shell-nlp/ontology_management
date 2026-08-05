@@ -14,9 +14,11 @@ const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module
 
 type User = { role: "ADMIN" | "VIEWER" } | null;
 
+type OntologyPropertyDefinition = PropertyDefinition & { unique?: boolean; indexed?: boolean };
+
 type ManagedDefinition = {
-  entityTypes: { name: string; properties: PropertyDefinition[] }[];
-  relationshipTypes: { name: string; properties: PropertyDefinition[] }[];
+  entityTypes: { id?: string; name: string; description?: string; properties: OntologyPropertyDefinition[] }[];
+  relationshipTypes: { id?: string; name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string; properties: OntologyPropertyDefinition[] }[];
 };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -43,6 +45,14 @@ function propertyValue(value: unknown) {
   if (value === null) return "null";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function OntologyPropertyList({ properties }: { properties: OntologyPropertyDefinition[] }) {
+  if (!properties.length) return <small>此类型未定义属性规则。</small>;
+  return <div className="ontology-property-list">{properties.map((property) => {
+    const constraints = [property.required ? "必填" : "可选", property.unique ? "唯一" : "", property.indexed ? "索引" : ""].filter(Boolean).join(" · ");
+    return <div className="ontology-property-rule" key={property.name}><b>{property.name}</b><span>{property.dataType}</span><small>{constraints}</small></div>;
+  })}</div>;
 }
 
 function storedPosition(node: GraphNode) {
@@ -85,6 +95,7 @@ export function GraphCanvas({
   user,
   editable = false,
   definition = null,
+  viewMode = "instance",
   runtimeTypes,
   onExpand,
   onRefresh,
@@ -97,6 +108,7 @@ export function GraphCanvas({
   user?: User;
   editable?: boolean;
   definition?: ManagedDefinition | null;
+  viewMode?: "instance" | "ontology";
   runtimeTypes?: RuntimeTypeSet;
   onExpand?: (nodeId: string) => Promise<void>;
   onRefresh?: () => Promise<void>;
@@ -145,6 +157,12 @@ export function GraphCanvas({
 
   const nodeDefinitions = selectedNode ? (definition?.entityTypes.find((item) => selectedNode.labels.includes(item.name))?.properties ?? null) : null;
   const edgeDefinitions = selectedEdge ? (definition?.relationshipTypes.find((item) => item.name === selectedEdge.type)?.properties ?? null) : null;
+  const ontologyEntity = viewMode === "ontology" && selectedNode ? definition?.entityTypes.find((item) => item.id === selectedNode.id || item.name === graphLabel(selectedNode) || selectedNode.labels.includes(item.name)) ?? null : null;
+  const ontologyRelationship = viewMode === "ontology" && selectedEdge ? definition?.relationshipTypes.find((item) => item.id === selectedEdge.id || item.name === selectedEdge.type) ?? null : null;
+  const ontologySource = ontologyRelationship ? definition?.entityTypes.find((item) => item.id === ontologyRelationship.sourceEntityTypeId) ?? null : null;
+  const ontologyTarget = ontologyRelationship ? definition?.entityTypes.find((item) => item.id === ontologyRelationship.targetEntityTypeId) ?? null : null;
+  const graphSource = selectedEdge ? graph.nodes.find((item) => item.id === selectedEdge.source) ?? null : null;
+  const graphTarget = selectedEdge ? graph.nodes.find((item) => item.id === selectedEdge.target) ?? null : null;
 
   const graphData = useMemo(() => {
     const hubId = hubNodeId(graph.nodes, graph.relationships);
@@ -153,12 +171,12 @@ export function GraphCanvas({
     const useStoredPositions = positionedNodeCount / graph.nodes.length >= 0.8;
     const nodes: SigmaNode[] = graph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
-      return { id: node.id, label: graphLabel(node), color: graphColor(node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
+      return { id: node.id, label: graphLabel(node), color: graphColor(viewMode === "ontology" ? graphLabel(node) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
     });
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges: SigmaEdge[] = visibleRelationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target)).map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.source, target: relationship.target }));
     return { nodes, edges };
-  }, [graph.nodes, graph.relationships, visibleNodeIds, visibleRelationships]);
+  }, [graph.nodes, graph.relationships, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -283,11 +301,13 @@ export function GraphCanvas({
       <aside className="graph-inspector open">
         {selectedNode && (
           <div className="graph-inspector-body">
-            <div className="graph-inspector-head"><div><span style={{ background: graphColor(selectedNode.labels[0] ?? "未标注") }} />节点事实</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
+            <div className="graph-inspector-head"><div><span style={{ background: graphColor(ontologyEntity ? ontologyEntity.name : selectedNode.labels[0] ?? "未标注") }} />{viewMode === "ontology" ? "实体类型" : "节点事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
             <h3>{graphLabel(selectedNode)}</h3>
-            <p>{selectedNode.labels.join(" · ") || "未标注类型"}</p>
-            <code className="graph-element-id">{selectedNode.id}</code>
-                {admin && editing ? (
+            <p>{viewMode === "ontology" ? ontologyEntity?.description || "数据库架构中已存在的实体类型" : selectedNode.labels.join(" · ") || "未标注类型"}</p>
+            {viewMode !== "ontology" && <code className="graph-element-id">{selectedNode.id}</code>}
+                {viewMode === "ontology" ? (
+                  ontologyEntity ? <><p className="ontology-property-title">属性定义（{ontologyEntity.properties.length}）</p><OntologyPropertyList properties={ontologyEntity.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该实体类型的属性规则。</p>
+                ) : admin && editing ? (
                   <>
                     <PropertyEditor key={selectedNode.id} definitions={nodeDefinitions ?? []} values={selectedNode.properties} mode={nodeDefinitions ? "managed" : "raw"} onChange={setDraftProps} />
                     <div className="graph-inspector-actions">
@@ -308,11 +328,13 @@ export function GraphCanvas({
         )}
         {selectedEdge && (
           <div className="graph-inspector-body">
-            <div className="graph-inspector-head"><div><span style={{ background: "#7a8f8c" }} />关系事实</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
+            <div className="graph-inspector-head"><div><span style={{ background: "#7a8f8c" }} />{viewMode === "ontology" ? "关系类型" : "关系事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
             <h3>{selectedEdge.type}</h3>
-            <p><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</p>
-            <code className="graph-element-id">{selectedEdge.id}</code>
-            {admin && editing ? (
+            <p>{viewMode === "ontology" ? <><span>起点实体类型</span> {ontologySource?.name ?? (graphSource ? graphLabel(graphSource) : "未定义")}<br /><span>终点实体类型</span> {ontologyTarget?.name ?? (graphTarget ? graphLabel(graphTarget) : "未定义")}</> : <><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</>}</p>
+            {viewMode !== "ontology" && <code className="graph-element-id">{selectedEdge.id}</code>}
+            {viewMode === "ontology" ? (
+              ontologyRelationship ? <><p className="ontology-property-title">属性定义（{ontologyRelationship.properties.length}）</p><OntologyPropertyList properties={ontologyRelationship.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该关系类型的属性规则。</p>
+            ) : admin && editing ? (
               <>
                 <PropertyEditor key={selectedEdge.id} definitions={edgeDefinitions ?? []} values={selectedEdge.properties} mode={edgeDefinitions ? "managed" : "raw"} onChange={setDraftProps} />
                 <div className="graph-inspector-actions">
@@ -330,7 +352,7 @@ export function GraphCanvas({
           </div>
         )}
         {!selectedNode && !selectedEdge && (
-          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</span></div>
+          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击实体类型或关系类型，查看端点契约及每一项属性规则。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</>}</span></div>
         )}
       </aside>
 
