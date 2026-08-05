@@ -120,6 +120,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
   const registerEvents = useRegisterEvents<NodeAttributes, EdgeAttributes>();
   const draggedNodeRef = useRef<string | null>(null);
+  const draggedNodeForceLabelRef = useRef(false);
   const layoutRef = useRef<FA2LayoutSupervisor | null>(null);
   const noverlapRef = useRef<NoverlapLayoutSupervisor | null>(null);
   const layoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,6 +153,9 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         layoutRef.current?.kill();
         noverlapRef.current?.kill();
         draggedNodeRef.current = node;
+        draggedNodeForceLabelRef.current = graph.getNodeAttribute(node, "forceLabel");
+        graph.setNodeAttribute(node, "forceLabel", true);
+        sigma.refresh();
         event.preventSigmaDefault();
       },
       moveBody: ({ event }) => {
@@ -166,18 +170,22 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         if (!node) return;
         event.preventSigmaDefault();
         const point = sigma.getGraph().getNodeAttributes(node);
+        graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
+        sigma.refresh();
         onDragEnd(node, { x: point.x, y: point.y });
       },
       upStage: () => {
         const node = draggedNodeRef.current;
         if (!node) return;
         const point = sigma.getGraph().getNodeAttributes(node);
+        graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
+        sigma.refresh();
         onDragEnd(node, { x: point.x, y: point.y });
       },
     });
-  }, [draggable, onDragEnd, onEdgeClick, onNodeClick, onStageClick, registerEvents, sigma]);
+  }, [draggable, graph, onDragEnd, onEdgeClick, onNodeClick, onStageClick, registerEvents, sigma]);
 
   useEffect(() => () => {
     if (layoutTimerRef.current) clearTimeout(layoutTimerRef.current);

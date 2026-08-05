@@ -85,6 +85,11 @@
 .graph-head-panel .title-row { align-items: flex-end; }
 .graph-head-filter { display: flex; align-items: center; gap: 7px; color: #52615f; font-size: 11px; font-weight: 700; }
 .graph-head-filter select { min-height: 30px; border: 1px solid #cdd9d4; border-radius: 4px; color: #26373a; background: #fff; padding: 0 8px; }
+.graph-view-switcher { display: inline-flex; align-self: start; width: fit-content; overflow: hidden; border: 1px solid #c8d9d2; border-radius: 5px; background: #ffffff; box-shadow: 0 3px 9px rgba(29, 69, 64, .06); }
+.graph-view-switcher button { min-height: 32px; padding: 0 12px; border: 0; border-right: 1px solid #d9e5df; color: #607673; background: transparent; font-size: 11px; font-weight: 700; }
+.graph-view-switcher button:last-child { border-right: 0; }
+.graph-view-switcher button:hover { background: #eef7f2; color: #215b55; }
+.graph-view-switcher button.active { color: #ffffff; background: #28786e; }
 .manager-toolbar { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(120px, 1fr) auto auto; gap: 7px; margin: 4px 0 10px; }
 .manager-toolbar select, .manager-toolbar input { min-height: 32px; border: 1px solid #cdd9d4; border-radius: 4px; color: #26373a; background: #fff; padding: 0 9px; font-size: 12px; }
 .manager-rows { max-height: 560px; overflow: auto; display: grid; align-content: start; }
