@@ -8,7 +8,7 @@ export type RuntimeTypeInfo = { name: string; count: number };
 export type RuntimeTypeSet = { labels: RuntimeTypeInfo[]; relationshipTypes: RuntimeTypeInfo[] };
 
 export type EntityRecord = { id: string; labels: string[]; properties: Record<string, unknown> };
-export type RelationshipRecord = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown> };
+export type RelationshipRecord = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
 
 export async function readRuntimeTypes(target: Neo4jTarget): Promise<RuntimeTypeSet> {
   const [labelsResult, relationshipsResult] = await Promise.all([
@@ -46,7 +46,7 @@ function entityReturn() {
 }
 
 function relationshipReturn() {
-  return "RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, properties(r) AS properties";
+  return "RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties";
 }
 
 export async function readEntity(target: Neo4jTarget, elementId: string): Promise<EntityRecord | null> {

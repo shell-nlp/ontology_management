@@ -42,3 +42,15 @@ button, input, textarea { font: inherit; } button { cursor: pointer; } button:di
 .entity-chip-clear:hover { background:#e9efeb; color:#3f5052; }
 .entity-spinner { animation:entity-spin .8s linear infinite; }
 @keyframes entity-spin { to { transform:rotate(360deg); } }
+.cypher-bar { margin-bottom:14px; }
+.cypher-bar .cypher-input { min-height:96px; margin:0; }
+.cypher-controls { display:flex; align-items:center; gap:10px; margin-top:10px; }
+.cypher-controls > span { margin-right:auto; }
+.cypher-input { scrollbar-gutter:stable; }
+.cypher-editor { position:relative; }
+.cypher-mirror { position:absolute; top:0; left:0; width:100%; visibility:hidden; white-space:pre-wrap; overflow-wrap:break-word; overflow:hidden; pointer-events:none; scrollbar-gutter:stable; }
+.cypher-suggest { position:fixed; z-index:40; min-width:200px; max-width:340px; max-height:264px; overflow-y:auto; background:#fff; border:1px solid var(--line); border-radius:6px; box-shadow:0 18px 44px rgba(16,30,31,.18); padding:5px; }
+.cypher-suggest button { display:flex; align-items:center; gap:8px; width:100%; padding:6px 8px; border:0; background:transparent; text-align:left; border-radius:4px; font-size:12px; color:#243235; cursor:pointer; font-family:ui-monospace,"Cascadia Code",monospace; }
+.cypher-suggest button.active { background:#eaf5ed; color:#245e60; }
+.cypher-suggest-kind { flex:none; font-size:9px; letter-spacing:.5px; padding:1px 5px; border-radius:3px; text-transform:uppercase; background:#eef2ef; color:#7c8a87; }
+.cypher-suggest button.active .cypher-suggest-kind { background:#245e60; color:#fff; }

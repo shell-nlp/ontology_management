@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, FileCheck2, GitBranch, Link2, Loader2, LogOut, Network, Pencil, Plus, Search, Settings2, ShieldCheck, TableProperties, TerminalSquare, Trash2, UserRound, X } from "lucide-react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, FileCheck2, GitBranch, Link2, Loader2, LogOut, Network, Pencil, Plus, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { PropertyEditor } from "@/components/property-editor";
 import type { GraphData } from "@/lib/neo4j";
@@ -14,10 +14,10 @@ type EntityType = { id: string; name: string; description: string; displayProper
 type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 type Definition = { entityTypes: EntityType[]; relationshipTypes: RelationType[] };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition };
-type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "cypher" | "targets";
+type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "targets";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
-type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown> };
+type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
 
 const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [] };
 const typeOptions: Property["dataType"][] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
@@ -198,7 +198,7 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ATLAS</b><small>ONTOLOGY CONTROL</small></span></div><label className="target-picker"><span>当前 Neo4j 目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label><nav>{([
-      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["cypher", "Cypher 工作台", TerminalSquare], ["targets", "连接目标", Database],
+      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { if (id === "graph") setGraphMode("instances"); setView(id); }}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />已选择目标</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} />
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setView("graph"); }} />}
@@ -207,7 +207,6 @@ export function FunctionalWorkbench() {
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} mode={graphMode} onModeChange={setGraphMode} notify={notify} fail={fail} />}
       {view === "entities" && <EntityManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} published={published} runtimeTypes={runtimeTypes} notify={notify} fail={fail} />}
-      {view === "cypher" && <CypherManager target={selectedTarget} user={userProp} fail={fail} />}
     </section>
   </main>;
 }
@@ -272,6 +271,99 @@ function TypeEditDialog({ kind, entity, relation, entityTypes, onClose, onSave }
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog type-dialog" onSubmit={submit}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon">{kind === "entity" ? <CircleDot size={22} /> : <Link2 size={22} />}</div><span className="eyebrow">{kind === "entity" ? "实体类型" : "关系契约"}</span><h2>编辑{kind === "entity" ? "实体类型" : "关系类型"}</h2><label>名称<input value={name} onChange={(event) => setName(event.target.value)} required /></label>{kind === "entity" ? <><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="业务含义" /></label><label>显示属性<select value={displayProperty} onChange={(event) => setDisplayProperty(event.target.value)}><option value="">默认（按 name/名称/title/id 自动选择）</option>{properties.map((prop) => <option key={prop.name} value={prop.name}>{prop.name}</option>)}</select><small>节点在可视化中的标题；在本体草稿页「复制显示样式」可导出对应 Neo4j Browser caption 规则。</small></label></> : <><label>起始实体类型<select value={source} onChange={(event) => setSource(event.target.value)} required><option value="">选择类型</option>{entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>终止实体类型<select value={target} onChange={(event) => setTarget(event.target.value)} required><option value="">选择类型</option>{entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label></>}<div className="dialog-divider" /><div className="dialog-section-head"><span className="eyebrow">属性配置</span><h3>{kind === "entity" ? "实体属性" : "关系属性"}</h3></div><p className="dialog-hint">在同一处维护该类型全部属性，保存时一并写入草稿。</p>{properties.length > 0 && <div className="dialog-prop-list">{properties.map((prop, index) => editingProp === index && propDraft ? <div className="dialog-prop-row editing" key={`${prop.name}-${index}`}><input value={propDraft.name} onChange={(event) => setPropDraft({ ...propDraft, name: event.target.value })} /><select value={propDraft.dataType} onChange={(event) => setPropDraft({ ...propDraft, dataType: event.target.value as Property["dataType"] })}>{typeOptions.map((item) => <option key={item}>{item}</option>)}</select><label className="check-label"><input type="checkbox" checked={propDraft.required} onChange={(event) => setPropDraft({ ...propDraft, required: event.target.checked })} />必填</label><button type="button" className="action compact" onClick={saveProperty}><CheckCircle2 size={13} />保存</button><button type="button" className="action compact" onClick={() => { setEditingProp(null); setPropDraft(null); setLocalError(""); }}>取消</button></div> : <div className="dialog-prop-row" key={`${prop.name}-${index}`}><TableProperties size={15} /><b>{prop.name}</b><span>{prop.dataType}</span><em>{prop.required ? "必填" : "可选"}</em><button type="button" className="action compact" onClick={() => startEditProperty(index)}><Pencil size={12} />编辑</button><button type="button" className="action compact danger" onClick={() => removeProperty(index)}><Trash2 size={12} />删除</button></div>)}</div>}<form className="inline-form dialog-prop-add" onSubmit={addProperty}><input value={propName} onChange={(event) => setPropName(event.target.value)} placeholder="新属性名称" /><select value={dataType} onChange={(event) => setDataType(event.target.value as Property["dataType"])}>{typeOptions.map((item) => <option key={item}>{item}</option>)}</select><label className="check-label"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />必填</label><button className="action primary"><Plus size={14} />添加属性</button></form>{localError && <p className="dialog-error">{localError}</p>}<div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
+type CypherSuggestion = { text: string; kind: string };
+const CYPHER_KEYWORDS = ["MATCH", "OPTIONAL MATCH", "WHERE", "WITH", "RETURN", "UNWIND", "ORDER BY", "SKIP", "LIMIT", "UNION", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "DETACH DELETE", "CALL", "YIELD", "AS", "DISTINCT", "USING", "INDEX", "EXISTS", "EXPLAIN", "PROFILE", "FOREACH", "LOAD CSV", "START", "CASE", "WHEN", "THEN", "ELSE", "END", "AND", "OR", "NOT", "XOR", "IN", "IS NULL", "IS NOT NULL", "CONTAINS", "STARTS WITH", "ENDS WITH"];
+const CYPHER_FUNCTIONS = ["count", "sum", "avg", "min", "max", "collect", "count(*)", "coalesce", "exists", "size", "length", "keys", "properties", "labels", "type", "elementId", "id", "startNode", "endNode", "toString", "toInteger", "toFloat", "toBoolean", "toUpper", "toLower", "trim", "ltrim", "rtrim", "substring", "replace", "split", "left", "right", "reverse", "head", "last", "tail", "range", "reduce", "abs", "ceil", "floor", "round", "sign", "sqrt", "exp", "log", "log10", "rand", "pi", "date", "datetime", "time", "duration", "point", "distance", "randomUUID", "timestamp"];
+const DEFAULT_CYPHER_SUGGESTIONS: CypherSuggestion[] = ["MATCH", "OPTIONAL MATCH", "WHERE", "WITH", "RETURN", "UNWIND", "ORDER BY", "LIMIT", "SKIP", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "CALL", "YIELD", "DISTINCT", "CASE", "FOREACH"].map((text) => ({ text, kind: "关键字" }));
+
+function cypherFilter(items: string[], partial: string, kind: string): CypherSuggestion[] {
+  const p = partial.toLowerCase();
+  return items.filter((item) => item.toLowerCase().includes(p)).map((item) => {
+    const lower = item.toLowerCase();
+    return { text: item, kind, score: (lower.startsWith(p) ? 0 : 1) + lower.indexOf(p) / 1000 };
+  }).sort((a, b) => a.score - b.score).map(({ text, kind: k }) => ({ text, kind: k }));
+}
+
+function CypherEditor({ value, onChange, labels, relationshipTypes, propertyKeys, placeholder }: { value: string; onChange: (next: string) => void; labels: string[]; relationshipTypes: string[]; propertyKeys: string[]; placeholder?: string }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const markerRef = useRef<HTMLSpanElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [wordStart, setWordStart] = useState(0);
+  const [suggestions, setSuggestions] = useState<CypherSuggestion[]>([]);
+  const [highlight, setHighlight] = useState(0);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const refresh = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const cursor = textarea.selectionStart;
+    setCaret(cursor);
+    const before = textarea.value.slice(0, cursor);
+    const match = /[\p{L}\p{N}_]+$/u.exec(before);
+    const word = match ? match[0] : "";
+    const start = match ? cursor - word.length : cursor;
+    const head = before.slice(0, start);
+    const trimmed = head.trimEnd();
+    const prev = trimmed[trimmed.length - 1] ?? "";
+    let list: CypherSuggestion[];
+    if (prev === ".") {
+      list = cypherFilter(propertyKeys, word, "属性").slice(0, 12);
+    } else if (prev === ":") {
+      const inBrackets = (head.match(/\[/g) ?? []).length > (head.match(/\]/g) ?? []).length;
+      list = cypherFilter(inBrackets ? relationshipTypes : labels, word, inBrackets ? "关系" : "标签").slice(0, 12);
+    } else if (!word) {
+      list = DEFAULT_CYPHER_SUGGESTIONS;
+    } else {
+      list = [...cypherFilter(CYPHER_KEYWORDS, word, "关键字"), ...cypherFilter(CYPHER_FUNCTIONS, word, "函数")].slice(0, 12);
+    }
+    setWordStart(start);
+    setSuggestions(list);
+    setHighlight(0);
+  }, [labels, relationshipTypes, propertyKeys]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    const marker = markerRef.current;
+    if (!textarea || !marker || suggestions.length === 0) { setPos(null); return; }
+    const rect = marker.getBoundingClientRect();
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+    setPos({ top: rect.top - textarea.scrollTop + lineHeight + 4, left: rect.left - textarea.scrollLeft });
+  }, [caret, suggestions]);
+
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => { if (containerRef.current && !containerRef.current.contains(event.target as Node)) setSuggestions([]); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const accept = (suggestion: CypherSuggestion) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const before = textarea.value.slice(0, wordStart);
+    const after = textarea.value.slice(textarea.selectionStart);
+    const insert = suggestion.text + (suggestion.kind === "关键字" ? " " : "");
+    const next = before + insert + after;
+    onChange(next);
+    setSuggestions([]);
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const position = (before + insert).length;
+      textarea.setSelectionRange(position, position);
+    });
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!suggestions.length) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); setHighlight((h) => (h + 1) % Math.min(suggestions.length, 8)); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setHighlight((h) => (h - 1 + Math.min(suggestions.length, 8)) % Math.min(suggestions.length, 8)); }
+    else if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); accept(suggestions[highlight] ?? suggestions[0]); }
+    else if (event.key === "Escape") { setSuggestions([]); }
+  };
+
+  return <div className="cypher-editor" ref={containerRef}><div className="cypher-input cypher-mirror" aria-hidden="true">{value.slice(0, caret)}<span ref={markerRef}>&#8203;</span>{value.slice(caret)}</div><textarea ref={textareaRef} className="cypher-input" value={value} placeholder={placeholder} spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(event) => onChange(event.target.value)} onSelect={refresh} onKeyUp={refresh} onClick={refresh} onKeyDown={onKeyDown} />{suggestions.length > 0 && pos && <div className="cypher-suggest" style={{ top: pos.top, left: pos.left }} onMouseDown={(event) => event.preventDefault()}>{suggestions.slice(0, 8).map((suggestion, index) => <button key={`${suggestion.kind}-${suggestion.text}`} className={index === highlight ? "active" : ""} onClick={() => accept(suggestion)}><span className="cypher-suggest-kind">{suggestion.kind}</span>{suggestion.text}</button>)}</div>}</div>;
+}
+
 function GraphManager({ target, user, published, runtimeTypes, mode, onModeChange, notify, fail }: { target: Target | null; user: User; published: Version | null; runtimeTypes: RuntimeTypeSet | null; mode: "instances" | "ontology"; onModeChange: (mode: "instances" | "ontology") => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
   const [graph, setGraph] = useState<GraphData>({ nodes: [], relationships: [] });
   const [ontologyGraph, setOntologyGraph] = useState<GraphData | null>(null);
@@ -282,6 +374,21 @@ function GraphManager({ target, user, published, runtimeTypes, mode, onModeChang
   const { settings, update, reset } = useGraphSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const ontologyTargetId = target?.id;
+  const [cypher, setCypher] = useState("MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100");
+  const [running, setRunning] = useState(false);
+  const cypherIsWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
+  const [cypherMeta, setCypherMeta] = useState<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>({ labels: [], relationshipTypes: [], propertyKeys: [] });
+
+  useEffect(() => {
+    if (!target) return;
+    void api<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>(`/api/instances/meta?targetId=${encodeURIComponent(target.id)}`).then(setCypherMeta).catch(() => {});
+    // Schema metadata is re-fetched only when the selected target changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id]);
+
+  const cypherLabels = useMemo(() => [...new Set([...cypherMeta.labels, ...(published?.definition.entityTypes.map((item) => item.name) ?? [])])].sort((a, b) => a.localeCompare(b)), [cypherMeta.labels, published]);
+  const cypherRelationshipTypes = useMemo(() => [...new Set([...cypherMeta.relationshipTypes, ...(published?.definition.relationshipTypes.map((item) => item.name) ?? [])])].sort((a, b) => a.localeCompare(b)), [cypherMeta.relationshipTypes, published]);
+  const cypherPropertyKeys = useMemo(() => [...new Set([...cypherMeta.propertyKeys, ...(published?.definition.entityTypes.flatMap((item) => item.properties.map((prop) => prop.name)) ?? []), ...(published?.definition.relationshipTypes.flatMap((item) => item.properties.map((prop) => prop.name)) ?? [])])].sort((a, b) => a.localeCompare(b)), [cypherMeta.propertyKeys, published]);
 
   const load = useCallback(async (nextLabel: string, nextSearch: string, nodeLimit: number, filters = typeFilters) => {
     if (!target) return;
@@ -324,6 +431,17 @@ function GraphManager({ target, user, published, runtimeTypes, mode, onModeChang
     setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
   }, [target, settings.maxNeighbors]);
 
+  const runCypher = useCallback(async () => {
+    if (!target) return;
+    try {
+      if (cypherIsWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。");
+      if (cypherIsWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return;
+      setRunning(true);
+      const result = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: cypherIsWrite }) });
+      setGraph(capResult(result, settings.recordLimit).graph);
+    } catch (reason) { fail(reason); } finally { setRunning(false); }
+  }, [target, user, cypher, cypherIsWrite, settings.recordLimit, fail]);
+
   return <section className="stack">
     <div className="graph-view-switcher" aria-label="图谱视图">
       <button className={mode === "instances" ? "active" : ""} aria-pressed={mode === "instances"} onClick={() => onModeChange("instances")}>实例图谱</button>
@@ -331,6 +449,7 @@ function GraphManager({ target, user, published, runtimeTypes, mode, onModeChang
     </div>
     {mode === "instances" ? <>
       <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">图谱管理</span><h2>画布编辑并写回 Neo4j</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">管理员：拖拽节点保存位置，从节点详情发起新建关系后选择目标节点；可在详情面板编辑属性或删除元素。当前按“可视化节点上限”{settings.nodeLimit} 个节点加载，可在“可视化配置”中调整。未发布本体时按运行时类型直接管理。</p></div>
+      <div className="panel functional-panel cypher-bar"><div className="title-row"><div><span className="eyebrow">Cypher 查询</span><h2>运行语句并可视化</h2></div></div><CypherEditor value={cypher} onChange={setCypher} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder="MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100" /><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running || !target} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>
       <GraphCanvas graph={graph} targetId={target?.id} user={user} editable definition={published?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={expand} onRefresh={() => load(label, search, settings.nodeLimit)} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
     </> : <>
@@ -427,6 +546,8 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
   }, [target?.id]);
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const definition = published?.definition ?? null;
+  const selectedEnds = selected ? relationshipEndpoints(selected, definition) : null;
   const definitions = selected ? (published?.definition.relationshipTypes.find((item) => item.name === selected.type)?.properties ?? null) : null;
   const managed = Boolean(definitions);
 
@@ -451,16 +572,29 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
         <button className="action compact" onClick={() => void load(type, search)}><Search size={14} /></button>
         <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
       </div>
-      <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(row.properties); }}><Link2 size={15} /><span><b>{row.type}</b><small>{row.sourceId} <span className="arrow">→</span> {row.targetId} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的关系。</p>}</div>
+      <div className="manager-rows">{rows.map((row) => { const ends = relationshipEndpoints(row, definition); return <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(row.properties); }}><Link2 size={15} /><span><b>{row.type}</b><small>{ends.source || row.sourceId} <span className="arrow">→</span> {ends.target || row.targetId} · {propertySummary(row.properties)}</small></span></button>; })}{!rows.length && <p className="empty">没有匹配的关系。</p>}</div>
     </div>
     <div className="panel functional-panel detail-panel">
-      {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selected.sourceId} <span className="arrow">→</span> {selected.targetId}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
+      {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selectedEnds?.source || selected.sourceId} <span className="arrow">→</span> {selectedEnds?.target || selected.targetId}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog targetId={target?.id ?? ""} published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已写入 Neo4j。"); setCreateOpen(false); await load(type, search); } catch (reason) { fail(reason); } }} />}
   </section>;
 }
 
 type EntitySearchResult = { id: string; labels: string[]; properties: Record<string, unknown>; matched: string[]; rank: number };
+
+function nodeDisplayName(labels: string[] | undefined, properties: Record<string, unknown> | undefined, definition: Definition | null): string {
+  if (!properties) return "";
+  const entityType = definition?.entityTypes.find((item) => labels?.includes(item.name));
+  const primary = entityType?.displayProperty;
+  if (primary && properties[primary] != null) return String(properties[primary]);
+  for (const key of ["name", "名称", "title", "label"]) if (properties[key] != null) return String(properties[key]);
+  return "";
+}
+
+function relationshipEndpoints(row: RelationshipRow, definition: Definition | null) {
+  return { source: nodeDisplayName(row.sourceLabels, row.sourceProperties, definition), target: nodeDisplayName(row.targetLabels, row.targetProperties, definition) };
+}
 
 function entityDisplayName(node: EntitySearchResult, definition: Definition | null): string {
   const entityType = definition?.entityTypes.find((item) => node.labels.includes(item.name));
@@ -534,22 +668,6 @@ function RelationshipCreateDialog({ targetId, published, runtimeTypes, onClose, 
   const options = useMemo(() => [...new Set([...(published?.definition.relationshipTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.relationshipTypes.map((item) => item.name) ?? [])])], [published, runtimeTypes]);
   const selfLoop = Boolean(source && target && source.id === target.id);
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog dialog-wide" onSubmit={(event) => { event.preventDefault(); if (!type.trim() || !source || !target) return; setBusy(true); void onCreate(type.trim(), source.id, target.id, properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Link2 size={22} /></div><span className="eyebrow">新建关系</span><h2>选择关系类型</h2><label>关系类型<select value={type} onChange={(event) => { setType(event.target.value); setSource(null); setTarget(null); }} required><option value="">选择类型</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><div className="dialog-field"><span>起始实体</span><EntitySearchPicker targetId={targetId} labels={sourceLabels} definition={published?.definition ?? null} placeholder="按名称搜索起始实体…" value={source} onChange={setSource} /></div><div className="dialog-field"><span>终止实体</span><EntitySearchPicker targetId={targetId} labels={targetLabels} definition={published?.definition ?? null} placeholder="按名称搜索终止实体…" value={target} onChange={setTarget} /></div>{selfLoop && <p className="dialog-hint">起始与终止为同一实体（自环关系）。</p>}<PropertyEditor definitions={definitions ?? []} values={properties} mode="managed" onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!type.trim() || !source || !target || busy}>{busy ? "创建中…" : "创建关系"}</button></div></form></div>;
-}
-
-function CypherManager({ target, user, fail }: { target: Target | null; user: User; fail: (reason: unknown) => void }) {
-  const [cypher, setCypher] = useState("MATCH p=()-[]->() RETURN p LIMIT 25");
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [running, setRunning] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const { settings, update, reset } = useGraphSettings();
-  const isWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
-  const expandNode = async (nodeId: string) => {
-    if (!target) throw new Error("请先选择 Neo4j 目标。");
-    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: `MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT ${Math.max(1, settings.maxNeighbors)}`, parameters: { nodeId } }) });
-    const merged: QueryResult = { ...expanded, graph: { nodes: [...new Map([...result?.graph.nodes ?? [], ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...(result?.graph.relationships ?? []), ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }, records: [...(result?.records ?? []), ...expanded.records] };
-    setResult(capResult(merged, settings.recordLimit));
-  };
-  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">Cypher 工作台</span><h2>{target?.name ?? "请先选择目标"}</h2></div><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div><textarea className="cypher-input" value={cypher} onChange={(event) => setCypher(event.target.value)} spellCheck={false} /><div className="title-row"><span className={isWrite ? "write-warning" : "read-state"}>{isWrite ? "检测到写入语句，执行前需要确认" : "只读语句"}</span><button className="action primary" disabled={running} onClick={async () => { try { if (!target) throw new Error("请先选择目标。"); if (isWrite && user.role !== "ADMIN") throw new Error("查看者不能执行写入 Cypher。"); if (isWrite && !window.confirm("确认执行写入 Cypher？此操作会修改目标图谱。")) return; setRunning(true); setResult(capResult(await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: isWrite }) }), settings.recordLimit)); } catch (reason) { fail(reason); } finally { setRunning(false); } }}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div><GraphCanvas graph={result?.graph ?? { nodes: [], relationships: [] }} onExpand={expandNode} />{settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}</section>;
 }
 
 function PlayIcon() { return <span className="arrow">▶</span>; }
