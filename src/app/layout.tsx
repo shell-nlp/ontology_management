@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Atlas Ontology | 本体管理平台",
+  title: "Ontology | 本体管理平台",
   description: "Neo4j 本体建模、实例管理与 Cypher 工作台",
 };
 

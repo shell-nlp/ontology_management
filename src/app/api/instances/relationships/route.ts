@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
       `MATCH (source)-[r]->(target)
        WHERE ($type IS NULL OR type(r) = $type)
          AND ($search IS NULL OR any(k IN keys(r) WHERE toString(r[k]) CONTAINS $search))
-       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, properties(r) AS properties
+       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties
        ORDER BY id LIMIT 200`,
       { type: type || null, search: search || null },
     );
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       target,
       `MATCH (source), (target) WHERE elementId(source) = $sourceId AND elementId(target) = $targetId
        CREATE (source)-[r:${quoteCypherIdentifier(input.relationshipType)}]->(target) SET r += $properties
-       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, properties(r) AS properties`,
+       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties`,
       { sourceId: input.sourceId, targetId: input.targetIdValue, properties },
     );
     if (!result.records[0]) return NextResponse.json({ error: "关系端点不存在。" }, { status: 422 });
