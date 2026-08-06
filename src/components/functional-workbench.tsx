@@ -585,7 +585,7 @@ function EntityManager({ target, user, published, runtimeTypes, notify, fail }: 
     try { setBusy(true); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  return <section className="manager-grid">
+  return <section className="manager-grid instance-manager-grid">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">实体</span>
       <h2>{rows.length} 条</h2>
@@ -648,7 +648,7 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
     try { setBusy(true); await api(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  return <section className="manager-grid">
+  return <section className="manager-grid instance-manager-grid">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">关系</span>
       <h2>{rows.length} 条</h2>

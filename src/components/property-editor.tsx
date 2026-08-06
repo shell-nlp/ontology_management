@@ -76,7 +76,7 @@ export function PropertyEditor({
   return (
     <div className="property-editor">
       {fields.map((field) => (
-        <label key={field.key} className="property-field">
+        <label key={field.key} className={field.dataType === "TEXT_ARRAY" || field.dataType === "JSON" ? "property-field property-field-wide" : "property-field"}>
           <span>
             {field.key}
             {field.required && <em>*</em>}
