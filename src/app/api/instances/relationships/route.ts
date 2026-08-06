@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       target,
       `MATCH (source)-[r]->(target)
        WHERE ($type IS NULL OR type(r) = $type)
-         AND ($search IS NULL OR any(k IN keys(r) WHERE toString(r[k]) CONTAINS $search))
+         AND ($search IS NULL OR any(k IN keys(r) WHERE toLower(CASE WHEN r[k] IS LIST THEN reduce(s = '', item IN r[k] | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') WHEN r[k] IS NULL THEN '' ELSE toString(r[k]) END) CONTAINS toLower($search)))
        RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties
        ORDER BY id LIMIT 200`,
       { type: type || null, search: search || null },

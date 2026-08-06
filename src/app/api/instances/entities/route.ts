@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { executeCypher } from "@/lib/neo4j";
 import { getTarget } from "@/lib/targets";
 import { getEntityDefinitions } from "@/lib/instances";
+import { getPublishedOntology } from "@/lib/published-ontology";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import { writeAuditEntry } from "@/lib/platform-db";
 
@@ -14,6 +15,10 @@ const inputSchema = z.object({
   properties: z.record(z.string(), z.unknown()).default({}),
 });
 
+function safeText(expr: string) {
+  return `CASE WHEN ${expr} IS LIST THEN reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') WHEN ${expr} IS NULL THEN '' ELSE toString(${expr}) END`;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requireRole("VIEWER");
@@ -23,14 +28,24 @@ export async function GET(request: NextRequest) {
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    let displayProps: Record<string, string> = {};
+    try {
+      const ontology = await getPublishedOntology(target.id);
+      for (const item of ontology.entityTypes) if (item.displayProperty) displayProps[item.name] = item.displayProperty;
+    } catch {
+      // 未发布本体时退回按任意属性搜索
+    }
+    const hasDisplayProperty = "any(label IN labels(n) WHERE label IN keys($displayProps) AND n[$displayProps[label]] IS NOT NULL)";
+    const displayMatch = `any(label IN labels(n) WHERE label IN keys($displayProps) AND n[$displayProps[label]] IS NOT NULL AND toLower(${safeText("n[$displayProps[label]]")}) CONTAINS toLower($search))`;
+    const genericMatch = `any(k IN keys(n) WHERE toLower(${safeText("n[k]")}) CONTAINS toLower($search))`;
     const result = await executeCypher(
       target,
       `MATCH (n)
        WHERE ($label IS NULL OR $label IN labels(n))
-         AND ($search IS NULL OR any(k IN keys(n) WHERE toString(n[k]) CONTAINS $search))
+         AND ($search IS NULL OR ${displayMatch} OR (NOT ${hasDisplayProperty} AND ${genericMatch}))
        RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties
        ORDER BY id LIMIT 200`,
-      { label: label || null, search: search || null },
+      { label: label || null, search: search || null, displayProps },
     );
     return NextResponse.json({ rows: result.records });
   } catch (error) {

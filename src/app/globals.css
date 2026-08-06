@@ -42,7 +42,7 @@ button, input, textarea { font: inherit; } button { cursor: pointer; } button:di
 .entity-chip-clear:hover { background:#e9efeb; color:#3f5052; }
 .entity-spinner { animation:entity-spin .8s linear infinite; }
 @keyframes entity-spin { to { transform:rotate(360deg); } }
-@media (max-width:900px) { .overview-stats { grid-template-columns:repeat(2,1fr); } .overview-stat:nth-child(2) { border-right:0; } .overview-stat:nth-child(1), .overview-stat:nth-child(2) { border-bottom:1px solid var(--line); } }
+@media (max-width:900px) { .overview-stats { grid-template-columns:repeat(2,1fr); } .overview-stat:nth-child(2) { border-right:0; } .overview-stat:nth-child(1), .overview-stat:nth-child(2) { border-bottom:1px solid var(--line); } .overview-census { grid-template-columns:1fr; } }
 .cypher-bar { margin-bottom:14px; }
 .cypher-bar .cypher-input { min-height:96px; margin:0; }
 .cypher-controls { display:flex; align-items:center; gap:10px; margin-top:10px; }
@@ -72,3 +72,18 @@ button, input, textarea { font: inherit; } button { cursor: pointer; } button:di
 @keyframes overview-rise { from { opacity:0; transform:translateY(9px); } to { opacity:1; transform:translateY(0); } }
 .overview-status { display:flex; gap:18px; font-size:11px; color:var(--muted); margin-bottom:18px; }
 .overview-status b { color:#245e60; font-weight:700; }
+.overview-census { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:0 0 18px; align-items:start; }
+.census-panel { border:1px solid var(--line); border-radius:5px; background:#fff; padding:15px 16px 8px; box-shadow:var(--shadow); }
+.census-head { display:flex; align-items:center; gap:7px; margin:0 0 9px; }
+.census-head svg { flex:none; color:#2e6b6d; }
+.census-panel.relation .census-head svg { color:#b5893a; }
+.census-head span { font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#86918f; }
+.census-head b { margin-left:auto; font-family:Georgia,"Noto Serif SC",serif; font-size:17px; font-weight:500; color:#1f4a47; }
+.census-row { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(70px,1.6fr) auto; gap:10px; align-items:center; padding:7px 0; }
+.census-row + .census-row { border-top:1px solid #eef1ee; }
+.census-name { font-size:12px; font-weight:600; color:#3f5052; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.census-track { height:6px; border-radius:99px; background:#eef1ee; overflow:hidden; }
+.census-track i { display:block; height:100%; border-radius:99px; background:#2e6b6d; }
+.census-panel.relation .census-track i { background:#b5893a; }
+.census-count { font-family:ui-monospace,"Cascadia Code",Consolas,monospace; font-size:12px; color:#4a5b5c; font-variant-numeric:tabular-nums; }
+.overview-census-empty { margin:0 0 18px; padding:14px 16px; border:1px dashed #c8d6d0; border-radius:5px; font-size:11px; line-height:1.6; color:#7c8a87; background:#fbfdfb; }
