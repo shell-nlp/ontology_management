@@ -50,4 +50,15 @@ describe("version snapshot", () => {
     expect(messages).toContain("关系端点不符合草稿中的实体类型契约。");
     expect(messages).toContain("关系使用了草稿中不存在的关系类型。");
   });
+
+  it("flags unique values that exceed the index size limit", () => {
+    const snapshot = validSnapshot();
+    const oversized = "汉".repeat(2800);
+    snapshot.nodes[0].properties.名称 = oversized;
+    const violations = validateVersionSnapshot(snapshot);
+    const match = violations.find((violation) => violation.message.includes("超过 Neo4j 索引大小限制"));
+    expect(match).toBeDefined();
+    expect(match!.rule).toBe("客户.名称");
+    expect(match!.count).toBe(1);
+  });
 });

@@ -397,6 +397,8 @@ export function runtimeTypesFromSnapshot(snapshot: VersionSnapshot): RuntimeType
   };
 }
 
+const MAX_INDEXED_VALUE_BYTES = 8191;
+
 export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const violations: { rule: string; message: string; count: number }[] = [];
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
@@ -404,6 +406,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
   const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
   const uniqueValues = new Map<string, Set<string>>();
+  const oversizedUnique = new Map<string, { typeName: string; propertyName: string; count: number }>();
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
@@ -417,11 +420,19 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     }
     for (const property of type.properties.filter((item) => item.unique && node.properties[item.name] != null)) {
       const key = `${type.id}:${property.name}`;
-      const value = JSON.stringify(node.properties[property.name]);
+      const raw = node.properties[property.name];
+      const value = JSON.stringify(raw);
       const seen = uniqueValues.get(key) ?? new Set<string>();
       if (seen.has(value)) violations.push({ rule: `${type.name}.${property.name}`, message: "唯一属性存在重复值。", count: 1 });
       seen.add(value);
       uniqueValues.set(key, seen);
+      const serialized = typeof raw === "string" ? raw : value;
+      if (Buffer.byteLength(serialized, "utf8") > MAX_INDEXED_VALUE_BYTES) {
+        const rule = `${type.name}.${property.name}`;
+        const entry = oversizedUnique.get(rule) ?? { typeName: type.name, propertyName: property.name, count: 0 };
+        entry.count += 1;
+        oversizedUnique.set(rule, entry);
+      }
     }
   }
   for (const relationship of snapshot.relationships) {
@@ -438,6 +449,9 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     try { parsePropertyValues(type.properties, relationship.properties); } catch (error) {
       violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
     }
+  }
+  for (const entry of oversizedUnique.values()) {
+    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.count} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.count });
   }
   return violations;
 }

@@ -234,7 +234,7 @@ export function FunctionalWorkbench() {
   };
 
   const publish = async () => {
-    try { const current = await ensureDraft(); const result = await api<{ published: boolean; communityEdition?: boolean; entityCount?: number; relationshipCount?: number; violations?: { message: string; count: number }[] }>(`/api/ontology/${current.id}/publish`, { method: "POST" }); if (result.published) { notify(`版本 v${current.version_number} 已发布：${result.entityCount ?? 0} 个实体、${result.relationshipCount ?? 0} 条关系已在 Neo4j 生效。`); await loadVersions(targetId); } } catch (reason) { fail(reason); }
+    try { const current = await ensureDraft(); const result = await api<{ published: boolean; communityEdition?: boolean; entityCount?: number; relationshipCount?: number; violations?: { message: string; count: number }[] }>(`/api/ontology/${current.id}/publish`, { method: "POST" }); if (result.published) { notify(`版本 v${current.version_number} 已发布：${result.entityCount ?? 0} 个实体、${result.relationshipCount ?? 0} 条关系已在 Neo4j 生效。`); await loadVersions(targetId); } else if (result.violations?.length) { fail(result.violations.map((item) => `${item.message} (${item.count})`).join("；")); } } catch (reason) { fail(reason); }
   };
 
   const activateVersion = async (version: Version) => {
