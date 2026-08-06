@@ -7,30 +7,35 @@ export type RuntimeProperty = { name: string; dataType: DataType; required: bool
 export type RuntimeTypeInfo = { name: string; count: number; properties?: RuntimeProperty[] };
 export type RuntimeTypeSet = { labels: RuntimeTypeInfo[]; relationshipTypes: RuntimeTypeInfo[]; entityCount: number; relationshipCount: number; relationshipEndpoints?: Record<string, { source: string; target: string }> };
 
-function inferDataType(sample: unknown): DataType {
-  if (typeof sample === "boolean") return "BOOLEAN";
-  if (typeof sample === "number") return Number.isInteger(sample) ? "INTEGER" : "DECIMAL";
-  if (Array.isArray(sample)) return "TEXT_ARRAY";
-  if (sample && typeof sample === "object") {
-    const record = sample as Record<string, unknown>;
-    if (typeof record.year === "number" && typeof record.month === "number" && typeof record.day === "number") return "hour" in record ? "DATETIME" : "DATE";
-    return "JSON";
-  }
+export function inferDataTypeFromNeo4jValueType(valueType: unknown): DataType {
+  const type = String(valueType).toUpperCase();
+  if (type.includes("BOOLEAN")) return "BOOLEAN";
+  if (type.includes("INTEGER")) return "INTEGER";
+  if (type.includes("FLOAT")) return "DECIMAL";
+  if (type.includes("LIST")) return "TEXT_ARRAY";
+  if (type.includes("DATETIME")) return "DATETIME";
+  if (type.includes("DATE")) return "DATE";
   return "TEXT";
 }
 
 const MAX_AUTO_UNIQUE_BYTES = 1000;
+const MAX_UTF8_BYTES_PER_CHARACTER = 4;
 
-function serializedLength(value: unknown) {
-  if (typeof value === "string") return Buffer.byteLength(value, "utf8");
-  return Buffer.byteLength(JSON.stringify(value), "utf8");
+export function isAutoUniqueCandidate(row: { cnt: number; distinctCount: number; maxCharacterLength: number }) {
+  // Neo4j strings can use up to four UTF-8 bytes per character. The bound keeps
+  // automatically created constraints comfortably below Neo4j's index limit.
+  return row.cnt > 1 && row.distinctCount === row.cnt && row.maxCharacterLength <= Math.floor(MAX_AUTO_UNIQUE_BYTES / MAX_UTF8_BYTES_PER_CHARACTER);
 }
 
-function buildProperties(rows: { name: string; key: string; cnt: number; distinctCount: number; sample: unknown }[]): Map<string, RuntimeProperty[]> {
+export function cypherPropertyText(value: string) {
+  return `CASE WHEN valueType(${value}) STARTS WITH 'LIST<' THEN reduce(text = '', item IN ${value} | text + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') WHEN ${value} IS NULL THEN '' ELSE toString(${value}) END`;
+}
+
+function buildProperties(rows: { name: string; key: string; cnt: number; distinctCount: number; maxCharacterLength: number; valueType: unknown }[]): Map<string, RuntimeProperty[]> {
   const result = new Map<string, RuntimeProperty[]>();
   for (const row of rows) {
     if (!result.has(row.name)) result.set(row.name, []);
-    result.get(row.name)!.push({ name: row.key, dataType: inferDataType(row.sample), required: false, unique: row.cnt > 1 && row.distinctCount === row.cnt && serializedLength(row.sample) <= MAX_AUTO_UNIQUE_BYTES, indexed: false });
+    result.get(row.name)!.push({ name: row.key, dataType: inferDataTypeFromNeo4jValueType(row.valueType), required: false, unique: isAutoUniqueCandidate(row), indexed: false });
   }
   for (const list of result.values()) list.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
   return result;
@@ -40,21 +45,22 @@ export type EntityRecord = { id: string; labels: string[]; properties: Record<st
 export type RelationshipRecord = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
 
 export async function readRuntimeTypes(target: Neo4jTarget): Promise<RuntimeTypeSet> {
+  const valueText = cypherPropertyText("value");
   const [labelsResult, relationshipsResult, countsResult, endpointsResult, labelPropsResult, relationshipPropsResult] = await Promise.all([
     executeCypher(target, "MATCH (n) UNWIND labels(n) AS label RETURN label AS name, count(*) AS count ORDER BY count DESC"),
     executeCypher(target, "MATCH ()-[r]->() RETURN type(r) AS name, count(*) AS count ORDER BY count DESC"),
     executeCypher(target, "MATCH (n) WITH count(n) AS nodes OPTIONAL MATCH ()-[r]->() RETURN nodes AS nodeCount, count(r) AS relationshipCount"),
     executeCypher(target, "MATCH (source)-[r]->(target) WHERE labels(source)[0] IS NOT NULL AND labels(target)[0] IS NOT NULL WITH type(r) AS relType, labels(source)[0] AS sourceLabel, labels(target)[0] AS targetLabel, count(*) AS count RETURN relType, sourceLabel, targetLabel, count ORDER BY relType, count DESC"),
-    executeCypher(target, "MATCH (n) UNWIND labels(n) AS label WITH label, n UNWIND keys(n) AS key WITH label, key, n[key] AS value WITH label, key, count(*) AS cnt, count(DISTINCT value) AS distinctCount, collect(value)[0] AS sample RETURN label AS name, key, cnt, distinctCount, sample"),
-    executeCypher(target, "MATCH ()-[r]->() WITH type(r) AS relType, r UNWIND keys(r) AS key WITH relType, key, r[key] AS value WITH relType, key, count(*) AS cnt, count(DISTINCT value) AS distinctCount, collect(value)[0] AS sample RETURN relType AS name, key, cnt, distinctCount, sample"),
+    executeCypher(target, `MATCH (n) UNWIND labels(n) AS label WITH label, n UNWIND keys(n) AS key WITH label, key, n[key] AS value WITH label, key, count(*) AS cnt, count(DISTINCT value) AS distinctCount, max(size(${valueText})) AS maxCharacterLength, min(valueType(value)) AS valueType RETURN label AS name, key, cnt, distinctCount, maxCharacterLength, valueType`),
+    executeCypher(target, `MATCH ()-[r]->() WITH type(r) AS relType, r UNWIND keys(r) AS key WITH relType, key, r[key] AS value WITH relType, key, count(*) AS cnt, count(DISTINCT value) AS distinctCount, max(size(${valueText})) AS maxCharacterLength, min(valueType(value)) AS valueType RETURN relType AS name, key, cnt, distinctCount, maxCharacterLength, valueType`),
   ]);
   const relationshipEndpoints: Record<string, { source: string; target: string }> = {};
   for (const row of endpointsResult.records) {
     const name = String(row.relType);
     if (name && !relationshipEndpoints[name]) relationshipEndpoints[name] = { source: String(row.sourceLabel), target: String(row.targetLabel) };
   }
-  const labelProps = buildProperties(labelPropsResult.records.map((row) => ({ name: String(row.name), key: String(row.key), cnt: Number(row.cnt), distinctCount: Number(row.distinctCount), sample: row.sample })));
-  const relationshipProps = buildProperties(relationshipPropsResult.records.map((row) => ({ name: String(row.name), key: String(row.key), cnt: Number(row.cnt), distinctCount: Number(row.distinctCount), sample: row.sample })));
+  const labelProps = buildProperties(labelPropsResult.records.map((row) => ({ name: String(row.name), key: String(row.key), cnt: Number(row.cnt), distinctCount: Number(row.distinctCount), maxCharacterLength: Number(row.maxCharacterLength), valueType: row.valueType })));
+  const relationshipProps = buildProperties(relationshipPropsResult.records.map((row) => ({ name: String(row.name), key: String(row.key), cnt: Number(row.cnt), distinctCount: Number(row.distinctCount), maxCharacterLength: Number(row.maxCharacterLength), valueType: row.valueType })));
   return {
     labels: labelsResult.records.map((row) => { const name = String(row.name); return { name, count: Number(row.count), properties: labelProps.get(name) }; }),
     relationshipTypes: relationshipsResult.records.map((row) => { const name = String(row.name); return { name, count: Number(row.count), properties: relationshipProps.get(name) }; }),
