@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
@@ -7,13 +7,13 @@ import { z } from "zod";
 import { executeCypher, type GraphData } from "@/lib/neo4j";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
-import { platformQuery } from "@/lib/platform-db";
 import type { Neo4jTarget } from "@/lib/platform-db";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/instances";
 
 const INTERNAL_ID = "__ontology_id";
 const INTERNAL_VERSION_ID = "__ontology_version_id";
 const SNAPSHOT_FORMAT = 1;
+const VERSION_SEGMENT = /^[0-9a-f-]{36}$/i;
 
 const nodeSchema = z.object({
   id: z.string().uuid(),
@@ -37,13 +37,21 @@ export type VersionSnapshot = {
   relationships: SnapshotRelationship[];
 };
 
-type SnapshotVersionRow = {
+export type VersionStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+
+export type VersionRecord = {
   id: string;
   target_id: string;
   version_number: number;
-  status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
-  definition: unknown;
-  artifact_path: string | null;
+  status: VersionStatus;
+  definition: OntologyDefinition;
+  created_by: string;
+  created_at: string;
+  published_at: string | null;
+  artifact_path: string;
+  entity_count: number;
+  relationship_count: number;
+  content_hash: string | null;
 };
 
 type SnapshotManifest = {
@@ -51,6 +59,10 @@ type SnapshotManifest = {
   versionId: string;
   targetId: string;
   versionNumber: number;
+  status: VersionStatus;
+  createdAt: string;
+  createdBy: string;
+  publishedAt: string | null;
   entityCount: number;
   relationshipCount: number;
   contentHash: string;
@@ -58,6 +70,7 @@ type SnapshotManifest = {
 };
 
 const locks = new Map<string, Promise<void>>();
+const targetLocks = new Map<string, Promise<void>>();
 
 function snapshotRoot() {
   const configured = process.env.ONTOLOGY_VERSION_DIR;
@@ -66,7 +79,7 @@ function snapshotRoot() {
 }
 
 function safeSegment(value: string) {
-  if (!/^[0-9a-f-]{36}$/i.test(value)) throw new Error("版本快照标识不合法。");
+  if (!VERSION_SEGMENT.test(value)) throw new Error("版本快照标识不合法。");
   return value;
 }
 
@@ -86,6 +99,179 @@ function artifactFiles(directory: string) {
     relationships: path.join(/*turbopackIgnore: true*/ directory, "relationships.csv"),
     manifest: path.join(/*turbopackIgnore: true*/ directory, "manifest.json"),
   };
+}
+
+async function readManifest(directory: string) {
+  const text = await readFile(path.join(/*turbopackIgnore: true*/ directory, "manifest.json"), "utf8");
+  return JSON.parse(text) as SnapshotManifest;
+}
+
+async function readManifestSafe(directory: string): Promise<SnapshotManifest | null> {
+  try {
+    return await readManifest(directory);
+  } catch {
+    return null;
+  }
+}
+
+async function writeManifest(directory: string, manifest: SnapshotManifest) {
+  await atomicWrite(path.join(/*turbopackIgnore: true*/ directory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+async function readDefinition(directory: string): Promise<OntologyDefinition> {
+  return ontologyDefinitionSchema.parse(JSON.parse(await readFile(path.join(/*turbopackIgnore: true*/ directory, "definition.json"), "utf8")));
+}
+
+function toVersionRecord(manifest: SnapshotManifest, directory: string): Omit<VersionRecord, "definition"> {
+  return {
+    id: manifest.versionId,
+    target_id: manifest.targetId,
+    version_number: manifest.versionNumber,
+    status: manifest.status ?? "ARCHIVED",
+    created_by: manifest.createdBy ?? "",
+    created_at: manifest.createdAt ?? new Date(0).toISOString(),
+    published_at: manifest.publishedAt ?? null,
+    artifact_path: directory,
+    entity_count: manifest.entityCount ?? 0,
+    relationship_count: manifest.relationshipCount ?? 0,
+    content_hash: manifest.contentHash || null,
+  };
+}
+
+async function findVersionDirectory(versionId: string) {
+  const root = snapshotRoot();
+  let targets: string[];
+  try {
+    targets = await readdir(root);
+  } catch {
+    return null;
+  }
+  for (const segment of targets) {
+    if (!VERSION_SEGMENT.test(segment)) continue;
+    const directory = path.join(root, segment, safeSegment(versionId));
+    try {
+      const manifest = await readManifest(directory);
+      if (manifest.versionId === versionId) return directory;
+    } catch {
+      // not in this target
+    }
+  }
+  return null;
+}
+
+export async function listVersionRecords(targetId: string): Promise<VersionRecord[]> {
+  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return [];
+  }
+  const records: VersionRecord[] = [];
+  for (const segment of entries) {
+    if (!VERSION_SEGMENT.test(segment)) continue;
+    const versionDir = path.join(directory, segment);
+    try {
+      const manifest = await readManifest(versionDir);
+      if (manifest.targetId !== targetId) continue;
+      records.push({ ...toVersionRecord(manifest, versionDir), definition: await readDefinition(versionDir) });
+    } catch {
+      // skip unreadable version directory
+    }
+  }
+  return records.sort((a, b) => b.version_number - a.version_number);
+}
+
+export async function getVersionRecord(versionId: string): Promise<VersionRecord | null> {
+  const directory = await findVersionDirectory(versionId);
+  if (!directory) return null;
+  const manifest = await readManifest(directory);
+  return { ...toVersionRecord(manifest, directory), definition: await readDefinition(directory) };
+}
+
+export async function createVersionRecord(input: { targetId: string; versionNumber: number; createdBy: string; definition: OntologyDefinition }): Promise<VersionRecord> {
+  const id = randomUUID();
+  const directory = versionArtifactDirectory(input.targetId, id);
+  const now = new Date().toISOString();
+  await mkdir(/*turbopackIgnore: true*/ directory, { recursive: true });
+  await atomicWrite(path.join(/*turbopackIgnore: true*/ directory, "definition.json"), `${JSON.stringify(input.definition, null, 2)}\n`);
+  const manifest: SnapshotManifest = {
+    formatVersion: SNAPSHOT_FORMAT,
+    versionId: id,
+    targetId: input.targetId,
+    versionNumber: input.versionNumber,
+    status: "DRAFT",
+    createdAt: now,
+    createdBy: input.createdBy,
+    publishedAt: null,
+    entityCount: 0,
+    relationshipCount: 0,
+    contentHash: "",
+    updatedAt: now,
+  };
+  await writeManifest(directory, manifest);
+  return { ...toVersionRecord(manifest, directory), definition: input.definition };
+}
+
+export async function updateVersionRecord(versionId: string, patch: { status?: VersionStatus; publishedAt?: string | null }) {
+  const directory = await findVersionDirectory(versionId);
+  if (!directory) throw new Error("本体版本不存在。");
+  const manifest = await readManifest(directory);
+  await writeManifest(directory, {
+    ...manifest,
+    status: patch.status ?? manifest.status,
+    publishedAt: patch.publishedAt !== undefined ? patch.publishedAt : manifest.publishedAt,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function deleteVersionRecord(versionId: string) {
+  const directory = await findVersionDirectory(versionId);
+  if (!directory) throw new Error("本体版本不存在。");
+  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
+}
+
+export async function deleteTargetVersions(targetId: string) {
+  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return 0;
+  }
+  const count = entries.filter((segment) => VERSION_SEGMENT.test(segment)).length;
+  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
+  return count;
+}
+
+async function withSnapshotLock<T>(versionId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = locks.get(versionId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  locks.set(versionId, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (locks.get(versionId) === queued) locks.delete(versionId);
+  }
+}
+
+export async function withTargetLock<T>(targetId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = targetLocks.get(targetId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  targetLocks.set(targetId, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (targetLocks.get(targetId) === queued) targetLocks.delete(targetId);
+  }
 }
 
 function stripInternalProperties(properties: Record<string, unknown>) {
@@ -116,29 +302,25 @@ async function atomicWrite(filePath: string, content: string) {
   await rename(/*turbopackIgnore: true*/ temporary, /*turbopackIgnore: true*/ filePath);
 }
 
-async function getVersionRow(versionId: string) {
-  const result = await platformQuery<SnapshotVersionRow>(
-    `SELECT id, target_id, version_number, status, definition, artifact_path
-     FROM ontology_platform.ontology_versions WHERE id = $1`,
-    [versionId],
-  );
-  return result.rows[0] ?? null;
-}
-
-async function writeSnapshotFiles(row: SnapshotVersionRow, snapshot: VersionSnapshot) {
+async function writeSnapshotFiles(record: VersionRecord, snapshot: VersionSnapshot) {
   const validated: VersionSnapshot = {
     definition: ontologyDefinitionSchema.parse(snapshot.definition),
     nodes: snapshot.nodes.map((node) => nodeSchema.parse(node)),
     relationships: snapshot.relationships.map((relationship) => relationshipSchema.parse(relationship)),
   };
-  const directory = versionArtifactDirectory(row.target_id, row.id);
+  const directory = versionArtifactDirectory(record.target_id, record.id);
   const files = artifactFiles(directory);
   const content = snapshotContent(validated);
+  const previous = await readManifestSafe(directory);
   const manifest: SnapshotManifest = {
     formatVersion: SNAPSHOT_FORMAT,
-    versionId: row.id,
-    targetId: row.target_id,
-    versionNumber: row.version_number,
+    versionId: record.id,
+    targetId: record.target_id,
+    versionNumber: record.version_number,
+    status: previous?.status ?? record.status,
+    createdAt: previous?.createdAt ?? record.created_at,
+    createdBy: previous?.createdBy ?? record.created_by,
+    publishedAt: previous?.publishedAt ?? record.published_at,
     entityCount: validated.nodes.length,
     relationshipCount: validated.relationships.length,
     contentHash: content.contentHash,
@@ -150,29 +332,8 @@ async function writeSnapshotFiles(row: SnapshotVersionRow, snapshot: VersionSnap
     atomicWrite(files.nodes, content.nodes),
     atomicWrite(files.relationships, content.relationships),
   ]);
-  await atomicWrite(files.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
-  await platformQuery(
-    `UPDATE ontology_platform.ontology_versions
-     SET artifact_path = $1, definition = $2, entity_count = $3, relationship_count = $4, content_hash = $5
-     WHERE id = $6`,
-    [directory, JSON.stringify(validated.definition), validated.nodes.length, validated.relationships.length, content.contentHash, row.id],
-  );
+  await writeManifest(directory, manifest);
   return manifest;
-}
-
-async function withSnapshotLock<T>(versionId: string, operation: () => Promise<T>): Promise<T> {
-  const previous = locks.get(versionId) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  const queued = previous.then(() => current);
-  locks.set(versionId, queued);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (locks.get(versionId) === queued) locks.delete(versionId);
-  }
 }
 
 function parseProperties(value: string) {
@@ -181,11 +342,9 @@ function parseProperties(value: string) {
   return parsed as Record<string, unknown>;
 }
 
-async function readSnapshotFiles(row: SnapshotVersionRow): Promise<VersionSnapshot> {
-  if (!row.artifact_path) throw new Error("该版本尚未生成数据快照。");
-  const expectedDirectory = versionArtifactDirectory(row.target_id, row.id);
-  if (path.resolve(/*turbopackIgnore: true*/ row.artifact_path) !== expectedDirectory) throw new Error("版本快照路径不在配置的数据目录中。");
-  const files = artifactFiles(expectedDirectory);
+async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot> {
+  const directory = versionArtifactDirectory(record.target_id, record.id);
+  const files = artifactFiles(directory);
   const [definitionText, nodesText, relationshipsText, manifestText] = await Promise.all([
     readFile(/*turbopackIgnore: true*/ files.definition, "utf8"),
     readFile(/*turbopackIgnore: true*/ files.nodes, "utf8"),
@@ -193,8 +352,8 @@ async function readSnapshotFiles(row: SnapshotVersionRow): Promise<VersionSnapsh
     readFile(/*turbopackIgnore: true*/ files.manifest, "utf8"),
   ]);
   const manifest = JSON.parse(manifestText) as SnapshotManifest;
-  if (manifest.formatVersion !== SNAPSHOT_FORMAT || manifest.versionId !== row.id || manifest.targetId !== row.target_id) {
-    throw new Error("版本快照清单与数据库索引不一致。");
+  if (manifest.formatVersion !== SNAPSHOT_FORMAT || manifest.versionId !== record.id || manifest.targetId !== record.target_id) {
+    throw new Error("版本快照清单与版本记录不一致。");
   }
   const contentHash = createHash("sha256").update(definitionText).update(nodesText).update(relationshipsText).digest("hex");
   if (contentHash !== manifest.contentHash) throw new Error("版本快照内容校验失败，文件可能已被外部修改。");
@@ -239,26 +398,26 @@ export async function exportTargetSnapshot(target: Neo4jTarget, definition: Onto
 
 export async function initializeVersionSnapshot(versionId: string, target: Neo4jTarget, sourceVersionId?: string | null) {
   return withSnapshotLock(versionId, async () => {
-    const row = await getVersionRow(versionId);
+    const row = await getVersionRecord(versionId);
     if (!row) throw new Error("本体版本不存在。");
     let snapshot: VersionSnapshot;
     if (sourceVersionId) {
-      const source = await getVersionRow(sourceVersionId);
+      const source = await getVersionRecord(sourceVersionId);
       if (!source || source.target_id !== row.target_id) throw new Error("快照来源版本不存在或不属于当前目标。");
       snapshot = await readSnapshotFiles(source);
-      snapshot = { ...snapshot, definition: ontologyDefinitionSchema.parse(row.definition) };
+      snapshot = { ...snapshot, definition: row.definition };
     } else {
-      snapshot = await exportTargetSnapshot(target, ontologyDefinitionSchema.parse(row.definition));
+      snapshot = await exportTargetSnapshot(target, row.definition);
     }
     return writeSnapshotFiles(row, snapshot);
   });
 }
 
 export async function ensureVersionSnapshot(versionId: string, target: Neo4jTarget) {
-  const row = await getVersionRow(versionId);
+  const row = await getVersionRecord(versionId);
   if (!row) throw new Error("本体版本不存在。");
   if (row.target_id !== target.id) throw new Error("版本不属于当前 Neo4j 目标。");
-  if (!row.artifact_path) {
+  if (!row.content_hash) {
     if (row.status === "ARCHIVED") throw new Error("该旧归档版本创建时尚未保存实例快照，不能用当前图数据伪造历史版本。");
     await initializeVersionSnapshot(versionId, target);
   }
@@ -266,14 +425,14 @@ export async function ensureVersionSnapshot(versionId: string, target: Neo4jTarg
 }
 
 export async function readVersionSnapshot(versionId: string) {
-  const row = await getVersionRow(versionId);
+  const row = await getVersionRecord(versionId);
   if (!row) throw new Error("本体版本不存在。");
   return readSnapshotFiles(row);
 }
 
 export async function mutateDraftSnapshot<T>(versionId: string, mutation: (snapshot: VersionSnapshot) => T | Promise<T>) {
   return withSnapshotLock(versionId, async () => {
-    const row = await getVersionRow(versionId);
+    const row = await getVersionRecord(versionId);
     if (!row) throw new Error("本体版本不存在。");
     if (row.status !== "DRAFT") throw new Error("只有草稿版本可以修改实例数据。");
     const snapshot = await readSnapshotFiles(row);

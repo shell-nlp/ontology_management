@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 import { getTarget, publicTarget } from "@/lib/targets";
+import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
@@ -52,6 +53,7 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     await platformQuery("DELETE FROM ontology_platform.neo4j_targets WHERE id = $1", [targetId]);
+    await removeTargetSnapshotDirectory(targetId);
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     return NextResponse.json({ deleted: true });
   } catch (error) {

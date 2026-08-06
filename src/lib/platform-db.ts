@@ -57,26 +57,6 @@ export async function ensurePlatformSchema() {
         )
       `);
       await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.ontology_versions (
-          id TEXT PRIMARY KEY,
-          target_id TEXT NOT NULL REFERENCES ontology_platform.neo4j_targets(id) ON DELETE CASCADE,
-          version_number INTEGER NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('DRAFT', 'PUBLISHED', 'ARCHIVED')),
-          definition JSONB NOT NULL DEFAULT '{"entityTypes":[],"relationshipTypes":[]}'::jsonb,
-          created_by TEXT NOT NULL REFERENCES ontology_platform.users(id),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          published_at TIMESTAMPTZ,
-          UNIQUE (target_id, version_number)
-        )
-      `);
-      await client.query(`
-        ALTER TABLE ontology_platform.ontology_versions
-          ADD COLUMN IF NOT EXISTS artifact_path TEXT,
-          ADD COLUMN IF NOT EXISTS entity_count INTEGER NOT NULL DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS relationship_count INTEGER NOT NULL DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS content_hash TEXT
-      `);
-      await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
           id TEXT PRIMARY KEY,
           actor_id TEXT REFERENCES ontology_platform.users(id),
