@@ -614,6 +614,30 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [endpointDetails, setEndpointDetails] = useState<Record<string, { labels: string[]; properties: Record<string, unknown> }>>({});
+  const [endpointLoading, setEndpointLoading] = useState<Record<string, boolean>>({});
+  const [openEnd, setOpenEnd] = useState<"source" | "target" | null>(null);
+
+  const loadEndpoint = useCallback(async (elementId: string) => {
+    if (!target || endpointDetails[elementId] || endpointLoading[elementId]) return;
+    setEndpointLoading((current) => ({ ...current, [elementId]: true }));
+    try {
+      const entity = await api<{ id: string; labels: string[]; properties: Record<string, unknown> }>(`/api/instances/entities/${encodeURIComponent(elementId)}?targetId=${target.id}`);
+      setEndpointDetails((current) => ({ ...current, [elementId]: { labels: entity.labels, properties: entity.properties } }));
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setEndpointLoading((current) => ({ ...current, [elementId]: false }));
+    }
+  }, [target, endpointDetails, endpointLoading, fail]);
+
+  const toggleEnd = (which: "source" | "target", elementId: string) => {
+    if (openEnd === which) { setOpenEnd(null); return; }
+    setOpenEnd(which);
+    void loadEndpoint(elementId);
+  };
+
+  const resetEndpoints = () => { setOpenEnd(null); setEndpointDetails({}); setEndpointLoading({}); };
 
   const load = useCallback(async (nextType: string, nextSearch: string) => {
     if (!target) return;
@@ -646,7 +670,7 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
   const remove = async () => {
     if (!target || !selected) return;
     if (!window.confirm("删除该关系？")) return;
-    try { setBusy(true); await api(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+    try { setBusy(true); await api(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}`, { method: "DELETE" }); setSelectedId(null); resetEndpoints(); setRows((current) => current.filter((row) => row.id !== selected.id)); notify("已删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
   return <section className="manager-grid instance-manager-grid">
@@ -659,10 +683,10 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
         <button className="action compact" onClick={() => void load(type, search)}><Search size={14} /></button>
         <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
       </div>
-      <div className="manager-rows">{rows.map((row) => { const ends = relationshipEndpoints(row, definition); return <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(row.properties); }}><Link2 size={15} /><span><b>{row.type}</b><small>{ends.source || row.sourceId} <span className="arrow">→</span> {ends.target || row.targetId} · {propertySummary(row.properties)}</small></span></button>; })}{!rows.length && <p className="empty">没有匹配的关系。</p>}</div>
+      <div className="manager-rows">{rows.map((row) => { const ends = relationshipEndpoints(row, definition); return <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); resetEndpoints(); setDraftProps(row.properties); }}><Link2 size={15} /><span><b>{row.type}</b><small>{ends.source || row.sourceId} <span className="arrow">→</span> {ends.target || row.targetId} · {propertySummary(row.properties)}</small></span></button>; })}{!rows.length && <p className="empty">没有匹配的关系。</p>}</div>
     </div>
     <div className="panel functional-panel detail-panel">
-      {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selectedEnds?.source || selected.sourceId} <span className="arrow">→</span> {selectedEnds?.target || selected.targetId}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
+      {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selectedEnds?.source || selected.sourceId} <span className="arrow">→</span> {selectedEnds?.target || selected.targetId}</span><code>{selected.id}</code></div><div className="endpoint-cards"><EndpointCard side="头实体" elementId={selected.sourceId} displayName={selectedEnds?.source || selected.sourceId} labels={selected.sourceLabels} detail={endpointDetails[selected.sourceId]} loading={Boolean(endpointLoading[selected.sourceId])} open={openEnd === "source"} onToggle={() => toggleEnd("source", selected.sourceId)} /><EndpointCard side="尾实体" elementId={selected.targetId} displayName={selectedEnds?.target || selected.targetId} labels={selected.targetLabels} detail={endpointDetails[selected.targetId]} loading={Boolean(endpointLoading[selected.targetId])} open={openEnd === "target"} onToggle={() => toggleEnd("target", selected.targetId)} /></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存属性</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />删除关系</button></div><p className="subtle">{managed ? "按已发布本体校验属性。" : "未受管类型，属性值直接写入。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog targetId={target?.id ?? ""} published={published} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已写入 Neo4j。"); setCreateOpen(false); await load(type, search); } catch (reason) { fail(reason); } }} />}
   </section>;
@@ -689,6 +713,17 @@ function entityDisplayName(node: EntitySearchResult, definition: Definition | nu
   if (primary && node.properties[primary] != null) return String(node.properties[primary]);
   for (const key of ["name", "名称", "title", "label"]) if (node.properties[key] != null) return String(node.properties[key]);
   return node.id;
+}
+
+function EndpointCard({ side, elementId, displayName, labels, detail, loading, open, onToggle }: { side: string; elementId: string; displayName: string; labels: string[] | undefined; detail: { labels: string[]; properties: Record<string, unknown> } | undefined; loading: boolean; open: boolean; onToggle: () => void }) {
+  return <div className="endpoint-card">
+    <div className="endpoint-card-head">
+      <div className="endpoint-card-title"><span className="endpoint-side">{side}</span><div><b>{displayName}</b><small>{labels?.join(", ") || "无标签"} · <code>{elementId}</code></small></div></div>
+      <button className="action compact" onClick={onToggle} disabled={loading}>{loading ? <Loader2 size={13} className="endpoint-spinner" /> : open ? "收起" : "查看属性"}</button>
+    </div>
+    {open && detail && <div className="endpoint-props">{Object.entries(detail.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div>}
+    {open && !detail && !loading && <p className="empty">暂无数据。</p>}
+  </div>;
 }
 
 function EntitySearchPicker({ targetId, labels, definition, placeholder, value, onChange }: { targetId: string; labels: string[]; definition: Definition | null; placeholder: string; value: EntitySearchResult | null; onChange: (node: EntitySearchResult | null) => void }) {
