@@ -98,6 +98,16 @@ function parallelEdgeOffsets(graph: Graph<NodeAttributes, EdgeAttributes>) {
   return offsets;
 }
 
+function safeRefresh(sigma: ReturnType<typeof useSigma<NodeAttributes, EdgeAttributes>>) {
+  try {
+    sigma.refresh();
+  } catch {
+    // SigmaContainer 在 graph/settings 变化时于同一 commit 内 kill 旧实例并创建新实例，
+    // 但 context 要等下一 commit 才更新：此刻拿到的仍是已 kill 的实例（nodePrograms 已清空），
+    // refresh 会抛 "could not find a suitable program..."。新实例提交后相关 effect 会重新执行。
+  }
+}
+
 function closestEdgeAt(sigma: ReturnType<typeof useSigma<NodeAttributes, EdgeAttributes>>, point: { x: number; y: number }) {
   let closest: string | null = null;
   let closestDistance = 9;
@@ -275,16 +285,21 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
   const completedLayoutRequestRef = useRef(0);
 
   useEffect(() => {
-    sigma.setSettings({
-      nodeReducer: (node, data) => ({
-        ...data,
-        color: node === connectionSourceId ? "#b9e8d7" : node === selectedNodeId ? "#f4d99f" : data.color,
-        size: node === selectedNodeId || node === connectionSourceId ? data.size + 2.8 : data.size,
-        zIndex: node === selectedNodeId || node === connectionSourceId ? 4 : data.zIndex,
-      }),
-      edgeReducer: (edge, data) => ({ ...data, color: edge === selectedEdgeId ? "#c89137" : data.color, size: edge === selectedEdgeId ? 2.5 : data.size }),
-    });
-    sigma.refresh();
+    try {
+      sigma.setSettings({
+        nodeReducer: (node, data) => ({
+          ...data,
+          color: node === connectionSourceId ? "#b9e8d7" : node === selectedNodeId ? "#f4d99f" : data.color,
+          size: node === selectedNodeId || node === connectionSourceId ? data.size + 2.8 : data.size,
+          zIndex: node === selectedNodeId || node === connectionSourceId ? 4 : data.zIndex,
+        }),
+        edgeReducer: (edge, data) => ({ ...data, color: edge === selectedEdgeId ? "#c89137" : data.color, size: edge === selectedEdgeId ? 2.5 : data.size }),
+      });
+    } catch {
+      // setSettings 内部会触发全量 refresh；当 SigmaContainer 在同一 commit 内替换实例时，
+      // 这里的 sigma 是已被 kill 的旧实例，refresh 会对空 program 抛错。
+      // 捕获后由下一 commit 的 effect 用新实例重新应用设置。
+    }
   }, [connectionSourceId, selectedEdgeId, selectedNodeId, sigma]);
 
   useEffect(() => {
@@ -303,7 +318,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         draggedNodeRef.current = node;
         draggedNodeForceLabelRef.current = graph.getNodeAttribute(node, "forceLabel");
         graph.setNodeAttribute(node, "forceLabel", true);
-        sigma.refresh();
+        safeRefresh(sigma);
         event.preventSigmaDefault();
       },
       moveBody: ({ event }) => {
@@ -320,7 +335,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         const point = sigma.getGraph().getNodeAttributes(node);
         graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
-        sigma.refresh();
+        safeRefresh(sigma);
         onDragEnd(node, { x: point.x, y: point.y });
       },
       upStage: () => {
@@ -329,7 +344,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         const point = sigma.getGraph().getNodeAttributes(node);
         graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
-        sigma.refresh();
+        safeRefresh(sigma);
         onDragEnd(node, { x: point.x, y: point.y });
       },
     });
@@ -366,7 +381,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
           const point = graph.getNodeAttributes(id);
           return [id, { x: point.x, y: point.y }];
         }));
-        sigma.refresh();
+        safeRefresh(sigma);
         onLayoutEnd(positions);
       };
       const noverlap = new NoverlapLayoutSupervisor(graph, {
