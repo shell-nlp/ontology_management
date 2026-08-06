@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
@@ -72,6 +72,11 @@ function safeSegment(value: string) {
 
 export function versionArtifactDirectory(targetId: string, versionId: string) {
   return path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId), safeSegment(versionId));
+}
+
+export async function removeTargetSnapshotDirectory(targetId: string) {
+  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
+  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
 }
 
 function artifactFiles(directory: string) {

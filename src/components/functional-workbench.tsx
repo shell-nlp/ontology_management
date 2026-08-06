@@ -14,7 +14,7 @@ type EntityType = { id: string; name: string; description: string; displayProper
 type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 type Definition = { entityTypes: EntityType[]; relationshipTypes: RelationType[] };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "targets";
+type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "targets" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -85,6 +85,37 @@ function useGraphSettings() {
   return { settings, update, reset };
 }
 
+type DisplaySettings = { entityLimit: number; relationshipLimit: number };
+const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = { entityLimit: 200, relationshipLimit: 200 };
+const DISPLAY_SETTINGS_KEY = "atlas.display-settings";
+
+function loadDisplaySettings(): DisplaySettings {
+  if (typeof window === "undefined") return DEFAULT_DISPLAY_SETTINGS;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DISPLAY_SETTINGS_KEY) ?? "{}") as Partial<DisplaySettings>;
+    return {
+      entityLimit: clampLimit(parsed.entityLimit, DEFAULT_DISPLAY_SETTINGS.entityLimit, 1, 10000),
+      relationshipLimit: clampLimit(parsed.relationshipLimit, DEFAULT_DISPLAY_SETTINGS.relationshipLimit, 1, 10000),
+    };
+  } catch { return DEFAULT_DISPLAY_SETTINGS; }
+}
+
+function useDisplaySettings() {
+  const [settings, setSettings] = useState<DisplaySettings>(loadDisplaySettings);
+  const update = useCallback((patch: Partial<DisplaySettings>) => {
+    setSettings((current) => {
+      const next: DisplaySettings = {
+        entityLimit: clampLimit(patch.entityLimit, current.entityLimit, 1, 10000),
+        relationshipLimit: clampLimit(patch.relationshipLimit, current.relationshipLimit, 1, 10000),
+      };
+      try { window.localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const reset = useCallback(() => { try { window.localStorage.removeItem(DISPLAY_SETTINGS_KEY); } catch { /* ignore */ } setSettings(DEFAULT_DISPLAY_SETTINGS); }, []);
+  return { settings, update, reset };
+}
+
 function capResult(result: QueryResult, recordLimit: number): QueryResult {
   return { ...result, records: result.records.slice(0, recordLimit), graph: { nodes: result.graph.nodes.slice(0, recordLimit), relationships: result.graph.relationships.slice(0, recordLimit) } };
 }
@@ -134,6 +165,7 @@ export function FunctionalWorkbench() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { settings: displaySettings, update: updateDisplaySettings, reset: resetDisplaySettings } = useDisplaySettings();
 
   const selectedTarget = targets.find((target) => target.id === targetId) ?? null;
   const workspaceVersion = draft ?? published;
@@ -212,6 +244,10 @@ export function FunctionalWorkbench() {
     await loadVersions(targetId);
   };
 
+  const resetVersions = async () => {
+    await loadVersions(targetId);
+  };
+
   if (user === undefined) return <div className="loading-screen">正在加载 Ontology...</div>;
   if (!user) return <Login onSuccess={async (next) => { setUser(next); await loadTargets(); }} />;
 
@@ -219,7 +255,7 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前 Neo4j 目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label><nav>{([
-      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database],
+      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database], ["settings", "设置", Settings2],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { if (id === "graph") setGraphMode("instances"); setView(id); }}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
@@ -227,8 +263,9 @@ export function FunctionalWorkbench() {
       {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} onSelect={(id) => { setTargetId(id); setView("overview"); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={graphMode} onModeChange={setGraphMode} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
-      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
-      {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
+      {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
+      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} entityLimit={displaySettings.entityLimit} />}
+      {view === "settings" && <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} />}
     </section>
   </main>;
 }
@@ -241,6 +278,50 @@ function VersionBar({ versions, draft, published, user, onCreate, onActivate, fa
     try { setBusyId(version.id); await onActivate(version); setOpen(false); } catch (reason) { fail(reason); } finally { setBusyId(null); }
   };
   return <div className="version-bar"><div><GitBranch size={16} /><span><b>{draft ? `草稿 v${draft.version_number}` : published ? `已发布 v${published.version_number}` : "尚无版本"}</b><small>{draft ? `${draft.entity_count ?? 0} 个实体 · ${draft.relationship_count ?? 0} 条关系，修改仅保存到快照文件` : published ? `${published.entity_count ?? 0} 个实体 · ${published.relationship_count ?? 0} 条关系正在 Neo4j 生效` : "创建首个草稿以导入当前图数据"}</small></span></div><div className="functional-actions">{user.role === "ADMIN" && !draft && <button className="action primary" onClick={() => void onCreate().catch(fail)}><Plus size={14} />创建草稿</button>}<button className="action" onClick={() => setOpen((value) => !value)}><History size={14} />版本记录</button></div>{open && <div className="version-menu">{versions.map((version) => <div className="version-menu-row" key={version.id}><span><b>v{version.version_number}</b><small>{version.status === "DRAFT" ? "草稿" : version.status === "PUBLISHED" ? "当前生效" : "历史归档"}</small></span><span>{version.entity_count ?? 0} 实体 · {version.relationship_count ?? 0} 关系</span>{version.artifact_path ? <code>{version.content_hash?.slice(0, 10) ?? "snapshot"}</code> : <em>无实例快照</em>}{user.role === "ADMIN" && version.status === "ARCHIVED" && <button className="action compact" disabled={Boolean(draft) || !version.artifact_path || busyId === version.id} onClick={() => void activate(version)} title={!version.artifact_path ? "旧版本未保存实例快照，不能激活" : draft ? "请先发布当前草稿" : "重新导入该版本快照"}><RotateCcw size={13} />{busyId === version.id ? "切换中" : "激活"}</button>}</div>)}{!versions.length && <p className="empty">尚无版本记录。</p>}</div>}</div>;
+}
+
+function SettingsManager({ target, user, versions, displaySettings, onSaveDisplaySettings, onResetDisplaySettings, onReset, notify, fail }: { target: Target | null; user: User; versions: Version[]; displaySettings: DisplaySettings; onSaveDisplaySettings: (next: DisplaySettings) => void; onResetDisplaySettings: () => void; onReset: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [draft, setDraft] = useState<DisplaySettings>(displaySettings);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const initialize = async () => {
+    if (!target) return;
+    setResetting(true);
+    try {
+      const result = await api<{ deletedVersions: number }>(`/api/targets/${target.id}/reset`, { method: "POST" });
+      await onReset();
+      setConfirmOpen(false);
+      notify(`版本数据已初始化：删除 ${result.deletedVersions} 个版本记录及其快照文件。可重新创建草稿以导入当前图数据。`);
+    } catch (reason) { fail(reason); } finally { setResetting(false); }
+  };
+
+  return <section className="manager-grid">
+    <form className="panel functional-panel form-panel" onSubmit={(event) => { event.preventDefault(); onSaveDisplaySettings(draft); notify("展示条数配置已保存。"); }}>
+      <span className="eyebrow">列表展示</span>
+      <h2>默认展示条数</h2>
+      <p className="subtle">「实体」与「关系」列表页每次加载时默认展示的记录数量，保存后即时生效。</p>
+      <div className="settings-grid">
+        <label className="settings-field"><span>实体展示条数</span><input type="number" min={1} max={10000} value={draft.entityLimit} onChange={(event) => setDraft({ ...draft, entityLimit: Number(event.target.value) })} /><small>实体列表单次加载最多返回的节点数量。</small></label>
+        <label className="settings-field"><span>关系展示条数</span><input type="number" min={1} max={10000} value={draft.relationshipLimit} onChange={(event) => setDraft({ ...draft, relationshipLimit: Number(event.target.value) })} /><small>关系列表单次加载最多返回的关系数量。</small></label>
+      </div>
+      <div className="functional-actions">
+        <button type="button" className="action" onClick={() => { onResetDisplaySettings(); setDraft(DEFAULT_DISPLAY_SETTINGS); }}>恢复默认</button>
+        <button className="action primary" type="submit">保存配置</button>
+      </div>
+    </form>
+    <div className="panel functional-panel target-list">
+      <span className="eyebrow">危险操作</span>
+      <h2>版本数据初始化</h2>
+      {target ? <>
+        <p className="subtle">将当前目标「{target.name}」的全部版本记录（共 {versions.length} 个）与对应快照文件删除，回到「尚无版本」状态。Neo4j 图数据不受影响，下次创建草稿时从当前图数据重新导出。</p>
+        <div className="functional-actions">
+          <button className="action danger" disabled={user.role !== "ADMIN" || resetting} onClick={() => setConfirmOpen(true)}><RotateCcw size={15} />{resetting ? "初始化中…" : "初始化版本数据"}</button>
+        </div>
+      </> : <p className="empty">请先选择一个 Neo4j 目标。</p>}
+    </div>
+    {confirmOpen && target && <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); void initialize(); }}><button type="button" className="close-button" onClick={() => setConfirmOpen(false)} title="关闭"><X size={18} /></button><div className="dialog-icon"><RotateCcw size={22} /></div><span className="eyebrow">危险操作</span><h2>初始化「{target.name}」？</h2><p>将删除该目标的 {versions.length} 个版本记录及全部快照文件，此操作无法撤销。Neo4j 图数据不会被修改。</p><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setConfirmOpen(false)}>取消</button><button className="primary-button" disabled={resetting}>{resetting ? "初始化中…" : "确认初始化"}</button></div></form></div>}
+  </section>;
 }
 
 function Login({ onSuccess }: { onSuccess: (user: User) => Promise<void> }) {
@@ -573,7 +654,7 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
   </section>;
 }
 
-function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, fail }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, fail, entityLimit }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void; entityLimit: number }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
@@ -589,17 +670,18 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       if (versionId) params.set("versionId", versionId);
       if (nextLabel) params.set("label", nextLabel);
       if (nextSearch) params.set("search", nextSearch);
+      params.set("limit", String(entityLimit));
       setRows(await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows));
     } catch (reason) { fail(reason); }
-  }, [target, version?.id, fail]);
+  }, [target, version?.id, fail, entityLimit]);
 
   useEffect(() => {
     if (!target) return;
     const versionParam = version ? `&versionId=${version.id}` : "";
-    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}${versionParam}`).then((data) => setRows(data.rows)).catch(fail);
-    // Entity list is re-fetched only when the selected target changes.
+    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}${versionParam}&limit=${entityLimit}`).then((data) => setRows(data.rows)).catch(fail);
+    // Entity list is re-fetched when the selected target, version or display limit changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.id, version?.id]);
+  }, [target?.id, version?.id, entityLimit]);
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const definitions = selected ? (version?.definition.entityTypes.find((item) => selected.labels.includes(item.name))?.properties ?? null) : null;
@@ -636,7 +718,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
   </section>;
 }
 
-function RelationshipManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, fail }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+function RelationshipManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, fail, relationshipLimit }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void; relationshipLimit: number }) {
   const [rows, setRows] = useState<RelationshipRow[]>([]);
   const [type, setType] = useState("");
   const [search, setSearch] = useState("");
@@ -677,17 +759,18 @@ function RelationshipManager({ target, user, version, draft, runtimeTypes, ensur
       if (versionId) params.set("versionId", versionId);
       if (nextType) params.set("type", nextType);
       if (nextSearch) params.set("search", nextSearch);
+      params.set("limit", String(relationshipLimit));
       setRows(await api<{ rows: RelationshipRow[] }>(`/api/instances/relationships?${params.toString()}`).then((data) => data.rows));
     } catch (reason) { fail(reason); }
-  }, [target, version?.id, fail]);
+  }, [target, version?.id, fail, relationshipLimit]);
 
   useEffect(() => {
     if (!target) return;
     const versionParam = version ? `&versionId=${version.id}` : "";
-    void api<{ rows: RelationshipRow[] }>(`/api/instances/relationships?targetId=${encodeURIComponent(target.id)}${versionParam}`).then((data) => setRows(data.rows)).catch(fail);
-    // Relationship list is re-fetched only when the selected target changes.
+    void api<{ rows: RelationshipRow[] }>(`/api/instances/relationships?targetId=${encodeURIComponent(target.id)}${versionParam}&limit=${relationshipLimit}`).then((data) => setRows(data.rows)).catch(fail);
+    // Relationship list is re-fetched when the selected target, version or display limit changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.id, version?.id]);
+  }, [target?.id, version?.id, relationshipLimit]);
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const definition = version?.definition ?? null;

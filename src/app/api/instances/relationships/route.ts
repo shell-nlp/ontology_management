@@ -19,6 +19,12 @@ function safeText(expr: string) {
   return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
 }
 
+function parseLimit(value: string | null, fallback = 200) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(10000, Math.floor(parsed));
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requireRole("VIEWER");
@@ -26,12 +32,13 @@ export async function GET(request: NextRequest) {
     const type = request.nextUrl.searchParams.get("type");
     const search = request.nextUrl.searchParams.get("search");
     const versionId = request.nextUrl.searchParams.get("versionId");
+    const limit = parseLimit(request.nextUrl.searchParams.get("limit"));
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     if (versionId) {
       const snapshot = await ensureVersionSnapshot(versionId, target);
-      return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search }) });
+      return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search, limit }) });
     }
     const relMatch = `any(k IN keys(r) WHERE toLower(${safeText("r[k]")}) CONTAINS toLower($search))`;
     const nodeMatch = `any(k IN keys(source) WHERE toLower(${safeText("source[k]")}) CONTAINS toLower($search)) OR any(k IN keys(target) WHERE toLower(${safeText("target[k]")}) CONTAINS toLower($search))`;
@@ -41,7 +48,7 @@ export async function GET(request: NextRequest) {
        WHERE ($type IS NULL OR type(r) = $type)
          AND ($search IS NULL OR ${relMatch} OR ${nodeMatch})
        RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties
-       ORDER BY id LIMIT 200`,
+       ORDER BY id LIMIT ${limit}`,
       { type: type || null, search: search || null },
     );
     return NextResponse.json({ rows: result.records });

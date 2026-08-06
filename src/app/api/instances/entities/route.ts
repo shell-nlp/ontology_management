@@ -19,6 +19,12 @@ function safeText(expr: string) {
   return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
 }
 
+function parseLimit(value: string | null, fallback = 200) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(10000, Math.floor(parsed));
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requireRole("VIEWER");
@@ -26,12 +32,13 @@ export async function GET(request: NextRequest) {
     const label = request.nextUrl.searchParams.get("label");
     const search = request.nextUrl.searchParams.get("search");
     const versionId = request.nextUrl.searchParams.get("versionId");
+    const limit = parseLimit(request.nextUrl.searchParams.get("limit"));
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     if (versionId) {
       const snapshot = await ensureVersionSnapshot(versionId, target);
-      return NextResponse.json({ rows: listSnapshotEntities(snapshot, { label, search }) });
+      return NextResponse.json({ rows: listSnapshotEntities(snapshot, { label, search, limit }) });
     }
     let displayProps: Record<string, string> = {};
     try {
@@ -49,7 +56,7 @@ export async function GET(request: NextRequest) {
        WHERE ($label IS NULL OR $label IN labels(n))
          AND ($search IS NULL OR ${displayMatch} OR (NOT ${hasDisplayProperty} AND ${genericMatch}))
        RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties
-       ORDER BY id LIMIT 200`,
+       ORDER BY id LIMIT ${limit}`,
       { label: label || null, search: search || null, displayProps },
     );
     return NextResponse.json({ rows: result.records });
