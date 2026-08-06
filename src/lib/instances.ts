@@ -1,7 +1,6 @@
 import neo4j from "neo4j-driver";
 import { executeCypher, type GraphData } from "@/lib/neo4j";
-import { getPublishedOntology, quoteCypherIdentifier } from "@/lib/published-ontology";
-import { parsePropertyValues, type DataType, type PropertyDefinition } from "@/lib/instance-property-editor";
+import type { DataType } from "@/lib/instance-property-editor";
 import type { Neo4jTarget } from "@/lib/platform-db";
 
 export type RuntimeProperty = { name: string; dataType: DataType; required: boolean; unique: boolean; indexed: boolean };
@@ -56,114 +55,6 @@ export async function readRuntimeTypes(target: Neo4jTarget): Promise<RuntimeType
     relationshipCount: Number(countsResult.records[0]?.relationshipCount ?? 0),
     relationshipEndpoints,
   };
-}
-
-export async function getEntityDefinitions(target: Neo4jTarget, labels: string[]): Promise<PropertyDefinition[] | null> {
-  try {
-    const ontology = await getPublishedOntology(target.id);
-    const type = ontology.entityTypes.find((item) => labels.includes(item.name));
-    return type ? type.properties : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function getRelationshipDefinitions(target: Neo4jTarget, typeName: string): Promise<PropertyDefinition[] | null> {
-  try {
-    const ontology = await getPublishedOntology(target.id);
-    const type = ontology.relationshipTypes.find((item) => item.name === typeName);
-    return type ? type.properties : null;
-  } catch {
-    return null;
-  }
-}
-
-function entityReturn() {
-  return "RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties";
-}
-
-function relationshipReturn() {
-  return "RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties";
-}
-
-export async function readEntity(target: Neo4jTarget, elementId: string): Promise<EntityRecord | null> {
-  const result = await executeCypher(target, `MATCH (n) WHERE elementId(n) = $elementId ${entityReturn()}`, { elementId });
-  return (result.records[0] as EntityRecord | undefined) ?? null;
-}
-
-export async function readRelationship(target: Neo4jTarget, elementId: string): Promise<RelationshipRecord | null> {
-  const result = await executeCypher(target, `MATCH (source)-[r]->(target) WHERE elementId(r) = $elementId ${relationshipReturn()}`, { elementId });
-  return (result.records[0] as RelationshipRecord | undefined) ?? null;
-}
-
-export async function createEntity(target: Neo4jTarget, labels: string[], rawProperties: Record<string, unknown>) {
-  const definitions = await getEntityDefinitions(target, labels);
-  const properties = definitions
-    ? parsePropertyValues(definitions, rawProperties)
-    : parsePropertyValues([], rawProperties, { allowArbitrary: true });
-  const labelPart = labels.map((label) => `:${quoteCypherIdentifier(label)}`).join("");
-  const result = await executeCypher(target, `CREATE (n${labelPart}) SET n += $properties ${entityReturn()}`, { properties });
-  return result.records[0] ?? null;
-}
-
-export async function createRelationship(
-  target: Neo4jTarget,
-  type: string,
-  sourceId: string,
-  targetId: string,
-  rawProperties: Record<string, unknown>,
-) {
-  const definitions = await getRelationshipDefinitions(target, type);
-  const properties = definitions
-    ? parsePropertyValues(definitions, rawProperties)
-    : parsePropertyValues([], rawProperties, { allowArbitrary: true });
-  const result = await executeCypher(
-    target,
-    `MATCH (source), (target) WHERE elementId(source) = $sourceId AND elementId(target) = $targetId
-     CREATE (source)-[r:${quoteCypherIdentifier(type)}]->(target) SET r += $properties ${relationshipReturn()}`,
-    { sourceId, targetId, properties },
-  );
-  return result.records[0] ?? null;
-}
-
-export async function updateEntityProperties(target: Neo4jTarget, elementId: string, rawProperties: Record<string, unknown>) {
-  const current = await readEntity(target, elementId);
-  if (!current) return null;
-  const definitions = await getEntityDefinitions(target, current.labels);
-  const properties = definitions
-    ? parsePropertyValues(definitions, rawProperties)
-    : parsePropertyValues([], rawProperties, { allowArbitrary: true });
-  const result = await executeCypher(target, `MATCH (n) WHERE elementId(n) = $elementId SET n += $properties ${entityReturn()}`, { elementId, properties });
-  return result.records[0] ?? null;
-}
-
-export async function updateRelationshipProperties(target: Neo4jTarget, elementId: string, rawProperties: Record<string, unknown>) {
-  const current = await readRelationship(target, elementId);
-  if (!current) return null;
-  const definitions = await getRelationshipDefinitions(target, current.type);
-  const properties = definitions
-    ? parsePropertyValues(definitions, rawProperties)
-    : parsePropertyValues([], rawProperties, { allowArbitrary: true });
-  const result = await executeCypher(target, `MATCH (source)-[r]->(target) WHERE elementId(r) = $elementId SET r += $properties ${relationshipReturn()}`, { elementId, properties });
-  return result.records[0] ?? null;
-}
-
-export async function deleteEntity(target: Neo4jTarget, elementId: string) {
-  await executeCypher(target, "MATCH (n) WHERE elementId(n) = $elementId DETACH DELETE n", { elementId });
-}
-
-export async function deleteRelationship(target: Neo4jTarget, elementId: string) {
-  await executeCypher(target, "MATCH ()-[r]->() WHERE elementId(r) = $elementId DELETE r", { elementId });
-}
-
-export async function updateNodePositions(target: Neo4jTarget, items: { elementId: string; x: number; y: number }[]) {
-  if (!items.length) return 0;
-  const result = await executeCypher(
-    target,
-    "UNWIND $items AS item MATCH (n) WHERE elementId(n) = item.elementId SET n.fx = item.x, n.fy = item.y",
-    { items },
-  );
-  return result.records.length;
 }
 
 export async function readGraph(

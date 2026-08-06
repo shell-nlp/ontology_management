@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
 import { executeCypher } from "@/lib/neo4j";
 import { getTarget } from "@/lib/targets";
+import { ensureVersionSnapshot } from "@/lib/version-snapshot";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,6 +11,15 @@ export async function GET(request: NextRequest) {
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    const versionId = request.nextUrl.searchParams.get("versionId");
+    if (versionId) {
+      const snapshot = await ensureVersionSnapshot(versionId, target);
+      return NextResponse.json({
+        labels: [...new Set(snapshot.nodes.flatMap((node) => node.labels))].sort(),
+        relationshipTypes: [...new Set(snapshot.relationships.map((relationship) => relationship.type))].sort(),
+        propertyKeys: [...new Set([...snapshot.nodes.flatMap((node) => Object.keys(node.properties)), ...snapshot.relationships.flatMap((relationship) => Object.keys(relationship.properties))])].sort(),
+      });
+    }
     const [labelsResult, relationshipsResult, keysResult] = await Promise.all([
       executeCypher(target, "CALL db.labels() YIELD label RETURN label ORDER BY label"),
       executeCypher(target, "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER BY relationshipType"),

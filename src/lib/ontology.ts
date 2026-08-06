@@ -65,8 +65,12 @@ export async function validateOntology(target: Neo4jTarget, input: OntologyDefin
   return violations;
 }
 
+function ruleNameValue(kind: string, typeName: string, propertyName: string) {
+  return `ontology_${kind}_${typeName}_${propertyName}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 55);
+}
+
 function ruleName(kind: string, typeName: string, propertyName: string) {
-  return quote(`ontology_${kind}_${typeName}_${propertyName}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 55));
+  return quote(ruleNameValue(kind, typeName, propertyName));
 }
 
 export async function supportsExistenceConstraints(target: Neo4jTarget) {
@@ -90,4 +94,29 @@ export async function applyStrongRules(target: Neo4jTarget, input: OntologyDefin
       if (property.required && canEnforceRequired) await executeCypher(target, `CREATE CONSTRAINT ${ruleName("required", entity.name, property.name)} IF NOT EXISTS FOR (n:${label}) REQUIRE n.${key} IS NOT NULL`);
     }
   }
+}
+
+export async function reconcileStrongRules(target: Neo4jTarget, input: OntologyDefinition) {
+  const canEnforceRequired = await supportsExistenceConstraints(target);
+  const desiredConstraints = new Set<string>();
+  const desiredIndexes = new Set<string>();
+  for (const entity of input.entityTypes) {
+    for (const property of entity.properties) {
+      if (property.unique) desiredConstraints.add(ruleNameValue("unique", entity.name, property.name));
+      else if (property.indexed) desiredIndexes.add(ruleNameValue("index", entity.name, property.name));
+      if (property.required && canEnforceRequired) desiredConstraints.add(ruleNameValue("required", entity.name, property.name));
+    }
+  }
+  const constraints = await executeCypher(target, "SHOW CONSTRAINTS YIELD name WHERE name STARTS WITH 'ontology_' RETURN name");
+  for (const row of constraints.records) {
+    const name = String(row.name);
+    if (!desiredConstraints.has(name)) await executeCypher(target, `DROP CONSTRAINT ${quote(name)} IF EXISTS`);
+  }
+  const indexes = await executeCypher(target, "SHOW INDEXES YIELD name WHERE name STARTS WITH 'ontology_' RETURN name");
+  for (const row of indexes.records) {
+    const name = String(row.name);
+    if (!desiredIndexes.has(name) && !desiredConstraints.has(name)) await executeCypher(target, `DROP INDEX ${quote(name)} IF EXISTS`);
+  }
+  await applyStrongRules(target, input);
+  return canEnforceRequired;
 }

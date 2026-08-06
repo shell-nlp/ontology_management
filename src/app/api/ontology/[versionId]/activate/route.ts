@@ -6,10 +6,12 @@ export async function POST(_: Request, context: { params: Promise<{ versionId: s
   try {
     const user = await requireRole("ADMIN");
     const { versionId } = await context.params;
-    const result = await publishVersionSnapshot(versionId, user, ["DRAFT"]);
+    const result = await publishVersionSnapshot(versionId, user, ["ARCHIVED", "PUBLISHED"]);
     if (!result.published) return NextResponse.json({ error: "版本快照未通过校验。", violations: result.violations }, { status: 422 });
     return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "本体发布失败。" }, { status: 400 });
+    const message = error instanceof Error ? error.message : "激活历史版本失败。";
+    const status = message.includes("不存在") ? 404 : message.includes("不允许") ? 409 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

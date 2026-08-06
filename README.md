@@ -28,6 +28,11 @@
 | `GET/POST /api/ontology` | 查看或创建本体草稿版本 |
 | `POST /api/ontology/:versionId/validate` | 依据已有图数据校验草稿 |
 | `POST /api/ontology/:versionId/publish` | 校验后发布，并生成显式配置的约束或索引 |
+| `POST /api/ontology/:versionId/activate` | 将具有完整快照的历史版本重新导入并激活 |
 | `POST /api/cypher` | 在指定目标执行受权限和确认策略保护的 Cypher |
 
 所有 Neo4j 与 PostgreSQL 操作均在 Next.js 服务端执行；浏览器不会收到数据库密码或加密主密钥。
+
+## 统一版本快照
+
+本体版本同时管理类型定义、实体和关系数据。草稿编辑只写 `ONTOLOGY_VERSION_DIR` 下的 `definition.json`、`nodes.csv`、`relationships.csv` 和 `manifest.json`，不会直接修改 Neo4j；发布或激活历史版本时才在事务中完整重建目标图。生产多实例部署必须为该目录配置共享持久卷。

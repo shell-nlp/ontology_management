@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
+import { updateSnapshotDefinition } from "@/lib/version-snapshot";
+import { ensureVersionSnapshot } from "@/lib/version-snapshot";
+import { getTarget } from "@/lib/targets";
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
   try {
@@ -14,9 +17,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
     const version = result.rows[0];
     if (!version) return NextResponse.json({ error: "本体草稿不存在。" }, { status: 404 });
     if (version.status !== "DRAFT") return NextResponse.json({ error: "已发布版本不可直接修改，请创建新草稿。" }, { status: 409 });
-    await platformQuery("UPDATE ontology_platform.ontology_versions SET definition = $1 WHERE id = $2", [JSON.stringify(definition), versionId]);
-    await writeAuditEntry({ actorId: user.id, targetId: version.target_id, action: "ONTOLOGY_DRAFT_UPDATED", details: { versionId } });
-    return NextResponse.json({ saved: true, definition });
+    const target = await getTarget(version.target_id);
+    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    await ensureVersionSnapshot(versionId, target);
+    const savedDefinition = await updateSnapshotDefinition(versionId, definition);
+    await writeAuditEntry({ actorId: user.id, targetId: version.target_id, action: "VERSION_DEFINITION_UPDATED", details: { versionId } });
+    return NextResponse.json({ saved: true, definition: savedDefinition });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存草稿失败。" }, { status: 400 });
   }

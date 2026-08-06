@@ -70,6 +70,13 @@ export async function ensurePlatformSchema() {
         )
       `);
       await client.query(`
+        ALTER TABLE ontology_platform.ontology_versions
+          ADD COLUMN IF NOT EXISTS artifact_path TEXT,
+          ADD COLUMN IF NOT EXISTS entity_count INTEGER NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS relationship_count INTEGER NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS content_hash TEXT
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
           id TEXT PRIMARY KEY,
           actor_id TEXT REFERENCES ontology_platform.users(id),

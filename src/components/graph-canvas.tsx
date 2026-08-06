@@ -101,6 +101,7 @@ type EditTarget = { kind: "node"; id: string } | { kind: "edge"; id: string } | 
 export function GraphCanvas({
   graph,
   targetId,
+  versionId,
   user,
   editable = false,
   definition = null,
@@ -114,6 +115,7 @@ export function GraphCanvas({
 }: {
   graph: GraphData;
   targetId?: string;
+  versionId?: string;
   user?: User;
   editable?: boolean;
   definition?: ManagedDefinition | null;
@@ -125,7 +127,7 @@ export function GraphCanvas({
   notify?: (text: string) => void;
   fail?: (reason: unknown) => void;
 }) {
-  const admin = editable && user?.role === "ADMIN" && Boolean(targetId);
+  const admin = editable && user?.role === "ADMIN" && Boolean(targetId) && Boolean(versionId);
   const [search, setSearch] = useState("");
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
   const [activeRelationshipTypes, setActiveRelationshipTypes] = useState<string[]>([]);
@@ -226,8 +228,8 @@ export function GraphCanvas({
     const endpoint = editTarget.kind === "node" ? "entities" : "relationships";
     try {
       setBusy(true);
-      await api(`/api/instances/${endpoint}/${encodeURIComponent(editTarget.id)}?targetId=${targetId}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) });
-      notify?.("属性已保存到 Neo4j。");
+      await api(`/api/instances/${endpoint}/${encodeURIComponent(editTarget.id)}?targetId=${targetId}&versionId=${versionId}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) });
+      notify?.("属性已保存到草稿快照。");
       await refresh();
     } catch (reason) {
       fail?.(reason);
@@ -243,8 +245,8 @@ export function GraphCanvas({
     if (!window.confirm(confirmText)) return;
     try {
       setBusy(true);
-      await api(`/api/instances/${endpoint}/${encodeURIComponent(editTarget.id)}?targetId=${targetId}`, { method: "DELETE" });
-      notify?.("已删除。");
+      await api(`/api/instances/${endpoint}/${encodeURIComponent(editTarget.id)}?targetId=${targetId}&versionId=${versionId}`, { method: "DELETE" });
+      notify?.("已从草稿快照删除。");
       await refresh();
     } catch (reason) {
       fail?.(reason);
@@ -254,9 +256,9 @@ export function GraphCanvas({
   };
 
   const savePositions = (positions: Record<string, { x: number; y: number }>) => {
-    if (!admin || !targetId) return;
+    if (!admin || !targetId || !versionId) return;
     const items = Object.entries(positions).filter(([, point]) => Number.isFinite(point.x) && Number.isFinite(point.y)).map(([elementId, point]) => ({ elementId, x: point.x, y: point.y }));
-    if (items.length) void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, items }) }).catch(() => {});
+    if (items.length) void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, versionId, items }) }).catch(() => {});
   };
 
   const handleNodeClick = (nodeId: string) => {
@@ -372,8 +374,8 @@ export function GraphCanvas({
         )}
       </aside>
 
-      {admin && pendingConnection && <RelationshipDialog typeOptions={relationshipTypeOptions(runtimeTypes, definition)} definition={definition} onClose={() => setPendingConnection(null)} onCreate={async (type, properties) => { try { setBusy(true); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId, relationshipType: type, sourceId: pendingConnection.source, targetIdValue: pendingConnection.target, properties }) }); notify?.("关系已写入 Neo4j。"); setPendingConnection(null); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
-      {admin && createOpen && <NodeDialog labelOptions={labelOptions(runtimeTypes, definition)} definition={definition} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { setBusy(true); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId, entityType: label, properties }) }); notify?.("节点已写入 Neo4j。"); setCreateOpen(false); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
+      {admin && pendingConnection && <RelationshipDialog typeOptions={relationshipTypeOptions(runtimeTypes, definition)} definition={definition} onClose={() => setPendingConnection(null)} onCreate={async (type, properties) => { try { setBusy(true); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId, versionId, relationshipType: type, sourceId: pendingConnection.source, targetIdValue: pendingConnection.target, properties }) }); notify?.("关系已加入草稿快照。"); setPendingConnection(null); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
+      {admin && createOpen && <NodeDialog labelOptions={labelOptions(runtimeTypes, definition)} definition={definition} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { setBusy(true); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId, versionId, entityType: label, properties }) }); notify?.("节点已加入草稿快照。"); setCreateOpen(false); await refresh(); } catch (reason) { fail?.(reason); } finally { setBusy(false); } }} />}
     </div>
   );
 }

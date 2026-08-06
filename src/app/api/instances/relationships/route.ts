@@ -3,13 +3,12 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { executeCypher } from "@/lib/neo4j";
 import { getTarget } from "@/lib/targets";
-import { getRelationshipDefinitions } from "@/lib/instances";
-import { quoteCypherIdentifier } from "@/lib/published-ontology";
-import { parsePropertyValues } from "@/lib/instance-property-editor";
 import { writeAuditEntry } from "@/lib/platform-db";
+import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/version-snapshot";
 
 const inputSchema = z.object({
   targetId: z.string().uuid(),
+  versionId: z.string().uuid(),
   relationshipType: z.string().min(1),
   sourceId: z.string().min(1),
   targetIdValue: z.string().min(1),
@@ -26,9 +25,14 @@ export async function GET(request: NextRequest) {
     const targetId = request.nextUrl.searchParams.get("targetId");
     const type = request.nextUrl.searchParams.get("type");
     const search = request.nextUrl.searchParams.get("search");
+    const versionId = request.nextUrl.searchParams.get("versionId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (versionId) {
+      const snapshot = await ensureVersionSnapshot(versionId, target);
+      return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search }) });
+    }
     const relMatch = `any(k IN keys(r) WHERE toLower(${safeText("r[k]")}) CONTAINS toLower($search))`;
     const nodeMatch = `any(k IN keys(source) WHERE toLower(${safeText("source[k]")}) CONTAINS toLower($search)) OR any(k IN keys(target) WHERE toLower(${safeText("target[k]")}) CONTAINS toLower($search))`;
     const result = await executeCypher(
@@ -52,20 +56,10 @@ export async function POST(request: NextRequest) {
     const input = inputSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
-    const definitions = await getRelationshipDefinitions(target, input.relationshipType);
-    const properties = definitions
-      ? parsePropertyValues(definitions, input.properties)
-      : parsePropertyValues([], input.properties, { allowArbitrary: true });
-    const result = await executeCypher(
-      target,
-      `MATCH (source), (target) WHERE elementId(source) = $sourceId AND elementId(target) = $targetId
-       CREATE (source)-[r:${quoteCypherIdentifier(input.relationshipType)}]->(target) SET r += $properties
-       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties`,
-      { sourceId: input.sourceId, targetId: input.targetIdValue, properties },
-    );
-    if (!result.records[0]) return NextResponse.json({ error: "关系端点不存在。" }, { status: 422 });
-    await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "RELATIONSHIP_CREATED", details: { relationshipType: input.relationshipType, sourceId: input.sourceId, targetId: input.targetIdValue, properties } });
-    return NextResponse.json(result.records[0], { status: 201 });
+    await ensureVersionSnapshot(input.versionId, target);
+    const relationship = await createSnapshotRelationship(input.versionId, input.relationshipType, input.sourceId, input.targetIdValue, input.properties);
+    await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_CREATED", details: { versionId: input.versionId, relationshipId: relationship.id, relationshipType: relationship.type } });
+    return NextResponse.json(relationship, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建关系。" }, { status: 400 });
   }

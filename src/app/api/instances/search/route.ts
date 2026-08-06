@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth";
 import { executeCypher } from "@/lib/neo4j";
 import { getTarget } from "@/lib/targets";
 import { getPublishedOntology } from "@/lib/published-ontology";
+import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/version-snapshot";
 
 function safeText(expr: string) {
   return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
@@ -36,6 +37,15 @@ export async function GET(request: NextRequest) {
       // 未发布本体时按任意属性搜索并仅按属性值排序
     }
     const limit = Math.min(Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 12), 30);
+    const versionId = request.nextUrl.searchParams.get("versionId");
+    if (versionId) {
+      const snapshot = await ensureVersionSnapshot(versionId, target);
+      const results = listSnapshotEntities(snapshot, { search: q, limit: 200 })
+        .filter((node) => !labels.length || node.labels.some((label) => labels.includes(label)))
+        .slice(0, limit)
+        .map((node) => ({ ...node, matched: Object.keys(node.properties), rank: 0 }));
+      return NextResponse.json({ results });
+    }
     const labelClause = labels.length > 0 ? "AND any(l IN $labels WHERE l IN labels(n))\n       " : "";
     const displayName = `reduce(d = '', label IN labels(n) | CASE WHEN d <> '' THEN d WHEN label IN keys($displayProps) AND n[$displayProps[label]] IS NOT NULL THEN ${safeText("n[$displayProps[label]]")} ELSE d END)`;
     const valueMatch = `any(k IN keys(n) WHERE toLower(${safeText("n[k]")}) CONTAINS toLower($q))`;
