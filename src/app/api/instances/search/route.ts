@@ -5,7 +5,7 @@ import { getTarget } from "@/lib/targets";
 import { getPublishedOntology } from "@/lib/published-ontology";
 
 function safeText(expr: string) {
-  return `CASE WHEN ${expr} IS LIST THEN reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') WHEN ${expr} IS NULL THEN '' ELSE toString(${expr}) END`;
+  return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
 }
 
 export async function GET(request: NextRequest) {

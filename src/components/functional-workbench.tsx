@@ -29,9 +29,9 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function Notice({ message, error }: { message: string | null; error?: boolean }) {
+function Notice({ message, error, onDismiss }: { message: string | null; error?: boolean; onDismiss?: () => void }) {
   if (!message) return null;
-  return <div className={error ? "notice error" : "notice"}>{error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{message}</div>;
+  return <div className={error ? "notice error" : "notice"}>{error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{message}{onDismiss && <button className="notice-close" onClick={onDismiss}><X size={14} /></button>}</div>;
 }
 
 function entityTitle(node: Pick<EntityRow, "labels" | "properties">, definition: Definition | null = null) {
@@ -139,6 +139,7 @@ export function FunctionalWorkbench() {
 
   const notify = (text: string) => { setMessage(text); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); messageTimer.current = setTimeout(() => setMessage(null), 5000); };
   const fail = (reason: unknown) => { setError(reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
+  const dismiss = () => { setMessage(null); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
 
   const loadTargets = async () => {
     const data = await api<Target[]>("/api/targets");
@@ -205,7 +206,7 @@ export function FunctionalWorkbench() {
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前 Neo4j 目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label><nav>{([
       ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { if (id === "graph") setGraphMode("instances"); setView(id); }}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />已选择目标</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} />
+    <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />已选择目标</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setView("graph"); }} />}
       {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} onSelect={(id) => { setTargetId(id); setView("overview"); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
@@ -654,7 +655,7 @@ function RelationshipManager({ target, user, published, runtimeTypes, notify, fa
       <h2>{rows.length} 条</h2>
       <div className="manager-toolbar">
         <select value={type} onChange={(event) => { setType(event.target.value); void load(event.target.value, search); }}><option value="">全部类型</option>{(runtimeTypes?.relationshipTypes ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
-        <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(type, search); }} placeholder="搜索属性" />
+        <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(type, search); }} placeholder="搜索关系或端点属性…" />
         <button className="action compact" onClick={() => void load(type, search)}><Search size={14} /></button>
         <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
       </div>

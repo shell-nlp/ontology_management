@@ -4,8 +4,8 @@ import { requireRole } from "@/lib/auth";
 import { executeCypher } from "@/lib/neo4j";
 import { getTarget } from "@/lib/targets";
 import { getRelationshipDefinitions } from "@/lib/instances";
-import { parsePropertyValues } from "@/lib/instance-property-editor";
 import { quoteCypherIdentifier } from "@/lib/published-ontology";
+import { parsePropertyValues } from "@/lib/instance-property-editor";
 import { writeAuditEntry } from "@/lib/platform-db";
 
 const inputSchema = z.object({
@@ -16,6 +16,10 @@ const inputSchema = z.object({
   properties: z.record(z.string(), z.unknown()).default({}),
 });
 
+function safeText(expr: string) {
+  return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requireRole("VIEWER");
@@ -25,11 +29,13 @@ export async function GET(request: NextRequest) {
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    const relMatch = `any(k IN keys(r) WHERE toLower(${safeText("r[k]")}) CONTAINS toLower($search))`;
+    const nodeMatch = `any(k IN keys(source) WHERE toLower(${safeText("source[k]")}) CONTAINS toLower($search)) OR any(k IN keys(target) WHERE toLower(${safeText("target[k]")}) CONTAINS toLower($search))`;
     const result = await executeCypher(
       target,
       `MATCH (source)-[r]->(target)
        WHERE ($type IS NULL OR type(r) = $type)
-         AND ($search IS NULL OR any(k IN keys(r) WHERE toLower(CASE WHEN r[k] IS LIST THEN reduce(s = '', item IN r[k] | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') WHEN r[k] IS NULL THEN '' ELSE toString(r[k]) END) CONTAINS toLower($search)))
+         AND ($search IS NULL OR ${relMatch} OR ${nodeMatch})
        RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties
        ORDER BY id LIMIT 200`,
       { type: type || null, search: search || null },
