@@ -172,7 +172,7 @@ export function FunctionalWorkbench() {
   const definition = draft?.definition ?? published?.definition ?? emptyDefinition;
 
   const notify = (text: string) => { setMessage(text); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); messageTimer.current = setTimeout(() => setMessage(null), 5000); };
-  const fail = (reason: unknown) => { setError(reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
+  const fail = (reason: unknown) => { setError(typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
   const dismiss = () => { setMessage(null); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
 
   const loadTargets = async () => {

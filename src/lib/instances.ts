@@ -19,11 +19,18 @@ function inferDataType(sample: unknown): DataType {
   return "TEXT";
 }
 
+const MAX_AUTO_UNIQUE_BYTES = 1000;
+
+function serializedLength(value: unknown) {
+  if (typeof value === "string") return Buffer.byteLength(value, "utf8");
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
 function buildProperties(rows: { name: string; key: string; cnt: number; distinctCount: number; sample: unknown }[]): Map<string, RuntimeProperty[]> {
   const result = new Map<string, RuntimeProperty[]>();
   for (const row of rows) {
     if (!result.has(row.name)) result.set(row.name, []);
-    result.get(row.name)!.push({ name: row.key, dataType: inferDataType(row.sample), required: false, unique: row.cnt > 1 && row.distinctCount === row.cnt, indexed: false });
+    result.get(row.name)!.push({ name: row.key, dataType: inferDataType(row.sample), required: false, unique: row.cnt > 1 && row.distinctCount === row.cnt && serializedLength(row.sample) <= MAX_AUTO_UNIQUE_BYTES, indexed: false });
   }
   for (const list of result.values()) list.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
   return result;

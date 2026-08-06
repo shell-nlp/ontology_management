@@ -565,7 +565,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
   const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
   const uniqueValues = new Map<string, Set<string>>();
-  const oversizedUnique = new Map<string, { typeName: string; propertyName: string; count: number }>();
+  const oversizedUnique = new Map<string, { typeName: string; propertyName: string; nodes: SnapshotNode[] }>();
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
@@ -588,8 +588,8 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
       const serialized = typeof raw === "string" ? raw : value;
       if (Buffer.byteLength(serialized, "utf8") > MAX_INDEXED_VALUE_BYTES) {
         const rule = `${type.name}.${property.name}`;
-        const entry = oversizedUnique.get(rule) ?? { typeName: type.name, propertyName: property.name, count: 0 };
-        entry.count += 1;
+        const entry = oversizedUnique.get(rule) ?? { typeName: type.name, propertyName: property.name, nodes: [] };
+        entry.nodes.push(node);
         oversizedUnique.set(rule, entry);
       }
     }
@@ -610,7 +610,18 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     }
   }
   for (const entry of oversizedUnique.values()) {
-    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.count} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.count });
+    const displayProperty = snapshot.definition.entityTypes.find((type) => type.name === entry.typeName)?.displayProperty;
+    const fallbackKeys = ["表名", "名称", "name", "title", "id"];
+    const involved = entry.nodes.map((node) => {
+      const keys = displayProperty ? [displayProperty, ...fallbackKeys] : fallbackKeys;
+      const readable = keys.map((key) => node.properties[key]).find((value) => (typeof value === "string" && value.trim()) || typeof value === "number");
+      const name = readable != null ? String(readable) : node.id;
+      const shortName = name.length > 60 ? `${name.slice(0, 60)}…` : name;
+      const raw = String(node.properties[entry.propertyName] ?? "");
+      const snippet = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
+      return `「${shortName}」(${node.id}，${entry.propertyName}开头：${snippet})`;
+    }).join("、");
+    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.nodes.length} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
   return violations;
 }
