@@ -34,7 +34,7 @@ type Props = {
   onLayoutEnd: (positions: Record<string, { x: number; y: number }>) => void;
 };
 
-type NodeAttributes = { x: number; y: number; size: number; label: string; color: string; forceLabel: boolean; zIndex: number; type: "internal" };
+type NodeAttributes = { x: number; y: number; size: number; label: string; color: string; textColor?: string; selected?: boolean; dimmed?: boolean; forceLabel: boolean; zIndex: number; type: "internal" };
 type EdgeAttributes = { label: string; relationshipType: string; color: string; size: number; type: "arrow"; hidden: boolean };
 
 function initialPoint(index: number, total: number) {
@@ -46,14 +46,26 @@ function initialPoint(index: number, total: number) {
 
 const drawInternalNodeLabel: NodeLabelDrawingFunction<NodeAttributes, EdgeAttributes> = (context, data) => {
   if (!data.label) return;
-  const fontSize = Math.max(8, Math.min(10, data.size / 3));
-  const maxChars = Math.max(3, Math.floor((data.size * 1.85) / fontSize));
+  const fontSize = Math.max(9, Math.min(13, data.size / 2.2));
+  const maxChars = Math.max(3, Math.min(7, Math.floor((data.size * 2) / fontSize)));
   const visible = data.label.length > maxChars * 2 ? `${data.label.slice(0, maxChars * 2 - 1)}...` : data.label;
   const lines = visible.match(new RegExp(`.{1,${maxChars}}`, "g")) ?? [];
   const lineHeight = fontSize * 1.18;
   context.save();
-  context.fillStyle = "#183234";
-  context.font = `800 ${fontSize}px ui-sans-serif, system-ui, sans-serif`;
+  context.beginPath();
+  context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
+  context.strokeStyle = data.dimmed ? "#f1f5f9" : "#ffffff";
+  context.lineWidth = 3;
+  context.stroke();
+  if (data.selected) {
+    context.beginPath();
+    context.arc(data.x, data.y, data.size + 5, 0, Math.PI * 2);
+    context.strokeStyle = "#93b4ff";
+    context.lineWidth = 2;
+    context.stroke();
+  }
+  context.fillStyle = data.dimmed ? "#94a3b8" : data.textColor ?? "#ffffff";
+  context.font = `700 ${fontSize}px ui-sans-serif, system-ui, sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   lines.forEach((line, index) => context.fillText(line, data.x, data.y + (index - (lines.length - 1) / 2) * lineHeight));
@@ -61,14 +73,6 @@ const drawInternalNodeLabel: NodeLabelDrawingFunction<NodeAttributes, EdgeAttrib
 };
 
 const InternalLabelNodeProgram = createNodeCompoundProgram<NodeAttributes, EdgeAttributes>([NodeCircleProgram<NodeAttributes, EdgeAttributes>], undefined, drawInternalNodeLabel);
-
-function nodeFillColor(color: string) {
-  const red = Number.parseInt(color.slice(1, 3), 16);
-  const green = Number.parseInt(color.slice(3, 5), 16);
-  const blue = Number.parseInt(color.slice(5, 7), 16);
-  const lighten = (channel: number) => Math.round(channel * 0.24 + 255 * 0.76).toString(16).padStart(2, "0");
-  return `#${lighten(red)}${lighten(green)}${lighten(blue)}`;
-}
 
 function pairKey(source: string, target: string) {
   return source < target ? `${source}\u0000${target}` : `${target}\u0000${source}`;
@@ -156,7 +160,7 @@ function closestEdgeAt(sigma: ReturnType<typeof useSigma<NodeAttributes, EdgeAtt
 
 function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
   const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: "directed", multi: true });
-  const nodeSize = nodes.length > 150 ? 13 : nodes.length > 80 ? 18 : 30;
+  const nodeSize = nodes.length > 400 ? 12 : nodes.length > 200 ? 16 : nodes.length > 120 ? 18 : nodes.length > 40 ? 22 : nodes.length > 20 ? 26 : 38;
   let nonHubIndex = 0;
   nodes.forEach((node) => {
     // The highest-degree node anchors the graph; all other nodes spread evenly around it.
@@ -166,9 +170,9 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
       y: Number.isFinite(node.y) ? node.y! : fallback.y,
       size: node.isHub ? nodeSize + 6 : nodeSize,
       label: node.label,
-      color: nodeFillColor(node.color),
+      color: node.color,
       type: "internal",
-      forceLabel: nodes.length <= 120,
+      forceLabel: nodes.length <= 300,
       zIndex: node.isHub ? 2 : 1,
     });
   });
@@ -184,20 +188,20 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
   groups.forEach((group) => { if (group.length > 1) group.forEach((edge) => parallelIds.add(edge.id)); });
   edges.forEach((edge) => {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
-      const hidden = edge.source === edge.target || parallelIds.has(edge.id);
-      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: hidden ? "" : edge.type, relationshipType: edge.type, color: "#718692", size: 1.2, type: "arrow", hidden });
+      const hidden = true;
+      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: hidden ? "" : edge.type, relationshipType: edge.type, color: "#c3ccda", size: 0.8, type: "arrow", hidden });
     }
   });
   return graph;
 }
 
-function EdgeDecorationLayer({ selectedEdgeId }: { selectedEdgeId: string | null }) {
+function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeId: string | null; selectedNodeId: string | null }) {
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
 
   useEffect(() => {
     const namespace = "http://www.w3.org/2000/svg";
     const layer = document.createElementNS(namespace, "svg");
-    const markerId = `sigma-edge-arrow-${crypto.randomUUID()}`;
+    const markerPrefix = `sigma-edge-arrow-${crypto.randomUUID()}`;
     layer.classList.add("sigma-self-loops");
     layer.setAttribute("aria-hidden", "true");
     sigma.getContainer().appendChild(layer);
@@ -208,56 +212,82 @@ function EdgeDecorationLayer({ selectedEdgeId }: { selectedEdgeId: string | null
       parent.appendChild(element);
       return element;
     };
+    const appendMarker = (defs: SVGElement, id: string, fill: string) => {
+      const marker = append(defs, "marker", { id, viewBox: "0 0 8 8", refX: "6.2", refY: "4", markerWidth: "6", markerHeight: "6", orient: "auto" });
+      append(marker, "path", { d: "M 0 0 L 8 4 L 0 8 z", fill });
+    };
+    const appendEdgeLabel = (parent: SVGElement, x: number, y: number, text: string, color: string) => {
+      const width = Math.max(36, text.length * 12 + 14);
+      append(parent, "rect", { x: String(x - width / 2), y: String(y - 9), width: String(width), height: "18", rx: "9", fill: "#ffffff", stroke: color === "#1677ff" ? "#bfd2ff" : "#e2e8f0", "stroke-width": "1" });
+      const label = append(parent, "text", { x: String(x), y: String(y + 4), fill: color === "#1677ff" ? "#1677ff" : "#526175", "text-anchor": "middle", "font-size": "11", "font-weight": "600" });
+      label.textContent = text;
+    };
 
     const update = () => {
       const graph = sigma.getGraph();
       const offsets = parallelEdgeOffsets(graph);
+      const showAllRelationshipLabels = graph.size <= 40;
       const dimensions = sigma.getDimensions();
       if (!layer.isConnected) sigma.getContainer().appendChild(layer);
       layer.setAttribute("width", String(dimensions.width));
       layer.setAttribute("height", String(dimensions.height));
       layer.replaceChildren();
       const defs = append(layer, "defs", {});
-      const marker = append(defs, "marker", { id: markerId, viewBox: "0 0 8 8", refX: "6.2", refY: "4", markerWidth: "6", markerHeight: "6", orient: "auto" });
-      append(marker, "path", { d: "M 0 0 L 8 4 L 0 8 z", fill: "#718692" });
+      const markerBase = `${markerPrefix}-base`;
+      const markerHighlight = `${markerPrefix}-highlight`;
+      const markerDim = `${markerPrefix}-dim`;
+      appendMarker(defs, markerBase, "#c3ccda");
+      appendMarker(defs, markerHighlight, "#1677ff");
+      appendMarker(defs, markerDim, "#e5eaf2");
+      const markerFor = (color: string) => color === "#1677ff" ? markerHighlight : color === "#e5eaf2" ? markerDim : markerBase;
 
       graph.edges().forEach((edge) => {
         const [source, target] = graph.extremities(edge);
-        if (source !== target) return;
-        const point = sigma.graphToViewport(graph.getNodeAttributes(source));
-        const radius = Math.max(16, (sigma.getNodeDisplayData(source)?.size ?? 18) * 0.55 + 8);
         const data = graph.getEdgeAttributes(edge);
-        const color = edge === selectedEdgeId ? "#c89137" : "#718692";
-        const startX = point.x - radius * 0.54;
-        const startY = point.y - radius * 0.48;
-        const endX = point.x - radius * 0.08;
-        const endY = point.y - radius * 0.76;
-        const topY = point.y - radius * 1.68;
-        const group = append(layer, "g", { color });
-        append(group, "path", { d: `M ${startX} ${startY} C ${point.x - radius * 1.55} ${topY}, ${point.x + radius * 0.05} ${topY}, ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": "1.5", "marker-end": `url(#${markerId})` });
-        const label = append(group, "text", { x: String(point.x - radius * 0.9), y: String(topY - 4), fill: color, "text-anchor": "middle" });
-        label.textContent = (data as EdgeAttributes).relationshipType;
-      });
-
-      graph.edges().forEach((edge) => {
-        const offset = offsets.get(edge);
-        if (offset === undefined) return;
-        const [source, target] = graph.extremities(edge);
+        if (source === target) {
+          const point = sigma.graphToViewport(graph.getNodeAttributes(source));
+          const displayedSize = sigma.scaleSize(sigma.getNodeDisplayData(source)?.size ?? 18);
+          const radius = Math.max(16, displayedSize * 0.55 + 8);
+          const isRelated = selectedNodeId !== null && source === selectedNodeId;
+          const color = edge === selectedEdgeId ? "#1677ff" : selectedNodeId !== null && !isRelated ? "#e5eaf2" : selectedNodeId !== null ? "#1677ff" : "#c3ccda";
+          const topY = point.y - radius * 1.68;
+          const group = append(layer, "g", { color });
+          append(group, "path", { d: `M ${point.x - radius * 0.54} ${point.y - radius * 0.48} C ${point.x - radius * 1.55} ${topY}, ${point.x + radius * 0.05} ${topY}, ${point.x - radius * 0.08} ${point.y - radius * 0.76}`, fill: "none", stroke: color, "stroke-width": "1", "marker-end": `url(#${markerFor(color)})` });
+          const labelText = showAllRelationshipLabels || edge === selectedEdgeId || isRelated ? (data as EdgeAttributes).relationshipType : "";
+          if (labelText) appendEdgeLabel(group, point.x - radius * 0.9, topY - 4, labelText, color);
+          return;
+        }
         const sourcePoint = sigma.graphToViewport(graph.getNodeAttributes(source));
         const targetPoint = sigma.graphToViewport(graph.getNodeAttributes(target));
+        const sourceRadius = Math.max(12, sigma.scaleSize(sigma.getNodeDisplayData(source)?.size ?? 18));
+        const targetRadius = Math.max(12, sigma.scaleSize(sigma.getNodeDisplayData(target)?.size ?? 18));
         const dx = targetPoint.x - sourcePoint.x;
         const dy = targetPoint.y - sourcePoint.y;
         const length = Math.hypot(dx, dy) || 1;
-        const controlX = (sourcePoint.x + targetPoint.x) / 2 - dy / length * offset;
-        const controlY = (sourcePoint.y + targetPoint.y) / 2 + dx / length * offset;
-        const data = graph.getEdgeAttributes(edge);
-        const color = edge === selectedEdgeId ? "#c89137" : "#718692";
-        const labelX = (sourcePoint.x + 2 * controlX + targetPoint.x) / 4;
-        const labelY = (sourcePoint.y + 2 * controlY + targetPoint.y) / 4;
+        const ux = dx / length;
+        const uy = dy / length;
+        const startX = sourcePoint.x + ux * (sourceRadius + 1);
+        const startY = sourcePoint.y + uy * (sourceRadius + 1);
+        const endX = targetPoint.x - ux * (targetRadius + 3);
+        const endY = targetPoint.y - uy * (targetRadius + 3);
+        const offset = offsets.get(edge);
+        const isRelated = selectedNodeId !== null && (source === selectedNodeId || target === selectedNodeId);
+        const color = edge === selectedEdgeId ? "#1677ff" : selectedNodeId !== null && !isRelated ? "#e5eaf2" : selectedNodeId !== null ? "#1677ff" : "#c3ccda";
+        const strokeWidth = edge === selectedEdgeId ? "1.8" : selectedNodeId !== null && !isRelated ? "0.7" : selectedNodeId !== null && isRelated ? "1.4" : "1";
         const group = append(layer, "g", { color });
-        append(group, "path", { d: `M ${sourcePoint.x} ${sourcePoint.y} Q ${controlX} ${controlY} ${targetPoint.x} ${targetPoint.y}`, fill: "none", stroke: color, "stroke-width": "1.35", "marker-end": `url(#${markerId})` });
-        const label = append(group, "text", { x: String(labelX), y: String(labelY - 5), fill: color, "text-anchor": "middle" });
-        label.textContent = (data as EdgeAttributes).relationshipType;
+        let labelX = (startX + endX) / 2;
+        let labelY = (startY + endY) / 2 - 5;
+        if (offset !== undefined) {
+          const controlX = (sourcePoint.x + targetPoint.x) / 2 - uy * offset;
+          const controlY = (sourcePoint.y + targetPoint.y) / 2 + ux * offset;
+          append(group, "path", { d: `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, "marker-end": `url(#${markerFor(color)})` });
+          labelX = (sourcePoint.x + 2 * controlX + targetPoint.x) / 4;
+          labelY = (sourcePoint.y + 2 * controlY + targetPoint.y) / 4 - 5;
+        } else {
+          append(group, "path", { d: `M ${startX} ${startY} L ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, "marker-end": `url(#${markerFor(color)})` });
+        }
+        const labelText = showAllRelationshipLabels || edge === selectedEdgeId || isRelated ? (data as EdgeAttributes).relationshipType : "";
+        if (labelText) appendEdgeLabel(group, labelX, labelY, labelText, color);
       });
     };
     update();
@@ -270,7 +300,7 @@ function EdgeDecorationLayer({ selectedEdgeId }: { selectedEdgeId: string | null
       sigma.getCamera().off("updated", update);
       layer.remove();
     };
-  }, [selectedEdgeId, sigma]);
+  }, [selectedEdgeId, selectedNodeId, sigma]);
   return null;
 }
 
@@ -283,24 +313,48 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
   const noverlapRef = useRef<NoverlapLayoutSupervisor | null>(null);
   const layoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completedLayoutRequestRef = useRef(0);
+  const selectedNeighborhood = useMemo(() => {
+    if (!selectedNodeId || !graph.hasNode(selectedNodeId)) return null;
+    return new Set<string>([selectedNodeId, ...graph.neighbors(selectedNodeId)]);
+  }, [graph, selectedNodeId]);
 
   useEffect(() => {
     try {
       sigma.setSettings({
-        nodeReducer: (node, data) => ({
-          ...data,
-          color: node === connectionSourceId ? "#b9e8d7" : node === selectedNodeId ? "#f4d99f" : data.color,
-          size: node === selectedNodeId || node === connectionSourceId ? data.size + 2.8 : data.size,
-          zIndex: node === selectedNodeId || node === connectionSourceId ? 4 : data.zIndex,
-        }),
-        edgeReducer: (edge, data) => ({ ...data, color: edge === selectedEdgeId ? "#c89137" : data.color, size: edge === selectedEdgeId ? 2.5 : data.size }),
+        nodeReducer: (node, data) => {
+          const isSelected = node === selectedNodeId;
+          const isConnectionSource = node === connectionSourceId;
+          const dimmed = selectedNeighborhood !== null && !selectedNeighborhood.has(node) && !isConnectionSource;
+          return {
+            ...data,
+            selected: isSelected,
+            dimmed,
+            label: dimmed ? "" : data.label,
+            color: isConnectionSource ? "#0f5fd7" : dimmed ? "#e5eaf2" : data.color,
+            size: isSelected || isConnectionSource ? data.size + 3.5 : dimmed ? Math.max(10, data.size * 0.85) : data.size,
+            textColor: dimmed ? "#94a3b8" : "#ffffff",
+            zIndex: isSelected || isConnectionSource ? 4 : dimmed ? 0 : data.zIndex,
+          };
+        },
+        edgeReducer: (edge, data) => {
+          const [source, target] = graph.extremities(edge);
+          const isSelectedEdge = edge === selectedEdgeId;
+          const isRelated = selectedNodeId !== null && (source === selectedNodeId || target === selectedNodeId);
+          const dimmed = selectedNeighborhood !== null && !isRelated && !isSelectedEdge;
+          return {
+            ...data,
+            color: isSelectedEdge ? "#1677ff" : dimmed ? "#e5eaf2" : selectedNodeId !== null && isRelated ? "#1677ff" : data.color,
+            size: isSelectedEdge ? 1.8 : dimmed ? 0.6 : selectedNodeId !== null && isRelated ? 1.2 : data.size,
+            label: selectedNodeId !== null ? (isRelated ? data.relationshipType : "") : data.label,
+          };
+        },
       });
     } catch {
       // setSettings 内部会触发全量 refresh；当 SigmaContainer 在同一 commit 内替换实例时，
       // 这里的 sigma 是已被 kill 的旧实例，refresh 会对空 program 抛错。
       // 捕获后由下一 commit 的 effect 用新实例重新应用设置。
     }
-  }, [connectionSourceId, selectedEdgeId, selectedNodeId, sigma]);
+  }, [connectionSourceId, graph, selectedEdgeId, selectedNeighborhood, selectedNodeId, sigma]);
 
   useEffect(() => {
     registerEvents({
@@ -363,7 +417,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
     noverlapRef.current?.kill();
     if (layoutTimerRef.current) clearTimeout(layoutTimerRef.current);
     const supervisor = new FA2LayoutSupervisor(graph, {
-      settings: { barnesHutOptimize: graph.order > 500, adjustSizes: false, linLogMode: false, gravity: 1, scalingRatio: 12, slowDown: 8 },
+      settings: { barnesHutOptimize: graph.order > 500, adjustSizes: true, linLogMode: false, gravity: graph.order <= 80 ? 0.35 : graph.order > 150 ? 0.6 : 1, scalingRatio: graph.order <= 80 ? 30 : graph.order > 150 ? 18 : 12, slowDown: 8 },
     });
     layoutRef.current = supervisor;
     supervisor.start();
@@ -385,10 +439,10 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         onLayoutEnd(positions);
       };
       const noverlap = new NoverlapLayoutSupervisor(graph, {
-        inputReducer: (_id, attributes) => ({ x: attributes.x, y: attributes.y, size: 0.25 }),
+        inputReducer: (_id, attributes) => ({ x: attributes.x, y: attributes.y, size: Math.max(8, attributes.size ?? 18) }),
         outputReducer: (_id, attributes) => ({ x: attributes.x, y: attributes.y }),
         onConverged: finish,
-        settings: { gridSize: graph.order > 1000 ? 30 : 20, margin: 0.08, expansion: 1.04, ratio: 1, speed: 2 },
+        settings: { gridSize: graph.order > 1000 ? 30 : 20, margin: 0.3, expansion: 1.15, ratio: 1, speed: 3 },
       });
       noverlapRef.current = noverlap;
       noverlap.start();
@@ -410,10 +464,10 @@ export function SigmaGraph(props: Props) {
         hideLabelsOnMove: false,
         hideEdgesOnMove: false,
         renderLabels: true,
-        renderEdgeLabels: props.nodes.length < 180,
-        labelRenderedSizeThreshold: props.nodes.length > 150 ? 1 : 8,
-        labelDensity: props.nodes.length > 500 ? 0.5 : props.nodes.length > 150 ? 1 : 0.8,
-        labelGridCellSize: props.nodes.length > 500 ? 180 : props.nodes.length > 150 ? 160 : 100,
+        renderEdgeLabels: false,
+        labelRenderedSizeThreshold: props.nodes.length > 500 ? 6 : 0,
+        labelDensity: props.nodes.length > 500 ? 0.5 : props.nodes.length > 200 ? 0.75 : 1,
+        labelGridCellSize: props.nodes.length > 500 ? 180 : props.nodes.length > 200 ? 150 : 110,
         labelFont: "ui-sans-serif, system-ui, sans-serif",
         labelWeight: "600",
         labelSize: 10,
@@ -432,7 +486,7 @@ export function SigmaGraph(props: Props) {
       }}
     >
       <SigmaScene {...props} graph={graph} />
-      <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} />
+      <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} selectedNodeId={props.selectedNodeId} />
     </SigmaContainer>
   );
 }

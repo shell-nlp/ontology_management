@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { CircleDot, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
+import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
 import { PropertyEditor } from "@/components/property-editor";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
@@ -42,7 +42,20 @@ function graphLabel(node: GraphNode, displayProps?: Map<string, string>) {
   return String(preferred ?? node.labels[0] ?? "节点");
 }
 
-const graphPalette = ["#2563eb", "#1d4ed8", "#0f70db", "#0f7cbf", "#3b82f6", "#1e40af"];
+function compactGraphLabel(value: string) {
+  const text = value.trim();
+  if (text.length <= 12) return text;
+  if (/^[A-Za-z0-9_.\-/]+$/.test(text)) {
+    const parts = text.split(/[._\-/]/).filter(Boolean);
+    const tail3 = parts.slice(-3).join("_");
+    if (tail3.length <= 12) return tail3;
+    const tail2 = parts.slice(-2).join("_");
+    return tail2.length <= 12 ? tail2 : `…${tail2.slice(-11)}`;
+  }
+  return text;
+}
+
+const graphPalette = ["#1677ff", "#0f8f8f", "#6d4aff", "#0b84d8", "#0f766e", "#7c3aed", "#2563eb", "#0369a1"];
 
 function graphColor(label: string) {
   let hash = 0;
@@ -54,6 +67,186 @@ function propertyValue(value: unknown) {
   if (value === null) return "null";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+const REPRESENTATIVE_NODE_LIMIT = 30;
+const REPRESENTATIVE_MIN_PER_LABEL = 2;
+
+type RepresentativeGraph = {
+  graph: GraphData;
+  hiddenBoundaryRelationships: number;
+  hiddenNodes: number;
+  hiddenRelationships: number;
+};
+
+function buildRepresentativeSubgraph(graph: GraphData): RepresentativeGraph {
+  if (graph.nodes.length <= REPRESENTATIVE_NODE_LIMIT) {
+    return { graph, hiddenBoundaryRelationships: 0, hiddenNodes: 0, hiddenRelationships: 0 };
+  }
+
+  const degree = new Map<string, number>();
+  graph.nodes.forEach((node) => degree.set(node.id, 0));
+  graph.relationships.forEach((relationship) => {
+    degree.set(relationship.source, (degree.get(relationship.source) ?? 0) + 1);
+    degree.set(relationship.target, (degree.get(relationship.target) ?? 0) + 1);
+  });
+  const byDegree = [...graph.nodes].sort((left, right) => (degree.get(right.id) ?? 0) - (degree.get(left.id) ?? 0) || left.id.localeCompare(right.id));
+  const byLabel = new Map<string, GraphNode[]>();
+  byDegree.forEach((node) => {
+    const label = node.labels[0] ?? "未标注";
+    const list = byLabel.get(label) ?? [];
+    list.push(node);
+    byLabel.set(label, list);
+  });
+
+  const selected = new Set<string>();
+  for (const nodes of byLabel.values()) {
+    for (const node of nodes.slice(0, REPRESENTATIVE_MIN_PER_LABEL)) {
+      selected.add(node.id);
+      if (selected.size >= REPRESENTATIVE_NODE_LIMIT) break;
+    }
+    if (selected.size >= REPRESENTATIVE_NODE_LIMIT) break;
+  }
+  for (const node of byDegree) {
+    if (selected.size >= REPRESENTATIVE_NODE_LIMIT) break;
+    selected.add(node.id);
+  }
+
+  const nodes = graph.nodes.filter((node) => selected.has(node.id));
+  const relationships = graph.relationships.filter((relationship) => selected.has(relationship.source) && selected.has(relationship.target));
+  const hiddenBoundaryRelationships = graph.relationships.filter((relationship) => selected.has(relationship.source) !== selected.has(relationship.target)).length;
+  return {
+    graph: { nodes, relationships },
+    hiddenBoundaryRelationships,
+    hiddenNodes: graph.nodes.length - nodes.length,
+    hiddenRelationships: graph.relationships.length - relationships.length,
+  };
+}
+
+function storedLayoutIsUsable(nodes: GraphNode[]) {
+  const points = nodes.map((node) => storedPosition(node)).filter((point): point is { x: number; y: number } => point !== null);
+  if (!nodes.length || points.length / nodes.length < 0.8) return false;
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const width = Math.max(...xs) - Math.min(...xs);
+  const height = Math.max(...ys) - Math.min(...ys);
+  const minWidth = Math.max(120, Math.sqrt(nodes.length) * 40);
+  const minHeight = Math.max(100, Math.sqrt(nodes.length) * 30);
+  return width >= minWidth && height >= minHeight;
+}
+
+function computeStableNodePositions(nodes: SigmaNode[], edges: SigmaEdge[], seed = 0) {
+  const positions = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return positions;
+  if (nodes.length === 1) {
+    positions.set(nodes[0].id, { x: 0, y: 0 });
+    return positions;
+  }
+
+  const degree = new Map(nodes.map((node) => [node.id, 0]));
+  edges.forEach((edge) => {
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+  });
+  const ordered = [...nodes].sort((left, right) => (degree.get(right.id) ?? 0) - (degree.get(left.id) ?? 0) || left.id.localeCompare(right.id));
+  const initialRadius = Math.max(70, Math.min(280, 36 + nodes.length * 7));
+  const rotation = (seed % 12) * (Math.PI / 6);
+  ordered.forEach((node, index) => {
+    if (index === 0) {
+      positions.set(node.id, { x: 0, y: 0 });
+      return;
+    }
+    const angle = rotation + index * Math.PI * (3 - Math.sqrt(5));
+    const radius = initialRadius * Math.sqrt(index / (nodes.length - 1));
+    positions.set(node.id, { x: Math.cos(angle) * radius * 1.3, y: Math.sin(angle) * radius });
+  });
+
+  const clampX = 340;
+  const clampY = 245;
+  const minDistance = 86;
+  const idealEdgeLength = Math.max(120, Math.min(220, 90 + nodes.length * 3));
+  const velocity = new Map(nodes.map((node) => [node.id, { x: 0, y: 0 }]));
+  const clampPoint = (point: { x: number; y: number }) => {
+    point.x = Math.max(-clampX, Math.min(clampX, point.x));
+    point.y = Math.max(-clampY, Math.min(clampY, point.y));
+  };
+
+  for (let iteration = 0; iteration < 160; iteration += 1) {
+    for (let left = 0; left < ordered.length; left += 1) {
+      const a = positions.get(ordered[left].id)!;
+      const velocityA = velocity.get(ordered[left].id)!;
+      for (let right = left + 1; right < ordered.length; right += 1) {
+        const b = positions.get(ordered[right].id)!;
+        const velocityB = velocity.get(ordered[right].id)!;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy) || 0.001;
+        if (distance < minDistance * 2.1) {
+          const push = (minDistance * 2.1 - distance) * 0.016;
+          dx /= distance;
+          dy /= distance;
+          velocityA.x -= dx * push;
+          velocityA.y -= dy * push;
+          velocityB.x += dx * push;
+          velocityB.y += dy * push;
+        }
+      }
+    }
+    edges.forEach((edge) => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+      if (!source || !target) return;
+      let dx = target.x - source.x;
+      let dy = target.y - source.y;
+      const distance = Math.hypot(dx, dy) || 0.001;
+      const force = (distance - idealEdgeLength) * 0.008;
+      dx /= distance;
+      dy /= distance;
+      const sourceVelocity = velocity.get(edge.source)!;
+      const targetVelocity = velocity.get(edge.target)!;
+      sourceVelocity.x += dx * force;
+      sourceVelocity.y += dy * force;
+      targetVelocity.x -= dx * force;
+      targetVelocity.y -= dy * force;
+    });
+    ordered.forEach((node) => {
+      const point = positions.get(node.id)!;
+      const nodeVelocity = velocity.get(node.id)!;
+      nodeVelocity.x -= point.x * 0.0035;
+      nodeVelocity.y -= point.y * 0.0035;
+      point.x += nodeVelocity.x;
+      point.y += nodeVelocity.y;
+      nodeVelocity.x *= 0.82;
+      nodeVelocity.y *= 0.82;
+      clampPoint(point);
+    });
+  }
+
+  for (let iteration = 0; iteration < 80; iteration += 1) {
+    let moved = false;
+    for (let left = 0; left < ordered.length; left += 1) {
+      const a = positions.get(ordered[left].id)!;
+      for (let right = left + 1; right < ordered.length; right += 1) {
+        const b = positions.get(ordered[right].id)!;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy) || 0.001;
+        if (distance >= minDistance) continue;
+        const push = (minDistance - distance) / 2;
+        dx /= distance;
+        dy /= distance;
+        a.x -= dx * push;
+        a.y -= dy * push;
+        b.x += dx * push;
+        b.y += dy * push;
+        clampPoint(a);
+        clampPoint(b);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return positions;
 }
 
 function OntologyPropertyList({ properties }: { properties: OntologyPropertyDefinition[] }) {
@@ -139,17 +332,36 @@ export function GraphCanvas({
   const [busy, setBusy] = useState(false);
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null);
   const [layoutRequest, setLayoutRequest] = useState(0);
+  const [layoutSeed, setLayoutSeed] = useState(0);
+  const persistLayoutRef = useRef(false);
+  const [showAllForGraph, setShowAllForGraph] = useState<GraphData | null>(null);
+  const showAllGraph = showAllForGraph === graph;
+  const representative = useMemo(
+    () => showAllGraph ? { graph, hiddenBoundaryRelationships: 0, hiddenNodes: 0, hiddenRelationships: 0 } : buildRepresentativeSubgraph(graph),
+    [graph, showAllGraph],
+  );
+  const displayGraph = representative.graph;
+
+  // Run a display-only layout on first load when the graph has no saved positions.
+  // Manual "自动整理" still persists the resulting positions through onLayoutEnd.
+  useEffect(() => {
+    if (graph.nodes.length < 2) return;
+    if (graph.nodes.length <= 60) return;
+    if (graph.nodes.every((node) => storedPosition(node))) return;
+    const timer = window.setTimeout(() => setLayoutRequest((request) => request + 1), 0);
+    return () => window.clearTimeout(timer);
+  }, [graph]);
 
   const nodeTypes = useMemo(() => {
     const types = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
-    for (const node of graph.nodes) for (const label of node.labels) if (!types.has(label)) types.set(label, 0);
+    for (const node of displayGraph.nodes) for (const label of node.labels) if (!types.has(label)) types.set(label, 0);
     return [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
-  }, [graph.nodes, runtimeTypes?.labels]);
+  }, [displayGraph.nodes, runtimeTypes?.labels]);
   const relationshipTypes = useMemo(() => {
     const types = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
-    for (const relationship of graph.relationships) if (!types.has(relationship.type)) types.set(relationship.type, 0);
+    for (const relationship of displayGraph.relationships) if (!types.has(relationship.type)) types.set(relationship.type, 0);
     return [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
-  }, [graph.relationships, runtimeTypes?.relationshipTypes]);
+  }, [displayGraph.relationships, runtimeTypes?.relationshipTypes]);
   const totalNodeCount = runtimeTypes ? runtimeTypes.labels.reduce((total, item) => total + item.count, 0) : graph.nodes.length;
   const totalRelationshipCount = runtimeTypes ? runtimeTypes.relationshipTypes.reduce((total, item) => total + item.count, 0) : graph.relationships.length;
   const displayProps = useMemo(() => {
@@ -159,19 +371,19 @@ export function GraphCanvas({
     }
     return map;
   }, [definition]);
-  const visibleNodeIds = useMemo(() => new Set(graph.nodes.filter((node) => {
+  const visibleNodeIds = useMemo(() => new Set(displayGraph.nodes.filter((node) => {
     const haystack = `${graphLabel(node, displayProps)} ${node.labels.join(" ")} ${Object.values(node.properties).map(propertyValue).join(" ")}`.toLocaleLowerCase();
     const labelMatches = !activeLabels.length || node.labels.some((label) => activeLabels.includes(label));
     return labelMatches && haystack.includes(search.trim().toLocaleLowerCase());
-  }).map((node) => node.id)), [activeLabels, displayProps, graph.nodes, search]);
-  const visibleRelationships = useMemo(() => graph.relationships.filter((relationship) => {
+  }).map((node) => node.id)), [activeLabels, displayProps, displayGraph.nodes, search]);
+  const visibleRelationships = useMemo(() => displayGraph.relationships.filter((relationship) => {
     return visibleNodeIds.has(relationship.source)
       && visibleNodeIds.has(relationship.target)
       && (!activeRelationshipTypes.length || activeRelationshipTypes.includes(relationship.type));
-  }), [activeRelationshipTypes, graph.relationships, visibleNodeIds]);
+  }), [activeRelationshipTypes, displayGraph.relationships, visibleNodeIds]);
 
-  const selectedNode = editTarget?.kind === "node" ? graph.nodes.find((node) => node.id === editTarget.id) ?? null : null;
-  const selectedEdge = editTarget?.kind === "edge" ? graph.relationships.find((relationship) => relationship.id === editTarget.id) ?? null : null;
+  const selectedNode = editTarget?.kind === "node" ? displayGraph.nodes.find((node) => node.id === editTarget.id) ?? null : null;
+  const selectedEdge = editTarget?.kind === "edge" ? displayGraph.relationships.find((relationship) => relationship.id === editTarget.id) ?? null : null;
 
   const nodeDefinitions = selectedNode ? (definition?.entityTypes.find((item) => selectedNode.labels.includes(item.name))?.properties ?? null) : null;
   const edgeDefinitions = selectedEdge ? (definition?.relationshipTypes.find((item) => item.name === selectedEdge.type)?.properties ?? null) : null;
@@ -179,22 +391,32 @@ export function GraphCanvas({
   const ontologyRelationship = viewMode === "ontology" && selectedEdge ? definition?.relationshipTypes.find((item) => item.id === selectedEdge.id || item.name === selectedEdge.type) ?? null : null;
   const ontologySource = ontologyRelationship ? definition?.entityTypes.find((item) => item.id === ontologyRelationship.sourceEntityTypeId) ?? null : null;
   const ontologyTarget = ontologyRelationship ? definition?.entityTypes.find((item) => item.id === ontologyRelationship.targetEntityTypeId) ?? null : null;
-  const graphSource = selectedEdge ? graph.nodes.find((item) => item.id === selectedEdge.source) ?? null : null;
-  const graphTarget = selectedEdge ? graph.nodes.find((item) => item.id === selectedEdge.target) ?? null : null;
+  const graphSource = selectedEdge ? displayGraph.nodes.find((item) => item.id === selectedEdge.source) ?? null : null;
+  const graphTarget = selectedEdge ? displayGraph.nodes.find((item) => item.id === selectedEdge.target) ?? null : null;
 
   const graphData = useMemo(() => {
-    const hubId = hubNodeId(graph.nodes, graph.relationships);
-    const positionedNodeCount = graph.nodes.filter((node) => storedPosition(node)).length;
+    const hubId = hubNodeId(displayGraph.nodes, displayGraph.relationships);
+    const positionedNodeCount = displayGraph.nodes.filter((node) => storedPosition(node)).length;
     // A partially persisted legacy layout mixes unrelated coordinate systems and creates sparse, uneven graphs.
-    const useStoredPositions = positionedNodeCount / graph.nodes.length >= 0.8;
-    const nodes: SigmaNode[] = graph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
+    const useStoredPositions = displayGraph.nodes.length > 0 && positionedNodeCount / displayGraph.nodes.length >= 0.8 && storedLayoutIsUsable(displayGraph.nodes);
+    const nodes: SigmaNode[] = displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
-      return { id: node.id, label: graphLabel(node, displayProps), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
+      return { id: node.id, label: compactGraphLabel(graphLabel(node, displayProps)), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
     });
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges: SigmaEdge[] = visibleRelationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target)).map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.source, target: relationship.target }));
+    if (!useStoredPositions && nodes.length <= 60) {
+      const stablePositions = computeStableNodePositions(nodes, edges, layoutSeed);
+      nodes.forEach((node) => {
+        const position = stablePositions.get(node.id);
+        if (position) {
+          node.x = position.x;
+          node.y = position.y;
+        }
+      });
+    }
     return { nodes, edges };
-  }, [displayProps, graph.nodes, graph.relationships, viewMode, visibleNodeIds, visibleRelationships]);
+  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -216,7 +438,7 @@ export function GraphCanvas({
   };
 
   const openEdit = (kind: "node" | "edge", id: string) => {
-    const element = kind === "node" ? graph.nodes.find((node) => node.id === id) : graph.relationships.find((relationship) => relationship.id === id);
+    const element = kind === "node" ? displayGraph.nodes.find((node) => node.id === id) : displayGraph.relationships.find((relationship) => relationship.id === id);
     if (!element) return;
     setDraftProps(Object.fromEntries(Object.entries(element.properties).filter(([key]) => key !== "fx" && key !== "fy")));
     setEditTarget({ kind, id });
@@ -278,7 +500,26 @@ export function GraphCanvas({
 
   const organize = () => {
     if (!graph.nodes.length) return;
+    if (graphData.nodes.length <= 60) {
+      if (admin && targetId && versionId) {
+        savePositions(Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1)));
+      }
+      setLayoutSeed((seed) => seed + 1);
+      return;
+    }
+    persistLayoutRef.current = true;
     setLayoutRequest((request) => request + 1);
+  };
+
+  const showAll = () => {
+    setShowAllForGraph(graph);
+    setLayoutSeed((seed) => seed + 1);
+    if (graph.nodes.length > 60) setLayoutRequest((request) => request + 1);
+  };
+
+  const showRepresentative = () => {
+    setShowAllForGraph(null);
+    setLayoutSeed((seed) => seed + 1);
   };
 
   if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>画布上没有可绘制的节点</b><span>运行返回节点、关系或路径的 Cypher 后即可切换图谱视图；在“图谱”页可管理现有图数据。</span></div>;
@@ -292,16 +533,23 @@ export function GraphCanvas({
         selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
         connectionSourceId={connectionSourceId}
         draggable={admin}
-        layoutRequest={layoutRequest}
+        layoutRequest={graphData.nodes.length <= 60 ? 0 : layoutRequest}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
         onStageClick={() => { setEditTarget(null); setEditing(false); setConnectionSourceId(null); }}
         onDragEnd={(nodeId, point) => savePositions({ [nodeId]: point })}
-        onLayoutEnd={(positions) => { savePositions(positions); notify?.("已按关系重新整理布局。"); }}
+        onLayoutEnd={(positions) => {
+          if (!persistLayoutRef.current) return;
+          persistLayoutRef.current = false;
+          savePositions(positions);
+          notify?.("已按关系重新整理布局。");
+        }}
       />
       <div className="graph-explorer-toolbar">
         <label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label>
-        <span>{visibleNodeIds.size}/{graph.nodes.length} 个节点 · {visibleRelationships.length}/{graph.relationships.length} 条关系</span>
+        <span>{visibleNodeIds.size}/{totalNodeCount} 个节点 · {visibleRelationships.length}/{totalRelationshipCount} 条关系{representative.hiddenNodes > 0 ? ` · 已隐藏 ${representative.hiddenNodes} 节点 / ${representative.hiddenRelationships} 关系（边界 ${representative.hiddenBoundaryRelationships}）` : ""}</span>
+        {representative.hiddenNodes > 0 && <button className="graph-tool-action" onClick={showAll} title="显示全部节点与关系"><Eye size={14} />显示全部</button>}
+        {showAllGraph && graph.nodes.length > REPRESENTATIVE_NODE_LIMIT && <button className="graph-tool-action" onClick={showRepresentative} title="恢复有代表性的精简视图"><EyeOff size={14} />恢复精简</button>}
         {graph.nodes.length > 1 && <button className="graph-tool-action" onClick={() => void organize()} title="以关联最多的节点为中心重新排列，其余节点分层环绕"><Wand2 size={14} />自动整理</button>}
         {admin && <button className="graph-tool-action" onClick={() => setCreateOpen(true)}><Plus size={14} />新增节点</button>}
       </div>
