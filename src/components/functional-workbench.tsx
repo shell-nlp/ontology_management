@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Activity, AlertCircle, BookOpen, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { PropertyEditor } from "@/components/property-editor";
@@ -114,6 +114,117 @@ function useDisplaySettings() {
   }, []);
   const reset = useCallback(() => { try { window.localStorage.removeItem(DISPLAY_SETTINGS_KEY); } catch { /* ignore */ } setSettings(DEFAULT_DISPLAY_SETTINGS); }, []);
   return { settings, update, reset };
+}
+
+const MANAGER_SPLIT_MIN_LEFT = 380;
+const MANAGER_SPLIT_MIN_DETAIL = 380;
+const MANAGER_SPLIT_HANDLE_WIDTH = 12;
+const MANAGER_SPLIT_MAX_LEFT = 900;
+const MANAGER_SPLIT_DEFAULT_LEFT = 520;
+
+function readManagerSplitWidth(storageKey: string, fallback: number) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = Number(window.localStorage.getItem(storageKey));
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function ResizableManagerGrid({ children, defaultWidth = MANAGER_SPLIT_DEFAULT_LEFT, storageKey }: { children: ReactNode; defaultWidth?: number; storageKey: string }) {
+  const containerRef = useRef<HTMLElement | null>(null);
+  const [width, setWidth] = useState(() => readManagerSplitWidth(storageKey, defaultWidth));
+  const widthRef = useRef(width);
+
+  const clampWidth = useCallback((value: number) => {
+    const containerWidth = containerRef.current?.clientWidth ?? 0;
+    const maxByContainer = containerWidth > 0
+      ? containerWidth - MANAGER_SPLIT_MIN_DETAIL - MANAGER_SPLIT_HANDLE_WIDTH
+      : MANAGER_SPLIT_MAX_LEFT;
+    const max = Math.max(MANAGER_SPLIT_MIN_LEFT, Math.min(MANAGER_SPLIT_MAX_LEFT, maxByContainer));
+    return Math.round(Math.min(Math.max(value, MANAGER_SPLIT_MIN_LEFT), max));
+  }, []);
+
+  const applyWidth = useCallback((next: number) => {
+    const clamped = clampWidth(next);
+    widthRef.current = clamped;
+    setWidth(clamped);
+  }, [clampWidth]);
+
+  const persistWidth = useCallback(() => {
+    try { window.localStorage.setItem(storageKey, String(widthRef.current)); } catch { /* ignore unavailable storage */ }
+  }, [storageKey]);
+
+  useEffect(() => {
+    applyWidth(widthRef.current);
+    const onWindowResize = () => applyWidth(widthRef.current);
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, [applyWidth]);
+
+  const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = widthRef.current;
+    const onMove = (moveEvent: PointerEvent) => {
+      applyWidth(startWidth + moveEvent.clientX - startX);
+    };
+    const onEnd = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onEnd);
+      document.body.classList.remove("resizing-manager-split");
+      persistWidth();
+    };
+    document.body.classList.add("resizing-manager-split");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onEnd);
+  }, [applyWidth, persistWidth]);
+
+  const resetWidth = useCallback(() => {
+    applyWidth(defaultWidth);
+    persistWidth();
+  }, [applyWidth, defaultWidth, persistWidth]);
+
+  const nudgeWidth = useCallback((delta: number) => {
+    applyWidth(widthRef.current + delta);
+    persistWidth();
+  }, [applyWidth, persistWidth]);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      nudgeWidth(event.key === "ArrowLeft" ? -24 : 24);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      resetWidth();
+    }
+  }, [nudgeWidth, resetWidth]);
+
+  const items = Children.toArray(children);
+  return <section className="manager-grid instance-manager-grid" ref={containerRef} style={{ "--manager-split-left": `${width}px` } as CSSProperties}>
+    {items[0]}
+    <div
+      aria-label="拖动调整列表宽度"
+      aria-orientation="vertical"
+      aria-valuemax={MANAGER_SPLIT_MAX_LEFT}
+      aria-valuemin={MANAGER_SPLIT_MIN_LEFT}
+      aria-valuenow={Math.round(width)}
+      className="manager-split-handle"
+      onDoubleClick={resetWidth}
+      onKeyDown={handleKeyDown}
+      onPointerDown={beginResize}
+      role="separator"
+      tabIndex={0}
+      title="拖动调整列表宽度，双击恢复默认"
+    >
+      <span aria-hidden="true" />
+    </div>
+    {items.slice(1)}
+  </section>;
 }
 
 function capResult(result: QueryResult, recordLimit: number): QueryResult {
@@ -699,7 +810,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
     try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); setRows((rows) => rows.filter((row) => row.id !== selected.id)); await onSnapshotChange(); notify("实体及其关联关系已从草稿快照删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  return <section className="manager-grid instance-manager-grid">
+  return <ResizableManagerGrid storageKey="ontology.manager-split.entities">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">实体</span>
       <h2>{rows.length} 条</h2>
@@ -716,7 +827,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       {selected ? <><span className="eyebrow">选中实体</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条实体</b><span>点击左侧列表中的实体查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <EntityCreateDialog published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择目标。"); const current = await ensureDraft(); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: label, properties }) }); notify("实体已加入草稿快照。"); setCreateOpen(false); await load(label, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
-  </section>;
+  </ResizableManagerGrid>;
 }
 
 function RelationshipManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, fail, relationshipLimit }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void; relationshipLimit: number }) {
@@ -790,7 +901,7 @@ function RelationshipManager({ target, user, version, draft, runtimeTypes, ensur
     try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/relationships/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); resetEndpoints(); setRows((rows) => rows.filter((row) => row.id !== selected.id)); await onSnapshotChange(); notify("关系已从草稿快照删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  return <section className="manager-grid instance-manager-grid">
+  return <ResizableManagerGrid storageKey="ontology.manager-split.relationships">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">关系</span>
       <h2>{rows.length} 条</h2>
@@ -806,7 +917,7 @@ function RelationshipManager({ target, user, version, draft, runtimeTypes, ensur
       {selected ? <><span className="eyebrow">选中关系</span><h2>{selected.type}</h2><div className="detail-meta"><span>{selectedEnds?.source || selected.sourceId} <span className="arrow">→</span> {selectedEnds?.target || selected.targetId}</span><code>{selected.id}</code></div><div className="endpoint-cards"><EndpointCard side="头实体" elementId={selected.sourceId} displayName={selectedEnds?.source || selected.sourceId} labels={selected.sourceLabels} detail={endpointDetails[selected.sourceId]} loading={Boolean(endpointLoading[selected.sourceId])} open={openEnd === "source"} onToggle={() => toggleEnd("source", selected.sourceId)} /><EndpointCard side="尾实体" elementId={selected.targetId} displayName={selectedEnds?.target || selected.targetId} labels={selected.targetLabels} detail={endpointDetails[selected.targetId]} loading={Boolean(endpointLoading[selected.targetId])} open={openEnd === "target"} onToggle={() => toggleEnd("target", selected.targetId)} /></div>{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><Link2 size={20} /><b>选择一条关系</b><span>点击左侧列表中的关系查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <RelationshipCreateDialog targetId={target?.id ?? ""} versionId={version?.id ?? ""} published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (type, sourceId, targetId, properties) => { try { if (!target) throw new Error("请先选择目标。"); const current = await ensureDraft(); await api("/api/instances/relationships", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, relationshipType: type, sourceId, targetIdValue: targetId, properties }) }); notify("关系已加入草稿快照。"); setCreateOpen(false); await load(type, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
-  </section>;
+  </ResizableManagerGrid>;
 }
 
 type EntitySearchResult = { id: string; labels: string[]; properties: Record<string, unknown>; matched: string[]; rank: number };
