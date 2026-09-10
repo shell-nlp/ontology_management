@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  面向 Neo4j 的本体与图数据管理平台<br/>
-  多目标 Neo4j · 版本化本体快照 · 草稿安全编辑 · 发布事务重建
+  面向 Neo4j 与 Apache Jena 的本体与图数据管理平台<br/>
+  可插拔图数据库抽象 · 版本化本体快照 · 草稿安全编辑 · 发布重建图数据
 </p>
 
 <p align="center">
@@ -31,12 +31,14 @@
 
 ---
 
-使用 Next.js 与 `neo4j-driver` 管理多个 Neo4j 目标；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密目标凭据、版本索引与审计记录。
+使用 Next.js 管理多个图数据库目标（当前支持 Neo4j 与 Apache Jena）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密目标凭据、版本索引与审计记录。
+
+图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知 Cypher / SPARQL 差异。接入新的图后端只需新增一个适配器。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
 ```text
-草稿编辑 → 校验 → 发布 / 激活 → 事务内重建 Neo4j 图
+草稿编辑 → 校验 → 发布 / 激活 → 重建目标图数据
    │                                    │
    └──── 只写本地快照文件 ──────────────┘  成功后才更新版本状态
 ```
@@ -59,9 +61,10 @@
 | 📐 | **本体草稿** | 实体类型、关系类型、端点契约与属性规则；校验后发布 |
 | 🔗 | **实体与关系** | 实体绑定单一已发布类型（Label）；关系端点须符合契约 |
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON |
-| 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 看 `db.schema.visualization` |
-| ⌨️ | **Cypher 工作台** | 默认只读；管理员写入需显式模式 + 单次确认 |
-| 🗄 | **目标管理** | Neo4j 密码 AES-256-GCM 加密入库；主密钥仅在服务端 |
+| 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由各后端推导（Neo4j / RDF） |
+| ⌨️ | **查询工作台** | 按目标后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
+| 🗄 | **目标管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
+| 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，Neo4j 与 Apache Jena 已实现 |
 | 📦 | **统一版本** | 类型 + 实体 + 关系完整快照；草稿写文件，发布才写图 |
 
 ## 技术栈
@@ -69,7 +72,7 @@
 | 层级 | 选型 |
 | --- | --- |
 | 前端 / API | Next.js（App Router）、React 19 |
-| 图数据库 | Neo4j · `neo4j-driver` |
+| 图数据库 | Neo4j · `neo4j-driver`；Apache Jena / Fuseki · SPARQL 1.1 |
 | 平台元数据 | PostgreSQL · Schema `ontology_platform` |
 | 图可视化 | Sigma / Graphology、React Flow |
 | 校验 | Zod |
@@ -187,7 +190,7 @@ PostgreSQL `ontology_platform.ontology_versions` 保存索引、状态、路径�
 </details>
 
 <details>
-<summary><b>Neo4j 目标</b></summary>
+<summary><b>连接目标（Neo4j / Apache Jena）</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -227,18 +230,49 @@ PostgreSQL `ontology_platform.ontology_versions` 保存索引、状态、路径�
 | `GET` | `/api/instances/types` | 运行时类型 |
 | `GET` | `/api/instances/meta` | 元信息 |
 | `GET` | `/api/instances/search` | 搜索 |
+| `GET` | `/api/instances/neighbors` | 一度邻居扩展（后端无关） |
 | `POST` | `/api/instances/positions` | 画布位置 |
 
 </details>
 
 <details>
-<summary><b>Cypher</b></summary>
+<summary><b>查询工作台</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/cypher` | 受权限与确认策略保护的 Cypher 执行 |
+| `POST` | `/api/query` | 按目标后端执行只读 Cypher / SPARQL，写入一律 409 |
 
 </details>
+
+## 图数据库抽象
+
+`src/lib/graph` 是唯一的图数据库访问入口：
+
+| 文件 | 职责 |
+| --- | --- |
+| `types.ts` | `GraphTarget`、`GraphData`、`RuntimeTypeSet`、`GraphStore` 契约与连接元数据 |
+| `neo4j.ts` | Neo4j 适配器：Cypher、约束/索引、`db.schema.visualization` |
+| `jena.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
+| `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
+
+### 目标配置字段
+
+| 字段 | Neo4j | Apache Jena |
+| --- | --- | --- |
+| `uri` | `neo4j://host:7687` | Fuseki 服务地址，如 `http://host:3030`（也接受 `/ds/query`、`/ds/sparql`） |
+| `database_name` | 数据库名 | 数据集名 |
+| `username` / `password` | 必填 | 可选（写入通常需要管理员凭据） |
+| `options.namedGraph` | — | 可选，写入/读取指定命名图，默认图可留空 |
+
+RDF 与属性图的映射：`?s rdf:type ?t` → 节点标签，字面量三元组 → 节点属性，资源三元组 → 关系；关系自身属性用 `urn:bkn:Relationship` 具体化表达，同时保留一条直接三元组，外部 SPARQL 工具照常可查。
+
+### 新增图后端
+
+1. 在 `GraphTargetKind` 登记类型，并在 `GRAPH_TARGET_KINDS` 补齐连接表单元数据；
+2. 新增实现 `GraphStore` 的适配器；
+3. 在 `getGraphStore` 中注册。
+
+API 路由、版本发布流程与界面组件无需改动。
 
 ## 目录结构
 
@@ -247,7 +281,7 @@ ontology_management/
 ├── src/
 │   ├── app/              # 页面与 API 路由
 │   ├── components/       # 工作台、图画布、属性编辑器
-│   └── lib/              # 认证、Neo4j、本体、版本快照、目标
+│   └── lib/              # 认证、图数据库抽象（graph/）、本体、版本快照、目标
 ├── docs/
 │   └── adr/              # 架构决策记录
 ├── e2e/                  # Playwright 端到端

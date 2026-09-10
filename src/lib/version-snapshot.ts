@@ -4,11 +4,10 @@ import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { z } from "zod";
-import { executeCypher, type GraphData } from "@/lib/neo4j";
+import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
-import type { Neo4jTarget } from "@/lib/platform-db";
-import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/instances";
+import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
 
 const INTERNAL_ID = "__ontology_id";
 const INTERNAL_VERSION_ID = "__ontology_version_id";
@@ -366,37 +365,43 @@ async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot
   };
 }
 
-export async function exportTargetSnapshot(target: Neo4jTarget, definition: OntologyDefinition): Promise<VersionSnapshot> {
-  const [nodeResult, relationshipResult] = await Promise.all([
-    executeCypher(target, `MATCH (n) RETURN elementId(n) AS elementId, labels(n) AS labels, properties(n) AS properties`),
-    executeCypher(target, `MATCH (source)-[r]->(target)
-      RETURN elementId(r) AS elementId, elementId(source) AS sourceElementId, elementId(target) AS targetElementId,
-             type(r) AS type, properties(r) AS properties`),
-  ]);
-  const elementIds = new Map<string, string>();
+export async function exportTargetSnapshot(target: GraphTarget, definition: OntologyDefinition): Promise<VersionSnapshot> {
+  const exported = await getGraphStore(target).exportGraph();
+  const snapshotIds = new Map<string, string>();
   const usedIds = new Set<string>();
-  const nodes = nodeResult.records.map((record) => {
-    const properties = record.properties as Record<string, unknown>;
-    const storedId = typeof properties[INTERNAL_ID] === "string" ? properties[INTERNAL_ID] : null;
-    const id = storedId && !usedIds.has(storedId) ? storedId : randomUUID();
-    usedIds.add(id);
-    elementIds.set(String(record.elementId), id);
-    return nodeSchema.parse({ id, labels: record.labels, properties: stripInternalProperties(properties) });
-  });
-  const relationships = relationshipResult.records.map((record) => {
-    const sourceId = elementIds.get(String(record.sourceElementId));
-    const targetId = elementIds.get(String(record.targetElementId));
+  const isUuid = (value: string) => VERSION_SEGMENT.test(value);
+  const storedIdOf = (properties: Record<string, unknown>) => (typeof properties[INTERNAL_ID] === "string" ? (properties[INTERNAL_ID] as string) : null);
+  /** 后端元素 id -> 快照 UUID。优先保留后端里存的稳定 id，否则按需生成。 */
+  const snapshotIdOf = (rawId: string, properties: Record<string, unknown>) => {
+    const existing = snapshotIds.get(rawId);
+    if (existing) return existing;
+    const stored = storedIdOf(properties);
+    const preferred = stored && !usedIds.has(stored) ? stored : isUuid(rawId) && !usedIds.has(rawId) ? rawId : randomUUID();
+    usedIds.add(preferred);
+    snapshotIds.set(rawId, preferred);
+    return preferred;
+  };
+  const nodes = exported.nodes.map((node) => nodeSchema.parse({
+    id: snapshotIdOf(node.id, node.properties),
+    labels: node.labels,
+    properties: stripInternalProperties(node.properties),
+  }));
+  const relationships = exported.relationships.map((relationship) => {
+    const sourceId = snapshotIds.get(relationship.sourceId);
+    const targetId = snapshotIds.get(relationship.targetId);
     if (!sourceId || !targetId) throw new Error("导出关系时找不到端点实体。");
-    const properties = record.properties as Record<string, unknown>;
-    const candidateId = typeof properties[INTERNAL_ID] === "string" ? properties[INTERNAL_ID] : null;
-    const id = candidateId && !usedIds.has(candidateId) ? candidateId : randomUUID();
-    usedIds.add(id);
-    return relationshipSchema.parse({ id, sourceId, targetId, type: record.type, properties: stripInternalProperties(properties) });
+    return relationshipSchema.parse({
+      id: snapshotIdOf(relationship.id, relationship.properties),
+      sourceId,
+      targetId,
+      type: relationship.type,
+      properties: stripInternalProperties(relationship.properties),
+    });
   });
   return { definition: ontologyDefinitionSchema.parse(definition), nodes, relationships };
 }
 
-export async function initializeVersionSnapshot(versionId: string, target: Neo4jTarget, sourceVersionId?: string | null) {
+export async function initializeVersionSnapshot(versionId: string, target: GraphTarget, sourceVersionId?: string | null) {
   return withSnapshotLock(versionId, async () => {
     const row = await getVersionRecord(versionId);
     if (!row) throw new Error("本体版本不存在。");
@@ -413,10 +418,10 @@ export async function initializeVersionSnapshot(versionId: string, target: Neo4j
   });
 }
 
-export async function ensureVersionSnapshot(versionId: string, target: Neo4jTarget) {
+export async function ensureVersionSnapshot(versionId: string, target: GraphTarget) {
   const row = await getVersionRecord(versionId);
   if (!row) throw new Error("本体版本不存在。");
-  if (row.target_id !== target.id) throw new Error("版本不属于当前 Neo4j 目标。");
+  if (row.target_id !== target.id) throw new Error("版本不属于当前连接目标。");
   if (!row.content_hash) {
     if (row.status === "ARCHIVED") throw new Error("该旧归档版本创建时尚未保存实例快照，不能用当前图数据伪造历史版本。");
     await initializeVersionSnapshot(versionId, target);

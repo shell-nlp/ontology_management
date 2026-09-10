@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cypherPropertyText, inferDataTypeFromNeo4jValueType, isAutoUniqueCandidate } from "@/lib/instances";
+import { isAutoUniqueCandidate } from "@/lib/graph/schema-inference";
+import { cypherPropertyText, inferDataTypeFromNeo4jValueType } from "@/lib/graph/neo4j";
 
 describe("isAutoUniqueCandidate", () => {
   it("does not infer a unique constraint when any value may be too large for the index", () => {

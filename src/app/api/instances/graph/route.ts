@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
-import { readGraph } from "@/lib/instances";
+import { getGraphStore } from "@/lib/graph";
 import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/version-snapshot";
 
 export async function GET(request: NextRequest) {
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         nodeLimit: Number(request.nextUrl.searchParams.get("nodeLimit") ?? 300),
       }));
     }
-    const graph = await readGraph(target, {
+    const graph = await getGraphStore(target).readGraph({
       label: request.nextUrl.searchParams.get("label"),
       labels: request.nextUrl.searchParams.getAll("graphLabel"),
       relationshipTypes: request.nextUrl.searchParams.getAll("relationshipType"),

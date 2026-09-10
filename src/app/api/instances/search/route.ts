@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
-import { executeCypher } from "@/lib/neo4j";
+import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/version-snapshot";
-
-function safeText(expr: string) {
-  return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,7 +25,7 @@ export async function GET(request: NextRequest) {
         labels = [];
       }
     }
-    let displayProps: Record<string, string> = {};
+    const displayProps: Record<string, string> = {};
     try {
       const ontology = await getPublishedOntology(target.id);
       for (const item of ontology.entityTypes) if (item.displayProperty) displayProps[item.name] = item.displayProperty;
@@ -46,26 +42,8 @@ export async function GET(request: NextRequest) {
         .map((node) => ({ ...node, matched: Object.keys(node.properties), rank: 0 }));
       return NextResponse.json({ results });
     }
-    const labelClause = labels.length > 0 ? "AND any(l IN $labels WHERE l IN labels(n))\n       " : "";
-    const displayName = `reduce(d = '', label IN labels(n) | CASE WHEN d <> '' THEN d WHEN label IN keys($displayProps) AND n[$displayProps[label]] IS NOT NULL THEN ${safeText("n[$displayProps[label]]")} ELSE d END)`;
-    const valueMatch = `any(k IN keys(n) WHERE toLower(${safeText("n[k]")}) CONTAINS toLower($q))`;
-    const result = await executeCypher(
-      target,
-      `MATCH (n)
-       WHERE ${valueMatch}
-       ${labelClause}WITH n, [k IN keys(n) WHERE toLower(${safeText("n[k]")}) CONTAINS toLower($q) | k] AS matched, ${displayName} AS displayName
-       RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties, matched,
-              CASE WHEN toLower(displayName) = toLower($q) THEN 0
-                   WHEN toLower(displayName) STARTS WITH toLower($q) THEN 1
-                   WHEN any(k IN matched WHERE toLower(${safeText("n[k]")}) = toLower($q)) THEN 2
-                   WHEN toLower(displayName) CONTAINS toLower($q) THEN 3
-                   WHEN any(k IN matched WHERE toLower(${safeText("n[k]")}) STARTS WITH toLower($q)) THEN 4
-                   ELSE 5 END AS rank
-       ORDER BY rank, size(matched) DESC, id
-       LIMIT ${limit}`,
-      { q, labels, displayProps },
-    );
-    return NextResponse.json({ results: result.records });
+    const results = await getGraphStore(target).searchEntities({ search: q, labels, limit, displayProperties: displayProps });
+    return NextResponse.json({ results });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "无法搜索实体。" }, { status: 400 });
   }

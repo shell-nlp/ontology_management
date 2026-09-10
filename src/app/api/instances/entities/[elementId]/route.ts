@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
-import { executeCypher } from "@/lib/neo4j";
+import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/version-snapshot";
 
@@ -29,13 +29,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ele
       if (!entity) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
       return NextResponse.json(entityFromSnapshot(entity));
     }
-    const result = await executeCypher(
-      target,
-      `MATCH (n) WHERE elementId(n) = $elementId RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties`,
-      { elementId },
-    );
-    if (!result.records[0]) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
-    return NextResponse.json(result.records[0]);
+    const entity = await getGraphStore(target).readEntity(elementId);
+    if (!entity) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
+    return NextResponse.json(entity);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取实体。" }, { status: 400 });
   }

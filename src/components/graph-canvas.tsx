@@ -6,8 +6,7 @@ import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Sear
 import { PropertyEditor } from "@/components/property-editor";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
-import type { GraphData, GraphNode, GraphRelationship } from "@/lib/neo4j";
-import type { RuntimeTypeSet } from "@/lib/instances";
+import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/graph/types";
 import "./graph-canvas.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });

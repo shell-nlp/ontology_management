@@ -3,15 +3,17 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
-import { getTarget, publicTarget } from "@/lib/targets";
+import { getTarget, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
+  kind: z.enum(["NEO4J", "JENA"]).optional(),
   uri: z.string().trim().url().optional(),
   databaseName: z.string().trim().min(1).max(100).optional(),
-  username: z.string().trim().min(1).max(100).optional(),
+  username: z.string().trim().max(100).optional(),
   password: z.string().min(1).optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
 });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ targetId: string }> }) {
@@ -26,14 +28,16 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const updates: string[] = [];
     const values: unknown[] = [];
     if (input.name !== undefined) { updates.push(`name = $${updates.length + 1}`); values.push(input.name); }
+    if (input.kind !== undefined) { updates.push(`kind = $${updates.length + 1}`); values.push(normalizeTargetKind(input.kind)); }
     if (input.uri !== undefined) { updates.push(`uri = $${updates.length + 1}`); values.push(input.uri); }
     if (input.databaseName !== undefined) { updates.push(`database_name = $${updates.length + 1}`); values.push(input.databaseName); }
     if (input.username !== undefined) { updates.push(`username = $${updates.length + 1}`); values.push(input.username); }
     if (input.password !== undefined && input.password.length > 0) { updates.push(`credential_secret = $${updates.length + 1}`); values.push(encryptSecret(input.password)); }
+    if (input.options !== undefined) { updates.push(`options = $${updates.length + 1}`); values.push(JSON.stringify(parseTargetOptions(input.options))); }
     values.push(targetId);
 
     const result = await platformQuery<{ id: string }>(
-      `UPDATE ontology_platform.neo4j_targets SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING id`,
+      `UPDATE ontology_platform.graph_targets SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING id`,
       values,
     );
     if (result.rows.length === 0) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
@@ -52,7 +56,7 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
-    await platformQuery("DELETE FROM ontology_platform.neo4j_targets WHERE id = $1", [targetId]);
+    await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [targetId]);
     await removeTargetSnapshotDirectory(targetId);
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     return NextResponse.json({ deleted: true });

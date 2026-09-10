@@ -1,4 +1,5 @@
 import { Pool, type QueryResultRow } from "pg";
+import { GRAPH_TARGET_KINDS } from "@/lib/graph/types";
 
 let pool: Pool | undefined;
 let schemaPromise: Promise<void> | undefined;
@@ -10,16 +11,6 @@ export type PlatformUser = QueryResultRow & {
   email: string;
   role: Role;
   password_hash: string;
-};
-
-export type Neo4jTarget = QueryResultRow & {
-  id: string;
-  name: string;
-  uri: string;
-  database_name: string;
-  username: string;
-  credential_secret: string;
-  created_at: Date;
 };
 
 function getPool() {
@@ -45,22 +36,39 @@ export async function ensurePlatformSchema() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      // 目标表从 neo4j_targets 演进为后端无关的 graph_targets，并保留历史数据。
       await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.neo4j_targets (
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ontology_platform' AND table_name = 'neo4j_targets')
+             AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ontology_platform' AND table_name = 'graph_targets') THEN
+            ALTER TABLE ontology_platform.neo4j_targets RENAME TO graph_targets;
+          END IF;
+        END $$;
+      `);
+      const kinds = GRAPH_TARGET_KINDS.map((item) => `'${item.kind}'`).join(", ");
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.graph_targets (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL DEFAULT 'NEO4J',
           uri TEXT NOT NULL,
           database_name TEXT NOT NULL DEFAULT 'neo4j',
-          username TEXT NOT NULL,
-          credential_secret TEXT NOT NULL,
+          username TEXT NOT NULL DEFAULT '',
+          credential_secret TEXT NOT NULL DEFAULT '',
+          options JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'NEO4J'`);
+      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
+      await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
+      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
           id TEXT PRIMARY KEY,
           actor_id TEXT REFERENCES ontology_platform.users(id),
-          target_id TEXT REFERENCES ontology_platform.neo4j_targets(id) ON DELETE SET NULL,
+          target_id TEXT REFERENCES ontology_platform.graph_targets(id) ON DELETE SET NULL,
           action TEXT NOT NULL,
           details JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

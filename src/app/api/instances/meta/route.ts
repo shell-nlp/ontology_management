@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
-import { executeCypher } from "@/lib/neo4j";
+import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot } from "@/lib/version-snapshot";
 
@@ -20,16 +20,7 @@ export async function GET(request: NextRequest) {
         propertyKeys: [...new Set([...snapshot.nodes.flatMap((node) => Object.keys(node.properties)), ...snapshot.relationships.flatMap((relationship) => Object.keys(relationship.properties))])].sort(),
       });
     }
-    const [labelsResult, relationshipsResult, keysResult] = await Promise.all([
-      executeCypher(target, "CALL db.labels() YIELD label RETURN label ORDER BY label"),
-      executeCypher(target, "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER BY relationshipType"),
-      executeCypher(target, "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey ORDER BY propertyKey"),
-    ]);
-    return NextResponse.json({
-      labels: labelsResult.records.map((row) => String(row.label)),
-      relationshipTypes: relationshipsResult.records.map((row) => String(row.relationshipType)),
-      propertyKeys: keysResult.records.map((row) => String(row.propertyKey)),
-    });
+    return NextResponse.json(await getGraphStore(target).readMeta());
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取 Schema 元数据。" }, { status: 400 });
   }

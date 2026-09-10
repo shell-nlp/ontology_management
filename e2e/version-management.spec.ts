@@ -23,8 +23,8 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "
     await expect(page.locator(".functional-content")).toBeVisible();
     await page.waitForTimeout(1000);
     if (viewport.name === "desktop") {
-      const response = await page.request.post("http://localhost:3011/api/cypher", {
-        data: { targetId: "00000000-0000-4000-8000-000000000000", cypher: "CREATE (n:ForbiddenProbe)", confirmWrite: true },
+      const response = await page.request.post("http://localhost:3011/api/query", {
+        data: { targetId: "00000000-0000-4000-8000-000000000000", query: "CREATE (n:ForbiddenProbe)", confirmWrite: true },
       });
       expect(response.status()).toBe(409);
     }

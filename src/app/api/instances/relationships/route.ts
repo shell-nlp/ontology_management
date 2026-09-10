@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireRole } from "@/lib/auth";
-import { executeCypher } from "@/lib/neo4j";
+import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/version-snapshot";
@@ -14,10 +14,6 @@ const inputSchema = z.object({
   targetIdValue: z.string().min(1),
   properties: z.record(z.string(), z.unknown()).default({}),
 });
-
-function safeText(expr: string) {
-  return `CASE WHEN ${expr} IS NULL THEN '' ELSE reduce(s = '', item IN ${expr} | s + CASE WHEN item IS NULL THEN '' ELSE toString(item) END + ' ') END`;
-}
 
 function parseLimit(value: string | null, fallback = 200) {
   const parsed = Number(value);
@@ -40,18 +36,8 @@ export async function GET(request: NextRequest) {
       const snapshot = await ensureVersionSnapshot(versionId, target);
       return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search, limit }) });
     }
-    const relMatch = `any(k IN keys(r) WHERE toLower(${safeText("r[k]")}) CONTAINS toLower($search))`;
-    const nodeMatch = `any(k IN keys(source) WHERE toLower(${safeText("source[k]")}) CONTAINS toLower($search)) OR any(k IN keys(target) WHERE toLower(${safeText("target[k]")}) CONTAINS toLower($search))`;
-    const result = await executeCypher(
-      target,
-      `MATCH (source)-[r]->(target)
-       WHERE ($type IS NULL OR type(r) = $type)
-         AND ($search IS NULL OR ${relMatch} OR ${nodeMatch})
-       RETURN elementId(r) AS id, type(r) AS type, elementId(source) AS sourceId, elementId(target) AS targetId, labels(source) AS sourceLabels, properties(source) AS sourceProperties, labels(target) AS targetLabels, properties(target) AS targetProperties, properties(r) AS properties
-       ORDER BY id LIMIT ${limit}`,
-      { type: type || null, search: search || null },
-    );
-    return NextResponse.json({ rows: result.records });
+    const rows = await getGraphStore(target).listRelationships({ type: type || null, search: search || null, limit });
+    return NextResponse.json({ rows });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取关系。" }, { status: 400 });
   }

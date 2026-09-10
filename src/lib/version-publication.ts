@@ -1,5 +1,4 @@
-import { reconcileStrongRules } from "@/lib/ontology";
-import { replaceGraphWithSnapshot } from "@/lib/neo4j";
+import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, validateVersionSnapshot, withTargetLock, type VersionStatus } from "@/lib/version-snapshot";
@@ -21,8 +20,9 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     const violations = validateVersionSnapshot(snapshot);
     if (violations.length) return { published: false as const, violations };
 
-    await replaceGraphWithSnapshot(target, version.id, snapshot);
-    const canEnforceRequired = await reconcileStrongRules(target, snapshot.definition);
+    const store = getGraphStore(target);
+    await store.replaceGraph(snapshot);
+    const { enforced: canEnforceRequired } = await store.reconcileStrongRules(snapshot.definition);
     for (const record of await listVersionRecords(version.target_id)) {
       if (record.id !== version.id && record.status === "PUBLISHED") await updateVersionRecord(record.id, { status: "ARCHIVED" });
     }
@@ -31,14 +31,21 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       actorId: user.id,
       targetId: version.target_id,
       action: version.status === "DRAFT" ? "VERSION_PUBLISHED" : "VERSION_ACTIVATED",
-      details: { versionId: version.id, entityCount: snapshot.nodes.length, relationshipCount: snapshot.relationships.length, communityEdition: !canEnforceRequired },
+      details: {
+        versionId: version.id,
+        kind: target.kind,
+        entityCount: snapshot.nodes.length,
+        relationshipCount: snapshot.relationships.length,
+        // 只有 Neo4j 企业版能落地必填约束；其余后端如实记录为未强制。
+        strongRulesEnforced: canEnforceRequired,
+      },
     });
     return {
       published: true as const,
       versionId: version.id,
       entityCount: snapshot.nodes.length,
       relationshipCount: snapshot.relationships.length,
-      communityEdition: !canEnforceRequired,
+      strongRulesEnforced: canEnforceRequired,
     };
   });
 }

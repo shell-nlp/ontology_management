@@ -4,11 +4,10 @@ import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEve
 import { Activity, AlertCircle, BookOpen, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { PropertyEditor } from "@/components/property-editor";
-import type { GraphData } from "@/lib/neo4j";
-import type { RuntimeTypeInfo, RuntimeTypeSet } from "@/lib/instances";
+import { GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
-type Target = { id: string; name: string; uri: string; databaseName: string; username: string };
+type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Property = { name: string; dataType: "TEXT" | "INTEGER" | "DECIMAL" | "BOOLEAN" | "DATE" | "DATETIME" | "TEXT_ARRAY" | "JSON"; required: boolean; unique: boolean; indexed: boolean };
 type EntityType = { id: string; name: string; description: string; displayProperty?: string; properties: Property[] };
 type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
@@ -18,6 +17,25 @@ type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "targ
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
+
+type QueryTemplate = { defaultQuery: string; placeholder: string; visualizationHint: string };
+const NEO4J_QUERY_TEMPLATE: QueryTemplate = { defaultQuery: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100", placeholder: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100", visualizationHint: "返回节点、关系或路径即可在画布上可视化。" };
+const JENA_QUERY_TEMPLATE: QueryTemplate = { defaultQuery: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", placeholder: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", visualizationHint: "以 ?s / ?p / ?o 为变量名返回三元组即可可视化；也可以用 CONSTRUCT 构造子图。" };
+
+function queryTemplateFor(kind: GraphTargetKind | undefined): QueryTemplate {
+  return kind === "JENA" ? JENA_QUERY_TEMPLATE : NEO4J_QUERY_TEMPLATE;
+}
+
+/** 只用于前端即时提示；真正的写保护在服务端按后端能力判断。 */
+function isWriteStatement(kind: GraphTargetKind | undefined, statement: string) {
+  return kind === "JENA"
+    ? /\b(insert|delete|load|clear|create|drop|add|move|copy)\b/i.test(statement)
+    : /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(statement);
+}
+
+function graphNoun(target: Target | null | undefined) {
+  return target ? graphTargetKindInfo(target.kind).label : "图数据库";
+}
 
 const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [] };
 const typeOptions: Property["dataType"][] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
@@ -251,7 +269,7 @@ function GraphSettingsDialog({ settings, onSave, onReset, onClose }: { settings:
         <div className="settings-grid">
           {field("nodeLimit", "可视化节点上限", "首次加载与刷新时最多渲染的节点数。", 10000)}
           {field("maxNeighbors", "最大新增邻居数", "扩展一度邻居时最多加入的邻居数量。", 10000)}
-          {field("recordLimit", "单次记录上限", "单条 Cypher 查询最多获取并展示的记录条数。", 100000)}
+          {field("recordLimit", "单次记录上限", "单条只读查询最多获取并展示的记录条数（Cypher / SPARQL）。", 100000)}
         </div>
         <div className="dialog-actions">
           <button type="button" className="quiet-button" onClick={onReset}>恢复默认</button>
@@ -327,7 +345,7 @@ export function FunctionalWorkbench() {
   const refreshRuntimeTypes = () => { if (!targetId || !workspaceVersion) return; void api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(targetId)}&versionId=${workspaceVersion.id}`).then(setRuntimeTypes).catch(() => setRuntimeTypes(null)); };
 
   const ensureDraft = async () => {
-    if (!targetId) throw new Error("请先登记并选择一个 Neo4j 目标。");
+    if (!targetId) throw new Error("请先登记并选择一个连接目标。");
     if (draft) return draft;
     const result = await api<{ id: string; versionNumber: number; entity_count?: number; relationship_count?: number }>("/api/ontology", { method: "POST", body: JSON.stringify({ targetId, definition: published?.definition ?? emptyDefinition }) });
     const next: Version = { id: result.id, target_id: targetId, version_number: result.versionNumber, status: "DRAFT", definition: published?.definition ?? emptyDefinition, entity_count: result.entity_count, relationship_count: result.relationship_count, artifact_path: "created" };
@@ -350,13 +368,13 @@ export function FunctionalWorkbench() {
   };
 
   const publish = async () => {
-    try { const current = await ensureDraft(); const result = await api<{ published: boolean; communityEdition?: boolean; entityCount?: number; relationshipCount?: number; violations?: { message: string; count: number }[] }>(`/api/ontology/${current.id}/publish`, { method: "POST" }); if (result.published) { notify(`版本 v${current.version_number} 已发布：${result.entityCount ?? 0} 个实体、${result.relationshipCount ?? 0} 条关系已在 Neo4j 生效。`); await loadVersions(targetId); } else if (result.violations?.length) { fail(result.violations.map((item) => `${item.message} (${item.count})`).join("；")); } } catch (reason) { fail(reason); }
+    try { const current = await ensureDraft(); const result = await api<{ published: boolean; strongRulesEnforced?: boolean; entityCount?: number; relationshipCount?: number; violations?: { message: string; count: number }[] }>(`/api/ontology/${current.id}/publish`, { method: "POST" }); if (result.published) { notify(`版本 v${current.version_number} 已发布：${result.entityCount ?? 0} 个实体、${result.relationshipCount ?? 0} 条关系已在 ${graphNoun(selectedTarget)} 生效。`); await loadVersions(targetId); } else if (result.violations?.length) { fail(result.violations.map((item) => `${item.message} (${item.count})`).join("；")); } } catch (reason) { fail(reason); }
   };
 
   const activateVersion = async (version: Version) => {
     if (draft) throw new Error("当前存在草稿，请先发布草稿后再切换历史版本。");
     const result = await api<{ published: boolean; entityCount: number; relationshipCount: number }>(`/api/ontology/${version.id}/activate`, { method: "POST" });
-    notify(`已切换到 v${version.version_number}：${result.entityCount} 个实体、${result.relationshipCount} 条关系已重新导入 Neo4j。`);
+    notify(`已切换到 v${version.version_number}：${result.entityCount} 个实体、${result.relationshipCount} 条关系已重新导入 ${graphNoun(selectedTarget)}。`);
     await loadVersions(targetId);
   };
 
@@ -370,10 +388,10 @@ export function FunctionalWorkbench() {
   const userProp = user;
 
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前 Neo4j 目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></label><nav>{([
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前连接目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{GRAPH_TARGET_KINDS.map((kindInfo) => { const group = targets.filter((item) => item.kind === kindInfo.kind); return group.length ? <optgroup key={kindInfo.kind} label={kindInfo.label}>{group.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup> : null; })}</select></label><nav>{([
       ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database], ["settings", "设置", Settings2],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => setView(id)}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接 Neo4j 目标"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接图数据库"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
       {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} onSelect={(id) => { setTargetId(id); setView("overview"); }} notify={notify} fail={fail} />}
@@ -390,10 +408,10 @@ function VersionBar({ versions, draft, published, user, onCreate, onActivate, fa
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const activate = async (version: Version) => {
-    if (!window.confirm(`确认将 Neo4j 切换到历史版本 v${version.version_number}？当前图数据会由该版本快照完整替换。`)) return;
+    if (!window.confirm(`确认将图数据切换到历史版本 v${version.version_number}？当前图数据会由该版本快照完整替换。`)) return;
     try { setBusyId(version.id); await onActivate(version); setOpen(false); } catch (reason) { fail(reason); } finally { setBusyId(null); }
   };
-  return <div className="version-bar"><div><GitBranch size={16} /><span><b>{draft ? `草稿 v${draft.version_number}` : published ? `已发布 v${published.version_number}` : "尚无版本"}</b><small>{draft ? `${draft.entity_count ?? 0} 个实体 · ${draft.relationship_count ?? 0} 条关系，修改仅保存到快照文件` : published ? `${published.entity_count ?? 0} 个实体 · ${published.relationship_count ?? 0} 条关系正在 Neo4j 生效` : "创建首个草稿以导入当前图数据"}</small></span></div><div className="functional-actions">{user.role === "ADMIN" && !draft && <button className="action primary" onClick={() => void onCreate().catch(fail)}><Plus size={14} />创建草稿</button>}<button className="action" onClick={() => setOpen((value) => !value)}><History size={14} />版本记录</button></div>{open && <div className="version-menu">{versions.map((version) => <div className="version-menu-row" key={version.id}><span><b>v{version.version_number}</b><small>{version.status === "DRAFT" ? "草稿" : version.status === "PUBLISHED" ? "当前生效" : "历史归档"}</small></span><span>{version.entity_count ?? 0} 实体 · {version.relationship_count ?? 0} 关系</span>{version.artifact_path ? <code>{version.content_hash?.slice(0, 10) ?? "snapshot"}</code> : <em>无实例快照</em>}{user.role === "ADMIN" && version.status === "ARCHIVED" && <button className="action compact" disabled={Boolean(draft) || !version.artifact_path || busyId === version.id} onClick={() => void activate(version)} title={!version.artifact_path ? "旧版本未保存实例快照，不能激活" : draft ? "请先发布当前草稿" : "重新导入该版本快照"}><RotateCcw size={13} />{busyId === version.id ? "切换中" : "激活"}</button>}</div>)}{!versions.length && <p className="empty">尚无版本记录。</p>}</div>}</div>;
+  return <div className="version-bar"><div><GitBranch size={16} /><span><b>{draft ? `草稿 v${draft.version_number}` : published ? `已发布 v${published.version_number}` : "尚无版本"}</b><small>{draft ? `${draft.entity_count ?? 0} 个实体 · ${draft.relationship_count ?? 0} 条关系，修改仅保存到快照文件` : published ? `${published.entity_count ?? 0} 个实体 · ${published.relationship_count ?? 0} 条关系正在图数据库中生效` : "创建首个草稿以导入当前图数据"}</small></span></div><div className="functional-actions">{user.role === "ADMIN" && !draft && <button className="action primary" onClick={() => void onCreate().catch(fail)}><Plus size={14} />创建草稿</button>}<button className="action" onClick={() => setOpen((value) => !value)}><History size={14} />版本记录</button></div>{open && <div className="version-menu">{versions.map((version) => <div className="version-menu-row" key={version.id}><span><b>v{version.version_number}</b><small>{version.status === "DRAFT" ? "草稿" : version.status === "PUBLISHED" ? "当前生效" : "历史归档"}</small></span><span>{version.entity_count ?? 0} 实体 · {version.relationship_count ?? 0} 关系</span>{version.artifact_path ? <code>{version.content_hash?.slice(0, 10) ?? "snapshot"}</code> : <em>无实例快照</em>}{user.role === "ADMIN" && version.status === "ARCHIVED" && <button className="action compact" disabled={Boolean(draft) || !version.artifact_path || busyId === version.id} onClick={() => void activate(version)} title={!version.artifact_path ? "旧版本未保存实例快照，不能激活" : draft ? "请先发布当前草稿" : "重新导入该版本快照"}><RotateCcw size={13} />{busyId === version.id ? "切换中" : "激活"}</button>}</div>)}{!versions.length && <p className="empty">尚无版本记录。</p>}</div>}</div>;
 }
 
 function SettingsManager({ target, user, versions, displaySettings, onSaveDisplaySettings, onResetDisplaySettings, onReset, notify, fail }: { target: Target | null; user: User; versions: Version[]; displaySettings: DisplaySettings; onSaveDisplaySettings: (next: DisplaySettings) => void; onResetDisplaySettings: () => void; onReset: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
@@ -430,13 +448,13 @@ function SettingsManager({ target, user, versions, displaySettings, onSaveDispla
       <span className="eyebrow">危险操作</span>
       <h2>版本数据初始化</h2>
       {target ? <>
-        <p className="subtle">将当前目标「{target.name}」的全部版本记录（共 {versions.length} 个）与对应快照文件删除，回到「尚无版本」状态。Neo4j 图数据不受影响，下次创建草稿时从当前图数据重新导出。</p>
+        <p className="subtle">将当前目标「{target.name}」的全部版本记录（共 {versions.length} 个）与对应快照文件删除，回到「尚无版本」状态。图数据不受影响，下次创建草稿时从当前图数据重新导出。</p>
         <div className="functional-actions">
           <button className="action danger" disabled={user.role !== "ADMIN" || resetting} onClick={() => setConfirmOpen(true)}><RotateCcw size={15} />{resetting ? "初始化中…" : "初始化版本数据"}</button>
         </div>
-      </> : <p className="empty">请先选择一个 Neo4j 目标。</p>}
+      </> : <p className="empty">请先选择一个连接目标。</p>}
     </div>
-    {confirmOpen && target && <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); void initialize(); }}><button type="button" className="close-button" onClick={() => setConfirmOpen(false)} title="关闭"><X size={18} /></button><div className="dialog-icon"><RotateCcw size={22} /></div><span className="eyebrow">危险操作</span><h2>初始化「{target.name}」？</h2><p>将删除该目标的 {versions.length} 个版本记录及全部快照文件，此操作无法撤销。Neo4j 图数据不会被修改。</p><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setConfirmOpen(false)}>取消</button><button className="primary-button" disabled={resetting}>{resetting ? "初始化中…" : "确认初始化"}</button></div></form></div>}
+    {confirmOpen && target && <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); void initialize(); }}><button type="button" className="close-button" onClick={() => setConfirmOpen(false)} title="关闭"><X size={18} /></button><div className="dialog-icon"><RotateCcw size={22} /></div><span className="eyebrow">危险操作</span><h2>初始化「{target.name}」？</h2><p>将删除该目标的 {versions.length} 个版本记录及全部快照文件，此操作无法撤销。图数据不会被修改。</p><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setConfirmOpen(false)}>取消</button><button className="primary-button" disabled={resetting}>{resetting ? "初始化中…" : "确认初始化"}</button></div></form></div>}
   </section>;
 }
 
@@ -465,21 +483,53 @@ function Overview({ target, draft, published, runtimeTypes, onNavigate, onOpenOn
   const entityTotal = entityRows.reduce((sum, item) => sum + item.count, 0);
   const relationTotal = relationRows.reduce((sum, item) => sum + item.count, 0);
   const hasCensus = runtimeTypes !== null;
-  return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个目标"}</h2>{target ? <><div className="overview-stats"><div className="overview-stat"><b>{entityTypes}</b><span>实体类型</span><small>数据库中的标签</small></div><div className="overview-stat"><b>{entities}</b><span>实体</span><small>数据库中的节点</small></div><div className="overview-stat"><b>{relationshipTypes}</b><span>关系类型</span><small>数据库中的关系类型</small></div><div className="overview-stat"><b>{relationships}</b><span>关系</span><small>数据库中的关系</small></div></div><div className="overview-status"><span>草稿：<b>{draft ? `v${draft.version_number}` : "无"}</b></span><span>已发布：<b>{published ? `v${published.version_number}` : "无"}</b></span></div>{hasCensus && (entityTotal + relationTotal > 0 ? <div className="overview-census"><section className="census-panel entity"><div className="census-head"><CircleDot size={15} /><span>实体类型分布</span><b>{entityRows.length}</b></div>{censusRows(entityRows, entityTotal, "entity")}</section><section className="census-panel relation"><div className="census-head"><Link2 size={15} /><span>关系类型分布</span><b>{relationRows.length}</b></div>{censusRows(relationRows, relationTotal, "relation")}</section></div> : <div className="overview-census-empty">图数据库中还没有数据。在「图谱」页创建节点与关系后，这里会展示每种实体类型与关系类型的数量分布。</div>)}</> : <p>先在“连接目标”登记 Neo4j URI、数据库、用户名与密码。密码会加密保存。</p>}<div className="functional-actions">{target && <button className="action" onClick={() => onNavigate("graph")}><Network size={16} />打开图谱管理</button>}{target && <button className="action" onClick={() => onNavigate("ontology")}><BookOpen size={16} />配置本体草稿</button>}<button className="action primary" onClick={() => target ? onOpenOntology() : onNavigate("targets")}><span className="arrow">→</span>{target ? "查看本体" : "登记 Neo4j 目标"}</button></div></section>;
+  return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个目标"}</h2>{target ? <><div className="overview-stats"><div className="overview-stat"><b>{entityTypes}</b><span>实体类型</span><small>数据库中的标签</small></div><div className="overview-stat"><b>{entities}</b><span>实体</span><small>数据库中的节点</small></div><div className="overview-stat"><b>{relationshipTypes}</b><span>关系类型</span><small>数据库中的关系类型</small></div><div className="overview-stat"><b>{relationships}</b><span>关系</span><small>数据库中的关系</small></div></div><div className="overview-status"><span>草稿：<b>{draft ? `v${draft.version_number}` : "无"}</b></span><span>已发布：<b>{published ? `v${published.version_number}` : "无"}</b></span></div>{hasCensus && (entityTotal + relationTotal > 0 ? <div className="overview-census"><section className="census-panel entity"><div className="census-head"><CircleDot size={15} /><span>实体类型分布</span><b>{entityRows.length}</b></div>{censusRows(entityRows, entityTotal, "entity")}</section><section className="census-panel relation"><div className="census-head"><Link2 size={15} /><span>关系类型分布</span><b>{relationRows.length}</b></div>{censusRows(relationRows, relationTotal, "relation")}</section></div> : <div className="overview-census-empty">图数据库中还没有数据。在「图谱」页创建节点与关系后，这里会展示每种实体类型与关系类型的数量分布。</div>)}</> : <p>先在“连接目标”登记目标图数据库的连接信息，凭据会加密保存。</p>}<div className="functional-actions">{target && <button className="action" onClick={() => onNavigate("graph")}><Network size={16} />打开图谱管理</button>}{target && <button className="action" onClick={() => onNavigate("ontology")}><BookOpen size={16} />配置本体草稿</button>}<button className="action primary" onClick={() => target ? onOpenOntology() : onNavigate("targets")}><span className="arrow">→</span>{target ? "查看本体" : "登记连接目标"}</button></div></section>;
+}
+
+type TargetFormState = { name: string; kind: GraphTargetKind; uri: string; databaseName: string; username: string; password: string; namedGraph: string };
+
+function defaultTargetForm(kind: GraphTargetKind): TargetFormState {
+  const info = graphTargetKindInfo(kind);
+  return { name: "", kind, uri: info.endpoint.example, databaseName: info.dataset?.example ?? "", username: info.credentials.usernameExample, password: "", namedGraph: "" };
+}
+
+function formFromTarget(target: Target): TargetFormState {
+  const namedGraph = target.options?.namedGraph;
+  return { name: target.name, kind: target.kind, uri: target.uri, databaseName: target.databaseName, username: target.username, password: "", namedGraph: typeof namedGraph === "string" ? namedGraph : "" };
+}
+
+function targetOptions(form: TargetFormState) {
+  return form.namedGraph.trim() ? { namedGraph: form.namedGraph.trim() } : {};
+}
+
+/** 连接字段由后端类型元数据驱动，接入新的图数据库时这里不需要改动。 */
+function TargetFields({ form, setForm, editing = false }: { form: TargetFormState; setForm: (next: TargetFormState) => void; editing?: boolean }) {
+  const info = graphTargetKindInfo(form.kind);
+  const credentialRequired = info.credentials.required;
+  return <>
+    <label>目标名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：生产知识图谱" required /></label>
+    <label>数据库类型<select value={form.kind} onChange={(event) => setForm({ ...defaultTargetForm(event.target.value as GraphTargetKind), name: form.name })}>{GRAPH_TARGET_KINDS.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}</select><small>{info.description}</small></label>
+    <label>{info.endpoint.label}<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder={info.endpoint.placeholder} required /></label>
+    {info.dataset && <label>{info.dataset.label}<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} placeholder={info.dataset.placeholder} required /></label>}
+    {form.kind === "JENA" && <label>命名图（可选）<input value={form.namedGraph} onChange={(event) => setForm({ ...form, namedGraph: event.target.value })} placeholder="留空写入默认图，例如 urn:ontology" /></label>}
+    <label>{info.credentials.usernameLabel}<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} placeholder={info.credentials.usernameExample} required={credentialRequired} /></label>
+    <label>{info.credentials.passwordLabel}<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={editing ? "留空保持不变" : ""} required={credentialRequired && !editing} /></label>
+  </>;
 }
 
 function TargetManager({ targets, refresh, onSelect, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; onSelect: (id: string) => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
-  const [form, setForm] = useState({ name: "", uri: "bolt://", databaseName: "neo4j", username: "neo4j", password: "" }); const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
-  const add = async (event: FormEvent) => { event.preventDefault(); try { const target = await api<Target>("/api/targets", { method: "POST", body: JSON.stringify(form) }); await refresh(); onSelect(target.id); notify("Neo4j 目标已登记，密码已加密保存。"); setForm({ name: "", uri: "bolt://", databaseName: "neo4j", username: "neo4j", password: "" }); } catch (reason) { fail(reason); } };
+  const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm("NEO4J")); const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
+  const add = async (event: FormEvent) => { event.preventDefault(); try { const target = await api<Target>("/api/targets", { method: "POST", body: JSON.stringify({ ...form, options: targetOptions(form) }) }); await refresh(); onSelect(target.id); notify(`${graphTargetKindInfo(target.kind).label} 目标已登记，凭据已加密保存。`); setForm(defaultTargetForm(form.kind)); } catch (reason) { fail(reason); } };
   const remove = async (target: Target) => { if (!window.confirm(`确定删除目标“${target.name}”及其全部本体版本？`)) return; try { setDeleting(target.id); await api(`/api/targets/${target.id}`, { method: "DELETE" }); notify("目标已删除。"); await refresh(); } catch (reason) { fail(reason); } finally { setDeleting(""); } };
-  return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={add}><span className="eyebrow">登记目标</span><h2>新建 Neo4j 连接</h2><label>目标名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：生产知识图谱" required /></label><label>Neo4j URI<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder="neo4j+s://host:7687" required /></label><label>数据库名称<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} required /></label><label>用户名<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} required /></label><label>密码<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label><button className="action primary"><Plus size={16} />登记并选择</button></form><div className="panel functional-panel target-list"><span className="eyebrow">已登记目标</span><h2>{targets.length} 个目标</h2>{targets.length ? targets.map((target) => <div className="target-row" key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span><button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const info = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${info.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>) : <p className="empty">尚未登记目标。</p>}</div>{editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("目标已更新。"); }} fail={fail} />}</section>;
+  const groups = GRAPH_TARGET_KINDS.map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind) }));
+  return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={add}><span className="eyebrow">登记目标</span><h2>新建连接</h2><TargetFields form={form} setForm={setForm} /><button className="action primary"><Plus size={16} />登记并选择</button></form><div className="panel functional-panel target-list"><span className="eyebrow">已登记目标</span><h2>{targets.length} 个目标</h2>{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><span className="target-kind-badge">{info.label}</span><small>{info.description}</small></div>{items.map((target) => <div className="target-row" key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span><button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <p className="empty">尚未登记目标。</p>}</div>{editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("目标已更新。"); }} fail={fail} />}</section>;
 }
 
 function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; onClose: () => void; onSaved: () => Promise<void>; fail: (reason: unknown) => void }) {
-  const [form, setForm] = useState({ name: target.name, uri: target.uri, databaseName: target.databaseName, username: target.username, password: "" });
+  const [form, setForm] = useState<TargetFormState>(() => formFromTarget(target));
   const [busy, setBusy] = useState(false);
-  const save = async (event: FormEvent) => { event.preventDefault(); try { setBusy(true); const payload: Record<string, string> = { name: form.name, uri: form.uri, databaseName: form.databaseName, username: form.username }; if (form.password) payload.password = form.password; await api<Target>(`/api/targets/${target.id}`, { method: "PATCH", body: JSON.stringify(payload) }); await onSaved(); onClose(); } catch (reason) { fail(reason); } finally { setBusy(false); } };
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑目标</span><h2>{target.name}</h2><p>修改连接信息，留空密码表示保持原密码不变。</p><label>目标名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label><label>Neo4j URI<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder="neo4j+s://host:7687" required /></label><label>数据库名称<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} required /></label><label>用户名<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} required /></label><label>密码<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="留空保持不变" /></label><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
+  const save = async (event: FormEvent) => { event.preventDefault(); try { setBusy(true); const payload: Record<string, unknown> = { name: form.name, kind: form.kind, uri: form.uri, databaseName: form.databaseName, username: form.username, options: targetOptions(form) }; if (form.password) payload.password = form.password; await api<Target>(`/api/targets/${target.id}`, { method: "PATCH", body: JSON.stringify(payload) }); await onSaved(); onClose(); } catch (reason) { fail(reason); } finally { setBusy(false); } };
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑目标</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
 function OntologyManager({ definition, draft, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, fail }: { definition: Definition; draft: Version | null; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
@@ -584,6 +634,8 @@ type CypherSuggestion = { text: string; kind: string };
 const CYPHER_KEYWORDS = ["MATCH", "OPTIONAL MATCH", "WHERE", "WITH", "RETURN", "UNWIND", "ORDER BY", "SKIP", "LIMIT", "UNION", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "DETACH DELETE", "CALL", "YIELD", "AS", "DISTINCT", "USING", "INDEX", "EXISTS", "EXPLAIN", "PROFILE", "FOREACH", "LOAD CSV", "START", "CASE", "WHEN", "THEN", "ELSE", "END", "AND", "OR", "NOT", "XOR", "IN", "IS NULL", "IS NOT NULL", "CONTAINS", "STARTS WITH", "ENDS WITH"];
 const CYPHER_FUNCTIONS = ["count", "sum", "avg", "min", "max", "collect", "count(*)", "coalesce", "exists", "size", "length", "keys", "properties", "labels", "type", "elementId", "id", "startNode", "endNode", "toString", "toInteger", "toFloat", "toBoolean", "toUpper", "toLower", "trim", "ltrim", "rtrim", "substring", "replace", "split", "left", "right", "reverse", "head", "last", "tail", "range", "reduce", "abs", "ceil", "floor", "round", "sign", "sqrt", "exp", "log", "log10", "rand", "pi", "date", "datetime", "time", "duration", "point", "distance", "randomUUID", "timestamp"];
 const DEFAULT_CYPHER_SUGGESTIONS: CypherSuggestion[] = ["MATCH", "OPTIONAL MATCH", "WHERE", "WITH", "RETURN", "UNWIND", "ORDER BY", "LIMIT", "SKIP", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "CALL", "YIELD", "DISTINCT", "CASE", "FOREACH"].map((text) => ({ text, kind: "关键字" }));
+const SPARQL_KEYWORDS = ["SELECT", "DISTINCT", "WHERE", "PREFIX", "BASE", "CONSTRUCT", "DESCRIBE", "ASK", "FROM", "NAMED", "OPTIONAL", "UNION", "MINUS", "FILTER", "BIND", "VALUES", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "ASC", "DESC", "AS", "GRAPH", "SERVICE", "EXISTS", "NOT EXISTS", "STR", "LANG", "DATATYPE", "BOUND", "IRI", "STRUUID", "REGEX", "REPLACE", "CONCAT", "SUBSTR", "STRLEN", "UCASE", "LCASE", "CONTAINS", "STRSTARTS", "STRENDS", "COUNT", "SUM", "AVG", "MIN", "MAX", "SAMPLE", "GROUP_CONCAT"];
+const DEFAULT_SPARQL_SUGGESTIONS: CypherSuggestion[] = ["SELECT", "WHERE", "PREFIX", "CONSTRUCT", "ASK", "OPTIONAL", "FILTER", "UNION", "GROUP BY", "ORDER BY", "LIMIT", "OFFSET", "VALUES", "BIND", "GRAPH", "DISTINCT"].map((text) => ({ text, kind: "关键字" }));
 
 function cypherFilter(items: string[], partial: string, kind: string): CypherSuggestion[] {
   const p = partial.toLowerCase();
@@ -593,7 +645,7 @@ function cypherFilter(items: string[], partial: string, kind: string): CypherSug
   }).sort((a, b) => a.score - b.score).map(({ text, kind: k }) => ({ text, kind: k }));
 }
 
-function CypherEditor({ value, onChange, labels, relationshipTypes, propertyKeys, placeholder }: { value: string; onChange: (next: string) => void; labels: string[]; relationshipTypes: string[]; propertyKeys: string[]; placeholder?: string }) {
+function CypherEditor({ value, onChange, language = "cypher", labels, relationshipTypes, propertyKeys, placeholder }: { value: string; onChange: (next: string) => void; language?: "cypher" | "sparql"; labels: string[]; relationshipTypes: string[]; propertyKeys: string[]; placeholder?: string }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -622,14 +674,16 @@ function CypherEditor({ value, onChange, labels, relationshipTypes, propertyKeys
       const inBrackets = (head.match(/\[/g) ?? []).length > (head.match(/\]/g) ?? []).length;
       list = cypherFilter(inBrackets ? relationshipTypes : labels, word, inBrackets ? "关系" : "标签").slice(0, 12);
     } else if (!word) {
-      list = DEFAULT_CYPHER_SUGGESTIONS;
+      list = language === "sparql" ? DEFAULT_SPARQL_SUGGESTIONS : DEFAULT_CYPHER_SUGGESTIONS;
+    } else if (language === "sparql") {
+      list = cypherFilter(SPARQL_KEYWORDS, word, "关键字").slice(0, 12);
     } else {
       list = [...cypherFilter(CYPHER_KEYWORDS, word, "关键字"), ...cypherFilter(CYPHER_FUNCTIONS, word, "函数")].slice(0, 12);
     }
     setWordStart(start);
     setSuggestions(list);
     setHighlight(0);
-  }, [labels, relationshipTypes, propertyKeys]);
+  }, [labels, relationshipTypes, propertyKeys, language]);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -683,10 +737,14 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
   const { settings, update, reset } = useGraphSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const ontologyTargetId = target?.id;
-  const [cypher, setCypher] = useState("MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100");
+  const [queryDraft, setQueryDraft] = useState<{ kind: GraphTargetKind | undefined; text: string } | null>(null);
   const [cypherOpen, setCypherOpen] = useState(false);
   const [running, setRunning] = useState(false);
-  const cypherIsWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
+  const queryTemplate = queryTemplateFor(target?.kind);
+  // 用户改过的语句保留；切换图数据库后端时自动回落到该后端的默认语句。
+  const cypher = queryDraft && queryDraft.kind === target?.kind ? queryDraft.text : queryTemplate.defaultQuery;
+  const setCypher = (next: string) => setQueryDraft({ kind: target?.kind, text: next });
+  const cypherIsWrite = isWriteStatement(target?.kind, cypher);
   const [cypherMeta, setCypherMeta] = useState<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>({ labels: [], relationshipTypes: [], propertyKeys: [] });
 
   useEffect(() => {
@@ -740,16 +798,16 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
 
   const expand = useCallback(async (nodeId: string) => {
     if (!target) return;
-    const expanded = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher: `MATCH (focus) WHERE elementId(focus) = $nodeId OPTIONAL MATCH (focus)-[relationship]-(neighbor) RETURN focus, relationship, neighbor LIMIT ${Math.max(1, settings.maxNeighbors)}`, parameters: { nodeId } }) });
-    setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.graph.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.graph.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
+    const expanded = await api<GraphData>(`/api/instances/neighbors?targetId=${encodeURIComponent(target.id)}&nodeId=${encodeURIComponent(nodeId)}&limit=${Math.max(1, settings.maxNeighbors)}`);
+    setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
   }, [target, settings.maxNeighbors]);
 
   const runCypher = useCallback(async () => {
     if (!target) return;
     try {
-      if (cypherIsWrite) throw new Error("版本管理启用后禁止通过 Cypher 工作台直接写 Neo4j；请在草稿的实体、关系或图谱页面修改数据后发布。");
+      if (cypherIsWrite) throw new Error(`版本管理启用后禁止通过 ${graphTargetKindInfo(target.kind).queryLanguageLabel} 工作台直接写入 ${graphTargetKindInfo(target.kind).label}；请在草稿的实体、关系或图谱页面修改数据后发布。`);
       setRunning(true);
-      const result = await api<QueryResult>("/api/cypher", { method: "POST", body: JSON.stringify({ targetId: target.id, cypher, confirmWrite: cypherIsWrite }) });
+      const result = await api<QueryResult>("/api/query", { method: "POST", body: JSON.stringify({ targetId: target.id, query: cypher, confirmWrite: cypherIsWrite }) });
       setGraph(capResult(result, settings.recordLimit).graph);
     } catch (reason) { fail(reason); } finally { setRunning(false); }
   }, [target, cypher, cypherIsWrite, settings.recordLimit, fail]);
@@ -760,13 +818,13 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
       <button className={mode === "ontology" ? "active" : ""} aria-pressed={mode === "ontology"} onClick={() => onModeChange("ontology")}>查看本体</button>
     </div>
     {mode === "instances" ? <>
-      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? "节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 Neo4j。" : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
-      {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">Cypher 只读查询</span><b>查询当前 Neo4j 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder="MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100" /><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
+      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? `节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 ${graphNoun(target)}。` : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
+      {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">{graphTargetKindInfo(target?.kind ?? "NEO4J").queryLanguageLabel} 只读查询</span><b>查询当前 {graphNoun(target)} 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} language={target?.kind === "JENA" ? "sparql" : "cypher"} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder={queryTemplate.placeholder} /><p className="cypher-hint">{queryTemplate.visualizationHint}</p><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
     </> : <>
-      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">本体骨架</span><h2>查看当前 Neo4j 运行结构</h2><p className="subtle">骨架由 <code>CALL db.schema.visualization()</code> 读取已发布生效的数据；草稿类型和实例要到发布后才会出现在这里。</p></div><button className="action" disabled={loading} onClick={() => void loadOntology()}><Network size={15} />{loading ? "加载中…" : "刷新本体骨架"}</button></div></div>
-      {ontologyGraph ? <GraphCanvas graph={ontologyGraph} targetId={target?.id} user={user} editable={false} definition={version?.definition ?? null} viewMode="ontology" notify={notify} fail={fail} /> : <div className="graph-empty"><Network size={27} /><b>正在读取本体骨架</b><span>将从目标 Neo4j 加载实际存在的实体类型和关系类型。</span></div>}
+      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">本体骨架</span><h2>查看当前 {graphNoun(target)} 运行结构</h2><p className="subtle">骨架从已发布生效的数据推导：Neo4j 读取 <code>db.schema.visualization()</code>，Apache Jena 读取实例的 <code>rdf:type</code> 与对象属性。草稿类型和实例要到发布后才会出现在这里。</p></div><button className="action" disabled={loading} onClick={() => void loadOntology()}><Network size={15} />{loading ? "加载中…" : "刷新本体骨架"}</button></div></div>
+      {ontologyGraph ? <GraphCanvas graph={ontologyGraph} targetId={target?.id} user={user} editable={false} definition={version?.definition ?? null} viewMode="ontology" notify={notify} fail={fail} /> : <div className="graph-empty"><Network size={27} /><b>正在读取本体骨架</b><span>将从目标图数据库加载实际存在的实体类型和关系类型。</span></div>}
     </>}
   </section>;
 }
@@ -806,7 +864,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
 
   const save = async () => {
     if (!target || !selected) return;
-    try { setBusy(true); const current = await ensureDraft(); const updated = await api<EntityRow>(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((rows) => rows.map((row) => row.id === updated.id ? updated : row)); await onSnapshotChange(); notify("实体属性已保存到草稿快照，发布前不会影响 Neo4j。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+    try { setBusy(true); const current = await ensureDraft(); const updated = await api<EntityRow>(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((rows) => rows.map((row) => row.id === updated.id ? updated : row)); await onSnapshotChange(); notify(`实体属性已保存到草稿快照，发布前不会影响 ${graphNoun(target)}。`); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
   const remove = async () => {
