@@ -1,8 +1,9 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
+import { GraphKindBadge, GraphKindChoice, GraphKindMark, GraphKindPicker, capabilityLine } from "@/components/graph-kind-picker";
 import { PropertyEditor } from "@/components/property-editor";
 import { GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -290,6 +291,7 @@ export function FunctionalWorkbench() {
   const [versions, setVersions] = useState<Version[]>([]);
   const [runtimeTypes, setRuntimeTypes] = useState<RuntimeTypeSet | null>(null);
   const [view, setView] = useState<View>("overview");
+  const [newTargetOpen, setNewTargetOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"instances" | "ontology">("instances");
   const [graphModeTargetId, setGraphModeTargetId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -392,9 +394,10 @@ export function FunctionalWorkbench() {
       ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "实体", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database], ["settings", "设置", Settings2],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => setView(id)}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接图数据库"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
-      {selectedTarget && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
+      {selectedTarget && view !== "targets" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
-      {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} onSelect={(id) => { setTargetId(id); setView("overview"); }} notify={notify} fail={fail} />}
+      {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { setTargetId(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}
+      {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); setTargetId(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
@@ -503,12 +506,12 @@ function targetOptions(form: TargetFormState) {
 }
 
 /** 连接字段由后端类型元数据驱动，接入新的图数据库时这里不需要改动。 */
-function TargetFields({ form, setForm, editing = false }: { form: TargetFormState; setForm: (next: TargetFormState) => void; editing?: boolean }) {
+function TargetFields({ form, setForm, editing = false, showKind = true }: { form: TargetFormState; setForm: (next: TargetFormState) => void; editing?: boolean; showKind?: boolean }) {
   const info = graphTargetKindInfo(form.kind);
   const credentialRequired = info.credentials.required;
   return <>
     <label>目标名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：生产知识图谱" required /></label>
-    <label>数据库类型<select value={form.kind} onChange={(event) => setForm({ ...defaultTargetForm(event.target.value as GraphTargetKind), name: form.name })}>{GRAPH_TARGET_KINDS.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}</select><small>{info.description}</small></label>
+    {showKind && <div className="field-block"><span>数据库类型</span><GraphKindPicker value={form.kind} onChange={(kind) => setForm({ ...defaultTargetForm(kind), name: form.name })} /></div>}
     <label>{info.endpoint.label}<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder={info.endpoint.placeholder} required /></label>
     {info.dataset && <label>{info.dataset.label}<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} placeholder={info.dataset.placeholder} required /></label>}
     {form.kind === "JENA" && <label>命名图（可选）<input value={form.namedGraph} onChange={(event) => setForm({ ...form, namedGraph: event.target.value })} placeholder="留空写入默认图，例如 urn:ontology" /></label>}
@@ -517,12 +520,69 @@ function TargetFields({ form, setForm, editing = false }: { form: TargetFormStat
   </>;
 }
 
-function TargetManager({ targets, refresh, onSelect, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; onSelect: (id: string) => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
-  const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm("NEO4J")); const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
-  const add = async (event: FormEvent) => { event.preventDefault(); try { const target = await api<Target>("/api/targets", { method: "POST", body: JSON.stringify({ ...form, options: targetOptions(form) }) }); await refresh(); onSelect(target.id); notify(`${graphTargetKindInfo(target.kind).label} 目标已登记，凭据已加密保存。`); setForm(defaultTargetForm(form.kind)); } catch (reason) { fail(reason); } };
+function TargetManager({ targets, refresh, selectedId, onSelect, onNew, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; selectedId: string; onSelect: (id: string) => void; onNew: () => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
   const remove = async (target: Target) => { if (!window.confirm(`确定删除目标“${target.name}”及其全部本体版本？`)) return; try { setDeleting(target.id); await api(`/api/targets/${target.id}`, { method: "DELETE" }); notify("目标已删除。"); await refresh(); } catch (reason) { fail(reason); } finally { setDeleting(""); } };
   const groups = GRAPH_TARGET_KINDS.map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind) }));
-  return <section className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={add}><span className="eyebrow">登记目标</span><h2>新建连接</h2><TargetFields form={form} setForm={setForm} /><button className="action primary"><Plus size={16} />登记并选择</button></form><div className="panel functional-panel target-list"><span className="eyebrow">已登记目标</span><h2>{targets.length} 个目标</h2>{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><span className="target-kind-badge">{info.label}</span><small>{info.description}</small></div>{items.map((target) => <div className="target-row" key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span><button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <p className="empty">尚未登记目标。</p>}</div>{editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("目标已更新。"); }} fail={fail} />}</section>;
+  const census = groups.filter((group) => group.items.length).map((group) => `${graphTargetKindInfo(group.info.kind).label} ${group.items.length}`).join(" · ");
+  return <section className="stack">
+    <div className="panel functional-panel target-action-bar"><div><span className="eyebrow">连接目标</span><b>{targets.length} 个已登记目标</b><p className="subtle">{census ? `按图数据库类型分组：${census}。` : "还没有登记任何图数据库连接。"}凭据以 AES-256-GCM 加密保存在平台库，只有服务端能解密。</p></div><button className="action primary" onClick={onNew}><Plus size={15} />新建连接</button></div>
+    <div className="panel functional-panel target-list">{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><GraphKindBadge kind={info.kind} /><small>{info.description}</small></div>{items.map((target) => <div className={target.id === selectedId ? "target-row current" : "target-row"} key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span>{target.id === selectedId ? <span className="target-current"><Check size={12} />当前目标</span> : <button className="action compact" onClick={() => onSelect(target.id)}>打开</button>}<button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <div className="target-empty"><Database size={22} /><b>还没有连接目标</b><span>点右上角「新建连接」，先选图数据库类型，再填连接信息。</span></div>}</div>
+    {editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("目标已更新。"); }} fail={fail} />}
+  </section>;
+}
+
+/** 新建连接：先选类型，再填连接信息。两步都收在同一个弹窗里，页面不再常驻一张空表单。 */
+function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => void; onCreated: (target: Target) => void | Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [kind, setKind] = useState<GraphTargetKind>("NEO4J");
+  const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm("NEO4J"));
+  const [busy, setBusy] = useState(false);
+  const info = graphTargetKindInfo(kind);
+
+  useEffect(() => {
+    // 这里要的是浏览器原生事件；本文件里的 KeyboardEvent 是 React 的那个同名类型。
+    const onKeyDown = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const pickKind = (next: GraphTargetKind) => { setKind(next); setForm((current) => ({ ...defaultTargetForm(next), name: current.name })); };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      const target = await api<Target>("/api/targets", { method: "POST", body: JSON.stringify({ ...form, options: targetOptions(form) }) });
+      notify(`${graphTargetKindInfo(target.kind).label} 目标已登记，凭据已加密保存。`);
+      await onCreated(target);
+    } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <form className="dialog graph-dialog new-target-dialog" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+      <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
+      <span className="eyebrow">新建连接 · 步骤 {step} / 2</span>
+      <h2>{step === 1 ? "选择图数据库类型" : `连接 ${info.label}`}</h2>
+      <p>{step === 1 ? "类型决定这个目标用什么查询语言、按什么模型存图。" : info.description}</p>
+      <ol className="wizard-steps">
+        <li className={step === 1 ? "active" : "done"}><span>{step === 1 ? "1" : <Check size={12} />}</span>选择类型<em>{info.label}</em></li>
+        <li className={step === 2 ? "active" : ""}><span>2</span>填写连接信息</li>
+      </ol>
+      {step === 1
+        ? <GraphKindChoice value={kind} onChange={pickKind} />
+        : <div className="dialog-form"><TargetFields form={form} setForm={setForm} showKind={false} /></div>}
+      <div className="kind-picker-foot">
+        <span className="kind-picker-summary"><GraphKindMark mark={info.mark} accent={info.accent} size={16} />{info.label}<code>{capabilityLine(info)}</code></span>
+        <div className="functional-actions">
+          {step === 2 && <button type="button" className="quiet-button" onClick={() => setStep(1)}>上一步</button>}
+          {step === 1
+            ? <><button type="button" className="quiet-button" onClick={onClose}>取消</button><button type="button" className="primary-button" onClick={() => setStep(2)}>下一步</button></>
+            : <button className="primary-button" disabled={busy}>{busy ? "登记中…" : "登记并选择"}</button>}
+        </div>
+      </div>
+    </form>
+  </div>;
 }
 
 function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; onClose: () => void; onSaved: () => Promise<void>; fail: (reason: unknown) => void }) {

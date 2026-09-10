@@ -25,12 +25,23 @@ export type GraphStoreCapabilities = {
   strongRules: boolean;
 };
 
+/**
+ * 引擎标记的几何来源：直接用该引擎自己的数据模型画，而不是套一个通用数据库图标。
+ * property-graph = 节点 + 卫星点；triple = 闭合的主谓宾；mesh = 无向网格；shards = 分片。
+ */
+export type GraphTargetMark = "property-graph" | "triple" | "mesh" | "shards";
+
 export type GraphTargetKindInfo = {
   kind: GraphTargetKind;
   label: string;
   /** 用于按钮、徽标等紧凑位置。 */
   shortLabel: string;
   description: string;
+  /** 数据模型的一句话说法，例如「属性图」「RDF 三元组」。 */
+  modelLabel: string;
+  /** 引擎专属强调色，只用于标记与选中态。 */
+  accent: string;
+  mark: GraphTargetMark;
   queryLanguage: QueryLanguage;
   queryLanguageLabel: string;
   capabilities: GraphStoreCapabilities;
@@ -51,6 +62,9 @@ export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
     label: "Neo4j",
     shortLabel: "Neo4j",
     description: "Cypher 图数据库，属性图模型：节点带标签与属性，关系有类型与方向。",
+    modelLabel: "属性图",
+    accent: "#0b84d8",
+    mark: "property-graph",
     queryLanguage: "cypher",
     queryLanguageLabel: "Cypher",
     capabilities: { schemaVisualization: true, strongRules: true },
@@ -63,6 +77,9 @@ export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
     label: "Apache Jena",
     shortLabel: "Jena",
     description: "RDF/OWL 与 SPARQL 1.1。通过 Fuseki 的 SPARQL 端点读写三元组，支持推理机。",
+    modelLabel: "RDF 三元组",
+    accent: "#6d4aff",
+    mark: "triple",
     queryLanguage: "sparql",
     queryLanguageLabel: "SPARQL",
     capabilities: { schemaVisualization: true, strongRules: false },
@@ -70,6 +87,26 @@ export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
     dataset: { label: "数据集名称", placeholder: "ds", example: "ds", required: true },
     credentials: { usernameLabel: "用户名（可选）", usernameExample: "admin", passwordLabel: "密码（可选）", required: false },
   },
+];
+
+/**
+ * 路线图上的引擎，只用于选择器的「规划中」分类。
+ * 刻意不并入 GraphTargetKind 与 GRAPH_TARGET_KINDS：数据库 kind 约束只应包含真正可连接的后端。
+ */
+export type PlannedGraphTarget = {
+  key: string;
+  label: string;
+  description: string;
+  /** 卡片上的能力行，与已支持引擎的「模型 · 查询语言」保持同样的位置。 */
+  capability: string;
+  note: string;
+  accent: string;
+  mark: GraphTargetMark;
+};
+
+export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
+  { key: "NETWORKX", label: "NetworkX", description: "进程内图算法与推理，适合子图计算、中心性与社区发现。", capability: "图算法 · Python API", note: "规划中", accent: "#0f766e", mark: "mesh" },
+  { key: "ELASTICSEARCH", label: "Elasticsearch", description: "文档检索与聚合，用于大图上的属性召回与倒排筛选。", capability: "检索 · 聚合", note: "规划中", accent: "#b45309", mark: "shards" },
 ];
 
 export function isGraphTargetKind(value: unknown): value is GraphTargetKind {

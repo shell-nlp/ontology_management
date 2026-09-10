@@ -1,4 +1,5 @@
 import { decryptSecret } from "@/lib/crypto";
+import { graphTargetKindInfo } from "@/lib/graph/types";
 import {
   dataTypeFromSparqlDatatype,
   escapeSparqlStringLiteral,
@@ -494,23 +495,11 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     };
   }
 
-  const info = {
-    kind: "JENA" as const,
-    label: "Apache Jena",
-    shortLabel: "Jena",
-    description: "RDF/OWL 与 SPARQL 1.1",
-    queryLanguage: "sparql" as const,
-    queryLanguageLabel: "SPARQL",
-    capabilities: { schemaVisualization: true, strongRules: false },
-    endpoint: { label: "SPARQL 服务地址", placeholder: "http://localhost:3030", example: "http://localhost:3030" },
-    dataset: { label: "数据集名称", placeholder: "ds", example: "ds", required: true },
-    credentials: { usernameLabel: "用户名（可选）", usernameExample: "admin", passwordLabel: "密码（可选）", required: false },
-  };
-
   return {
     kind: "JENA",
     target,
-    info,
+    // 连接表单元数据只有一份：来自 @/lib/graph/types 的注册表。
+    info: graphTargetKindInfo("JENA"),
 
     async testConnection(): Promise<ConnectionInfo> {
       const text = await post(endpoints.query, `ASK { ${scope("?s ?p ?o")} }`, "application/sparql-query; charset=utf-8", "application/sparql-results+json");

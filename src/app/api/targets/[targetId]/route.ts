@@ -56,9 +56,10 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    // 审计记录必须先写：graph_targets 删除后审计表的外键就找不到目标了。
+    await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [targetId]);
     await removeTargetSnapshotDirectory(targetId);
-    await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     return NextResponse.json({ deleted: true });
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;

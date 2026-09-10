@@ -2,6 +2,7 @@ import neo4j, { type Driver } from "neo4j-driver";
 import { decryptSecret } from "@/lib/crypto";
 import type { DataType } from "@/lib/instance-property-editor";
 import { isAutoUniqueCandidate } from "@/lib/graph/schema-inference";
+import { graphTargetKindInfo } from "@/lib/graph/types";
 import type {
   ConnectionInfo,
   EntityRecord,
@@ -193,18 +194,8 @@ export function createNeo4jStore(target: GraphTarget): GraphStore {
   return {
     kind: "NEO4J",
     target,
-    info: {
-      kind: "NEO4J",
-      label: "Neo4j",
-      shortLabel: "Neo4j",
-      description: "Cypher 图数据库",
-      queryLanguage: "cypher",
-      queryLanguageLabel: "Cypher",
-      capabilities: { schemaVisualization: true, strongRules: true },
-      endpoint: { label: "Neo4j URI", placeholder: "neo4j+s://host:7687", example: "neo4j://localhost:7687" },
-      dataset: { label: "数据库名称", placeholder: "neo4j", example: "neo4j", required: true },
-      credentials: { usernameLabel: "用户名", usernameExample: "neo4j", passwordLabel: "密码", required: true },
-    },
+    // 连接表单元数据只有一份：来自 @/lib/graph/types 的注册表。
+    info: graphTargetKindInfo("NEO4J"),
 
     async testConnection(): Promise<ConnectionInfo> {
       const driver = createNeo4jDriver(target);
