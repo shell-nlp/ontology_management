@@ -42,7 +42,7 @@ function graphLabel(node: GraphNode, displayProps?: Map<string, string>) {
   return String(preferred ?? node.labels[0] ?? "节点");
 }
 
-const graphPalette = ["#2e9b8f", "#d97757", "#5b8def", "#a47acb", "#c89137", "#4b9f69"];
+const graphPalette = ["#2563eb", "#1d4ed8", "#0f70db", "#0f7cbf", "#3b82f6", "#1e40af"];
 
 function graphColor(label: string) {
   let hash = 0;

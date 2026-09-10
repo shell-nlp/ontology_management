@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, CheckCircle2, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { PropertyEditor } from "@/components/property-editor";
 import type { GraphData } from "@/lib/neo4j";
@@ -568,6 +568,7 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
   const [settingsOpen, setSettingsOpen] = useState(false);
   const ontologyTargetId = target?.id;
   const [cypher, setCypher] = useState("MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100");
+  const [cypherOpen, setCypherOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const cypherIsWrite = /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(cypher);
   const [cypherMeta, setCypherMeta] = useState<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>({ labels: [], relationshipTypes: [], propertyKeys: [] });
@@ -644,7 +645,7 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
     </div>
     {mode === "instances" ? <>
       <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? "节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 Neo4j。" : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
-      {!draft && <div className="panel functional-panel cypher-bar"><div className="title-row"><div><span className="eyebrow">Cypher 只读查询</span><h2>查询当前 Neo4j 并可视化</h2></div></div><CypherEditor value={cypher} onChange={setCypher} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder="MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100" /><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}
+      {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">Cypher 只读查询</span><b>查询当前 Neo4j 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder="MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100" /><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
     </> : <>
