@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ rows });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取实体。" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取对象。" }, { status: 400 });
   }
 }
 
@@ -71,6 +71,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_ENTITY_CREATED", details: { versionId: input.versionId, entityId: entity.id, labels: entity.labels } });
     return NextResponse.json(entity, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建实体。" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建对象。" }, { status: 400 });
   }
 }

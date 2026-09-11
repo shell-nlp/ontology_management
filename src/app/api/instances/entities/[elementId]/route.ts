@@ -26,14 +26,14 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ele
     if (versionId) {
       const snapshot = await ensureVersionSnapshot(versionId, target);
       const entity = snapshot.nodes.find((node) => node.id === elementId);
-      if (!entity) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
+      if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
       return NextResponse.json(entityFromSnapshot(entity));
     }
     const entity = await getGraphStore(target).readEntity(elementId);
-    if (!entity) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
+    if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
     return NextResponse.json(entity);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取实体。" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取对象。" }, { status: 400 });
   }
 }
 
@@ -45,14 +45,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);
-    if (!versionId) return NextResponse.json({ error: "修改实体必须指定草稿 versionId。" }, { status: 400 });
+    if (!versionId) return NextResponse.json({ error: "修改对象必须指定草稿 versionId。" }, { status: 400 });
     await ensureVersionSnapshot(versionId, target);
     const updated = await updateSnapshotEntity(versionId, elementId, input.properties);
-    if (!updated) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
+    if (!updated) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_ENTITY_UPDATED", details: { versionId, entityId: elementId } });
     return NextResponse.json(updated);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "无法更新实体。";
+    const message = error instanceof Error ? error.message : "无法更新对象。";
     return NextResponse.json({ error: message }, { status: message === "UNAUTHORIZED" ? 403 : 400 });
   }
 }
@@ -64,13 +64,13 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);
-    if (!versionId) return NextResponse.json({ error: "删除实体必须指定草稿 versionId。" }, { status: 400 });
+    if (!versionId) return NextResponse.json({ error: "删除对象必须指定草稿 versionId。" }, { status: 400 });
     await ensureVersionSnapshot(versionId, target);
     const deleted = await deleteSnapshotEntity(versionId, elementId);
-    if (!deleted) return NextResponse.json({ error: "实体不存在。" }, { status: 404 });
+    if (!deleted) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_ENTITY_DELETED", details: { versionId, entityId: elementId } });
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法删除实体。" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法删除对象。" }, { status: 400 });
   }
 }

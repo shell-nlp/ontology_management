@@ -129,7 +129,7 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-/** 实体 id -> 裸主语项（不含尖括号）。应用写入的节点固定用 urn:bkn:node:<uuid>。 */
+/** 对象 id -> 裸主语项（不含尖括号）。应用写入的节点固定用 urn:bkn:node:<uuid>。 */
 export function termForId(id: string) {
   if (id.startsWith("_:")) return id;
   if (isUuid(id)) return `${BKN_NODE_PREFIX}${id}`;
@@ -862,7 +862,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
               ${scope(`?s <${RDF_TYPE}> ${classIri} FILTER NOT EXISTS { ?s ${predicate} ?value }`)}
             }`);
           const amount = Number(rows.rows[0]?.count?.value ?? 0);
-          if (amount) violations.push({ rule: `${entity.name}.${property.name}`, message: "存在缺失必填属性的实体实例。", count: amount });
+          if (amount) violations.push({ rule: `${entity.name}.${property.name}`, message: "存在缺失必填属性的对象实例。", count: amount });
         }
       }
       for (const relationship of definition.relationshipTypes) {

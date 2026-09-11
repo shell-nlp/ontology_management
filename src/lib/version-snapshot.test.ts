@@ -47,7 +47,7 @@ describe("version snapshot", () => {
     snapshot.relationships.push({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sourceId: customerId, targetId: orderId, type: "不存在", properties: {} });
     const messages = validateVersionSnapshot(snapshot).map((violation) => violation.message);
     expect(messages).toContain("唯一属性存在重复值。");
-    expect(messages).toContain("关系端点不符合草稿中的实体类型契约。");
+    expect(messages).toContain("关系端点不符合草稿中的对象类型契约。");
     expect(messages).toContain("关系使用了草稿中不存在的关系类型。");
   });
 

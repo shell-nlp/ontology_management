@@ -58,14 +58,14 @@
 
 | | 模块 | 说明 |
 | :---: | --- | --- |
-| 📐 | **本体草稿** | 实体类型、关系类型、端点契约与属性规则；校验后发布 |
-| 🔗 | **实体与关系** | 实体绑定单一已发布类型（Label）；关系端点须符合契约 |
+| 📐 | **本体草稿** | 对象类型、关系类型、端点契约与属性规则；校验后发布 |
+| 🔗 | **对象与关系** | 对象绑定单一已发布类型（Label）；关系端点须符合契约 |
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON |
 | 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由各后端推导（Neo4j / RDF）。两种视图的节点都可拖拽摆放：有草稿的实例位置写入图快照，只读浏览与本体骨架的摆放只记在本机浏览器 |
 | ⌨️ | **查询工作台** | 按目标后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
 | 🗄 | **目标管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
 | 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，Neo4j 与 Apache Jena 已实现 |
-| 📦 | **统一版本** | 类型 + 实体 + 关系完整快照；草稿写文件，发布才写图 |
+| 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
 
 ## 技术栈
 
@@ -130,9 +130,9 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 文件 | 内容 |
 | --- | --- |
-| `definition.json` | 实体类型、关系类型、端点契约、属性规则 |
-| `nodes.csv` | 实体稳定 ID、Label、属性 JSON |
-| `relationships.csv` | 关系稳定 ID、起止实体 ID、类型、属性 JSON |
+| `definition.json` | 对象类型、关系类型、端点契约、属性规则 |
+| `nodes.csv` | 对象稳定 ID、Label、属性 JSON |
+| `relationships.csv` | 关系稳定 ID、起止对象 ID、类型、属性 JSON |
 | `manifest.json` | 格式版本、目标、版本号、数量、时间、SHA-256 |
 
 版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是实例数据与版本状态的唯一事实来源**。PostgreSQL 只保存账号、连接目标与审计记录；`ONTOLOGY_VERSION_DIR` 因此是所有实例共享的持久卷。
@@ -147,7 +147,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 ```
 
 1. **创建草稿** — 优先复制当前发布版；升级后首版从当前图数据导出  
-2. **编辑草稿** — 类型 / 实体 / 关系 / 属性 / 画布位置只改文件；写操作须带 `versionId`  
+2. **编辑草稿** — 类型 / 对象 / 关系 / 属性 / 画布位置只改文件；写操作须带 `versionId`  
 3. **校验** — 必填/唯一、实例类型、关系端点与契约  
 4. **发布** — 由后端适配器整图替换，必须原子：要么整体生效，要么图保持原样  
 5. **激活历史** — 同一发布流程；存在草稿时禁止切换  
@@ -233,8 +233,8 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` / `POST` | `/api/instances/entities` | 实体列表 / 创建 |
-| `GET` / `PATCH` / `DELETE` | `/api/instances/entities/:elementId` | 实体读写删 |
+| `GET` / `POST` | `/api/instances/entities` | 对象列表 / 创建 |
+| `GET` / `PATCH` / `DELETE` | `/api/instances/entities/:elementId` | 对象读写删 |
 | `GET` / `POST` | `/api/instances/relationships` | 关系列表 / 创建 |
 | `GET` / `PATCH` / `DELETE` | `/api/instances/relationships/:elementId` | 关系读写删 |
 | `GET` | `/api/instances/graph` | 图数据 |

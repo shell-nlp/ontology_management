@@ -45,6 +45,6 @@ export async function GET(request: NextRequest) {
     const results = await getGraphStore(target).searchEntities({ search: q, labels, limit, displayProperties: displayProps });
     return NextResponse.json({ results });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法搜索实体。" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法搜索对象。" }, { status: 400 });
   }
 }

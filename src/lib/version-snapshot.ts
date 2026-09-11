@@ -391,7 +391,7 @@ export async function exportTargetSnapshot(target: GraphTarget, definition: Onto
   const relationships = exported.relationships.map((relationship) => {
     const sourceId = snapshotIds.get(relationship.sourceId);
     const targetId = snapshotIds.get(relationship.targetId);
-    if (!sourceId || !targetId) throw new Error("导出关系时找不到端点实体。");
+    if (!sourceId || !targetId) throw new Error("导出关系时找不到端点对象。");
     return relationshipSchema.parse({
       id: snapshotIdOf(relationship.id, relationship.properties),
       sourceId,
@@ -576,13 +576,13 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
-      violations.push({ rule: node.id, message: "实体必须且只能使用一个草稿中定义的实体类型。", count: 1 });
+      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的对象类型。", count: 1 });
       continue;
     }
     const type = entityTypes.get(managed[0])!;
     const businessProperties = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key !== "fx" && key !== "fy"));
     try { parsePropertyValues(type.properties, businessProperties); } catch (error) {
-      violations.push({ rule: `${type.name}:${node.id}`, message: error instanceof Error ? error.message : "实体属性校验失败。", count: 1 });
+      violations.push({ rule: `${type.name}:${node.id}`, message: error instanceof Error ? error.message : "对象属性校验失败。", count: 1 });
     }
     for (const property of type.properties.filter((item) => item.unique && node.properties[item.name] != null)) {
       const key = `${type.id}:${property.name}`;
@@ -606,11 +606,11 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     const source = nodes.get(relationship.sourceId);
     const target = nodes.get(relationship.targetId);
     if (!type) { violations.push({ rule: relationship.id, message: "关系使用了草稿中不存在的关系类型。", count: 1 }); continue; }
-    if (!source || !target) { violations.push({ rule: relationship.id, message: "关系引用了不存在的实体。", count: 1 }); continue; }
+    if (!source || !target) { violations.push({ rule: relationship.id, message: "关系引用了不存在的对象。", count: 1 }); continue; }
     const sourceType = entityTypesById.get(type.sourceEntityTypeId);
     const targetType = entityTypesById.get(type.targetEntityTypeId);
     if (!sourceType || !targetType || !source.labels.includes(sourceType.name) || !target.labels.includes(targetType.name)) {
-      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的实体类型契约。", count: 1 });
+      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的对象类型契约。", count: 1 });
     }
     try { parsePropertyValues(type.properties, relationship.properties); } catch (error) {
       violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
@@ -636,7 +636,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
 export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
-    if (!type) throw new Error("实体类型未在当前草稿中定义。");
+    if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawProperties) });
     snapshot.nodes.push(node);
     return entityFromSnapshot(node);
@@ -648,7 +648,7 @@ export async function updateSnapshotEntity(versionId: string, entityId: string, 
     const node = snapshot.nodes.find((item) => item.id === entityId);
     if (!node) return null;
     const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
-    if (!type) throw new Error("实体类型未在当前草稿中定义。");
+    if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
     node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
     return entityFromSnapshot(node);

@@ -453,7 +453,7 @@ export function createNeo4jStore(target: GraphTarget): GraphStore {
         for (const property of entity.properties) {
           if (!property.required) continue;
           const amount = await count(`MATCH (n:${quoteIdentifier(entity.name)}) WHERE n.${quoteIdentifier(property.name)} IS NULL RETURN count(n) AS count`);
-          if (amount) violations.push({ rule: `${entity.name}.${property.name}`, message: "存在缺失必填属性的实体实例。", count: amount });
+          if (amount) violations.push({ rule: `${entity.name}.${property.name}`, message: "存在缺失必填属性的对象实例。", count: amount });
         }
       }
       for (const relationship of definition.relationshipTypes) {

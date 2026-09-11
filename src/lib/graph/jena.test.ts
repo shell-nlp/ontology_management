@@ -49,7 +49,7 @@ describe("RDF 名词转换", () => {
     expect(localName(`urn:bkn:class:${iriSegment(raw)}`)).toBe(raw);
   });
 
-  it("实体 id 与 SPARQL 主语项互转", () => {
+  it("对象 id 与 SPARQL 主语项互转", () => {
     expect(termForId("32ae1a46-faa1-485b-8dbc-44c63481c8f5")).toBe("urn:bkn:node:32ae1a46-faa1-485b-8dbc-44c63481c8f5");
     expect(termForId("http://example.org/Person/1")).toBe("http://example.org/Person/1");
     expect(termForId("_:b0")).toBe("_:b0");
