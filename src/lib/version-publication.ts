@@ -21,12 +21,46 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     if (violations.length) return { published: false as const, violations };
 
     const store = getGraphStore(target);
-    await store.replaceGraph(snapshot);
-    const { enforced: canEnforceRequired } = await store.reconcileStrongRules(snapshot.definition);
-    for (const record of await listVersionRecords(version.target_id)) {
-      if (record.id !== version.id && record.status === "PUBLISHED") await updateVersionRecord(record.id, { status: "ARCHIVED" });
+    const { atomicReplace } = store.info.capabilities;
+    // 先落一条“已开始”的审计：发布跨越图库写入与版本状态两处，出问题时需要能从审计还原现场。
+    await writeAuditEntry({
+      actorId: user.id,
+      targetId: version.target_id,
+      action: "VERSION_PUBLISH_STARTED",
+      details: {
+        versionId: version.id,
+        kind: target.kind,
+        atomicReplace,
+        entityCount: snapshot.nodes.length,
+        relationshipCount: snapshot.relationships.length,
+      },
+    });
+
+    let canEnforceRequired = false;
+    let graphReplaced = false;
+    try {
+      await store.replaceGraph(snapshot);
+      graphReplaced = true;
+      canEnforceRequired = (await store.reconcileStrongRules(snapshot.definition)).enforced;
+      for (const record of await listVersionRecords(version.target_id)) {
+        if (record.id !== version.id && record.status === "PUBLISHED") await updateVersionRecord(record.id, { status: "ARCHIVED" });
+      }
+      await updateVersionRecord(version.id, { status: "PUBLISHED", publishedAt: new Date().toISOString() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      await writeAuditEntry({
+        actorId: user.id,
+        targetId: version.target_id,
+        action: "VERSION_PUBLISH_FAILED",
+        details: { versionId: version.id, kind: target.kind, atomicReplace, graphReplaced, error: message },
+      });
+      // 原子替换的后端失败时图数据没动，可以明确告诉用户；非原子后端只能说“可能已改动”。
+      throw new Error(graphReplaced
+        ? `目标图数据已替换，但版本状态未更新：${message}。请重新发布该版本以恢复一致。`
+        : atomicReplace
+          ? `发布失败，目标图数据未改动：${message}`
+          : `发布失败，且 ${store.info.label} 不支持事务替换，目标图数据可能已被部分修改：${message}`);
     }
-    await updateVersionRecord(version.id, { status: "PUBLISHED", publishedAt: new Date().toISOString() });
     await writeAuditEntry({
       actorId: user.id,
       targetId: version.target_id,
@@ -34,6 +68,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       details: {
         versionId: version.id,
         kind: target.kind,
+        atomicReplace,
         entityCount: snapshot.nodes.length,
         relationshipCount: snapshot.relationships.length,
         // 只有 Neo4j 企业版能落地必填约束；其余后端如实记录为未强制。
@@ -46,6 +81,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       entityCount: snapshot.nodes.length,
       relationshipCount: snapshot.relationships.length,
       strongRulesEnforced: canEnforceRequired,
+      atomicReplace,
     };
   });
 }

@@ -5,6 +5,7 @@ import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { z } from "zod";
 import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
+import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
@@ -266,7 +267,8 @@ export async function withTargetLock<T>(targetId: string, operation: () => Promi
   targetLocks.set(targetId, queued);
   await previous;
   try {
-    return await operation();
+    // 先在本实例排队，再拿数据库级锁，保证多实例部署时同一目标只有一个发布在进行。
+    return await withAdvisoryLock(`ontology:target:${targetId}`, operation);
   } finally {
     release();
     if (targetLocks.get(targetId) === queued) targetLocks.delete(targetId);

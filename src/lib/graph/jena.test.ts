@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, resolveSparqlEndpoints, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
+import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
 import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
 import type { GraphTarget } from "@/lib/graph/types";
 
@@ -102,5 +102,55 @@ describe("RDF 字面量与数据类型", () => {
     expect(dataTypeFromSparqlDatatype("http://www.w3.org/2001/XMLSchema#decimal")).toBe("DECIMAL");
     expect(dataTypeFromSparqlDatatype("urn:bkn:json")).toBe("JSON");
     expect(valueFromSparqlLiteral("0.92", "http://www.w3.org/2001/XMLSchema#decimal")).toBe(0.92);
+  });
+});
+
+describe("planReplaceRequests", () => {
+  it("小图把清空与插入放进同一个请求——单个 update 请求才是事务性的", () => {
+    const plan = planReplaceRequests(['<urn:a> <urn:b> "1" .'], { namedGraph: null });
+    expect(plan.requests).toHaveLength(1);
+    expect(plan.requests[0]).toBe('CLEAR SILENT DEFAULT ;\nINSERT DATA { <urn:a> <urn:b> "1" . }');
+    expect(plan.cleanup).toBeNull();
+  });
+
+  it("命名图只清空目标图，并写回同一个图", () => {
+    const plan = planReplaceRequests(['<urn:a> <urn:b> "1" .'], { namedGraph: "urn:g" });
+    expect(plan.requests).toHaveLength(1);
+    expect(plan.requests[0]).toContain("CLEAR SILENT GRAPH <urn:g> ;");
+    expect(plan.requests[0]).toContain('INSERT DATA { GRAPH <urn:g> { <urn:a> <urn:b> "1" . } }');
+    expect(plan.cleanup).toBeNull();
+  });
+
+  it("空快照只清空，不构造非法的空 INSERT", () => {
+    const plan = planReplaceRequests([], { namedGraph: null });
+    expect(plan.requests).toEqual(["CLEAR SILENT DEFAULT"]);
+    expect(plan.cleanup).toBeNull();
+  });
+
+  it("大图先写影子图，最后一个请求才原子切换，并带回兜底清理", () => {
+    const statements = Array.from({ length: 1001 }, (_, index) => `<urn:s:${index}> <urn:p> "v${index}" .`);
+    const plan = planReplaceRequests(statements, { namedGraph: "urn:g", singleRequestLimit: 1000 });
+    expect(plan.requests).toHaveLength(4); // 500 + 500 + 1 批写入，再 +1 次切换
+    const [first, second, third, swap] = plan.requests;
+    expect(first).toMatch(/^INSERT DATA \{ GRAPH <urn:bkn:staging:[0-9a-f-]+> \{/);
+    expect(first).not.toContain("CLEAR");
+    expect(second).toMatch(/^INSERT DATA \{ GRAPH <urn:bkn:staging:[0-9a-f-]+> \{/);
+    expect(third).toContain('<urn:s:1000> <urn:p> "v1000" .');
+    expect(swap).toMatch(/^CLEAR SILENT GRAPH <urn:g> ;\nADD <urn:bkn:staging:[0-9a-f-]+> TO <urn:g> ;\nDROP SILENT GRAPH <urn:bkn:staging:[0-9a-f-]+>$/);
+    expect(plan.cleanup).toMatch(/^DROP SILENT GRAPH <urn:bkn:staging:[0-9a-f-]+>$/);
+    // 同一次计划里影子图必须是同一个
+    const staging = /urn:bkn:staging:[0-9a-f-]+/.exec(first!)![0];
+    expect(swap).toContain(staging);
+    expect(plan.cleanup).toContain(staging);
+  });
+
+  it("默认图的大图切换走 ADD ... TO DEFAULT", () => {
+    const plan = planReplaceRequests(['<urn:a> <urn:b> "1" .', '<urn:a> <urn:b> "2" .'], { namedGraph: null, singleRequestLimit: 1 });
+    expect(plan.requests).toHaveLength(2);
+    expect(plan.requests[1]).toMatch(/^CLEAR SILENT DEFAULT ;\nADD <urn:bkn:staging:[0-9a-f-]+> TO DEFAULT ;/);
+  });
+
+  it("默认单请求上限是给发布用的保守值", () => {
+    expect(DEFAULT_SINGLE_REPLACE_LIMIT).toBe(5000);
   });
 });

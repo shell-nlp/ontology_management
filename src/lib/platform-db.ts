@@ -87,6 +87,32 @@ export async function platformQuery<T extends QueryResultRow>(text: string, valu
   return getPool().query<T>(text, values);
 }
 
+/**
+ * 跨实例互斥锁。
+ *
+ * 进程内的 Promise 队列只能挡住同一个实例：多实例部署时，两个实例可能同时发布同一个目标。
+ * 这里用 PostgreSQL 会话级 advisory lock 补齐这一层，让同一个 key 在集群范围内串行。
+ * 连接断开时锁会自动释放；解锁在 finally 里显式执行，且必须与加锁落在同一条连接上。
+ */
+export async function withAdvisoryLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint)", [key]);
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+  try {
+    return await operation();
+  } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint)", [key]);
+    } finally {
+      client.release();
+    }
+  }
+}
+
 export async function writeAuditEntry(input: {
   actorId?: string;
   targetId?: string;

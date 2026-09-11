@@ -23,6 +23,11 @@ export type GraphStoreCapabilities = {
   schemaVisualization: boolean;
   /** 能否在图库侧落地唯一 / 必填等强约束。 */
   strongRules: boolean;
+  /**
+   * 整图替换是否原子：要么整体生效，要么图保持替换前的状态。
+   * 发布流程据此决定失败后能不能说“图数据未被改动”。
+   */
+  atomicReplace: boolean;
 };
 
 /**
@@ -67,7 +72,7 @@ export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
     mark: "property-graph",
     queryLanguage: "cypher",
     queryLanguageLabel: "Cypher",
-    capabilities: { schemaVisualization: true, strongRules: true },
+    capabilities: { schemaVisualization: true, strongRules: true, atomicReplace: true },
     endpoint: { label: "Neo4j URI", placeholder: "neo4j+s://host:7687", example: "neo4j://localhost:7687" },
     dataset: { label: "数据库名称", placeholder: "neo4j", example: "neo4j", required: true },
     credentials: { usernameLabel: "用户名", usernameExample: "neo4j", passwordLabel: "密码", required: true },
@@ -82,7 +87,7 @@ export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
     mark: "triple",
     queryLanguage: "sparql",
     queryLanguageLabel: "SPARQL",
-    capabilities: { schemaVisualization: true, strongRules: false },
+    capabilities: { schemaVisualization: true, strongRules: false, atomicReplace: true },
     endpoint: { label: "SPARQL 服务地址", placeholder: "http://localhost:3030", example: "http://localhost:3030" },
     dataset: { label: "数据集名称", placeholder: "ds", example: "ds", required: true },
     credentials: { usernameLabel: "用户名（可选）", usernameExample: "admin", passwordLabel: "密码（可选）", required: false },
@@ -263,7 +268,10 @@ export interface GraphStore {
   listRelationships(options?: ListRelationshipsOptions): Promise<RelationshipRecord[]>;
   /** 导出整图，用于从当前图数据初始化草稿快照。 */
   exportGraph(): Promise<GraphExport>;
-  /** 用快照整体替换图数据，发布/激活版本时调用。 */
+  /**
+   * 用快照整体替换图数据，发布/激活版本时调用。
+   * 实现必须保证原子性：失败时图数据保持替换前的状态，不能留下半成品。
+   */
   replaceGraph(snapshot: GraphWriteSnapshot): Promise<void>;
   /** 校验本体定义在图库上的约束违反情况。 */
   validateDefinition(definition: GraphDefinitionLike): Promise<GraphViolation[]>;

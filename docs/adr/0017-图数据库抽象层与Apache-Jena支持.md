@@ -56,7 +56,33 @@ Jena 生产部署通常以 Fuseki 暴露 SPARQL 1.1 HTTP 协议，因此适配�
 
 - `capabilities.strongRules` 为 `false`：Fuseki 不落地唯一/必填约束，`reconcileStrongRules`
   返回 `{ enforced: false }`；RDF 侧表达这类规则应导出 SHACL 形状，另行校验。
+- `capabilities.atomicReplace` 为 `true`：整图替换保证原子（实现见下）。新增后端若做不到，
+  必须声明为 `false`，发布流程会据此把失败提示改成「图数据可能已被部分修改」。
 - 关系属性无法用三元组直接承载，只能具体化，这是 RDF 数据模型的固有约束。
+
+## 发布原子性与并发
+
+版本管理的状态机、编号、快照格式与哈希都放在平台层，与图库无关；**只有「把快照落到图库」这一步是后端相关的**，
+并由 `GraphStore.replaceGraph()` 承担硬性契约：失败时图数据必须保持替换前的状态。
+
+Jena 的落地方式经过实测后确定（Fuseki 5.1 / TDB2）：
+
+- 单个 SPARQL Update 请求是事务性的：请求体里 `CLEAR` 后面出现语法错误时返回 400，且已有的三元组原样未动。
+- 因此小快照用「`CLEAR` + `INSERT DATA`」的单请求提交，天然原子；`ADD <影子图> TO DEFAULT` 与
+  `MOVE ... TO DEFAULT` 均可用于命名图/默认图的切换。
+- 三元组超过 5000 条时，先把数据写进 `urn:bkn:staging:<uuid>` 影子图（这批写入对读取不可见），
+  再用一个请求 `CLEAR 目标 ; ADD 影子图 TO 目标 ; DROP 影子图` 原子切换；失败时兜底删除影子图。
+  阈值可用目标 `options.singleReplaceLimit` 调整。
+
+并发控制分两层：进程内的按目标 Promise 队列，加上 PostgreSQL 会话级 advisory lock
+（`ontology:target:<id>`），保证多实例部署时同一个目标不会并发替换。
+
+发布过程写三条审计，便于事后还原现场：`VERSION_PUBLISH_STARTED`（后端类型 + `atomicReplace` + 数量）、
+`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`）。
+
+实测证据：同一次 Jena 发布在 Fuseki 日志里恰好产生 1 个 `POST /ds/update` 请求；把
+`singleReplaceLimit` 压到 1 强制走影子图路径时为 2 个请求（1 批写入 + 1 次切换），切换后无残留命名图。
+故意用错凭据发布时，接口返回「发布失败，目标图数据未改动」，Fuseki 三元组数量不变，审计记录 `graphReplaced: false`。
 
 ## 影响
 

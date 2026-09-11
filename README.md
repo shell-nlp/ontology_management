@@ -135,7 +135,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `relationships.csv` | 关系稳定 ID、起止实体 ID、类型、属性 JSON |
 | `manifest.json` | 格式版本、目标、版本号、数量、时间、SHA-256 |
 
-PostgreSQL `ontology_platform.ontology_versions` 保存索引、状态、路径、数量与哈希；**快照文件是实例数据的事实来源**。
+版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是实例数据与版本状态的唯一事实来源**。PostgreSQL 只保存账号、连接目标与审计记录；`ONTOLOGY_VERSION_DIR` 因此是所有实例共享的持久卷。
 
 ### 生命周期
 
@@ -146,11 +146,22 @@ PostgreSQL `ontology_platform.ontology_versions` 保存索引、状态、路径�
 └─────────────┘    └─────────────┘    └──────────┘    └────────────────┘
 ```
 
-1. **创建草稿** — 优先复制当前发布版；升级后首版可从 Neo4j 导出  
+1. **创建草稿** — 优先复制当前发布版；升级后首版从当前图数据导出  
 2. **编辑草稿** — 类型 / 实体 / 关系 / 属性 / 画布位置只改文件；写操作须带 `versionId`  
 3. **校验** — 必填/唯一、实例类型、关系端点与契约  
-4. **发布** — 单事务清空并分批重建；任一批失败则整图回滚  
+4. **发布** — 由后端适配器整图替换，必须原子：要么整体生效，要么图保持原样  
 5. **激活历史** — 同一发布流程；存在草稿时禁止切换  
+
+### 发布的原子性与并发
+
+`GraphStore.replaceGraph()` 有硬性契约：**失败时图数据必须保持替换前的状态**，由 `capabilities.atomicReplace` 声明，发布流程据此决定失败提示的措辞。
+
+| 后端 | 原子替换的实现 |
+| --- | --- |
+| Neo4j | 单个写事务内 `DETACH DELETE` + 分批 `UNWIND CREATE`，任一批失败整体回滚 |
+| Apache Jena | 单个 SPARQL Update 请求完成「清空 + 插入」（TDB2 上单请求即事务）；超过 5000 条三元组时先写入影子命名图，再用一个请求 `CLEAR + ADD + DROP` 原子切换 |
+
+发布过程写三条审计：`VERSION_PUBLISH_STARTED`（含后端类型与 `atomicReplace`）、`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`，用于判断图是否已被改动）。同一目标的发布在进程内队列与 PostgreSQL advisory lock 两层串行，多实例部署也不会并发替换同一个目标。
 
 发布成功后才更新版本状态，并对账 `ontology_*` 约束与索引。
 
