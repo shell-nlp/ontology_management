@@ -324,6 +324,7 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
   const registerEvents = useRegisterEvents<NodeAttributes, EdgeAttributes>();
   const graph = sigma.getGraph();
   const draggedNodeRef = useRef<string | null>(null);
+  const draggedOriginRef = useRef<{ x: number; y: number } | null>(null);
   const draggedNodeForceLabelRef = useRef(false);
   const layoutRef = useRef<FA2LayoutSupervisor | null>(null);
   const noverlapRef = useRef<NoverlapLayoutSupervisor | null>(null);
@@ -381,6 +382,21 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
   }, [connectionSourceId, graph, selectedEdgeId, selectedNeighborhood, selectedNodeId, sigma]);
 
   useEffect(() => {
+    // 松手后收尾：只有真的移动过才锁包围盒、才回写位置——单击（下按与松开落在同一点）只是选中，
+    // 否则点一下节点就会冻住视野，之后的重新布局不再适配。
+    const finishDrag = (node: string) => {
+      const point = sigma.getGraph().getNodeAttributes(node);
+      const origin = draggedOriginRef.current;
+      const moved = !origin || Math.hypot(point.x - origin.x, point.y - origin.y) > 0.5;
+      // 先锁再渲染：safeRefresh 会同步触发 afterRender，此刻若还没锁，视野会跟着新位置重新适配。
+      if (moved) viewportBBoxLockedRef.current = true;
+      graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
+      draggedNodeRef.current = null;
+      draggedOriginRef.current = null;
+      safeRefresh(sigma);
+      if (!moved) return;
+      onDragEnd(node, { x: point.x, y: point.y });
+    };
     registerEvents({
       clickNode: ({ node }) => onNodeClick(node),
       clickEdge: ({ edge }) => onEdgeClick(edge),
@@ -394,6 +410,8 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
         layoutRef.current?.kill();
         noverlapRef.current?.kill();
         draggedNodeRef.current = node;
+        const origin = graph.getNodeAttributes(node);
+        draggedOriginRef.current = { x: origin.x, y: origin.y };
         draggedNodeForceLabelRef.current = graph.getNodeAttribute(node, "forceLabel");
         graph.setNodeAttribute(node, "forceLabel", true);
         safeRefresh(sigma);
@@ -410,22 +428,12 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
         const node = draggedNodeRef.current;
         if (!node) return;
         event.preventSigmaDefault();
-        const point = sigma.getGraph().getNodeAttributes(node);
-        graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
-        draggedNodeRef.current = null;
-        viewportBBoxLockedRef.current = true;
-        safeRefresh(sigma);
-        onDragEnd(node, { x: point.x, y: point.y });
+        finishDrag(node);
       },
       upStage: () => {
         const node = draggedNodeRef.current;
         if (!node) return;
-        const point = sigma.getGraph().getNodeAttributes(node);
-        graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
-        draggedNodeRef.current = null;
-        viewportBBoxLockedRef.current = true;
-        safeRefresh(sigma);
-        onDragEnd(node, { x: point.x, y: point.y });
+        finishDrag(node);
       },
     });
   }, [draggable, graph, onDragEnd, onEdgeClick, onNodeClick, onStageClick, registerEvents, sigma]);
@@ -461,6 +469,9 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
       safeRefresh(sigma);
     };
     sigma.on("afterRender", followNodesExtent);
+    // 内容变化（换目标、改筛选、自动整理）后先对齐一次：新数据是在前一个子组件 effect 里灌进去的，
+    // 那一帧的 afterRender 早于本监听器注册，只靠 afterRender 会漏掉这次适配。
+    followNodesExtent();
     // “适应画布”会把镜头重置为铺满整张图的默认状态，此时放开包围盒，让视野重新包含被拖远的节点。
     const releaseLockOnFit = () => {
       const camera = sigma.getCamera().getState();

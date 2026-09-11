@@ -7,6 +7,8 @@ import { PropertyEditor } from "@/components/property-editor";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
 import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/graph/types";
+import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
+import { readStoredPositions, writeStoredPositions, type NodePositions } from "@/lib/local-layout";
 import "./graph-canvas.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
@@ -39,27 +41,6 @@ function graphLabel(node: GraphNode, displayProps?: Map<string, string>) {
   }
   const preferred = ["name", "名称", "title", "id"].map((key) => node.properties[key]).find((value) => typeof value === "string" || typeof value === "number");
   return String(preferred ?? node.labels[0] ?? "节点");
-}
-
-function compactGraphLabel(value: string) {
-  const text = value.trim();
-  if (text.length <= 12) return text;
-  if (/^[A-Za-z0-9_.\-/]+$/.test(text)) {
-    const parts = text.split(/[._\-/]/).filter(Boolean);
-    const tail3 = parts.slice(-3).join("_");
-    if (tail3.length <= 12) return tail3;
-    const tail2 = parts.slice(-2).join("_");
-    return tail2.length <= 12 ? tail2 : `…${tail2.slice(-11)}`;
-  }
-  return text;
-}
-
-const graphPalette = ["#1677ff", "#0f8f8f", "#6d4aff", "#0b84d8", "#0f766e", "#7c3aed", "#2563eb", "#0369a1"];
-
-function graphColor(label: string) {
-  let hash = 0;
-  for (const character of label) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
-  return graphPalette[Math.abs(hash) % graphPalette.length];
 }
 
 function propertyValue(value: unknown) {
@@ -261,40 +242,6 @@ function storedPosition(node: GraphNode) {
   const y = node.properties.fy;
   if (typeof x === "number" && typeof y === "number") return { x, y };
   return null;
-}
-
-type NodePositions = Record<string, { x: number; y: number }>;
-
-// 没有草稿可写时（只读浏览发布数据、看本体骨架），摆放位置放在本机存储里。
-// 位置单独放在缓存 + storage，不走组件状态：落点若触发重新渲染，画布会重算布局并重新适配视野，用户会看到“整张图跟着变”。
-// 本体骨架的节点 id 由图数据库临时分配（Neo4j db.schema.visualization() 的虚拟 id 每次调用都不同），所以本体用类型名做键。
-const localPositionCache = new Map<string, NodePositions>();
-
-function readStoredPositions(key: string) {
-  const cached = localPositionCache.get(key);
-  if (cached) return cached;
-  const positions: NodePositions = {};
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? "{}");
-    if (parsed && typeof parsed === "object") {
-      for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
-        const point = value as { x?: unknown; y?: unknown } | null;
-        if (point && typeof point.x === "number" && typeof point.y === "number" && Number.isFinite(point.x) && Number.isFinite(point.y)) positions[name] = { x: point.x, y: point.y };
-      }
-    }
-  } catch { /* 本机存储不可用时忽略历史摆放 */ }
-  localPositionCache.set(key, positions);
-  return positions;
-}
-
-function writeStoredPositions(key: string, positions: NodePositions) {
-  if (Object.keys(positions).length) {
-    localPositionCache.set(key, positions);
-    try { window.localStorage.setItem(key, JSON.stringify(positions)); } catch { /* 本机存储不可用时只影响摆放记忆 */ }
-    return;
-  }
-  localPositionCache.delete(key);
-  try { window.localStorage.removeItem(key); } catch { /* 同上 */ }
 }
 
 function buildAdjacency(relationships: GraphRelationship[]) {

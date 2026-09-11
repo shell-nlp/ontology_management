@@ -1,0 +1,311 @@
+"use client";
+
+import { useCallback, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { AlertTriangle, CircleDot, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
+import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
+import type { Definition, EntityType, RelationType } from "@/lib/ontology-draft";
+import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
+import { TypeEditDialog } from "@/components/type-edit-dialog";
+// 画布上的浮层沿用「图谱」页的样式（graph-canvas.css 已随 GraphCanvas 进入同一份页面样式）。
+import "./ontology-builder.css";
+
+const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
+
+/**
+ * 没被手动摆放过的对象类型：度数最高的那个居中，其余绕成一圈。
+ * 换一个 seed 就是绕轴转一圈，所以「自动整理」看得见变化，布局本身仍是确定的。
+ */
+function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) {
+  const positions = new Map<string, { x: number; y: number }>();
+  if (!entities.length) return positions;
+  const degree = new Map<string, number>();
+  for (const edge of edges) {
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+  }
+  let hub = entities[0];
+  for (const entity of entities) if ((degree.get(entity.id) ?? 0) > (degree.get(hub.id) ?? 0)) hub = entity;
+  positions.set(hub.id, { x: 0, y: 0 });
+  const rest = entities.filter((entity) => entity.id !== hub.id);
+  const radius = Math.max(150, 58 * Math.ceil(Math.sqrt(rest.length)));
+  rest.forEach((entity, index) => {
+    // 从 0° 起绕圈：两个端点会左右分列，正好铺满宽画布；seed 让「自动整理」看得见变化。
+    const angle = seed * 0.7 + (index / rest.length) * Math.PI * 2;
+    positions.set(entity.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+  });
+  return positions;
+}
+
+export type EntityPayload = { name: string; description: string; displayProperty: string; properties: EntityType["properties"] };
+export type RelationPayload = { name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
+
+type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
+type DialogState =
+  | { kind: "entity"; mode: "create"; id: string }
+  | { kind: "entity"; mode: "edit"; id: string }
+  | { kind: "relation"; mode: "create"; id: string; source: string; target: string }
+  | { kind: "relation"; mode: "edit"; id: string };
+
+type Props = {
+  definition: Definition;
+  targetId?: string;
+  canEdit: boolean;
+  hasSnapshot: boolean;
+  onCreateEntity: (id: string, payload: EntityPayload) => Promise<void>;
+  onUpdateEntity: (id: string, payload: EntityPayload) => Promise<void>;
+  onDeleteEntity: (id: string) => Promise<void>;
+  onCreateRelation: (id: string, payload: RelationPayload) => Promise<void>;
+  onUpdateRelation: (id: string, payload: RelationPayload) => Promise<void>;
+  onDeleteRelation: (id: string) => Promise<void>;
+  onExtract: () => void;
+  onFail: (reason: unknown) => void;
+};
+
+/**
+ * 本体草稿的可视化工作台：对象类型是节点，关系契约是带箭头的连线。
+ *
+ * 画布上做的每一次改动都会立刻写回草稿（和表单模式同一套保存路径），
+ * 摆放位置只记在本机浏览器，不属于草稿定义。
+ */
+export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onExtract, onFail }: Props) {
+  const [selected, setSelected] = useState<Selection>(null);
+  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [layoutSeed, setLayoutSeed] = useState(0);
+  const storageKey = targetId ? `ontology-builder:${targetId}` : null;
+
+  const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
+  const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
+
+  const { nodes, edges, orphanEntities, unresolvedRelations } = useMemo(() => {
+    const positions = storageKey ? readStoredPositions(storageKey) : {};
+    const connected = new Set<string>();
+    const degree = new Map<string, number>();
+    const drawnEdges: SigmaEdge[] = [];
+    const unresolved: RelationType[] = [];
+    for (const relation of definition.relationshipTypes) {
+      if (!entityById.has(relation.sourceEntityTypeId) || !entityById.has(relation.targetEntityTypeId)) { unresolved.push(relation); continue; }
+      connected.add(relation.sourceEntityTypeId);
+      connected.add(relation.targetEntityTypeId);
+      degree.set(relation.sourceEntityTypeId, (degree.get(relation.sourceEntityTypeId) ?? 0) + 1);
+      degree.set(relation.targetEntityTypeId, (degree.get(relation.targetEntityTypeId) ?? 0) + 1);
+      drawnEdges.push({ id: relation.id, type: relation.name, source: relation.sourceEntityTypeId, target: relation.targetEntityTypeId });
+    }
+    let hubId: string | null = null;
+    let hubDegree = -1;
+    for (const entity of definition.entityTypes) {
+      const value = degree.get(entity.id) ?? 0;
+      if (value > hubDegree) { hubDegree = value; hubId = entity.id; }
+    }
+    const fallback = radialLayout(definition.entityTypes, drawnEdges, layoutSeed);
+    const drawnNodes: SigmaNode[] = definition.entityTypes.map((entity) => ({
+      id: entity.id,
+      label: compactGraphLabel(entity.name),
+      color: graphColor(entity.name),
+      isHub: entity.id === hubId,
+      x: positions[entity.id]?.x ?? fallback.get(entity.id)?.x,
+      y: positions[entity.id]?.y ?? fallback.get(entity.id)?.y,
+    }));
+    return {
+      nodes: drawnNodes,
+      edges: drawnEdges,
+      orphanEntities: definition.entityTypes.filter((entity) => !connected.has(entity.id)),
+      unresolvedRelations: unresolved,
+    };
+  }, [definition.entityTypes, definition.relationshipTypes, entityById, layoutSeed, storageKey]);
+
+  const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
+  const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
+
+  const organize = useCallback(() => {
+    if (storageKey) writeStoredPositions(storageKey, {});
+    setLayoutSeed((seed) => seed + 1);
+  }, [storageKey]);
+
+  const openCreateRelation = (source: string, target: string) => {
+    setDialog({ kind: "relation", mode: "create", id: crypto.randomUUID(), source, target });
+    setConnectFrom(null);
+  };
+
+  const handleNodeClick = (nodeId: string) => {
+    if (connectFrom && connectFrom !== nodeId) { openCreateRelation(connectFrom, nodeId); return; }
+    if (connectFrom === nodeId) { setConnectFrom(null); return; }
+    setSelected({ kind: "entity", id: nodeId });
+  };
+
+  const startConnection = (source: string) => {
+    setConnectFrom(source);
+    setSelected({ kind: "entity", id: source });
+  };
+
+  const gapCount = orphanEntities.length + unresolvedRelations.length;
+
+  return (
+    <div className="ob-shell">
+      <div className="ob-canvas">
+      <SigmaGraph
+        nodes={nodes}
+        edges={edges}
+        selectedNodeId={selected?.kind === "entity" ? selected.id : null}
+        selectedEdgeId={selected?.kind === "relation" ? selected.id : null}
+        connectionSourceId={connectFrom}
+        draggable
+        layoutRequest={0}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={(edgeId) => setSelected({ kind: "relation", id: edgeId })}
+        onStageClick={() => { setSelected(null); setConnectFrom(null); }}
+        onDragEnd={(nodeId, point) => { if (storageKey && canEdit) writeStoredPositions(storageKey, { ...readStoredPositions(storageKey), [nodeId]: point }); }}
+        onLayoutEnd={() => undefined}
+      />
+
+      <div className="ob-toolbar">
+        <button className="graph-tool-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}>
+          <Plus size={14} />对象类型
+        </button>
+        <button
+          className={connectFrom ? "graph-tool-action" : "ob-tool-action"}
+          disabled={!canEdit || definition.entityTypes.length < 2}
+          onClick={() => (connectFrom ? setConnectFrom(null) : setConnectFrom(selectedEntity?.id ?? definition.entityTypes[0]?.id ?? null))}
+          title={connectFrom ? "取消连线" : "先点起点对象类型，再点终点对象类型"}
+        >
+          <Link2 size={14} />{connectFrom ? "退出连线" : "新建关系"}
+        </button>
+        <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
+        <span className="ob-count">{definition.entityTypes.length} 对象类型 · {definition.relationshipTypes.length} 关系类型</span>
+      </div>
+
+      {connectFrom && (
+        <div className="ob-connect-hint" role="status">
+          <Link2 size={13} />
+          正在从「{entityById.get(connectFrom)?.name ?? "对象类型"}」连线，点另一个对象类型作为终点
+          <button onClick={() => setConnectFrom(null)}>取消</button>
+        </div>
+      )}
+
+      {gapCount > 0 && (
+        <div className="ob-gaps">
+          <b><AlertTriangle size={13} />发布前待补全</b>
+          {unresolvedRelations.map((relation) => (
+            <button key={relation.id} onClick={() => setSelected({ kind: "relation", id: relation.id })}>{relation.name}<span>端点未定</span></button>
+          ))}
+          {orphanEntities.map((entity) => (
+            <button key={entity.id} onClick={() => setSelected({ kind: "entity", id: entity.id })}>{entity.name}<span>未接入关系</span></button>
+          ))}
+        </div>
+      )}
+
+      {!definition.entityTypes.length && (
+        <div className="ob-empty">
+          <CircleDot size={26} />
+          <b>画布上还没有对象类型</b>
+          <span>先落一个对象类型，从它拉出关系契约，再补端点和属性。每次改动都会立刻存进草稿。</span>
+          <div>
+            <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}><Plus size={15} />新建对象类型</button>
+            {hasSnapshot && <button className="graph-action" disabled={!canEdit} onClick={onExtract}><Database size={15} />从快照提取类型</button>}
+          </div>
+        </div>
+      )}
+
+      </div>
+      <aside className="ob-inspector">
+        {selectedEntity ? (
+          <>
+            <div className="graph-inspector-head">
+              <div><span style={{ background: graphColor(selectedEntity.name) }} />对象类型</div>
+              <button aria-label="关闭详情" onClick={() => setSelected(null)}><X size={15} /></button>
+            </div>
+            <div className="graph-inspector-body">
+              <h3>{selectedEntity.name}</h3>
+              <p>{selectedEntity.description || "未填写说明"}</p>
+              <div className="ob-facts">
+                <span>属性 <b>{selectedEntity.properties.length}</b></span>
+                <span>必填 <b>{selectedEntity.properties.filter((item) => item.required).length}</b></span>
+                <span>标题 <b>{selectedEntity.displayProperty || "默认"}</b></span>
+              </div>
+              {selectedEntity.properties.length > 0 ? (
+                <div className="graph-properties">
+                  {selectedEntity.properties.map((property) => (
+                    <div key={property.name}>
+                      <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
+                      <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="ob-inspector-note">还没有属性规则。点「编辑」补上业务属性与必填约束。</p>}
+              <div className="graph-inspector-actions">
+                <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
+                <button className="graph-action" disabled={!canEdit || definition.entityTypes.length < 2} onClick={() => startConnection(selectedEntity.id)}><Link2 size={13} />连一条关系</button>
+              </div>
+              <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteEntity(selectedEntity.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除对象类型</button>
+            </div>
+          </>
+        ) : selectedRelation ? (
+          <>
+            <div className="graph-inspector-head">
+              <div><span style={{ background: "#7a8f8c" }} />关系契约</div>
+              <button aria-label="关闭详情" onClick={() => setSelected(null)}><X size={15} /></button>
+            </div>
+            <div className="graph-inspector-body">
+              <h3>{selectedRelation.name}</h3>
+              <p><span>起点</span> {entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "未指定"}<br /><span>终点</span> {entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "未指定"}</p>
+              {(entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "") === "" || (entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "") === "" ? <p className="ob-inspector-warning"><AlertTriangle size={13} />端点未指定，这条关系类型不会出现在画布上，也无法发布。</p> : null}
+              {selectedRelation.properties.length > 0 ? (
+                <div className="graph-properties">
+                  {selectedRelation.properties.map((property) => (
+                    <div key={property.name}>
+                      <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
+                      <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="ob-inspector-note">这条关系没有额外属性。</p>}
+              <div className="graph-inspector-actions">
+                <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>
+                <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteRelation(selectedRelation.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除</button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="graph-inspector-body">
+            <div className="graph-inspector-empty">
+              <LocateFixed size={20} />
+              <b>选择一个元素</b>
+              <span>点对象类型看它的属性规则；点连线看端点契约。拖节点可调整摆放，「自动整理」复位。</span>
+            </div>
+          </div>
+        )}
+      </aside>
+
+      {dialog?.kind === "entity" && (
+        <TypeEditDialog
+          kind="entity"
+          mode={dialog.mode}
+          entity={dialog.mode === "edit" ? entityById.get(dialog.id) ?? null : null}
+          entityTypes={definition.entityTypes}
+          onClose={() => setDialog(null)}
+          onSave={async (payload) => {
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", properties: payload.properties };
+            if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
+            else await onUpdateEntity(dialog.id, body);
+          }}
+        />
+      )}
+      {dialog?.kind === "relation" && (
+        <TypeEditDialog
+          kind="relation"
+          mode={dialog.mode}
+          relation={dialog.mode === "edit" ? relationById.get(dialog.id) ?? null : { id: dialog.id, name: "", sourceEntityTypeId: dialog.source, targetEntityTypeId: dialog.target, properties: [] }}
+          entityTypes={definition.entityTypes}
+          onClose={() => setDialog(null)}
+          onSave={async (payload) => {
+            const body: RelationPayload = { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties };
+            if (dialog.mode === "create") { await onCreateRelation(dialog.id, body); setSelected({ kind: "relation", id: dialog.id }); }
+            else await onUpdateRelation(dialog.id, body);
+          }}
+        />
+      )}
+    </div>
+  );
+}
