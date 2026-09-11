@@ -1,0 +1,136 @@
+/* 对象类型 / 关系类型的定义面板。
+   左边写契约（身份、端点、属性规则），右边把「这个名字在画布上长什么样」画出来：
+   取色、标签压缩都直接复用画布同一套规则（graphColor / compactGraphLabel），
+   所以预览里的颜色和本体草稿画布上的圆点、连线完全一致——改一个名字，两处一起变。 */
+
+.ted-dialog {
+  --ted-ink: #14213d;
+  --ted-muted: #64748b;
+  --ted-soft: #8b9ab0;
+  --ted-line: #dfe7f1;
+  --ted-line-strong: #ccd9ea;
+  --ted-paper: #f7f9fc;
+  --ted-primary: #1e3a8a;
+  --ted-focus: rgba(29, 78, 216, .13);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(904px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ted-ink);
+  box-shadow: 0 24px 60px rgba(16, 30, 55, .3);
+  animation: ted-enter .16s ease-out;
+}
+/* sigma 的缩放控件默认 z-index 100，会盖在弹出层上；这里把遮罩抬到它之上。 */
+.dialog-backdrop.ted-backdrop { z-index: 120; background: rgba(14, 25, 45, .5); }
+@keyframes ted-enter { from { opacity: 0; transform: translateY(6px); } }
+
+.ted-head { display: flex; align-items: center; gap: 12px; padding: 19px 24px 16px; border-bottom: 1px solid var(--ted-line); }
+.ted-mark { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 4px; background: #eef3fb; color: var(--ted-primary); }
+.ted-title { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.ted-eyebrow { color: var(--ted-soft); font-size: 9.5px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; }
+.ted-dialog h2 { margin: 0; color: var(--ted-ink); font-family: Georgia, "Noto Serif SC", serif; font-size: 20px; font-weight: 600; line-height: 1.2; }
+.ted-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 4px; background: transparent; color: var(--ted-soft); }
+.ted-close:hover { background: #f1f5fb; color: var(--ted-ink); }
+
+.ted-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 0; }
+.ted-form { display: grid; align-content: start; gap: 15px; min-height: 0; max-height: min(58vh, 560px); padding: 20px 24px 22px; overflow: auto; }
+.ted-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+
+.ted-field { display: grid; align-content: start; gap: 6px; }
+.ted-field > span { color: #3f5052; font-size: 11px; font-weight: 700; }
+.ted-field small { color: var(--ted-soft); font-size: 10px; font-weight: 400; line-height: 1.55; }
+
+.ted-input, .ted-select { width: 100%; height: 38px; padding: 0 11px; border: 1px solid var(--ted-line-strong); border-radius: 4px; background: #fff; color: #16233b; font-size: 12.5px; outline: 0; }
+.ted-input::placeholder { color: #a9b8cb; }
+.ted-input:focus, .ted-select:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px var(--ted-focus); }
+.ted-select { appearance: none; padding-right: 30px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9ab0' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+
+.ted-direction { display: flex; align-items: center; gap: 8px; height: 38px; color: var(--ted-soft); }
+.ted-direction span { display: inline-block; max-width: 42%; height: 26px; padding: 0 10px; border-radius: 13px; color: #fff; font-size: 10.5px; font-weight: 600; line-height: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ted-direction span[data-empty="true"] { background: #eef2f8; color: var(--ted-soft); }
+
+.ted-section { display: grid; gap: 10px; margin-top: 3px; padding-top: 16px; border-top: 1px solid var(--ted-line); }
+.ted-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ted-section-head h3 { margin: 0; color: #1f3557; font-family: Georgia, "Noto Serif SC", serif; font-size: 15px; font-weight: 600; }
+.ted-section-head em { padding: 0; background: transparent; color: var(--ted-soft); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; font-style: normal; }
+
+.ted-props { display: grid; gap: 6px; }
+.ted-prop { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 9px; border: 1px solid var(--ted-line); border-radius: 4px; background: #fbfcfe; }
+.ted-prop.editing { grid-template-columns: minmax(0, 1fr) 112px auto auto; }
+.ted-prop.editing .ted-input, .ted-prop.editing .ted-select, .ted-prop.editing .ted-toggle { height: 34px; }
+.ted-prop-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ted-prop-main b { color: #1f3557; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ted-prop-main code { flex: none; padding: 2px 6px; border-radius: 3px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.ted-tag { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-style: normal; font-weight: 600; }
+.ted-tag.required { background: #fdf1ea; color: #a2622f; }
+.ted-tag.unique { background: #eef7f1; color: #2f6b4d; }
+.ted-prop-actions { display: flex; gap: 5px; }
+.ted-icon-button { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--ted-line); border-radius: 4px; background: #fff; color: #5c6b82; }
+.ted-icon-button:hover { border-color: #b9d1f5; background: #f4f8ff; color: #1d4ed8; }
+.ted-icon-button.confirm { border-color: #1e3a8a; background: #1e3a8a; color: #fff; }
+.ted-icon-button.confirm:hover { border-color: #142f73; background: #142f73; color: #fff; }
+.ted-icon-button.danger:hover { border-color: #e0bdb4; background: #fff1ed; color: #b04f3d; }
+
+.ted-props-empty { margin: 0; padding: 15px 12px; border: 1px dashed var(--ted-line-strong); border-radius: 4px; background: #fbfcfe; color: var(--ted-soft); font-size: 11px; text-align: center; }
+
+.ted-add { display: grid; grid-template-columns: minmax(0, 1fr) 116px auto auto; gap: 8px; align-items: center; }
+.ted-toggle { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 11px; border: 1px solid var(--ted-line-strong); border-radius: 4px; background: #fff; color: #4b5b6b; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.ted-toggle input { width: 13px; height: 13px; margin: 0; accent-color: var(--ted-primary); }
+.ted-toggle:has(input:checked) { border-color: #1e3a8a; background: #eef3fb; color: #1e3a8a; }
+.ted-add-button { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 13px; border: 1px solid #cbd9ed; border-radius: 4px; background: #fff; color: #315b9f; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.ted-add-button:hover { border-color: #a9c5ef; background: #eef4ff; color: #1d4ed8; }
+
+.ted-preview { display: grid; align-content: start; gap: 13px; min-height: 0; max-height: min(58vh, 560px); padding: 20px 20px 22px; overflow: auto; border-left: 1px solid var(--ted-line); background: var(--ted-paper); }
+.ted-preview-head { display: grid; gap: 4px; }
+.ted-preview-head b { color: #1f3557; font-size: 11px; font-weight: 700; letter-spacing: .4px; }
+.ted-preview-head span { color: var(--ted-soft); font-size: 10px; line-height: 1.55; }
+
+.ted-stage { display: grid; place-items: center; min-height: 152px; padding: 26px 16px; border: 1px solid var(--ted-line); border-radius: 4px; background-color: #fff; background-image: radial-gradient(#d9e5f5 1.15px, transparent 1.15px); background-size: 42px 42px; }
+.ted-node { display: grid; place-items: center; width: 74px; height: 74px; padding: 0 9px; border-radius: 50%; color: #fff; font-size: 10.5px; font-weight: 600; line-height: 1.25; text-align: center; overflow-wrap: anywhere; }
+.ted-node[data-empty="true"] { border: 1px dashed #bfcbe0; background: transparent; color: var(--ted-soft); }
+
+.ted-edge { display: flex; align-items: center; width: 100%; }
+.ted-edge-endpoint { flex: none; display: grid; place-items: center; width: 46px; height: 46px; padding: 0 5px; border-radius: 50%; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
+.ted-edge-endpoint[data-empty="true"] { border: 1px dashed #bfcbe0; color: var(--ted-soft); }
+.ted-edge-line { position: relative; flex: 1; height: 2px; margin: 0 9px 0 8px; background: #c3ccda; }
+.ted-edge-line[data-empty="true"] { background: repeating-linear-gradient(90deg, #cdd7e5 0 5px, transparent 5px 10px); }
+.ted-edge-label { position: absolute; top: 50%; left: 50%; max-width: 118px; padding: 2px 6px; border-radius: 2px; background: #fff; color: #536975; font-size: 10px; font-style: normal; white-space: nowrap; transform: translate(-50%, -50%); overflow: hidden; text-overflow: ellipsis; }
+.ted-edge-arrow { position: absolute; top: 50%; right: 0; width: 8px; height: 8px; border-top: 2px solid #c3ccda; border-right: 2px solid #c3ccda; transform: translate(50%, -50%) rotate(45deg); }
+
+.ted-preview-props { display: grid; gap: 5px; }
+.ted-preview-props > span { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--ted-line); border-radius: 3px; background: #fff; font-size: 11px; }
+.ted-preview-props em { padding: 0; background: transparent; color: #3d5168; font-size: 11px; font-style: normal; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ted-preview-props code { flex: none; color: #7186a4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.ted-preview-props > span.ted-preview-empty { display: block; border-style: dashed; color: var(--ted-soft); text-align: center; }
+.ted-preview-more { padding: 0 2px; color: var(--ted-soft); font-size: 10px; }
+.ted-note { margin: 0; padding: 9px 10px; border-left: 2px solid #cbd9ed; background: #fff; color: var(--ted-muted); font-size: 10.5px; line-height: 1.55; }
+
+.ted-foot { display: flex; align-items: center; gap: 14px; padding: 13px 24px; border-top: 1px solid var(--ted-line); background: #fbfcfe; }
+.ted-error { display: flex; align-items: center; gap: 7px; margin: 0; color: #a04a3a; font-size: 11px; }
+.ted-error svg { flex: none; }
+.ted-hint { margin: 0; color: var(--ted-soft); font-size: 10.5px; }
+.ted-foot-actions { display: flex; gap: 8px; margin-left: auto; }
+
+.ted-dialog button:focus-visible, .ted-toggle:focus-within { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .ted-dialog { overflow: auto; }
+  .ted-body { grid-template-columns: minmax(0, 1fr); }
+  .ted-form, .ted-preview { max-height: none; overflow: visible; }
+  .ted-preview { border-left: 0; border-top: 1px solid var(--ted-line); }
+}
+@media (max-width: 640px) {
+  .ted-grid-2, .ted-add { grid-template-columns: minmax(0, 1fr); }
+  .ted-prop.editing { grid-template-columns: minmax(0, 1fr); }
+  .ted-prop-actions { justify-content: flex-end; }
+  .ted-foot { flex-direction: column; align-items: stretch; }
+  .ted-foot-actions { margin-left: 0; }
+  .ted-foot-actions .quiet-button, .ted-foot-actions .primary-button { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ted-dialog { animation: none; }
+}

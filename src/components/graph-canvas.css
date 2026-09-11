@@ -160,20 +160,4 @@
 .settings-field input { border: 1px solid #cdd7d3; border-radius: 4px; outline: 0; height: 38px; padding: 0 10px; font: 12px ui-monospace, "Cascadia Code", monospace; }
 .settings-field input:focus { border-color: #599787; box-shadow: 0 0 0 3px rgba(89, 151, 135, .12); }
 .settings-field small { color: #7b8786; font-weight: 400; font-size: 11px; line-height: 1.5; }
-.dialog-divider { height: 1px; margin: 16px 0 13px; background: #edf1ee; }
-.dialog.type-dialog { width: min(560px, 100%); }
-.dialog-section-head { display: flex; align-items: baseline; gap: 8px; }
-.dialog-section-head h3 { margin: 0; color: #2c4542; font-family: Georgia, "Noto Serif SC", serif; font-size: 18px; font-weight: 600; }
 .dialog-hint { color: #7b8886; font-size: 11px; margin: 7px 0 10px; }
-.dialog-prop-list { display: grid; gap: 5px; margin: 4px 0 10px; max-height: 220px; overflow: auto; }
-.dialog-prop-row { display: grid; grid-template-columns: auto minmax(90px, 1fr) minmax(80px, .7fr) auto auto auto; gap: 6px; align-items: center; padding: 7px 8px; border: 1px solid #e4ece8; border-radius: 4px; background: #fbfdfb; }
-.dialog-prop-row.editing { grid-template-columns: minmax(110px, 1.1fr) minmax(100px, .9fr) auto auto auto; }
-.dialog-prop-row > svg { color: #6a9c88; }
-.dialog-prop-row > b { color: #2c4643; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dialog-prop-row > span { color: #5b7470; font-size: 11px; font-family: ui-monospace, "Cascadia Code", monospace; }
-.dialog-prop-row > em { color: #7b8786; font-size: 10px; font-style: normal; white-space: nowrap; }
-.dialog-prop-row input, .dialog-prop-row select { min-height: 28px; border: 1px solid #cdd9d4; border-radius: 4px; outline: 0; padding: 0 7px; color: #26373a; background: #fff; font-size: 11px; }
-.dialog-prop-row .check-label { margin: 0; white-space: nowrap; }
-.dialog-prop-row .action.compact { min-height: 26px; padding: 0 7px; font-size: 10px; white-space: nowrap; }
-.dialog-prop-add { grid-template-columns: minmax(100px, 1.2fr) minmax(110px, 1fr) auto auto; gap: 6px; margin-top: 0; }
-.dialog-error { margin: 9px 0 0; padding: 8px 10px; border-left: 3px solid #dd735f; background: #fff3ef; color: #a04a3a; font-size: 11px; }
