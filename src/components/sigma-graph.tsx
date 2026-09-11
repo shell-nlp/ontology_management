@@ -313,6 +313,8 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
   const noverlapRef = useRef<NoverlapLayoutSupervisor | null>(null);
   const layoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completedLayoutRequestRef = useRef(0);
+  const viewportBBoxRef = useRef<{ x: [number, number]; y: [number, number] } | null>(null);
+  const viewportBBoxLockedRef = useRef(false);
   const selectedNeighborhood = useMemo(() => {
     if (!selectedNodeId || !graph.hasNode(selectedNodeId)) return null;
     return new Set<string>([selectedNodeId, ...graph.neighbors(selectedNodeId)]);
@@ -389,6 +391,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         const point = sigma.getGraph().getNodeAttributes(node);
         graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
+        viewportBBoxLockedRef.current = true;
         safeRefresh(sigma);
         onDragEnd(node, { x: point.x, y: point.y });
       },
@@ -398,6 +401,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
         const point = sigma.getGraph().getNodeAttributes(node);
         graph.setNodeAttribute(node, "forceLabel", draggedNodeForceLabelRef.current);
         draggedNodeRef.current = null;
+        viewportBBoxLockedRef.current = true;
         safeRefresh(sigma);
         onDragEnd(node, { x: point.x, y: point.y });
       },
@@ -410,9 +414,47 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
     noverlapRef.current?.kill();
   }, []);
 
+  // Sigma 默认把镜头缩放绑在当前所有节点的包围盒上：拖动节点一旦越出包围盒，整张图会跟着缩放，
+  // 观感就是“节点和边一起整体变动”。这里在拖拽期间锁住包围盒，只有重新布局或重建画布时才重新跟随。
+  useEffect(() => {
+    viewportBBoxRef.current = null;
+    viewportBBoxLockedRef.current = false;
+    const followNodesExtent = () => {
+      if (draggedNodeRef.current || viewportBBoxLockedRef.current || !graph.order) return;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      graph.forEachNode((_node, attributes) => {
+        if (attributes.x < minX) minX = attributes.x;
+        if (attributes.x > maxX) maxX = attributes.x;
+        if (attributes.y < minY) minY = attributes.y;
+        if (attributes.y > maxY) maxY = attributes.y;
+      });
+      const next = { x: [minX, maxX] as [number, number], y: [minY, maxY] as [number, number] };
+      const current = viewportBBoxRef.current;
+      if (current && current.x[0] === next.x[0] && current.x[1] === next.x[1] && current.y[0] === next.y[0] && current.y[1] === next.y[1]) return;
+      viewportBBoxRef.current = next;
+      sigma.setCustomBBox(next);
+      safeRefresh(sigma);
+    };
+    sigma.on("afterRender", followNodesExtent);
+    // “适应画布”会把镜头重置为铺满整张图的默认状态，此时放开包围盒，让视野重新包含被拖远的节点。
+    const releaseLockOnFit = () => {
+      const camera = sigma.getCamera().getState();
+      if (camera.x === 0.5 && camera.y === 0.5 && camera.ratio === 1 && camera.angle === 0) viewportBBoxLockedRef.current = false;
+    };
+    sigma.getCamera().on("updated", releaseLockOnFit);
+    return () => {
+      sigma.off("afterRender", followNodesExtent);
+      sigma.getCamera().off("updated", releaseLockOnFit);
+    };
+  }, [graph, sigma]);
+
   useEffect(() => {
     if (!layoutRequest || graph.order < 2 || completedLayoutRequestRef.current === layoutRequest) return;
     completedLayoutRequestRef.current = layoutRequest;
+    viewportBBoxLockedRef.current = false;
     layoutRef.current?.kill();
     noverlapRef.current?.kill();
     if (layoutTimerRef.current) clearTimeout(layoutTimerRef.current);

@@ -263,6 +263,40 @@ function storedPosition(node: GraphNode) {
   return null;
 }
 
+type NodePositions = Record<string, { x: number; y: number }>;
+
+// 本体骨架的节点 id 由图数据库临时分配（例如 Neo4j db.schema.visualization() 的虚拟 id 每次调用都不同），
+// 因此摆放位置以类型名作为稳定键。位置单独放在缓存 + 本机存储里，不走组件状态：
+// 拖动结束若触发重新渲染，画布会整体重算布局并重新适配视野，用户会看到“整张图跟着变”。
+const ontologyPositionCache = new Map<string, NodePositions>();
+
+function readStoredOntologyPositions(key: string) {
+  const cached = ontologyPositionCache.get(key);
+  if (cached) return cached;
+  const positions: NodePositions = {};
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? "{}");
+    if (parsed && typeof parsed === "object") {
+      for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const point = value as { x?: unknown; y?: unknown } | null;
+        if (point && typeof point.x === "number" && typeof point.y === "number" && Number.isFinite(point.x) && Number.isFinite(point.y)) positions[name] = { x: point.x, y: point.y };
+      }
+    }
+  } catch { /* 本机存储不可用时忽略历史摆放 */ }
+  ontologyPositionCache.set(key, positions);
+  return positions;
+}
+
+function writeStoredOntologyPositions(key: string, positions: NodePositions) {
+  if (Object.keys(positions).length) {
+    ontologyPositionCache.set(key, positions);
+    try { window.localStorage.setItem(key, JSON.stringify(positions)); } catch { /* 本机存储不可用时只影响摆放记忆 */ }
+    return;
+  }
+  ontologyPositionCache.delete(key);
+  try { window.localStorage.removeItem(key); } catch { /* 同上 */ }
+}
+
 function buildAdjacency(relationships: GraphRelationship[]) {
   const adjacency = new Map<string, string[]>();
   for (const relationship of relationships) {
@@ -333,6 +367,7 @@ export function GraphCanvas({
   const [layoutRequest, setLayoutRequest] = useState(0);
   const [layoutSeed, setLayoutSeed] = useState(0);
   const persistLayoutRef = useRef(false);
+  const ontologyLayoutKey = viewMode === "ontology" && targetId ? `ontology-layout:${targetId}` : null;
   const [showAllForGraph, setShowAllForGraph] = useState<GraphData | null>(null);
   const showAllGraph = showAllForGraph === graph;
   const representative = useMemo(
@@ -398,15 +433,20 @@ export function GraphCanvas({
     const positionedNodeCount = displayGraph.nodes.filter((node) => storedPosition(node)).length;
     // A partially persisted legacy layout mixes unrelated coordinate systems and creates sparse, uneven graphs.
     const useStoredPositions = displayGraph.nodes.length > 0 && positionedNodeCount / displayGraph.nodes.length >= 0.8 && storedLayoutIsUsable(displayGraph.nodes);
+    const ontologyPositions = ontologyLayoutKey ? readStoredOntologyPositions(ontologyLayoutKey) : {};
+    const manuallyPlaced = new Set<string>();
     const nodes: SigmaNode[] = displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
-      return { id: node.id, label: compactGraphLabel(graphLabel(node, displayProps)), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: position?.x, y: position?.y };
+      const override = viewMode === "ontology" ? ontologyPositions[graphLabel(node, displayProps)] : undefined;
+      if (override) manuallyPlaced.add(node.id);
+      return { id: node.id, label: compactGraphLabel(graphLabel(node, displayProps)), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: override?.x ?? position?.x, y: override?.y ?? position?.y };
     });
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges: SigmaEdge[] = visibleRelationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target)).map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.source, target: relationship.target }));
     if (!useStoredPositions && nodes.length <= 60) {
       const stablePositions = computeStableNodePositions(nodes, edges, layoutSeed);
       nodes.forEach((node) => {
+        if (manuallyPlaced.has(node.id)) return;
         const position = stablePositions.get(node.id);
         if (position) {
           node.x = position.x;
@@ -415,7 +455,7 @@ export function GraphCanvas({
       });
     }
     return { nodes, edges };
-  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, viewMode, visibleNodeIds, visibleRelationships]);
+  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, ontologyLayoutKey, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -482,6 +522,23 @@ export function GraphCanvas({
     if (items.length) void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, versionId, items }) }).catch(() => {});
   };
 
+  // 本体骨架没有草稿版本可写，摆放位置只记在本机浏览器，不进入图数据库。
+  const saveOntologyPosition = (nodeId: string, point: { x: number; y: number }) => {
+    const node = displayGraph.nodes.find((item) => item.id === nodeId);
+    if (!node || !ontologyLayoutKey) return;
+    writeStoredOntologyPositions(ontologyLayoutKey, { ...readStoredOntologyPositions(ontologyLayoutKey), [graphLabel(node, displayProps)]: point });
+  };
+
+  // 自动整理以节点 id 产出坐标，写回本机存储前先换成稳定的类型名。
+  const ontologyLabelPositions = (positions: Record<string, { x: number; y: number }>) => {
+    const next: NodePositions = ontologyLayoutKey ? { ...readStoredOntologyPositions(ontologyLayoutKey) } : {};
+    for (const [nodeId, point] of Object.entries(positions)) {
+      const node = displayGraph.nodes.find((item) => item.id === nodeId);
+      if (node) next[graphLabel(node, displayProps)] = point;
+    }
+    return next;
+  };
+
   const handleNodeClick = (nodeId: string) => {
     if (admin && connectionSourceId) {
       if (nodeId !== connectionSourceId) setPendingConnection({ source: connectionSourceId, target: nodeId });
@@ -499,10 +556,15 @@ export function GraphCanvas({
 
   const organize = () => {
     if (!graph.nodes.length) return;
+    if (viewMode === "ontology") {
+      if (ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, {});
+    }
     if (graphData.nodes.length <= 60) {
+      const arranged = Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1));
       if (admin && targetId && versionId) {
-        savePositions(Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1)));
+        savePositions(arranged);
       }
+      if (viewMode === "ontology" && ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, ontologyLabelPositions(arranged));
       setLayoutSeed((seed) => seed + 1);
       return;
     }
@@ -531,16 +593,23 @@ export function GraphCanvas({
         selectedNodeId={editTarget?.kind === "node" ? editTarget.id : null}
         selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
         connectionSourceId={connectionSourceId}
-        draggable={admin}
+        draggable={admin || viewMode === "ontology"}
         layoutRequest={graphData.nodes.length <= 60 ? 0 : layoutRequest}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
         onStageClick={() => { setEditTarget(null); setEditing(false); setConnectionSourceId(null); }}
-        onDragEnd={(nodeId, point) => savePositions({ [nodeId]: point })}
+        onDragEnd={(nodeId, point) => {
+          if (viewMode === "ontology") saveOntologyPosition(nodeId, point);
+          else savePositions({ [nodeId]: point });
+        }}
         onLayoutEnd={(positions) => {
           if (!persistLayoutRef.current) return;
           persistLayoutRef.current = false;
-          savePositions(positions);
+          if (viewMode === "ontology") {
+            if (ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, ontologyLabelPositions(positions));
+          } else {
+            savePositions(positions);
+          }
           notify?.("已按关系重新整理布局。");
         }}
       />
@@ -617,7 +686,7 @@ export function GraphCanvas({
           </div>
         )}
         {!selectedNode && !selectedEdge && (
-          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击实体类型或关系类型，查看端点契约及每一项属性规则。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</>}</span></div>
+          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击实体类型或关系类型，查看端点契约及每一项属性规则。拖拽节点可调整摆放，位置只记在本机；需要复原时点“自动整理”。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</>}</span></div>
         )}
       </aside>
 
