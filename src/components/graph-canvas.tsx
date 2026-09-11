@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
 import { PropertyEditor } from "@/components/property-editor";
@@ -265,13 +265,13 @@ function storedPosition(node: GraphNode) {
 
 type NodePositions = Record<string, { x: number; y: number }>;
 
-// 本体骨架的节点 id 由图数据库临时分配（例如 Neo4j db.schema.visualization() 的虚拟 id 每次调用都不同），
-// 因此摆放位置以类型名作为稳定键。位置单独放在缓存 + 本机存储里，不走组件状态：
-// 拖动结束若触发重新渲染，画布会整体重算布局并重新适配视野，用户会看到“整张图跟着变”。
-const ontologyPositionCache = new Map<string, NodePositions>();
+// 没有草稿可写时（只读浏览发布数据、看本体骨架），摆放位置放在本机存储里。
+// 位置单独放在缓存 + storage，不走组件状态：落点若触发重新渲染，画布会重算布局并重新适配视野，用户会看到“整张图跟着变”。
+// 本体骨架的节点 id 由图数据库临时分配（Neo4j db.schema.visualization() 的虚拟 id 每次调用都不同），所以本体用类型名做键。
+const localPositionCache = new Map<string, NodePositions>();
 
-function readStoredOntologyPositions(key: string) {
-  const cached = ontologyPositionCache.get(key);
+function readStoredPositions(key: string) {
+  const cached = localPositionCache.get(key);
   if (cached) return cached;
   const positions: NodePositions = {};
   try {
@@ -283,17 +283,17 @@ function readStoredOntologyPositions(key: string) {
       }
     }
   } catch { /* 本机存储不可用时忽略历史摆放 */ }
-  ontologyPositionCache.set(key, positions);
+  localPositionCache.set(key, positions);
   return positions;
 }
 
-function writeStoredOntologyPositions(key: string, positions: NodePositions) {
+function writeStoredPositions(key: string, positions: NodePositions) {
   if (Object.keys(positions).length) {
-    ontologyPositionCache.set(key, positions);
+    localPositionCache.set(key, positions);
     try { window.localStorage.setItem(key, JSON.stringify(positions)); } catch { /* 本机存储不可用时只影响摆放记忆 */ }
     return;
   }
-  ontologyPositionCache.delete(key);
+  localPositionCache.delete(key);
   try { window.localStorage.removeItem(key); } catch { /* 同上 */ }
 }
 
@@ -367,7 +367,9 @@ export function GraphCanvas({
   const [layoutRequest, setLayoutRequest] = useState(0);
   const [layoutSeed, setLayoutSeed] = useState(0);
   const persistLayoutRef = useRef(false);
-  const ontologyLayoutKey = viewMode === "ontology" && targetId ? `ontology-layout:${targetId}` : null;
+  // 有草稿可写时摆放位置进快照；只读浏览发布数据、看本体骨架时只记在本机浏览器。
+  const persistsPositions = admin && Boolean(targetId) && Boolean(versionId) && viewMode !== "ontology";
+  const localLayoutKey = targetId && !persistsPositions ? `${viewMode === "ontology" ? "ontology" : "instance"}-layout:${targetId}` : null;
   const [showAllForGraph, setShowAllForGraph] = useState<GraphData | null>(null);
   const showAllGraph = showAllForGraph === graph;
   const representative = useMemo(
@@ -428,16 +430,19 @@ export function GraphCanvas({
   const graphSource = selectedEdge ? displayGraph.nodes.find((item) => item.id === selectedEdge.source) ?? null : null;
   const graphTarget = selectedEdge ? displayGraph.nodes.find((item) => item.id === selectedEdge.target) ?? null : null;
 
+  // 本体骨架的节点 id 由后端临时分配，用类型名做键；实例节点直接用图数据库的节点 id。
+  const localPositionKey = useCallback((node: GraphNode) => (viewMode === "ontology" ? graphLabel(node, displayProps) : node.id), [displayProps, viewMode]);
+
   const graphData = useMemo(() => {
     const hubId = hubNodeId(displayGraph.nodes, displayGraph.relationships);
     const positionedNodeCount = displayGraph.nodes.filter((node) => storedPosition(node)).length;
     // A partially persisted legacy layout mixes unrelated coordinate systems and creates sparse, uneven graphs.
     const useStoredPositions = displayGraph.nodes.length > 0 && positionedNodeCount / displayGraph.nodes.length >= 0.8 && storedLayoutIsUsable(displayGraph.nodes);
-    const ontologyPositions = ontologyLayoutKey ? readStoredOntologyPositions(ontologyLayoutKey) : {};
+    const localPositions = localLayoutKey ? readStoredPositions(localLayoutKey) : {};
     const manuallyPlaced = new Set<string>();
     const nodes: SigmaNode[] = displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
-      const override = viewMode === "ontology" ? ontologyPositions[graphLabel(node, displayProps)] : undefined;
+      const override = localPositions[localPositionKey(node)];
       if (override) manuallyPlaced.add(node.id);
       return { id: node.id, label: compactGraphLabel(graphLabel(node, displayProps)), color: graphColor(viewMode === "ontology" ? graphLabel(node, displayProps) : node.labels[0] ?? "未标注"), isHub: node.id === hubId, x: override?.x ?? position?.x, y: override?.y ?? position?.y };
     });
@@ -455,7 +460,7 @@ export function GraphCanvas({
       });
     }
     return { nodes, edges };
-  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, ontologyLayoutKey, viewMode, visibleNodeIds, visibleRelationships]);
+  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, localLayoutKey, localPositionKey, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -522,21 +527,23 @@ export function GraphCanvas({
     if (items.length) void api("/api/instances/positions", { method: "PUT", body: JSON.stringify({ targetId, versionId, items }) }).catch(() => {});
   };
 
-  // 本体骨架没有草稿版本可写，摆放位置只记在本机浏览器，不进入图数据库。
-  const saveOntologyPosition = (nodeId: string, point: { x: number; y: number }) => {
-    const node = displayGraph.nodes.find((item) => item.id === nodeId);
-    if (!node || !ontologyLayoutKey) return;
-    writeStoredOntologyPositions(ontologyLayoutKey, { ...readStoredOntologyPositions(ontologyLayoutKey), [graphLabel(node, displayProps)]: point });
-  };
-
-  // 自动整理以节点 id 产出坐标，写回本机存储前先换成稳定的类型名。
-  const ontologyLabelPositions = (positions: Record<string, { x: number; y: number }>) => {
-    const next: NodePositions = ontologyLayoutKey ? { ...readStoredOntologyPositions(ontologyLayoutKey) } : {};
+  // 自动整理的坐标以节点 id 产出，写本机存储前先换成该视图的稳定键（本体用类型名）。
+  const localPositionEntries = (positions: Record<string, { x: number; y: number }>) => {
+    const next: NodePositions = localLayoutKey ? { ...readStoredPositions(localLayoutKey) } : {};
     for (const [nodeId, point] of Object.entries(positions)) {
       const node = displayGraph.nodes.find((item) => item.id === nodeId);
-      if (node) next[graphLabel(node, displayProps)] = point;
+      if (node) next[localPositionKey(node)] = point;
     }
     return next;
+  };
+
+  // 有草稿写快照，否则（只读浏览、本体骨架）只记在本机浏览器，不碰图数据库。
+  const saveNodePositions = (positions: Record<string, { x: number; y: number }>) => {
+    if (persistsPositions) {
+      savePositions(positions);
+      return;
+    }
+    if (localLayoutKey) writeStoredPositions(localLayoutKey, localPositionEntries(positions));
   };
 
   const handleNodeClick = (nodeId: string) => {
@@ -556,15 +563,10 @@ export function GraphCanvas({
 
   const organize = () => {
     if (!graph.nodes.length) return;
-    if (viewMode === "ontology") {
-      if (ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, {});
-    }
+    if (localLayoutKey) writeStoredPositions(localLayoutKey, {});
     if (graphData.nodes.length <= 60) {
       const arranged = Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1));
-      if (admin && targetId && versionId) {
-        savePositions(arranged);
-      }
-      if (viewMode === "ontology" && ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, ontologyLabelPositions(arranged));
+      saveNodePositions(arranged);
       setLayoutSeed((seed) => seed + 1);
       return;
     }
@@ -593,23 +595,16 @@ export function GraphCanvas({
         selectedNodeId={editTarget?.kind === "node" ? editTarget.id : null}
         selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
         connectionSourceId={connectionSourceId}
-        draggable={admin || viewMode === "ontology"}
+        draggable
         layoutRequest={graphData.nodes.length <= 60 ? 0 : layoutRequest}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
         onStageClick={() => { setEditTarget(null); setEditing(false); setConnectionSourceId(null); }}
-        onDragEnd={(nodeId, point) => {
-          if (viewMode === "ontology") saveOntologyPosition(nodeId, point);
-          else savePositions({ [nodeId]: point });
-        }}
+        onDragEnd={(nodeId, point) => saveNodePositions({ [nodeId]: point })}
         onLayoutEnd={(positions) => {
           if (!persistLayoutRef.current) return;
           persistLayoutRef.current = false;
-          if (viewMode === "ontology") {
-            if (ontologyLayoutKey) writeStoredOntologyPositions(ontologyLayoutKey, ontologyLabelPositions(positions));
-          } else {
-            savePositions(positions);
-          }
+          saveNodePositions(positions);
           notify?.("已按关系重新整理布局。");
         }}
       />
@@ -686,7 +681,7 @@ export function GraphCanvas({
           </div>
         )}
         {!selectedNode && !selectedEdge && (
-          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击实体类型或关系类型，查看端点契约及每一项属性规则。拖拽节点可调整摆放，位置只记在本机；需要复原时点“自动整理”。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "查看节点属性，或在 Cypher 结果中继续扩展。"}</>}</span></div>
+          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击实体类型或关系类型，查看端点契约及每一项属性规则。拖拽节点可调整摆放，位置只记在本机；需要复原时点“自动整理”。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "拖拽节点可调整摆放（只记在本机）；查看节点属性，或在查询结果中继续扩展。"}</>}</span></div>
         )}
       </aside>
 
