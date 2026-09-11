@@ -304,9 +304,25 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
   return null;
 }
 
-function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId, draggable, layoutRequest, onNodeClick, onEdgeClick, onStageClick, onDragEnd, onLayoutEnd }: Props & { graph: Graph<NodeAttributes, EdgeAttributes> }) {
+// 把图数据灌进已有实例，而不是换一个 graph 对象：SigmaContainer 只在 graph/settings 变化时重建实例，
+// 而 React 的 effect 在同一 commit 里可能仍拿到已被 kill 的旧实例，那一帧排队的渲染会抛
+// “could not find a suitable program for node type” 且不在我们的 try/catch 里。
+function SigmaGraphLoader({ graph }: { graph: Graph<NodeAttributes, EdgeAttributes> }) {
+  const sigma = useSigma<NodeAttributes, EdgeAttributes>();
+  useEffect(() => {
+    const target = sigma.getGraph();
+    if (target === graph) return;
+    target.clear();
+    target.import(graph);
+    safeRefresh(sigma);
+  }, [graph, sigma]);
+  return null;
+}
+
+function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, draggable, layoutRequest, nodes, edges, onNodeClick, onEdgeClick, onStageClick, onDragEnd, onLayoutEnd }: Props) {
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
   const registerEvents = useRegisterEvents<NodeAttributes, EdgeAttributes>();
+  const graph = sigma.getGraph();
   const draggedNodeRef = useRef<string | null>(null);
   const draggedNodeForceLabelRef = useRef(false);
   const layoutRef = useRef<FA2LayoutSupervisor | null>(null);
@@ -316,9 +332,15 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
   const viewportBBoxRef = useRef<{ x: [number, number]; y: [number, number] } | null>(null);
   const viewportBBoxLockedRef = useRef(false);
   const selectedNeighborhood = useMemo(() => {
-    if (!selectedNodeId || !graph.hasNode(selectedNodeId)) return null;
-    return new Set<string>([selectedNodeId, ...graph.neighbors(selectedNodeId)]);
-  }, [graph, selectedNodeId]);
+    // 用 props 计算而不是读 sigma 的图：图数据是在子组件 effect 里灌入的，渲染阶段读到的还是上一批内容。
+    if (!selectedNodeId || !nodes.some((node) => node.id === selectedNodeId)) return null;
+    const neighborhood = new Set<string>([selectedNodeId]);
+    for (const edge of edges) {
+      if (edge.source === selectedNodeId) neighborhood.add(edge.target);
+      if (edge.target === selectedNodeId) neighborhood.add(edge.source);
+    }
+    return neighborhood;
+  }, [edges, nodes, selectedNodeId]);
 
   useEffect(() => {
     try {
@@ -449,7 +471,7 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
       sigma.off("afterRender", followNodesExtent);
       sigma.getCamera().off("updated", releaseLockOnFit);
     };
-  }, [graph, sigma]);
+  }, [edges, graph, nodes, sigma]);
 
   useEffect(() => {
     if (!layoutRequest || graph.order < 2 || completedLayoutRequestRef.current === layoutRequest) return;
@@ -496,12 +518,15 @@ function SigmaScene({ graph, selectedNodeId, selectedEdgeId, connectionSourceId,
 }
 
 export function SigmaGraph(props: Props) {
-  const graph = useMemo(() => buildGraph(props.nodes, props.edges), [props.edges, props.nodes]);
+  // SigmaContainer 一旦收到不同的 graph 对象就会 kill 旧实例、新建一个；这里始终传同一个空图，
+  // 数据由 SigmaGraphLoader 原地灌进当前实例，实例只创建一次（切筛选、切目标都不会再重建）。
+  const containerGraph = useMemo(() => buildGraph([], []), []);
+  const loadedGraph = useMemo(() => buildGraph(props.nodes, props.edges), [props.edges, props.nodes]);
   return (
     <SigmaContainer
       className="graph-sigma-canvas"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
-      graph={graph}
+      graph={containerGraph}
       settings={{
         hideLabelsOnMove: false,
         hideEdgesOnMove: false,
@@ -527,7 +552,8 @@ export function SigmaGraph(props: Props) {
         defaultDrawNodeHover: drawInternalNodeLabel,
       }}
     >
-      <SigmaScene {...props} graph={graph} />
+      <SigmaGraphLoader graph={loadedGraph} />
+      <SigmaScene {...props} />
       <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} selectedNodeId={props.selectedNodeId} />
     </SigmaContainer>
   );

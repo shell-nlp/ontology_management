@@ -40,7 +40,6 @@
 
 | 编号 | 事项 | 现状 |
 | --- | --- | --- |
-| U1 | 图谱页控制台警告 | `Sigma: could not find a suitable program for node type "internal"`，不影响交互，但控制台报 error |
 | U2 | 审计记录查看界面 | 发布 / 失败 / 目标变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
 
 ### 工程清洁
