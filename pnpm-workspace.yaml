@@ -1,2 +1,7 @@
+# 依赖自带的构建脚本默认不执行，这里逐个显式表态。
+# - sharp：需要它的原生构建。
+# - oracledb：npm 包里已经带了 win32-x64 预编译二进制（build/Release/*.node），
+#   Thin 模式与 Instant Client 的 Thick 模式都用它，不需要再跑一遍安装脚本。
 allowBuilds:
+  oracledb: false
   sharp: true

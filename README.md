@@ -51,6 +51,7 @@
 - [统一版本快照](#统一版本快照)
 - [角色与安全](#角色与安全)
 - [服务端接口](#服务端接口)
+- [数据资源](#数据资源)
 - [目录结构](#目录结构)
 - [开发约定](#开发约定)
 
@@ -65,6 +66,7 @@
 | ⌨️ | **查询工作台** | 按本体存储后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
 | 🗄 | **本体存储管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
 | 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，Neo4j 与 Apache Jena 已实现 |
+| 🧱 | **数据资源** | 外部关系库的只读连接（PostgreSQL / MySQL / Oracle）：列结构、字段与数据预览，再把类绑到表上 |
 | 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
 
 ## 技术栈
@@ -255,6 +257,20 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 </details>
 
+<details>
+<summary><b>数据资源（外部关系库）</b></summary>
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` / `POST` | `/api/data-sources` | 列表 / 登记数据资源 |
+| `GET` / `PATCH` / `DELETE` | `/api/data-sources/:sourceId` | 查看 / 更新（密码留空即不变）/ 删除 |
+| `POST` | `/api/data-sources/test` | 用表单里的参数试连一次，不落库 |
+| `POST` | `/api/data-sources/:sourceId/test` | 按已保存的连接试连 |
+| `GET` | `/api/data-sources/:sourceId/views` | 表与视图清单；`schema=*` 表示看全库，`search=` 过滤 |
+| `GET` | `/api/data-sources/:sourceId/views/:viewName` | 字段清单 + 若干行数据预览（只读） |
+
+</details>
+
 ## 图数据库抽象
 
 `src/lib/graph` 是唯一的图数据库访问入口：
@@ -285,6 +301,43 @@ RDF 与属性图的映射：`?s rdf:type ?t` → 节点标签，字面量三元�
 
 API 路由、版本发布流程与界面组件无需改动。
 
+## 数据资源
+
+数据资源是**外部数据来源**，和本体存储不是一回事：本体存储（Neo4j / Apache Jena）是本体自己的落库位置，数据资源是「类下面那些对象从哪来」。
+
+`src/lib/data-source` 是唯一的数据来源访问入口：
+
+| 文件 | 职责 |
+| --- | --- |
+| `types.ts` | `DataSourceKind`、`DATA_SOURCE_KINDS` 连接表单元数据、`DataSourceConnector` 契约；纯类型，客户端可直接引用 |
+| `sql.ts` | 关系库适配器：TypeORM 建连接，`test / listViews / describeView / previewView`；Oracle 走数据字典读结构 |
+| `index.ts` | `openDataSourceConnector(record, credentials)` 注册表，按 `record.kind` 分派 |
+
+当前支持 PostgreSQL、MySQL、Oracle。三类共用同一份 SQL 实现，接入新的关系库通常只需要在 `DATA_SOURCE_KINDS` 里加一条元数据；接入 Elasticsearch、REST、文件这类非关系来源时，在 `openDataSourceConnector` 里分流到一个新实现即可 —— 界面与 API 不用改。
+
+### 对象与数据表的对应关系
+
+参照 Palantir 的模型：**类 ≈ 数据集，对象 ≈ 一行，属性 ≈ 一列**。因此绑定写在**类**上，而不是逐个对象上：
+
+| 绑定项 | 含义 |
+| --- | --- |
+| 数据资源 + 表 / 视图 | 这个类的对象来自哪张表 |
+| 主键字段（可复合） | 一个对象的身份 |
+| 显示名字段 | 对象在列表与图谱上的标题 |
+| 属性映射 | 类的属性对应哪个列 |
+
+绑定信息保存在版本快照的类定义里（`entityTypes[].source` 与 `properties[].sourceField`），草稿改动即时落库，历史版本读出来是空绑定，不会报错。
+
+### 连接配置
+
+| 类型 | 连接串 | 驱动 | 容器 |
+| --- | --- | --- | --- |
+| PostgreSQL | `postgresql://user@host:5432/db` | `pg` | 模式（schema），可留空 |
+| MySQL | `mysql://user@host:3306/db` | `mysql2` | 库名即容器 |
+| Oracle | `oracle://user@host:1521/SERVICE` | `oracledb` | 模式（schema / 用户），可留空 |
+
+Oracle 注意两点：服务端版本较旧（11g 及更早）时必须用 Instant Client 走 Thick 模式，把客户端目录配到 `ORACLE_CLIENT_LIB_DIR`（或放进 `.data/oracle-client/`）；结构清单直接读 `all_tables` / `all_tab_columns` 等数据字典，不走 ORM 的 `getTables()`。
+
 ## 目录结构
 
 ```text
@@ -292,7 +345,7 @@ ontology_management/
 ├── src/
 │   ├── app/              # 页面与 API 路由
 │   ├── components/       # 工作台、图画布、属性编辑器
-│   └── lib/              # 认证、图数据库抽象（graph/）、本体、版本快照、本体存储
+│   └── lib/              # 认证、图数据库抽象（graph/）、数据来源抽象（data-source/）、本体、版本快照
 ├── docs/
 │   └── adr/              # 架构决策记录
 ├── e2e/                  # Playwright 端到端

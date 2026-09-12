@@ -39,7 +39,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
   return positions;
 }
 
-export type EntityPayload = { name: string; description: string; displayProperty: string; properties: EntityType["properties"] };
+export type EntityPayload = { name: string; description: string; displayProperty: string; properties: EntityType["properties"]; source: EntityType["source"] };
 export type RelationPayload = { name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
@@ -291,7 +291,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           entityTypes={definition.entityTypes}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", properties: payload.properties };
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", properties: payload.properties, source: payload.source };
             if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
             else await onUpdateEntity(dialog.id, body);
           }}

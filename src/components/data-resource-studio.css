@@ -1,0 +1,146 @@
+/* 数据资源工作台：三栏结构浏览（来源 / 对象清单 / 字段与数据）。
+   沿用平台既有的白底蓝调运营界面，只在“结构”这件事上加密度，不加装饰。 */
+
+.drs-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 12px; align-items: start; }
+
+/* ---------- 左栏：已登记来源 ---------- */
+.drs-rail { display: flex; flex-direction: column; gap: 10px; padding: 12px 10px; max-height: min(680px, calc(100vh - 300px)); overflow: auto; }
+.drs-rail-group { display: flex; flex-direction: column; gap: 4px; }
+.drs-rail-head { padding: 2px 2px 4px; }
+.drs-rail-head .target-kind-badge { width: 100%; justify-content: flex-start; }
+.drs-rail-row { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px 7px 10px; border: 1px solid transparent; background: transparent; border-radius: 2px; text-align: left; color: #334155; }
+.drs-rail-row:hover { background: #f3f7ff; border-color: #e0e9f8; }
+.drs-rail-row.active { background: #eaf1ff; border-color: #c9dcff; box-shadow: inset 3px 0 0 var(--drs-accent, #2563eb); }
+.drs-rail-dot { width: 6px; height: 6px; border-radius: 1px; background: var(--drs-accent, #2563eb); flex: none; }
+.drs-rail-text { min-width: 0; flex: 1; }
+.drs-rail-text b { display: block; font-size: 12.5px; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-rail-row.active .drs-rail-text b { color: #1d4ed8; }
+.drs-rail-text small { display: block; margin-top: 2px; color: #7b8ca6; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-rail-off { flex: none; padding: 1px 5px; font-size: 10px; font-style: normal; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; }
+
+/* ---------- 右栏：一个来源的全部内容 ---------- */
+.drs-browser { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.drs-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid #e5ebf3; }
+.drs-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.drs-mark { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 1px solid; border-radius: 2px; }
+.drs-identity h2 { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; font-size: 17px; color: #102a56; }
+.drs-tag { padding: 1px 6px; font-size: 10.5px; font-style: normal; font-weight: 500; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; }
+.drs-address { display: block; margin-top: 5px; color: #667a98; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+.drs-head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.drs-switch { position: relative; display: inline-flex; width: 36px; height: 20px; flex: none; }
+.drs-switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.drs-switch > span { position: relative; flex: 1; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
+.drs-switch > span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .25); transition: transform .15s ease; }
+.drs-switch input:checked + span { background: #2563eb; }
+.drs-switch input:checked + span::after { transform: translateX(16px); }
+.drs-switch input:focus-visible + span { outline: 2px solid #2563eb; outline-offset: 2px; }
+.drs-switch input:disabled { cursor: not-allowed; }
+
+/* 资源指纹：一眼看清这个来源的规模与读取范围。 */
+.drs-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 22px; padding: 2px 0; }
+.drs-facts > span { display: inline-flex; align-items: baseline; gap: 6px; color: #64748b; font-size: 11.5px; }
+.drs-facts b { color: #14213d; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.drs-fact-ok { color: #4d7c0f !important; }
+.drs-fact-ok svg { align-self: center; }
+
+/* ---------- 结构浏览 ---------- */
+/* 高度跟着视口走，让结构清单和数据预览尽量占满中间这块，不留大片空白。 */
+.drs-split { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 12px; height: clamp(380px, calc(100vh - 400px), 860px); }
+.drs-catalog { display: flex; flex-direction: column; min-height: 0; background: #fbfcff; border: 1px solid #e2e9f3; }
+.drs-catalog-tools { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-bottom: 1px solid #e8eef7; }
+.drs-search { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px; color: #7b8ca6; background: #fff; border: 1px solid #dbe6f5; }
+.drs-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 12.5px; color: #14213d; }
+.drs-search button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; color: #94a3b8; background: transparent; }
+.drs-filter { width: 100%; }
+.drs-filter button { flex: 1; }
+.drs-catalog-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.drs-scope { height: 26px; padding: 0 9px; color: #1d4ed8; font-size: 11.5px; background: #f2f7ff; border: 1px solid #d6e4ff; }
+.drs-scope:hover { background: #e8f0ff; }
+.drs-list { flex: 1; min-height: 0; overflow: auto; }
+.drs-list-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 14px; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid #eef2f9; background: transparent; text-align: left; color: #334155; }
+.drs-list-row:hover { background: #f4f8ff; }
+.drs-list-row.active { background: #eaf1ff; box-shadow: inset 3px 0 0 #2563eb; }
+.drs-list-mark { color: #94a3b8; display: grid; place-items: center; }
+.drs-list-row.active .drs-list-mark { color: #2563eb; }
+.drs-list-text { min-width: 0; }
+.drs-list-text b { display: block; font-size: 12px; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-list-text small { display: block; margin-top: 2px; color: #7b8ca6; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-list-arrow { color: #cbd5e1; }
+.drs-list-row.active .drs-list-arrow { color: #2563eb; }
+.drs-list-state { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 12px; color: #7b8ca6; font-size: 12px; }
+.drs-list-state.error { color: #b91c1c; }
+
+/* 右侧详情：字段清单在上，数据预览在下，各自滚动。 */
+.drs-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid #e2e9f3; background: #fff; }
+.drs-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; flex: 1; padding: 32px; color: #7b8ca6; text-align: center; }
+.drs-placeholder b { color: #334155; font-size: 14px; }
+.drs-placeholder span { max-width: 380px; font-size: 12px; line-height: 1.7; }
+.drs-view-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #e8eef7; }
+.drs-view-head h3 { margin: 2px 0 0; font-size: 14.5px; color: #14213d; word-break: break-all; }
+.drs-view-meta { color: #7b8ca6; font-size: 11.5px; white-space: nowrap; }
+.drs-view-error { display: flex; align-items: center; gap: 7px; margin: 12px 14px; padding: 9px 11px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; font-size: 12px; }
+.drs-field-table { max-height: 46%; overflow: auto; border-bottom: 1px solid #e8eef7; }
+.drs-field-head, .drs-field-row { display: grid; grid-template-columns: minmax(120px, 1.1fr) 116px 108px minmax(0, 1.5fr); align-items: center; gap: 10px; padding: 6px 14px; }
+.drs-field-head { position: sticky; top: 0; z-index: 1; background: #f8fafc; color: #7b8ca6; font-size: 10.5px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 1px solid #e8eef7; }
+.drs-field-row { border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #475569; }
+.drs-field-row:hover { background: #f8fbff; }
+.drs-field-name { font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 11.5px; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-type { padding: 1px 6px; font-size: 10.5px; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; border: 1px solid; }
+.drs-type.text { color: #1d4ed8; background: #eff4ff; border-color: #d9e4ff; }
+.drs-type.number { color: #0f766e; background: #effaf7; border-color: #cdeee5; }
+.drs-type.time { color: #92400e; background: #fff8ec; border-color: #fbe3bd; }
+.drs-type.other { color: #526b91; background: #f4f7fb; border-color: #e2e9f3; }
+.drs-field-flags { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: #94a3b8; }
+.drs-field-flags i { font-style: normal; }
+.drs-field-flags i.strong { color: #b45309; }
+.drs-pk { display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px; color: #1d4ed8; background: #eef4ff; border: 1px solid #d9e4ff; font-style: normal; }
+.drs-field-comment { color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-preview { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.drs-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 14px; border-bottom: 1px solid #e8eef7; }
+.drs-preview-actions { display: flex; align-items: center; gap: 10px; }
+.drs-preview-note { color: #7b8ca6; font-size: 11px; }
+.drs-rows button { padding: 3px 7px; font-variant-numeric: tabular-nums; }
+.drs-preview-scroll { flex: 1; min-height: 0; overflow: auto; }
+.drs-preview-scroll table { border-collapse: collapse; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 11.5px; color: #334155; }
+.drs-preview-scroll th { position: sticky; top: 0; z-index: 1; padding: 7px 12px; background: #f8fafc; border-bottom: 1px solid #e2e9f3; border-right: 1px solid #eef2f9; color: #64748b; font-weight: 600; text-align: left; white-space: nowrap; }
+.drs-preview-scroll td { max-width: 260px; padding: 6px 12px; border-bottom: 1px solid #f1f5f9; border-right: 1px solid #f6f8fc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-preview-scroll tr:hover td { background: #f8fbff; }
+.drs-null { color: #b6c2d2; font-style: italic; }
+
+/* ---------- 空状态 ---------- */
+.drs-empty { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 44px 28px; text-align: center; }
+.drs-empty-marks { display: inline-flex; gap: 14px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e8eef7; }
+.drs-empty b { color: #102a56; font-size: 15px; }
+.drs-empty span { max-width: 520px; color: #667a98; font-size: 12.5px; line-height: 1.75; }
+
+/* ---------- 新建 / 编辑弹窗 ---------- */
+.drs-dialog { width: min(780px, 94vw); }
+.drs-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 4px; }
+.drs-field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: #475569; }
+.drs-field.wide { grid-column: 1 / -1; }
+.drs-field input { height: 34px; padding: 0 10px; color: #14213d; background: #fff; border: 1px solid #dbe6f5; border-radius: 2px; font-size: 13px; }
+.drs-field input:focus-visible { outline: 2px solid #2563eb; outline-offset: -1px; border-color: #2563eb; }
+.drs-form-note { grid-column: 1 / -1; margin: 2px 0 0; color: #7b8ca6; font-size: 11.5px; }
+.drs-probe { display: flex; align-items: center; gap: 7px; margin: 12px 0 0; padding: 9px 11px; font-size: 12px; }
+.drs-probe.ok { color: #3f6212; background: #f4f9ec; border: 1px solid #dbeac2; }
+.drs-probe.error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+.drs-dialog-actions { align-items: center; }
+.drs-dialog-spacer { flex: 1; }
+.drs-spin { animation: drs-spin 900ms linear infinite; }
+@keyframes drs-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1280px) {
+  .drs-shell { grid-template-columns: minmax(0, 1fr); }
+  .drs-rail { max-height: 220px; }
+}
+
+@media (max-width: 1080px) {
+  .drs-split { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .drs-catalog { max-height: 340px; }
+  .drs-view { min-height: 420px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drs-spin { animation: none; }
+  .drs-switch > span, .drs-switch > span::after { transition: none; }
+}

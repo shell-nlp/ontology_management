@@ -5,8 +5,15 @@ import type { OntologyDefinition } from "@/lib/ontology";
  * 但 `displayProperty` 允许缺省——新建类型时前端先不写这一项。
  */
 export type PropertyDataType = OntologyDefinition["entityTypes"][number]["properties"][number]["dataType"];
-export type Property = { name: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean };
-export type EntityType = { id: string; name: string; description: string; displayProperty?: string; properties: Property[] };
+export type Property = { name: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean; sourceField?: string };
+/** 类的数据来源：一个类一张表/视图，属性和列一一对应。 */
+export type EntitySource = OntologyDefinition["entityTypes"][number]["source"];
+export type EntityType = { id: string; name: string; description: string; displayProperty?: string; properties: Property[]; source?: EntitySource };
+
+/** 没接来源时的空绑定；直接写全字段，省得每处都判空。 */
+export function emptyEntitySource(): EntitySource {
+  return { dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" };
+}
 export type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 export type ActionParameter = OntologyDefinition["actionTypes"][number]["params"][number];
 export type ActionValueSource = OntologyDefinition["actionTypes"][number]["edits"][number]["assignments"][number]["value"];

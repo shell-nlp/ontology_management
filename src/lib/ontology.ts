@@ -19,6 +19,24 @@ const propertySchema = z.object({
   required: z.boolean().default(false),
   unique: z.boolean().default(false),
   indexed: z.boolean().default(false),
+  /** 这个属性的值来自数据源里的哪一列；缺省或空表示还没映射（老快照里没有这一项）。 */
+  sourceField: z.string().trim().max(200).optional(),
+});
+
+/**
+ * 类的数据来源：一个类对应数据资源里的一张表或视图，属性按列映射。
+ * 对象不单独绑表 —— 一个对象就是这张表里的一行，所以绑定写在类上。
+ * 空 dataSourceId 表示这个类还没接来源（纯建模也能用）。
+ */
+export const entitySourceSchema = z.object({
+  dataSourceId: z.union([z.string().uuid(), z.literal("")]).default(""),
+  /** 表/视图所在的容器：PG 的模式、Oracle 的模式；MySQL 留空。 */
+  schema: z.string().trim().max(200).default(""),
+  view: z.string().trim().max(200).default(""),
+  /** 对象身份取这几列，支持复合主键。 */
+  primaryKey: z.array(z.string().trim().max(200)).default([]),
+  /** 对象标题取这一列，等价于 Palantir 的 title property。 */
+  titleField: z.string().trim().max(200).default(""),
 });
 
 /** 动作参数：指向一个已有对象（ENTITY_REF），或者一个字面量（VALUE）。 */
@@ -132,6 +150,7 @@ export const ontologyDefinitionSchema = z.object({
     description: z.string().max(500).default(""),
     displayProperty: z.string().max(120).optional().default(""),
     properties: z.array(propertySchema).default([]),
+    source: entitySourceSchema.default({ dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" }),
   })).default([]),
   relationshipTypes: z.array(z.object({
     id: z.string().uuid(),

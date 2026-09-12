@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, Check, CircleDot, Link2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { AlertTriangle, Check, CircleDot, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
+import { api } from "@/lib/api-client";
+import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
-import { propertyTypeOptions, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
+import { emptyEntitySource, propertyTypeOptions, type EntitySource, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
 import "./type-edit-dialog.css";
 
 export type TypeEditPayload = {
@@ -13,6 +15,8 @@ export type TypeEditPayload = {
   sourceEntityTypeId?: string;
   targetEntityTypeId?: string;
   properties: Property[];
+  /** 类绑定的数据来源；关系类型不带这一项。 */
+  source?: EntitySource;
 };
 
 type Props = {
@@ -46,6 +50,43 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [propDraft, setPropDraft] = useState<Property | null>(null);
   const [localError, setLocalError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 数据来源绑定：只有类需要这一段，关系类型不显示。
+  const [sources, setSources] = useState<PublicDataSource[]>([]);
+  const [views, setViews] = useState<DataViewSummary[]>([]);
+  const [fields, setFields] = useState<DataViewField[]>([]);
+  const [sourceDraft, setSourceDraft] = useState<EntitySource>(() => entity?.source ?? emptyEntitySource());
+  const [sourceError, setSourceError] = useState("");
+  const viewListId = useId();
+
+  // 已登记的数据资源：只取一次，用来填下拉。
+  useEffect(() => {
+    if (kind !== "entity") return;
+    let cancelled = false;
+    void api<PublicDataSource[]>("/api/data-sources")
+      .then((rows) => { if (!cancelled) setSources(rows); })
+      .catch(() => { if (!cancelled) setSources([]); });
+    return () => { cancelled = true; };
+  }, [kind]);
+
+  // 选定资源后拉它的结构清单，给「表 / 视图」那个输入框做候选。
+  useEffect(() => {
+    if (kind !== "entity" || !sourceDraft.dataSourceId) return;
+    let cancelled = false;
+    void api<{ views: DataViewSummary[] }>(`/api/data-sources/${sourceDraft.dataSourceId}/views?limit=5000`)
+      .then((data) => { if (!cancelled) setViews(data.views); })
+      .catch(() => { if (!cancelled) setViews([]); });
+    return () => { cancelled = true; };
+  }, [kind, sourceDraft.dataSourceId]);
+
+  // 选定表之后取字段，属性映射和主键都从这份字段清单里选。
+  useEffect(() => {
+    if (kind !== "entity" || !sourceDraft.dataSourceId || !sourceDraft.view) return;
+    let cancelled = false;
+    void api<{ fields: DataViewField[] }>(`/api/data-sources/${sourceDraft.dataSourceId}/views/${encodeURIComponent(sourceDraft.view)}?limit=1`)
+      .then((data) => { if (!cancelled) { setFields(data.fields); setSourceError(""); } })
+      .catch((reason) => { if (!cancelled) { setFields([]); setSourceError(reason instanceof Error ? reason.message : "读取字段失败。"); } });
+    return () => { cancelled = true; };
+  }, [kind, sourceDraft.dataSourceId, sourceDraft.view]);
 
   // ESC 关闭：用 ref 存回调，避免调用方每次渲染都重新订阅键盘事件。
   const onCloseRef = useRef(onClose);
@@ -88,12 +129,40 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     if (removed && displayProperty === removed.name) setDisplayProperty("");
     if (editingProp === index) cancelEditProperty();
   };
+  /** 换数据源：旧的表、字段映射都不再成立，一起清掉，避免留下指向别处的映射。 */
+  const pickDataSource = (dataSourceId: string) => {
+    setViews([]);
+    setFields([]);
+    setSourceError("");
+    setSourceDraft({ dataSourceId, schema: "", view: "", primaryKey: [], titleField: "" });
+    setProperties((current) => current.map((item) => ({ ...item, sourceField: "" })));
+  };
+  /** 换表：字段清单会重新拉，主键与显示名也跟着换成新表的字段。 */
+  const pickView = (view: string) => {
+    const known = views.find((item) => item.name === view);
+    const same = sourceDraft.view === view;
+    setSourceError("");
+    if (!same) setFields([]);
+    setSourceDraft((current) => ({ ...current, view, schema: known?.schema ?? current.schema, primaryKey: same ? current.primaryKey : [], titleField: same ? current.titleField : "" }));
+    if (!same) setProperties((current) => current.map((item) => ({ ...item, sourceField: "" })));
+  };
+  const togglePrimaryKey = (field: string) => {
+    setSourceDraft((current) => ({
+      ...current,
+      primaryKey: current.primaryKey.includes(field) ? current.primaryKey.filter((item) => item !== field) : [...current.primaryKey, field],
+    }));
+  };
+  const mapProperty = (name: string, sourceField: string) => {
+    setProperties((current) => current.map((item) => (item.name === name ? { ...item, sourceField } : item)));
+  };
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     if (busy || !name.trim()) return;
     setBusy(true);
     try {
-      await onSave(kind === "entity" ? { name, description, displayProperty, properties } : { name, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
+      await onSave(kind === "entity"
+        ? { name, description, displayProperty, properties, source: { ...sourceDraft, view: sourceDraft.view.trim(), primaryKey: sourceDraft.primaryKey.filter(Boolean) } }
+        : { name, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
       onClose();
     } finally {
       setBusy(false);
@@ -108,6 +177,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const sourceEntity = entityTypes.find((item) => item.id === source) ?? null;
   const targetEntity = entityTypes.find((item) => item.id === target) ?? null;
   const previewProperties = properties.slice(0, 8);
+  const boundSource = sources.find((item) => item.id === sourceDraft.dataSourceId) ?? null;
+  const boundLabel = boundSource ? `${boundSource.name}${sourceDraft.view ? ` · ${sourceDraft.view}` : ""}` : "未绑定";
 
   return (
     <div
@@ -240,6 +311,75 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <button type="button" className="ted-add-button" onClick={addProperty}><Plus size={13} />添加</button>
               </div>
             </section>
+
+            {kind === "entity" && (
+              <section className="ted-section ted-source">
+                <div className="ted-section-head">
+                  <h3><Database size={13} />数据来源</h3>
+                  <em>{boundLabel}</em>
+                </div>
+                {sources.length ? (
+                  <>
+                    <div className="ted-grid-2">
+                      <label className="ted-field">
+                        <span>数据资源</span>
+                        <select className="ted-select" value={sourceDraft.dataSourceId} onChange={(event) => pickDataSource(event.target.value)}>
+                          <option value="">不绑定（只做建模）</option>
+                          {sources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kindLabel}</option>)}
+                        </select>
+                      </label>
+                      <label className="ted-field">
+                        <span><Table2 size={12} />表 / 视图</span>
+                        <input
+                          className="ted-input"
+                          list={viewListId}
+                          value={sourceDraft.view}
+                          onChange={(event) => pickView(event.target.value)}
+                          placeholder={sourceDraft.dataSourceId ? "输入或从下拉里选一个表名" : "先选数据资源"}
+                          disabled={!sourceDraft.dataSourceId}
+                        />
+                        <datalist id={viewListId}>{views.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
+                      </label>
+                    </div>
+                    {sourceError && <p className="ted-source-error"><AlertTriangle size={13} />{sourceError}</p>}
+                    {fields.length > 0 && <>
+                      <label className="ted-field">
+                        <span>对象的显示名</span>
+                        <select className="ted-select" value={sourceDraft.titleField} onChange={(event) => setSourceDraft((current) => ({ ...current, titleField: event.target.value }))}>
+                          <option value="">跟随「显示属性」</option>
+                          {fields.map((field) => <option key={field.name} value={field.name}>{field.name}{field.comment ? ` · ${field.comment}` : ""}</option>)}
+                        </select>
+                        <small>对象在列表和图谱上的标题取这一列；留空就按上面的「显示属性」。</small>
+                      </label>
+                      <div className="ted-field">
+                        <span>主键字段（对象身份）</span>
+                        <div className="ted-source-picker">
+                          {fields.map((field) => <label key={field.name} className={sourceDraft.primaryKey.includes(field.name) ? "ted-chip active" : "ted-chip"}>
+                            <input type="checkbox" checked={sourceDraft.primaryKey.includes(field.name)} onChange={() => togglePrimaryKey(field.name)} />
+                            {field.primaryKey && <KeyRound size={11} />}
+                            {field.name}
+                          </label>)}
+                        </div>
+                        <small>一个对象就是这张表里的一行，靠这几列认身份；表自己有主键的话用钥匙标出来了。</small>
+                      </div>
+                      <div className="ted-field">
+                        <span>属性映射</span>
+                        {properties.length ? <div className="ted-maps">
+                          {properties.map((prop) => <div className="ted-map" key={prop.name}>
+                            <b>{prop.name}</b>
+                            <select className="ted-select" value={prop.sourceField ?? ""} onChange={(event) => mapProperty(prop.name, event.target.value)}>
+                              <option value="">未映射</option>
+                              {fields.map((field) => <option key={field.name} value={field.name}>{field.name}</option>)}
+                            </select>
+                          </div>)}
+                        </div> : <p className="ted-props-empty">先在上面加属性，再回来把属性指到列上。</p>}
+                      </div>
+                    </>}
+                  </>
+                ) : <p className="ted-props-empty">还没有数据资源。先去左侧「数据资源」页登记一个数据库连接。</p>}
+                <p className="ted-source-note">对象不单独绑表：一个对象就是这张表里的一行，所以来源写在类上。</p>
+              </section>
+            )}
           </div>
 
           <aside className="ted-preview">

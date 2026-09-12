@@ -1,4 +1,5 @@
 import { Pool, type QueryResultRow } from "pg";
+import { DATA_SOURCE_KINDS } from "@/lib/data-source/types";
 import { GRAPH_TARGET_KINDS } from "@/lib/graph/types";
 
 let pool: Pool | undefined;
@@ -64,6 +65,27 @@ export async function ensurePlatformSchema() {
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
+      // 数据资源：外部业务数据的来源（关系库等）。与本体存储 graph_targets 是两件事：
+      // 前者是数据从哪来，后者是本体存在哪。这里只存连接信息，取数一律按需连、用完断开。
+      const sourceKinds = DATA_SOURCE_KINDS.map((item) => `'${item.kind}'`).join(", ");
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.data_sources (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL DEFAULT 'POSTGRES',
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL DEFAULT 5432,
+          database_name TEXT NOT NULL DEFAULT '',
+          schema_name TEXT NOT NULL DEFAULT '',
+          username TEXT NOT NULL DEFAULT '',
+          credential_secret TEXT NOT NULL DEFAULT '',
+          options JSONB NOT NULL DEFAULT '{}'::jsonb,
+          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(`ALTER TABLE ontology_platform.data_sources DROP CONSTRAINT IF EXISTS data_sources_kind_check`);
+      await client.query(`ALTER TABLE ontology_platform.data_sources ADD CONSTRAINT data_sources_kind_check CHECK (kind IN (${sourceKinds}))`);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
           id TEXT PRIMARY KEY,
