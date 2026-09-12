@@ -6,7 +6,7 @@
 
 ## 背景
 
-平台原先直接依赖 `neo4j-driver`：目标表叫 `neo4j_targets`，Cypher 字符串散布在 API 路由里，
+平台原先直接依赖 `neo4j-driver`：本体存储表叫 `neo4j_targets`，Cypher 字符串散布在 API 路由里，
 发布流程、运行时类型推断和查询工作台都写死了 Neo4j 语义。业务上还需要接入 Apache Jena
 （RDF / OWL / SPARQL 1.1），后续还可能接入其它图查询或推理引擎（例如 NetworkX、Elasticsearch）。
 
@@ -33,7 +33,7 @@ listEntities / readEntity / searchEntities / listRelationships
 exportGraph / replaceGraph / validateDefinition / reconcileStrongRules
 ```
 
-## 目标记录
+## 本体存储记录
 
 `ontology_platform.neo4j_targets` 演进为后端无关的 `ontology_platform.graph_targets`，
 启动时按 `information_schema` 幂等重命名并补齐 `kind` 与 `options` 列，历史数据保留。
@@ -74,20 +74,20 @@ Jena 的落地方式经过实测后确定（Fuseki 5.1 / TDB2）：
   再用一个请求 `CLEAR 目标 ; ADD 影子图 TO 目标 ; DROP 影子图` 原子切换；失败时兜底删除影子图。
   阈值可用目标 `options.singleReplaceLimit` 调整。
 
-并发控制分两层：进程内的按目标 Promise 队列，加上 PostgreSQL 会话级 advisory lock
-（`ontology:target:<id>`），保证多实例部署时同一个目标不会并发替换。
+并发控制分两层：进程内的按本体存储的 Promise 队列，加上 PostgreSQL 会话级 advisory lock
+（`ontology:target:<id>`），保证多实例部署时同一个本体存储不会并发替换。
 
 发布过程写三条审计，便于事后还原现场：`VERSION_PUBLISH_STARTED`（后端类型 + `atomicReplace` + 数量）、
 `VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`）。
 
 实测证据：同一次 Jena 发布在 Fuseki 日志里恰好产生 1 个 `POST /ds/update` 请求；把
 `singleReplaceLimit` 压到 1 强制走影子图路径时为 2 个请求（1 批写入 + 1 次切换），切换后无残留命名图。
-故意用错凭据发布时，接口返回「发布失败，目标图数据未改动」，Fuseki 三元组数量不变，审计记录 `graphReplaced: false`。
+故意用错凭据发布时，接口返回「发布失败，图数据未改动」，Fuseki 三元组数量不变，审计记录 `graphReplaced: false`。
 
 ## 影响
 
 - 接入新后端只需：登记 `GraphTargetKind`、补 `GRAPH_TARGET_KINDS` 元数据、新增适配器并在
   `getGraphStore` 注册；API 与界面无需改动。
-- 前端「连接目标」按数据库类型分组，连接表单字段由 `GRAPH_TARGET_KINDS` 驱动。
-- 查询工作台按目标后端切换 Cypher / SPARQL，写入仍然一律禁止，必须走草稿快照 + 发布。
-- 目标记录写入 PostgreSQL 时统一使用 `graph_targets`，`kind` 列带 `CHECK` 约束。
+- 前端「本体存储」按数据库类型分组，连接表单字段由 `GRAPH_TARGET_KINDS` 驱动。
+- 查询工作台按本体存储后端切换 Cypher / SPARQL，写入仍然一律禁止，必须走草稿快照 + 发布。
+- 本体存储记录写入 PostgreSQL 时统一使用 `graph_targets`，`kind` 列带 `CHECK` 约束。

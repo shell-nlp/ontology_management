@@ -9,7 +9,7 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
     const user = await requireRole("ADMIN");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
 
     const deletedVersions = await deleteTargetVersions(targetId);
     await writeAuditEntry({

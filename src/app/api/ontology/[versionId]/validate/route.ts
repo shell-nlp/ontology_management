@@ -10,7 +10,7 @@ export async function POST(_: Request, context: { params: Promise<{ versionId: s
     const row = await getVersionRecord(versionId);
     if (!row) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
     const target = await getTarget(row.target_id);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const snapshot = await ensureVersionSnapshot(row.id, target);
     const violations = validateVersionSnapshot(snapshot);
     return NextResponse.json({ valid: violations.length === 0, violations });

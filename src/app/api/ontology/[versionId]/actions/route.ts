@@ -30,7 +30,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
     const version = await getVersionRecord(versionId);
     if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
     const target = await getTarget(version.target_id);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(versionId, target);
     return NextResponse.json({ actions: await visibleSnapshotActions(versionId, subjectEntityId) });
   } catch (error) {
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ve
     const version = await getVersionRecord(versionId);
     if (!version) return NextResponse.json({ error: "本体草稿不存在。" }, { status: 404 });
     const target = await getTarget(version.target_id);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(versionId, target);
     const { outcome, applied } = await runSnapshotAction(versionId, input.actionId, input.inputs, { dryRun: input.dryRun, subjectEntityId: input.subjectEntityId });
     await writeAuditEntry({

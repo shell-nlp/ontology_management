@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const versionId = request.nextUrl.searchParams.get("versionId");
     if (versionId) {
       const snapshot = await ensureVersionSnapshot(versionId, target);

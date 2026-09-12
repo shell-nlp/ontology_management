@@ -167,7 +167,7 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 @media (max-width:850px) { .manager-grid.instance-manager-grid { grid-template-columns:1fr; height:auto; } .manager-split-handle { display:none; } }
 @media (max-width:900px) { .overview-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-stat:nth-child(2) { border-right:0; } .overview-stat:nth-child(1), .overview-stat:nth-child(2) { border-bottom:1px solid var(--line); } .overview-census { grid-template-columns:1fr; } }
 
-/* 连接目标按图数据库类型分组展示 */
+/* 本体存储按图数据库类型分组展示 */
 .target-group { border-top:1px solid #e8eef7; padding:10px 0 2px; }
 .target-group:first-of-type { border-top:0; padding-top:4px; }
 .target-group-head { display:flex; align-items:center; gap:8px; margin-bottom:2px; }
@@ -199,7 +199,7 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .wizard-steps li.done > span { border-color:#bcd0ef; background:#eaf1ff; color:#1d4ed8; }
 .wizard-steps li + li::before { content:""; width:20px; height:1px; margin:0 9px 0 11px; background:#dbe6f5; }
 
-/* 连接目标页：动作行 + 单列目标清单 */
+/* 本体存储页：动作行 + 单列本体存储清单 */
 .target-action-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .target-action-bar b { display:block; margin:3px 0 5px; color:#16233b; font-family:Georgia, "Noto Serif SC", serif; font-size:19px; font-weight:600; }
 .target-action-bar .subtle { max-width:820px; margin:0; }

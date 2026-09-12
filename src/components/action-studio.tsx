@@ -249,7 +249,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
 
   const run = async (dryRun: boolean) => {
     if (!selected) return;
-    if (!versionId) { fail("当前目标还没有草稿：动作只能写入草稿快照，请先在本体草稿页创建草稿。"); return; }
+    if (!versionId) { fail("当前本体存储还没有草稿：动作只能写入草稿快照，请先在本体草稿页创建草稿。"); return; }
     if (selected.scopeEntityTypeId && !subject) { fail(`动作「${selected.name}」作用在「${scopeName(definition, selected)}」上，请先选择要执行的对象。`); return; }
     setBusy(true);
     try {
@@ -569,7 +569,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
             <div className="as-placeholder">
               <span className="as-placeholder-mark"><ShieldAlert size={20} /></span>
               <b>先选一个动作</b>
-              <span>左边是这个目标已经定义好的动作。选中之后，这里会显示它的定义、规则、运行与决策。</span>
+              <span>左边是这个本体存储里已经定义好的动作。选中之后，这里会显示它的定义、规则、运行与决策。</span>
             </div>
           )}
         </section>

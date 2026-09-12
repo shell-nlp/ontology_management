@@ -16,8 +16,8 @@ const targetInput = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
 }).superRefine((value, context) => {
   if (value.kind !== "NEO4J") return;
-  if (!value.username) context.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "Neo4j 目标必须填写用户名。" });
-  if (!value.password) context.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: "Neo4j 目标必须填写密码。" });
+  if (!value.username) context.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "Neo4j 连接必须填写用户名。" });
+  if (!value.password) context.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: "Neo4j 连接必须填写密码。" });
 });
 
 export async function GET() {
@@ -26,7 +26,7 @@ export async function GET() {
     const targets = await platformQuery<GraphTarget>("SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at FROM ontology_platform.graph_targets ORDER BY kind, name");
     return NextResponse.json(targets.rows.map(publicTarget));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取连接目标。" }, { status: 401 });
+    return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取本体存储。" }, { status: 401 });
   }
 }
 
@@ -53,6 +53,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(publicTarget(target), { status: 201 });
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建目标。" }, { status });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建本体存储。" }, { status });
   }
 }

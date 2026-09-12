@@ -268,7 +268,7 @@ export async function withTargetLock<T>(targetId: string, operation: () => Promi
   targetLocks.set(targetId, queued);
   await previous;
   try {
-    // 先在本实例排队，再拿数据库级锁，保证多实例部署时同一目标只有一个发布在进行。
+    // 先在本实例排队，再拿数据库级锁，保证多实例部署时同一个本体存储只有一个发布在进行。
     return await withAdvisoryLock(`ontology:target:${targetId}`, operation);
   } finally {
     release();
@@ -411,7 +411,7 @@ export async function initializeVersionSnapshot(versionId: string, target: Graph
     let snapshot: VersionSnapshot;
     if (sourceVersionId) {
       const source = await getVersionRecord(sourceVersionId);
-      if (!source || source.target_id !== row.target_id) throw new Error("快照来源版本不存在或不属于当前目标。");
+      if (!source || source.target_id !== row.target_id) throw new Error("快照来源版本不存在或不属于当前本体存储。");
       snapshot = await readSnapshotFiles(source);
       snapshot = { ...snapshot, definition: row.definition };
     } else {
@@ -424,7 +424,7 @@ export async function initializeVersionSnapshot(versionId: string, target: Graph
 export async function ensureVersionSnapshot(versionId: string, target: GraphTarget) {
   const row = await getVersionRecord(versionId);
   if (!row) throw new Error("本体版本不存在。");
-  if (row.target_id !== target.id) throw new Error("版本不属于当前连接目标。");
+  if (row.target_id !== target.id) throw new Error("版本不属于当前本体存储。");
   if (!row.content_hash) {
     if (row.status === "ARCHIVED") throw new Error("该旧归档版本创建时尚未保存实例快照，不能用当前图数据伪造历史版本。");
     await initializeVersionSnapshot(versionId, target);

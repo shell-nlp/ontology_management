@@ -469,7 +469,7 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
       safeRefresh(sigma);
     };
     sigma.on("afterRender", followNodesExtent);
-    // 内容变化（换目标、改筛选、自动整理）后先对齐一次：新数据是在前一个子组件 effect 里灌进去的，
+    // 内容变化（换本体存储、改筛选、自动整理）后先对齐一次：新数据是在前一个子组件 effect 里灌进去的，
     // 那一帧的 afterRender 早于本监听器注册，只靠 afterRender 会漏掉这次适配。
     followNodesExtent();
     // “适应画布”会把镜头重置为铺满整张图的默认状态，此时放开包围盒，让视野重新包含被拖远的节点。
@@ -530,7 +530,7 @@ function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, dragga
 
 export function SigmaGraph(props: Props) {
   // SigmaContainer 一旦收到不同的 graph 对象就会 kill 旧实例、新建一个；这里始终传同一个空图，
-  // 数据由 SigmaGraphLoader 原地灌进当前实例，实例只创建一次（切筛选、切目标都不会再重建）。
+  // 数据由 SigmaGraphLoader 原地灌进当前实例，实例只创建一次（切筛选、切本体存储都不会再重建）。
   const containerGraph = useMemo(() => buildGraph([], []), []);
   const loadedGraph = useMemo(() => buildGraph(props.nodes, props.edges), [props.edges, props.nodes]);
   return (

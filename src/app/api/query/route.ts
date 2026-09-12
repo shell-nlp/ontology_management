@@ -7,7 +7,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 
 /**
  * 后端无关的只读查询入口。
- * Neo4j 目标执行 Cypher，Apache Jena 目标执行 SPARQL；
+ * Neo4j 本体存储执行 Cypher，Apache Jena 本体存储执行 SPARQL；
  * 写入一律走草稿快照 + 发布流程，这里不接受任何写语句。
  */
 const requestInput = z.object({
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const statement = input.query ?? input.cypher;
     if (!statement) return NextResponse.json({ error: "查询语句不能为空。" }, { status: 400 });
     const target = await getTarget(input.targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const store = getGraphStore(target);
     if (store.containsWriteStatement(statement)) {
       return NextResponse.json({ error: `版本管理启用后禁止直接写 ${store.info.label}。请修改草稿快照并通过发布生效。` }, { status: 409 });

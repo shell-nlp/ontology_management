@@ -31,14 +31,14 @@
 
 ---
 
-使用 Next.js 管理多个图数据库目标（当前支持 Neo4j 与 Apache Jena）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密目标凭据、版本索引与审计记录。
+使用 Next.js 管理多个图数据库（当前支持 Neo4j 与 Apache Jena）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密的本体存储凭据、版本索引与审计记录。
 
 图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知 Cypher / SPARQL 差异。接入新的图后端只需新增一个适配器。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
 ```text
-草稿编辑 → 校验 → 发布 / 激活 → 重建目标图数据
+草稿编辑 → 校验 → 发布 / 激活 → 重建图数据
    │                                    │
    └──── 只写本地快照文件 ──────────────┘  成功后才更新版本状态
 ```
@@ -62,8 +62,8 @@
 | 🔗 | **对象与关系** | 对象绑定单一已发布类型（Label）；关系端点须符合契约 |
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON |
 | 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由各后端推导（Neo4j / RDF）。两种视图的节点都可拖拽摆放：有草稿的实例位置写入图快照，只读浏览与本体骨架的摆放只记在本机浏览器 |
-| ⌨️ | **查询工作台** | 按目标后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
-| 🗄 | **目标管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
+| ⌨️ | **查询工作台** | 按本体存储后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
+| 🗄 | **本体存储管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
 | 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，Neo4j 与 Apache Jena 已实现 |
 | 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
 
@@ -133,9 +133,9 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `definition.json` | 类、关系类型、端点契约、属性规则 |
 | `nodes.csv` | 对象稳定 ID、Label、属性 JSON |
 | `relationships.csv` | 关系稳定 ID、起止对象 ID、类型、属性 JSON |
-| `manifest.json` | 格式版本、目标、版本号、数量、时间、SHA-256 |
+| `manifest.json` | 格式版本、本体存储、版本号、数量、时间、SHA-256 |
 
-版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是实例数据与版本状态的唯一事实来源**。PostgreSQL 只保存账号、连接目标与审计记录；`ONTOLOGY_VERSION_DIR` 因此是所有实例共享的持久卷。
+版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是实例数据与版本状态的唯一事实来源**。PostgreSQL 只保存账号、本体存储与审计记录；`ONTOLOGY_VERSION_DIR` 因此是所有实例共享的持久卷。
 
 ### 生命周期
 
@@ -161,7 +161,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 | Neo4j | 单个写事务内 `DETACH DELETE` + 分批 `UNWIND CREATE`，任一批失败整体回滚 |
 | Apache Jena | 单个 SPARQL Update 请求完成「清空 + 插入」（TDB2 上单请求即事务）；超过 5000 条三元组时先写入影子命名图，再用一个请求 `CLEAR + ADD + DROP` 原子切换 |
 
-发布过程写三条审计：`VERSION_PUBLISH_STARTED`（含后端类型与 `atomicReplace`）、`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`，用于判断图是否已被改动）。同一目标的发布在进程内队列与 PostgreSQL advisory lock 两层串行，多实例部署也不会并发替换同一个目标。
+发布过程写三条审计：`VERSION_PUBLISH_STARTED`（含后端类型与 `atomicReplace`）、`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`，用于判断图是否已被改动）。同一个本体存储的发布在进程内队列与 PostgreSQL advisory lock 两层串行，多实例部署也不会并发替换同一个本体存储。
 
 发布成功后才更新版本状态，并对账 `ontology_*` 约束与索引。
 
@@ -179,7 +179,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 角色 | 权限 |
 | --- | --- |
-| `ADMIN` | 目标、本体版本、实例写入、Cypher 写入（需确认） |
+| `ADMIN` 本体存储、本体版本、实例写入、Cypher 写入（需确认） |
 | `VIEWER` | 登录、浏览与只读查询 |
 
 - 会话：HttpOnly Cookie，`AUTH_SECRET` 签署  
@@ -201,7 +201,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 </details>
 
 <details>
-<summary><b>连接目标（Neo4j / Apache Jena）</b></summary>
+<summary><b>本体存储（Neo4j / Apache Jena）</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -209,7 +209,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `GET` / `PATCH` / `DELETE` | `/api/targets/:targetId` | 查看 / 更新 / 删除 |
 | `GET` | `/api/targets/:targetId/schema` | 运行时 Schema |
 | `POST` | `/api/targets/:targetId/test` | 连接测试 |
-| `POST` | `/api/targets/:targetId/reset` | 重置目标状态 |
+| `POST` | `/api/targets/:targetId/reset` | 重置本体存储状态 |
 
 </details>
 
@@ -229,7 +229,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 <details>
 <summary><b>实例（草稿快照）</b></summary>
 
-写操作面向草稿 `versionId`；读可按目标与版本查询。
+写操作面向草稿 `versionId`；读可按本体存储与版本查询。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -251,7 +251,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/query` | 按目标后端执行只读 Cypher / SPARQL，写入一律 409 |
+| `POST` | `/api/query` | 按连接的后端执行只读 Cypher / SPARQL，写入一律 409 |
 
 </details>
 
@@ -266,7 +266,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `jena.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
 | `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
 
-### 目标配置字段
+### 本体存储配置字段
 
 | 字段 | Neo4j | Apache Jena |
 | --- | --- | --- |
@@ -292,7 +292,7 @@ ontology_management/
 ├── src/
 │   ├── app/              # 页面与 API 路由
 │   ├── components/       # 工作台、图画布、属性编辑器
-│   └── lib/              # 认证、图数据库抽象（graph/）、本体、版本快照、目标
+│   └── lib/              # 认证、图数据库抽象（graph/）、本体、版本快照、本体存储
 ├── docs/
 │   └── adr/              # 架构决策记录
 ├── e2e/                  # Playwright 端到端

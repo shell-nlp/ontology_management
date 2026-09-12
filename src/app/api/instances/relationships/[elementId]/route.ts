@@ -21,7 +21,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     const { elementId } = await context.params;
     const input = patchSchema.parse(await request.json());
     const target = await getTarget(targetIdOf(request));
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);
     if (!versionId) return NextResponse.json({ error: "修改关系必须指定草稿 versionId。" }, { status: 400 });
     await ensureVersionSnapshot(versionId, target);
@@ -40,7 +40,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const user = await requireRole("ADMIN");
     const { elementId } = await context.params;
     const target = await getTarget(targetIdOf(request));
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);
     if (!versionId) return NextResponse.json({ error: "删除关系必须指定草稿 versionId。" }, { status: 400 });
     await ensureVersionSnapshot(versionId, target);

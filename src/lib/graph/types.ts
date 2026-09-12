@@ -3,7 +3,7 @@ import type { DataType } from "@/lib/instance-property-editor";
 /**
  * 图数据库抽象层的公共契约。
  *
- * 这里只描述“任何图后端都成立”的概念：连接目标、图数据、运行时类型、查询结果。
+ * 这里只描述“任何图后端都成立”的概念：本体存储、图数据、运行时类型、查询结果。
  * 具体后端（Neo4j / Apache Jena）各自实现 GraphStore，由 @/lib/graph 的注册表
  * 按 target.kind 分派。上层 API 路由与 React 组件只依赖这里的类型，
  * 不直接依赖 neo4j-driver 或 SPARQL。
@@ -122,7 +122,7 @@ export function graphTargetKindInfo(kind: GraphTargetKind): GraphTargetKindInfo 
   return GRAPH_TARGET_KINDS.find((item) => item.kind === kind) ?? GRAPH_TARGET_KINDS[0];
 }
 
-/** 目标记录：字段是所有后端共用的最小集合，后端专属配置放在 options 里。 */
+/** 本体存储记录：字段是所有后端共用的最小集合，后端专属配置放在 options 里。 */
 export type GraphTarget = {
   id: string;
   name: string;
@@ -236,7 +236,7 @@ export type ListRelationshipsOptions = {
 };
 
 /**
- * 一个已登记图连接目标的统一操作面。
+ * 一个已登记本体存储的统一操作面。
  * 每个方法都必须是后端无关的语义：调用方不应该知道 Cypher 或 SPARQL。
  */
 export interface GraphStore {

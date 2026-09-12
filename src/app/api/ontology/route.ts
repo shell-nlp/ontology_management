@@ -24,14 +24,14 @@ export async function POST(request: NextRequest) {
     const user = await requireRole("ADMIN");
     const input = createInput.parse(await request.json());
     const target = await getTarget(input.targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     return withTargetLock(input.targetId, async () => {
       const versions = await listVersionRecords(input.targetId);
-      if (versions.some((version) => version.status === "DRAFT")) return NextResponse.json({ error: "该目标已有草稿，请先发布或继续编辑现有草稿。" }, { status: 409 });
+      if (versions.some((version) => version.status === "DRAFT")) return NextResponse.json({ error: "该本体存储已有草稿，请先发布或继续编辑现有草稿。" }, { status: 409 });
       let base = input.baseVersionId
         ? versions.find((version) => version.id === input.baseVersionId) ?? null
         : versions.find((version) => version.status === "PUBLISHED") ?? null;
-      if (input.baseVersionId && (!base || base.target_id !== input.targetId)) return NextResponse.json({ error: "基础版本不存在或不属于当前目标。" }, { status: 404 });
+      if (input.baseVersionId && (!base || base.target_id !== input.targetId)) return NextResponse.json({ error: "基础版本不存在或不属于当前本体存储。" }, { status: 404 });
       if (base) await ensureVersionSnapshot(base.id, target);
       const definition = input.definition ?? base?.definition ?? { entityTypes: [], relationshipTypes: [] };
       const versionNumber = versions.reduce((max, version) => Math.max(max, version.version_number), 0) + 1;

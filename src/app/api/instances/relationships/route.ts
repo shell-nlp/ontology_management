@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const limit = parseLimit(request.nextUrl.searchParams.get("limit"));
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     if (versionId) {
       const snapshot = await ensureVersionSnapshot(versionId, target);
       return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search, limit }) });
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const user = await requireRole("ADMIN");
     const input = inputSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(input.versionId, target);
     const relationship = await createSnapshotRelationship(input.versionId, input.relationshipType, input.sourceId, input.targetIdValue, input.properties);
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_CREATED", details: { versionId: input.versionId, relationshipId: relationship.id, relationshipType: relationship.type } });

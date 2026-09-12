@@ -14,7 +14,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
     if (!version) return NextResponse.json({ error: "本体草稿不存在。" }, { status: 404 });
     if (version.status !== "DRAFT") return NextResponse.json({ error: "已发布版本不可直接修改，请创建新草稿。" }, { status: 409 });
     const target = await getTarget(version.target_id);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(versionId, target);
     const savedDefinition = await updateSnapshotDefinition(versionId, definition);
     await writeAuditEntry({ actorId: user.id, targetId: version.target_id, action: "VERSION_DEFINITION_UPDATED", details: { versionId } });

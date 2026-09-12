@@ -16,7 +16,7 @@ export async function PUT(request: NextRequest) {
     const user = await requireRole("ADMIN");
     const input = inputSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(input.versionId, target);
     const updated = await updateSnapshotPositions(input.versionId, input.items);
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_POSITIONS_UPDATED", details: { versionId: input.versionId, count: updated } });

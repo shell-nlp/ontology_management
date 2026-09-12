@@ -23,7 +23,7 @@ export function GraphKindMark({ mark, accent, size = 24, className }: { mark: Gr
   return <svg {...stroke}><circle cx="12" cy="12" r="3.3" fill={accent} stroke="none" /><circle cx="4.8" cy="6.2" r="1.8" /><circle cx="19.2" cy="6.8" r="1.8" /><circle cx="12" cy="20.2" r="1.8" /><path d="M9.4 9.9 6.4 7.5M14.6 10.1l3-2.5M12 15.4v3" /></svg>;
 }
 
-/** 已登记目标分组抬头用的类型徽标。 */
+/** 已登记本体存储分组抬头用的类型徽标。 */
 export function GraphKindBadge({ kind }: { kind: GraphTargetKind }) {
   const info = graphTargetKindInfo(kind);
   return <span className="target-kind-badge" style={{ color: info.accent, borderColor: `${info.accent}33`, background: `${info.accent}0f` }}>
@@ -135,9 +135,9 @@ export function GraphKindPicker({ value, onChange }: { value: GraphTargetKind; o
     {open && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <div className="dialog graph-kind-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef}>
         <button type="button" className="close-button" onClick={close} title="关闭"><X size={18} /></button>
-        <span className="eyebrow">连接目标</span>
+        <span className="eyebrow">本体存储</span>
         <h2 id={titleId}>选择图数据库类型</h2>
-        <p>类型决定这个目标用什么查询语言、按什么模型存图。</p>
+        <p>类型决定这个本体存储用什么查询语言、按什么模型存图。</p>
         <GraphKindChoice value={draft} onChange={setDraft} />
         <div className="kind-picker-foot">
           <span className="kind-picker-summary"><GraphKindMark mark={draftInfo.mark} accent={draftInfo.accent} size={16} />已选择 <b>{draftInfo.label}</b><code>{capabilityLine(draftInfo)}</code></span>

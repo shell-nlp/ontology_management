@@ -12,10 +12,10 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     if (!allowedStatuses.includes(version.status)) throw new Error("该版本当前状态不允许发布或激活。");
     if (version.status === "ARCHIVED") {
       const records = await listVersionRecords(version.target_id);
-      if (records.some((record) => record.status === "DRAFT")) throw new Error("当前目标存在草稿，请先发布草稿后再激活历史版本。");
+      if (records.some((record) => record.status === "DRAFT")) throw new Error("当前本体存储存在草稿，请先发布草稿后再激活历史版本。");
     }
     const target = await getTarget(version.target_id);
-    if (!target) throw new Error("目标不存在。");
+    if (!target) throw new Error("本体存储不存在。");
     const snapshot = await ensureVersionSnapshot(version.id, target);
     const violations = validateVersionSnapshot(snapshot);
     if (violations.length) return { published: false as const, violations };
@@ -56,10 +56,10 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       });
       // 原子替换的后端失败时图数据没动，可以明确告诉用户；非原子后端只能说“可能已改动”。
       throw new Error(graphReplaced
-        ? `目标图数据已替换，但版本状态未更新：${message}。请重新发布该版本以恢复一致。`
+        ? `图数据已替换，但版本状态未更新：${message}。请重新发布该版本以恢复一致。`
         : atomicReplace
-          ? `发布失败，目标图数据未改动：${message}`
-          : `发布失败，且 ${store.info.label} 不支持事务替换，目标图数据可能已被部分修改：${message}`);
+          ? `发布失败，图数据未改动：${message}`
+          : `发布失败，且 ${store.info.label} 不支持事务替换，图数据可能已被部分修改：${message}`);
     }
     await writeAuditEntry({
       actorId: user.id,

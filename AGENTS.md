@@ -25,7 +25,7 @@
 | P1 | 增量发布 | 每次发布都是整图替换：Neo4j `DETACH DELETE` + 重建，Jena 清空 + 重写 | 快照与当前图做 diff，只写增删改；`GraphStore` 增加 `applyDelta` 能力，版本里记录基线版本 |
 | P2 | 大图导出流式化 | `exportGraph()` 全量进内存（Jena 单条 `SELECT ?s ?p ?o`，Neo4j `MATCH (n)`），快照写入也一次性构造 | 分页/游标导出（Jena 按主语分页、Neo4j 用分批 `LIMIT`），快照写入改流式 |
 | P3 | 版本状态机补 `PUBLISHING` | 图库替换成功而版本状态更新失败时，只能靠审计 `VERSION_PUBLISH_FAILED` 事后诊断 | 发布前写 `PUBLISHING`，成功后转 `PUBLISHED`；失败态在前端提供“重新发布以恢复一致” |
-| P4 | 目标 `kind` 变更的历史版本策略 | 快照后端无关，改 `kind` 后老版本仍能发布，目前没有任何提示 | 明确产品决定：允许（加提示并记录审计）或禁止（有版本时锁定 kind） |
+| P4 | 本体存储 `kind` 变更的历史版本策略 | 快照后端无关，改 `kind` 后老版本仍能发布，目前没有任何提示 | 明确产品决定：允许（加提示并记录审计）或禁止（有版本时锁定 kind） |
 | P5 | `/api/ontology/:versionId` 的 GET / DELETE | README 接口表写了 `GET/PATCH/DELETE`，路由只实现了 `PATCH` | 补 GET/DELETE（已发布版本禁止删除）或改 README 对齐实现 |
 
 ### 图数据库适配层
@@ -41,12 +41,12 @@
 
 | 编号 | 事项 | 现状 |
 | --- | --- | --- |
-| U2 | 审计记录查看界面 | 发布 / 失败 / 目标变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
-| U3 | 弹窗层级低于图谱控件 | sigma 的缩放控件 z-index 为 `--sigma-controls-zindex`（100），全局 `.dialog-backdrop` 只有 10，弹窗够高时控件会浮在弹窗上。本次只在类型编辑弹窗用 `.ted-backdrop` 抬到 120 规避，其它弹窗（新建目标、新建关系、新建对象）仍有此问题 |
+| U2 | 审计记录查看界面 | 发布 / 失败 / 本体存储变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
+| U3 | 弹窗层级低于图谱控件 | sigma 的缩放控件 z-index 为 `--sigma-controls-zindex`（100），全局 `.dialog-backdrop` 只有 10，弹窗够高时控件会浮在弹窗上。本次只在类型编辑弹窗用 `.ted-backdrop` 抬到 120 规避，其它弹窗（新建本体存储、新建关系、新建对象）仍有此问题 |
 
 ### 工程清洁
 
 | 编号 | 事项 | 说明 |
 | --- | --- | --- |
 | C1 | `src/lib/version-store.test.ts` 命名过时 | 用例实际测试 `version-snapshot.ts`，文件应与被测模块同名 |
-| C2 | 端到端用例覆盖不足 | `e2e/` 目前只有一个版本工作区 smoke；目标创建向导、发布失败提示、SPARQL 工作台都还没有 e2e |
+| C2 | 端到端用例覆盖不足 | `e2e/` 目前只有一个版本工作区 smoke；本体存储创建向导、发布失败提示、SPARQL 工作台都还没有 e2e |

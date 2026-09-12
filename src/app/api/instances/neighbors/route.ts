@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const limitRaw = Number(request.nextUrl.searchParams.get("limit") ?? "200");
     if (!targetId || !nodeId) return NextResponse.json({ error: "targetId 与 nodeId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const limit = Number.isFinite(limitRaw) ? limitRaw : 200;
     return NextResponse.json(await getGraphStore(target).readNeighborhood(nodeId, limit));
   } catch (error) {

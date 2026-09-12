@@ -36,7 +36,7 @@ export async function ensurePlatformSchema() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
-      // 目标表从 neo4j_targets 演进为后端无关的 graph_targets，并保留历史数据。
+      // 本体存储表从 neo4j_targets 演进为后端无关的 graph_targets，并保留历史数据。
       await client.query(`
         DO $$
         BEGIN
@@ -90,7 +90,7 @@ export async function platformQuery<T extends QueryResultRow>(text: string, valu
 /**
  * 跨实例互斥锁。
  *
- * 进程内的 Promise 队列只能挡住同一个实例：多实例部署时，两个实例可能同时发布同一个目标。
+ * 进程内的 Promise 队列只能挡住同一个实例：多实例部署时，两个实例可能同时发布同一个本体存储。
  * 这里用 PostgreSQL 会话级 advisory lock 补齐这一层，让同一个 key 在集群范围内串行。
  * 连接断开时锁会自动释放；解锁在 finally 里显式执行，且必须与加锁落在同一条连接上。
  */

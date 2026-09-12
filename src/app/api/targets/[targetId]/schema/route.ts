@@ -8,7 +8,7 @@ export async function GET(_: Request, context: { params: Promise<{ targetId: str
     await requireRole("VIEWER");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "目标不存在。" }, { status: 404 });
+    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const result = await getGraphStore(target).readSchemaGraph();
     return NextResponse.json(result);
   } catch (error) {
