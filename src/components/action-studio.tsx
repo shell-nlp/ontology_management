@@ -5,6 +5,7 @@ import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, Tra
 import { api } from "@/lib/api-client";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { actionInvolvement, validateActionDefinition } from "@/lib/action-engine";
+import { graphColor } from "@/lib/graph-palette";
 import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology-draft";
 import type { OntologyDefinition } from "@/lib/ontology";
 import "./action-studio.css";
@@ -26,12 +27,24 @@ export type ActionRunOutcome = {
   applied: boolean;
 };
 
+/** 工作台里选中一个动作之后，右侧停在哪一阶段。 */
+type Stage = "define" | "rules" | "run" | "ledger";
+
+const stageLabels: Record<Stage, string> = { define: "定义", rules: "规则", run: "运行", ledger: "决策" };
+
 type DecisionEntry = {
   id: string;
   action: string;
   actorEmail: string | null;
   createdAt: string;
-  details: { actionName?: string; actionCode?: string; dryRun?: boolean; verdict?: string; subject?: { display?: string } | null; blockers?: { ruleName: string; message: string }[] };
+  details: {
+    actionName?: string;
+    actionCode?: string;
+    dryRun?: boolean;
+    verdict?: string;
+    subject?: { label?: string; display?: string } | null;
+    blockers?: { ruleName: string; message: string; evidence?: string[] }[];
+  };
 };
 
 type Props = {
@@ -140,8 +153,10 @@ function describeEdit(definition: Definition, action: ActionType, edit: ActionEd
 }
 
 function describeCondition(definition: Definition, action: ActionType | null, condition: RuleCondition) {
+  // 绑在「全部动作」上的规则没有作用类，这时不要渲染出空的括号。
+  const scope = scopeName(definition, action);
   const subject = condition.subject.kind === "SUBJECT"
-    ? `主对象（${scopeName(definition, action)}）`
+    ? scope ? `主对象（${scope}）` : "主对象"
     : condition.subject.kind === "PARAM"
       ? `入参「${action?.params.find((item) => item.code === condition.subject.code)?.name ?? condition.subject.code}」`
       : `第 ${(action?.edits.findIndex((item) => item.op === "CREATE_ENTITY" && item.alias === condition.subject.code) ?? -1) + 1} 步新建的「${condition.subject.code}」`;
@@ -162,6 +177,11 @@ export function effectLabel(effect: RuleEffect) {
   return ruleEffectOptions.find((item) => item.value === effect)?.label ?? effect;
 }
 
+/** 处置对应的色标：拦截红、隐藏灰、提示黄。 */
+export function effectClass(effect: RuleEffect) {
+  return effect === "BLOCK" ? "blocker" : effect === "HIDE" ? "hide" : "warning";
+}
+
 /** 一条规则命中后会发生什么，用一句话说清楚。 */
 export function effectSentence(effect: RuleEffect) {
   if (effect === "HIDE") return "这个动作不出现在这类对象上";
@@ -180,8 +200,17 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
   const [outcome, setOutcome] = useState<ActionRunOutcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
+  // 从对象详情跳进来时直接落在「运行」：用户是带着一个对象来执行动作的。
+  const [stage, setStage] = useState<Stage>(initialRun ? "run" : "define");
+  const [ruleScope, setRuleScope] = useState<"action" | "all">("action");
+  const [ledgerScope, setLedgerScope] = useState<"action" | "all">("action");
 
   const selected = actions.find((item) => item.id === selectedId) ?? actions[0] ?? null;
+  const boundRulesOfSelected = selected ? rules.filter((item) => item.actionId === selected.id) : [];
+  /** 默认只看这个动作的规则：绑在「全部动作」上的规则也算作用在它身上。 */
+  const shownRules = ruleScope === "action" && selected ? rules.filter((item) => !item.actionId || item.actionId === selected.id) : rules;
+  /** 决策记录按版本累积，默认只看当前动作：这样台账回答的是"这个动作最近都干了什么"。 */
+  const ledgerEntries = ledgerScope === "action" && selected ? decisions.filter((item) => item.details?.actionCode === selected.code) : decisions;
 
   const refreshDecisions = useCallback(async () => {
     if (!versionId) { setDecisions([]); return; }
@@ -235,197 +264,316 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
     } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
-  const boundRules = (actionId: string) => rules.filter((item) => !item.actionId || item.actionId === actionId).length;
-
   return (
-    <section className="stack">
-      <div className="as-shell">
-        <div className="panel as-panel">
-          <div className="as-head">
-            <div>
-              <span className="eyebrow">动作</span>
-              <h2>动作清单</h2>
-              <p>动作是平台里唯一的业务写入口：把「一次业务动作的正确做法」固定成模板，规则再挂到动作上拦截。平台上没有的动作，就没有对应的写入口。</p>
-            </div>
-            <button className="action" disabled={!canEdit} onClick={() => setActionDialog({ mode: "create", action: newAction() })}><Plus size={15} />新建动作</button>
+    <section className="stack as-workbench">
+      <header className="panel as-topbar">
+        <div className="as-topbar-text">
+          <span className="eyebrow">动作</span>
+          <h2>动作工作台</h2>
+          <p>动作是平台里唯一的业务写入口：把「一次业务动作的正确做法」固定成模板，规则再挂到动作上决定它什么时候出现、什么时候被拦。平台上没有的动作，就没有对应的写入口。</p>
+        </div>
+        <div className="as-topbar-side">
+          <span className="as-stat"><b>{actions.length}</b>个动作</span>
+          <span className="as-stat"><b>{rules.length}</b>条规则</span>
+          <button className="action primary" disabled={!canEdit} onClick={() => setActionDialog({ mode: "create", action: newAction() })}><Plus size={15} />新建动作</button>
+        </div>
+      </header>
+
+      <div className="as-body">
+        <aside className="panel as-rail">
+          <div className="as-rail-head">
+            <span className="eyebrow">动作清单</span>
+            <span className="as-count">{actions.length}</span>
           </div>
           {actions.length ? (
-            <div className="as-list">
-              {actions.map((action) => (
-                <div key={action.id} className={selected?.id === action.id ? "as-card selectable selected" : "as-card selectable"} onClick={() => { setSelectedId(action.id); setOutcome(null); }}>
-                  <div className="as-card-top">
-                    <b>{action.name || "（未命名动作）"}</b>
-                    <code>{action.code || "no-code"}</code>
-                    {scopeName(definition, action)
-                      ? <span className="as-chip scope">定义在类「{scopeName(definition, action)}」上</span>
-                      : <span className="as-chip blocker">未选主对象</span>}
-                    <span className="as-chip muted">{boundRules(action.id)} 条规则</span>
-                    <div className="as-card-actions">
-                      <button className="ted-icon-button" title="编辑动作" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); setActionDialog({ mode: "edit", action }); }}><Pencil size={13} /></button>
-                      <button className="ted-icon-button danger" title="删除动作" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); void removeAction(action).catch(fail); }}><Trash2 size={13} /></button>
-                    </div>
-                  </div>
-                  <p className="as-card-meta">
-                    {action.params.length ? action.params.map((item) => `${item.name}（${item.kind === "ENTITY_REF" ? typeName(definition, item.entityTypeId) || "未选类型" : item.dataType}）`).join(" · ") : "无参数"}
-                    {" → "}
-                    {action.edits.length} 步操作
-                  </p>
-                  {(() => {
-                    const involvement = actionInvolvement(definition, action);
-                    if (!involvement.entityTypes.length && !involvement.relationshipTypes.length) return null;
-                    return (
-                      <div className="as-card-types">
-                        {involvement.entityTypes.map((item) => <span className="as-type-chip entity" key={item.id}>{item.name}<em>{item.roles.join(" · ")}</em></span>)}
-                        {involvement.relationshipTypes.map((item) => <span className="as-type-chip relation" key={item.id}>{item.name}<em>{item.roles.join(" · ")}</em></span>)}
-                      </div>
-                    );
-                  })()}
-                  {action.edits.length > 0 && <p className="as-card-recipe">{action.edits.map((edit) => describeEdit(definition, action, edit)).join(" → ")}</p>}
-                </div>
-              ))}
+            <div className="as-rail-list">
+              {actions.map((action) => {
+                const scope = scopeName(definition, action);
+                const bound = rules.filter((item) => item.actionId === action.id).length;
+                return (
+                  <button key={action.id} className={selected?.id === action.id ? "as-rail-row selected" : "as-rail-row"} onClick={() => { setSelectedId(action.id); setOutcome(null); }}>
+                    <i className="as-rail-dot" style={{ background: scope ? graphColor(scope) : "#cbd5e1" }} />
+                    <span className="as-rail-main">
+                      <b>{action.name || "（未命名动作）"}</b>
+                      <small><code>{action.code || "no-code"}</code> · {action.edits.length} 步{bound ? ` · ${bound} 条规则` : ""}</small>
+                    </span>
+                    <em>{scope || "未选类"}</em>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <p className="as-empty">还没有动作。先建一个「购票」这样的动作，把它要写哪些对象、哪些关系配成模板，规则再挂上去。</p>
           )}
-        </div>
+        </aside>
 
-        <div className="panel as-panel">
-          <div className="as-head">
-            <div>
-              <span className="eyebrow">规则</span>
-              <h2>规则清单</h2>
-              <p>规则绑在动作上，命中后有三种处置：隐藏（这个动作不出现在该对象上）、拦截（拒绝执行）、提示（只提醒）。结论都带规则名与证据。</p>
-            </div>
-            <button className="action" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "create", rule: newRule(selected?.id ?? "") })}><Plus size={15} />新建规则</button>
-          </div>
-          {rules.length ? (
-            <div className="as-list">
-              {rules.map((rule) => {
-                const action = actions.find((item) => item.id === rule.actionId) ?? null;
-                return (
-                  <div key={rule.id} className="as-card">
-                    <div className="as-card-top">
-                      <span className={`as-chip ${rule.effect === "BLOCK" ? "blocker" : rule.effect === "HIDE" ? "hide" : "warning"}`}>{effectLabel(rule.effect)}</span>
-                      <b>{rule.name || "（未命名规则）"}</b>
-                      {rule.enabled ? null : <span className="as-chip off">已停用</span>}
-                      <div className="as-card-actions">
-                        <button className="ted-icon-button" title={rule.enabled ? "停用规则" : "启用规则"} disabled={!canEdit} onClick={() => void toggleRule(rule).catch(fail)}>{rule.enabled ? <CircleSlash size={13} /> : <Check size={13} />}</button>
-                        <button className="ted-icon-button" title="编辑规则" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "edit", rule })}><Pencil size={13} /></button>
-                        <button className="ted-icon-button danger" title="删除规则" disabled={!canEdit} onClick={() => void removeRule(rule).catch(fail)}><Trash2 size={13} /></button>
-                      </div>
-                    </div>
-                    <p className="as-card-meta">绑定：{action ? action.name : "全部动作"} · 优先级 {rule.priority} · {rule.conditions.length} 个条件</p>
-                    <p className="as-card-recipe">当 {rule.conditions.length ? rule.conditions.map((condition) => describeCondition(definition, action, condition)).join(" 且 ") : "（未配置条件）"} 时，{effectSentence(rule.effect)}{rule.message ? `：${rule.message}` : "。"}</p>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="as-empty">还没有规则。例如「学生票须持学生资质」：条件盯住动作新建出来的票种与入参乘客的资质，处置写清楚拒绝原因。</p>
-          )}
-        </div>
-
-        <div className="panel as-panel">
-          <div className="as-head">
-            <div>
-              <span className="eyebrow">运行</span>
-              <h2>{selected ? `运行「${selected.name || "未命名动作"}」` : "运行动作"}</h2>
-              <p>{selected && scopeName(definition, selected) ? `这个动作定义在类「${scopeName(definition, selected)}」上：先选一个具体的${scopeName(definition, selected)}（属于这个类的对象），再填参数。干跑只算不写，执行才会写进草稿快照。` : "干跑只算不写：把执行后的样子算出来给规则看。执行才会写进草稿快照；被拦截时快照保持原样。"}</p>
-            </div>
-          </div>
+        <section className="panel as-workspace">
           {selected ? (
             <>
-              <div className="as-list">
-                {selected.scopeEntityTypeId && (
-                  <div className="as-param-row as-subject-row">
-                    <div className="as-param-label">
-                      <b>对哪个{scopeName(definition, selected) || "对象"}执行</b>
-                      <small>主对象 · {scopeName(definition, selected) || "未选类型"}</small>
-                    </div>
-                    {versionId && targetId ? (
-                      <EntitySearchPicker
-                        targetId={targetId}
-                        versionId={versionId}
-                        labels={scopeName(definition, selected) ? [scopeName(definition, selected)] : []}
-                        definition={definition}
-                        placeholder={`搜索${scopeName(definition, selected) || "对象"}…`}
-                        value={subject}
-                        onChange={setSubject}
-                      />
-                    ) : <span className="as-chip muted">需要先用草稿保存一次</span>}
+              <div className="as-ws-head">
+                <div className="as-ws-title">
+                  <span className="as-ws-eyebrow">
+                    {scopeName(definition, selected) ? <><i className="as-scope-dot" style={{ background: graphColor(scopeName(definition, selected)) }} />定义在类「{scopeName(definition, selected)}」上</> : "还没有选作用的类"}
+                  </span>
+                  <h3>{selected.name || "（未命名动作）"}<code className="as-ws-code">{selected.code || "no-code"}</code></h3>
+                </div>
+                <div className="as-ws-actions">
+                  <button className="action compact" disabled={!canEdit} onClick={() => setActionDialog({ mode: "edit", action: selected })}><Pencil size={13} />编辑定义</button>
+                  <button className="action compact danger" disabled={!canEdit} onClick={() => void removeAction(selected).catch(fail)}><Trash2 size={13} />删除</button>
+                </div>
+              </div>
+
+              <nav className="as-stagebar" role="tablist">
+                {(["define", "rules", "run", "ledger"] as const).map((id) => (
+                  <button key={id} type="button" role="tab" aria-selected={stage === id} className={stage === id ? "as-stage-tab selected" : "as-stage-tab"} onClick={() => setStage(id)}>
+                    {stageLabels[id]}
+                    {id === "rules" && <em>{rules.length}</em>}
+                    {id === "ledger" && <em>{decisions.length}</em>}
+                  </button>
+                ))}
+              </nav>
+
+              {stage === "define" && (
+                <div className="as-stage-body">
+                  <div className="as-info">
+                    <div><span>动作名称</span><b>{selected.name || "（未命名动作）"}</b></div>
+                    <div><span>动作标识</span><b className="as-mono">{selected.code || "—"}</b></div>
+                    <div><span>操作步数</span><b className="as-mono">{selected.edits.length}</b></div>
+                    <div className="wide"><span>说明</span><b>{selected.description || "未填写"}</b></div>
                   </div>
-                )}
-                {selected.params.length ? selected.params.map((parameter) => (
-                  <div className="as-param-row" key={parameter.code}>
-                    <div className="as-param-label">
-                      <b>{parameter.name || parameter.code || "（未命名参数）"}{parameter.required ? "" : "（可选）"}</b>
-                      <small>{parameter.kind === "ENTITY_REF" ? `对象 · ${typeName(definition, parameter.entityTypeId) || "未选类型"}` : `值 · ${parameter.dataType}`}</small>
-                    </div>
-                    {parameter.kind === "ENTITY_REF" ? (
-                      versionId && targetId ? (
-                        <EntitySearchPicker
-                          targetId={targetId}
-                          versionId={versionId}
-                          labels={typeName(definition, parameter.entityTypeId) ? [typeName(definition, parameter.entityTypeId)] : []}
-                          definition={definition}
-                          placeholder={`搜索${typeName(definition, parameter.entityTypeId) || "对象"}…`}
-                          value={values[parameter.code]?.entity ?? null}
-                          onChange={(node) => setValues((current) => ({ ...current, [parameter.code]: { entity: node, text: current[parameter.code]?.text ?? "" } }))}
-                        />
-                      ) : (
-                        <span className="as-chip muted">需要先用草稿保存一次</span>
-                      )
+
+                  <section className="as-block">
+                    <header className="as-block-head">
+                      <h4>作用的类</h4>
+                      <em>动作定义在这个类上，执行时先选一个属于它的对象（实例），规则和操作里用「主对象」引用它。</em>
+                    </header>
+                    {scopeName(definition, selected) ? (
+                      <div className="as-scope-card">
+                        <i style={{ background: graphColor(scopeName(definition, selected)) }} />
+                        <b>{scopeName(definition, selected)}</b>
+                        <span>执行时选中的那个对象，就是主对象</span>
+                      </div>
                     ) : (
-                      <input className="ted-input" value={values[parameter.code]?.text ?? ""} onChange={(event) => setValues((current) => ({ ...current, [parameter.code]: { entity: current[parameter.code]?.entity ?? null, text: event.target.value } }))} placeholder={`填写${parameter.name || "参数"}`} />
+                      <p className="as-warn">还没有选作用的类：动作没有定义在哪个类上，就没法执行。点右上角「编辑定义」补上。</p>
                     )}
+                  </section>
+
+                  <section className="as-block">
+                    <header className="as-block-head">
+                      <h4>写入模板</h4>
+                      <em>按顺序执行；任何一步不符合契约或必填，整次动作都不写库。</em>
+                    </header>
+                    {selected.params.length ? (
+                      <table className="as-table">
+                        <thead><tr><th>参数</th><th>类型</th><th>必填</th></tr></thead>
+                        <tbody>
+                          {selected.params.map((parameter) => (
+                            <tr key={parameter.code}>
+                              <td><b>{parameter.name || parameter.code}</b><code>{parameter.code}</code></td>
+                              <td>{parameter.kind === "ENTITY_REF" ? `${typeName(definition, parameter.entityTypeId) || "未选类型"} · 对象` : parameter.dataType}</td>
+                              <td>{parameter.required ? "必填" : "可选"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : <p className="as-quiet">没有参数：选好主对象就可以执行。</p>}
+                    <ol className="as-sequence">
+                      {selected.edits.map((edit, index) => (
+                        <li key={index}><i>{String(index + 1).padStart(2, "0")}</i><span>{describeEdit(definition, selected, edit)}</span></li>
+                      ))}
+                      {selected.edits.length ? null : <li className="quiet">这个动作还没有操作步骤，执行时不会写任何数据。</li>}
+                    </ol>
+                  </section>
+
+                  <section className="as-block">
+                    <header className="as-block-head">
+                      <h4>影响到的类与关系</h4>
+                      <em>从参数与操作模板推导出来，动作改了这里就跟着变。</em>
+                    </header>
+                    {(() => {
+                      const involvement = actionInvolvement(definition, selected);
+                      if (!involvement.entityTypes.length && !involvement.relationshipTypes.length) return <p className="as-quiet">还没有引用任何类或关系。</p>;
+                      return (
+                        <div className="as-involve">
+                          {involvement.entityTypes.map((item) => <span className="as-involve-chip entity" key={item.id}>{item.name}<em>{item.roles.join(" · ")}</em></span>)}
+                          {involvement.relationshipTypes.map((item) => <span className="as-involve-chip relation" key={item.id}>{item.name}<em>{item.roles.join(" · ")}</em></span>)}
+                        </div>
+                      );
+                    })()}
+                  </section>
+
+                  <section className="as-block">
+                    <header className="as-block-head">
+                      <h4>挂在这个动作上的规则</h4>
+                      <em>命中后：隐藏（不出现）· 拦截（拒绝执行）· 提示（只提醒）。</em>
+                      <button type="button" className="as-link" onClick={() => setStage("rules")}>去规则</button>
+                    </header>
+                    {boundRulesOfSelected.length ? (
+                      <div className="as-bind-list">
+                        {boundRulesOfSelected.map((rule) => (
+                          <div className="as-bind" key={rule.id}>
+                            <span className={`as-chip ${effectClass(rule.effect)}`}>{effectLabel(rule.effect)}</span>
+                            <b>{rule.name || "（未命名规则）"}</b>
+                            <small>{rule.enabled ? `${rule.conditions.length} 个条件 · 优先级 ${rule.priority}` : "已停用"}</small>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="as-quiet">这个动作还没有专属规则；绑在「全部动作」上的规则也会作用在它身上。</p>}
+                  </section>
+                </div>
+              )}
+
+              {stage === "rules" && (
+                <div className="as-stage-body">
+                  <div className="as-toolbar">
+                    <div className="as-seg">
+                      <button type="button" className={ruleScope === "action" ? "selected" : ""} onClick={() => setRuleScope("action")}>影响这个动作</button>
+                      <button type="button" className={ruleScope === "all" ? "selected" : ""} onClick={() => setRuleScope("all")}>全部规则</button>
+                    </div>
+                    <button className="action" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "create", rule: newRule(selected.id) })}><Plus size={15} />新建规则</button>
                   </div>
-                )) : <p className="as-empty">这个动作没有参数，选好主对象就可以直接干跑。</p>}
-              </div>
-              <div className="as-run-actions">
-                <button className="action" disabled={!canEdit || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
-                <button className="action primary" disabled={!canEdit || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
-              </div>
-              {outcome && <OutcomePanel outcome={outcome} />}
+                  {shownRules.length ? (
+                    <div className="as-rule-list">
+                      {shownRules.map((rule) => {
+                        const boundAction = actions.find((item) => item.id === rule.actionId) ?? null;
+                        return (
+                          <article key={rule.id} className="as-rule">
+                            <div className="as-rule-top">
+                              <span className={`as-chip ${effectClass(rule.effect)}`}>{effectLabel(rule.effect)}</span>
+                              <b>{rule.name || "（未命名规则）"}</b>
+                              {rule.enabled ? null : <span className="as-chip off">已停用</span>}
+                              <div className="as-card-actions">
+                                <button className="ted-icon-button" title={rule.enabled ? "停用规则" : "启用规则"} disabled={!canEdit} onClick={() => void toggleRule(rule).catch(fail)}>{rule.enabled ? <CircleSlash size={13} /> : <Check size={13} />}</button>
+                                <button className="ted-icon-button" title="编辑规则" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "edit", rule })}><Pencil size={13} /></button>
+                                <button className="ted-icon-button danger" title="删除规则" disabled={!canEdit} onClick={() => void removeRule(rule).catch(fail)}><Trash2 size={13} /></button>
+                              </div>
+                            </div>
+                            <p className="as-rule-meta">
+                              <span>绑定：{boundAction ? boundAction.name : "全部动作"}</span>
+                              <span>优先级 {rule.priority}</span>
+                              <span>{rule.conditions.length} 个条件</span>
+                            </p>
+                            <p className="as-rule-recipe">当 {rule.conditions.length ? rule.conditions.map((condition) => describeCondition(definition, boundAction, condition)).join(" 且 ") : "（未配置条件）"} 时，{effectSentence(rule.effect)}{rule.message ? `：${rule.message}` : "。"}</p>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="as-empty">这里还没有规则。例如「学生票须持学生资质」：条件盯住动作新建出来的票种与入参乘客的资质，处置写清楚拒绝原因。</p>
+                  )}
+                </div>
+              )}
+
+              {stage === "run" && (
+                <div className="as-stage-body">
+                  <p className="as-note">{scopeName(definition, selected) ? `这个动作定义在类「${scopeName(definition, selected)}」上：先选一个具体的${scopeName(definition, selected)}（属于这个类的对象），再填参数。` : ""}干跑只算不写，把执行后的样子算出来给规则看；点「执行」才会写进草稿快照，被拦截时快照保持原样。</p>
+                  <div className="as-params">
+                    {selected.scopeEntityTypeId && (
+                      <div className="as-param-row as-subject-row">
+                        <div className="as-param-label">
+                          <b>对哪个{scopeName(definition, selected) || "对象"}执行</b>
+                          <small>主对象 · {scopeName(definition, selected) || "未选类型"}</small>
+                        </div>
+                        {versionId && targetId ? (
+                          <EntitySearchPicker
+                            targetId={targetId}
+                            versionId={versionId}
+                            labels={scopeName(definition, selected) ? [scopeName(definition, selected)] : []}
+                            definition={definition}
+                            placeholder={`搜索${scopeName(definition, selected) || "对象"}…`}
+                            value={subject}
+                            onChange={setSubject}
+                          />
+                        ) : <span className="as-chip muted">需要先用草稿保存一次</span>}
+                      </div>
+                    )}
+                    {selected.params.length ? selected.params.map((parameter) => (
+                      <div className="as-param-row" key={parameter.code}>
+                        <div className="as-param-label">
+                          <b>{parameter.name || parameter.code || "（未命名参数）"}{parameter.required ? "" : "（可选）"}</b>
+                          <small>{parameter.kind === "ENTITY_REF" ? `对象 · ${typeName(definition, parameter.entityTypeId) || "未选类型"}` : `值 · ${parameter.dataType}`}</small>
+                        </div>
+                        {parameter.kind === "ENTITY_REF" ? (
+                          versionId && targetId ? (
+                            <EntitySearchPicker
+                              targetId={targetId}
+                              versionId={versionId}
+                              labels={typeName(definition, parameter.entityTypeId) ? [typeName(definition, parameter.entityTypeId)] : []}
+                              definition={definition}
+                              placeholder={`搜索${typeName(definition, parameter.entityTypeId) || "对象"}…`}
+                              value={values[parameter.code]?.entity ?? null}
+                              onChange={(node) => setValues((current) => ({ ...current, [parameter.code]: { entity: node, text: current[parameter.code]?.text ?? "" } }))}
+                            />
+                          ) : (
+                            <span className="as-chip muted">需要先用草稿保存一次</span>
+                          )
+                        ) : (
+                          <input className="ted-input" value={values[parameter.code]?.text ?? ""} onChange={(event) => setValues((current) => ({ ...current, [parameter.code]: { entity: current[parameter.code]?.entity ?? null, text: event.target.value } }))} placeholder={`填写${parameter.name || "参数"}`} />
+                        )}
+                      </div>
+                    )) : <p className="as-quiet">这个动作没有参数，选好主对象就可以直接干跑。</p>}
+                  </div>
+                  <div className="as-run-actions">
+                    <button className="action" disabled={!canEdit || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
+                    <button className="action primary" disabled={!canEdit || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
+                  </div>
+                  {outcome ? <OutcomePanel outcome={outcome} /> : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
+                </div>
+              )}
+
+              {stage === "ledger" && (
+                <div className="as-stage-body">
+                  <div className="as-toolbar">
+                    <div className="as-seg">
+                      <button type="button" className={ledgerScope === "action" ? "selected" : ""} onClick={() => setLedgerScope("action")}>这个动作</button>
+                      <button type="button" className={ledgerScope === "all" ? "selected" : ""} onClick={() => setLedgerScope("all")}>全部记录</button>
+                    </div>
+                    <span className="as-count">{ledgerEntries.length} 条</span>
+                  </div>
+                  {ledgerEntries.length ? (
+                    <div className="as-ledger">
+                      {ledgerEntries.map((entry) => {
+                        const blocked = entry.action === "ACTION_BLOCKED";
+                        const dryRun = entry.action === "ACTION_DRY_RUN";
+                        const hits = blocked ? entry.details?.blockers ?? [] : [];
+                        return (
+                          <article key={entry.id} className={blocked ? "as-ledger-row blocked" : "as-ledger-row"}>
+                            <div className="as-ledger-top">
+                              <span className={blocked ? "as-chip blocker" : dryRun ? "as-chip muted" : "as-chip passed"}>{blocked ? "拦截" : dryRun ? "干跑" : "已执行"}</span>
+                              <b>{entry.details?.actionName ?? "（动作）"}</b>
+                              {entry.details?.actionCode ? <code>{entry.details.actionCode}</code> : null}
+                              <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
+                            </div>
+                            <p className="as-ledger-line">
+                              {entry.details?.subject?.display ? `作用于 ${entry.details.subject.label ?? "对象"}「${entry.details.subject.display}」` : "未指定主对象"}
+                              {entry.actorEmail ? ` · ${entry.actorEmail}` : ""}
+                            </p>
+                            {hits.map((item) => (
+                              <div className="as-ledger-hit" key={`${entry.id}-${item.ruleName}`}>
+                                <em>{item.ruleName}</em>
+                                {item.message ? <span>{item.message}</span> : null}
+                                {item.evidence?.length ? <ul className="as-evidence">{item.evidence.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+                              </div>
+                            ))}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="as-empty">{ledgerScope === "action" ? "这个动作还没有决策记录。先干跑一次，或者切到「全部记录」看别的动作。" : "还没有决策记录。运行一次动作就会出现在这里，每条都带规则名与证据。"}</p>
+                  )}
+                </div>
+              )}
             </>
           ) : (
-            <p className="as-empty">先在左边选一个动作。</p>
-          )}
-        </div>
-
-        <div className="panel as-panel">
-          <div className="as-head">
-            <div>
-              <span className="eyebrow">决策</span>
-              <h2>决策记录</h2>
-              <p>每次干跑、执行、被拦截都会留一条：谁、什么时候、哪个动作、什么结果。</p>
+            <div className="as-placeholder">
+              <span className="as-placeholder-mark"><ShieldAlert size={20} /></span>
+              <b>先选一个动作</b>
+              <span>左边是这个目标已经定义好的动作。选中之后，这里会显示它的定义、规则、运行与决策。</span>
             </div>
-          </div>
-          {decisions.length ? (
-            <div className="as-decisions">
-              {decisions.map((entry) => {
-                const blocked = entry.action === "ACTION_BLOCKED";
-                const dryRun = entry.details?.dryRun !== false && entry.action === "ACTION_DRY_RUN";
-                return (
-                  <div className="as-decision" key={entry.id}>
-                    <span className={blocked ? "as-chip blocker" : "as-chip passed"}>{blocked ? "拦截" : entry.action === "ACTION_EXECUTED" ? "已执行" : "干跑"}</span>
-                    <div>
-                      <b>{entry.details?.actionName ?? "（动作）"}{dryRun ? "（干跑）" : ""}</b>
-                      <small>
-                        {entry.details?.subject?.display ? `作用于 ${entry.details.subject.display} · ` : ""}
-                        {blocked && entry.details?.blockers?.length ? "命中：" + entry.details.blockers.map((item) => item.ruleName).join("、") : entry.actorEmail ?? "系统"}
-                      </small>
-                    </div>
-                    <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="as-empty">还没有决策记录。运行一次动作就会出现在这里。</p>
           )}
-        </div>
+        </section>
       </div>
-
       {actionDialog && (
         <ActionEditDialog
           definition={definition}

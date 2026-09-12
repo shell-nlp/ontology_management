@@ -1,58 +1,154 @@
 /* 动作工作台。
-   页面本身是本平台既有的 panel/卡片词汇；弹窗外观沿用 type-edit-dialog.css 的 ted-*
-   词汇（同为"本体定义的编辑弹窗"，保持同一套观感），这里只补动作特有的部分。 */
+   左侧是动作清单，右侧是选中动作的工作区，按「定义 / 规则 / 运行 / 决策」四阶段切换。
+   页面沿用工作台既有的蓝白配色与 panel 词汇；弹窗外观仍继承 type-edit-dialog.css 的 ted-*。
+   这里有意只在一处用编号（写入模板的操作序列）——那是全页唯一真正有先后顺序的东西。 */
 
-.as-shell { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.as-panel { display: grid; align-content: start; gap: 12px; padding: 16px 18px 18px; }
-.as-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.as-head h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 17px; font-weight: 600; color: #16233b; }
-.as-head p { margin: 5px 0 0; color: #7b8ca6; font-size: 11px; line-height: 1.55; }
-.as-count { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+/* 全局把裸 em 当"绿标"用的旧规则（globals.css `.version-badge, em`）会漏进这一页，
+   这里先复位，具体到某个 em 要什么样式再单独覆盖。 */
+.as-workbench { display: grid; gap: 14px; }
+/* ted-* 这套变量原本只声明在弹窗根（.ted-dialog）上；动作页在弹窗之外也用了 ted-input，
+   把同一组变量补在页面根上，输入框才不会退化成没有边框的白块。 */
+.as-workbench {
+  --ted-ink: #14213d;
+  --ted-muted: #64748b;
+  --ted-soft: #8b9ab0;
+  --ted-line: #dfe7f1;
+  --ted-line-strong: #ccd9ea;
+  --ted-paper: #f7f9fc;
+  --ted-primary: #1e3a8a;
+  --ted-focus: rgba(29, 78, 216, .13);
+}
+.as-workbench em { padding: 0; border-radius: 0; background: transparent; color: inherit; font-size: inherit; font-style: normal; font-weight: inherit; }
 
-.as-list { display: grid; gap: 8px; }
-.as-empty { margin: 0; padding: 16px 14px; border: 1px dashed #ccd9ea; border-radius: 4px; background: #fbfcfe; color: #8b9ab0; font-size: 11px; line-height: 1.6; text-align: center; }
+/* ── 页头：一句话说明这个页面是干什么的 + 两个计数 ───────────────── */
+.as-topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 16px 20px 15px; }
+.as-topbar-text { min-width: 0; }
+.as-topbar h2 { margin: 0; color: var(--ink); font-size: 16px; font-weight: 650; letter-spacing: .2px; }
+.as-topbar p { max-width: 78ch; margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.as-topbar-side { display: flex; flex: none; align-items: center; gap: 18px; }
+.as-stat { display: grid; justify-items: end; gap: 1px; color: var(--muted); font-size: 10px; letter-spacing: .6px; text-transform: uppercase; }
+.as-stat b { color: var(--ink); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 19px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: 0; }
+.as-count { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.as-card { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fff; text-align: left; }
-.as-card.selectable { cursor: pointer; transition: border-color .14s ease, background .14s ease; }
-.as-card.selectable:hover { border-color: #b9d1f5; background: #fafcff; }
-.as-card.selected { border-color: #1d4ed8; background: #f6faff; box-shadow: inset 2px 0 0 #1d4ed8; }
-.as-card:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
-.as-card-top { display: flex; align-items: center; gap: 8px; }
-.as-card-top b { min-width: 0; color: #16233b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-card-top code { flex: none; padding: 2px 6px; border-radius: 3px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
-.as-card-actions { display: flex; gap: 5px; margin-left: auto; }
-.as-card-meta { color: #7b8ca6; font-size: 10.5px; line-height: 1.55; }
-.as-card-recipe { margin: 0; padding: 8px 9px; border-left: 2px solid #dbe6f5; background: #fafcff; color: #4b5b6b; font-size: 11px; line-height: 1.65; }
+/* ── 两栏：清单 + 工作区。工作区拿到剩下的全部宽度 ───────────────── */
+.as-body { display: grid; grid-template-columns: 294px minmax(0, 1fr); align-items: start; gap: 14px; }
 
-/* 动作与类、关系类型的关联：从参数与操作模板推导，双向可见。 */
-.as-card-types { display: flex; flex-wrap: wrap; gap: 6px; }
-.as-type-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 7px; border: 1px solid #dbe6f5; border-radius: 3px; background: #f7faff; color: #26456b; font-size: 10.5px; }
-.as-type-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #1d4ed8; }
-.as-type-chip.entity::before { background: #1d4ed8; }
-.as-type-chip.relation::before { border-radius: 1px; background: #7a8f8c; }
-.as-type-chip em { color: #8b9ab0; font-size: 9.5px; font-style: normal; }
+/* 动作清单 */
+.as-rail { position: sticky; top: 12px; display: grid; gap: 0; padding: 14px 11px 12px; }
+.as-rail-head { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 10px; }
+.as-rail-head .eyebrow { margin: 0; }
+.as-rail-list { display: grid; gap: 3px; }
+.as-rail-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid transparent; border-left: 2px solid transparent; border-radius: 3px; background: transparent; text-align: left; transition: background .14s ease, border-color .14s ease; }
+.as-rail-row:hover { border-color: #e3ecfb; background: #f3f7ff; }
+.as-rail-row.selected { border-color: #cfe0ff; border-left-color: var(--mint); background: #f2f7ff; }
+.as-rail-row:focus-visible, .as-stage-tab:focus-visible, .as-seg button:focus-visible { outline: 2px solid #1d4ed8; outline-offset: -2px; }
+/* 色块取的是这个类的颜色：和「本体草稿」画布上的圆点、图谱里的节点同一个值。 */
+.as-rail-dot { width: 8px; height: 8px; border-radius: 2px; }
+.as-rail-main { display: grid; min-width: 0; gap: 3px; }
+.as-rail-main b { overflow: hidden; color: var(--ink); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.as-rail-main small { display: flex; align-items: baseline; gap: 5px; color: #8b9ab0; font-size: 10px; }
+.as-rail-main code { color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
+.as-rail-row em { overflow: hidden; max-width: 78px; color: #8b9ab0; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.as-rail-row.selected em { color: #1d4ed8; }
 
-.as-chip { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-weight: 700; font-style: normal; white-space: nowrap; }
-.as-chip.blocker { background: #fdecea; color: #b03a2e; }
-.as-chip.warning { background: #fdf3e3; color: #a2622f; }
-.as-chip.hide { background: #eceef2; color: #4a5769; }
-.as-chip.muted { background: #eef2f8; color: #7b8ca6; }
-.as-chip.scope { background: #e7eefc; color: #1e3a8a; }
-.as-chip.passed { background: #eaf5ed; color: #2f6b4d; }
-.as-chip.off { background: #f1f3f6; color: #98a5b6; }
+/* ── 工作区：标题 + 阶段条 + 阶段内容 ───────────────────────────── */
+.as-workspace { display: grid; min-height: 560px; padding: 0; }
+.as-ws-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px 18px 13px; }
+.as-ws-title { min-width: 0; }
+.as-ws-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: #5a6b86; font-size: 10.5px; font-weight: 600; letter-spacing: .4px; }
+.as-scope-dot { width: 8px; height: 8px; border-radius: 2px; }
+.as-ws-title h3 { display: flex; align-items: baseline; gap: 10px; margin: 7px 0 0; color: var(--ink); font-size: 18px; font-weight: 650; }
+.as-ws-code { padding: 2px 7px; border-radius: 2px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; font-weight: 500; }
+.as-ws-actions { display: flex; flex: none; gap: 7px; }
 
-.as-param-row { display: grid; grid-template-columns: minmax(0, 1.1fr) auto; gap: 8px; align-items: center; }
+.as-stagebar { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
+.as-stage-tab { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; border: 0; background: transparent; color: #5a6b86; font-size: 12.5px; transition: color .14s ease; }
+.as-stage-tab:hover { color: var(--mint); }
+.as-stage-tab.selected { color: #1d4ed8; box-shadow: inset 0 -2px 0 #1d4ed8; font-weight: 650; }
+.as-stage-tab em { padding: 1px 5px; border-radius: 9px; background: #eef2f8; color: #7b8ca6; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; font-style: normal; font-variant-numeric: tabular-nums; }
+.as-stage-tab.selected em { background: #e2ecfd; color: #1d4ed8; }
+.as-stage-body { display: grid; gap: 17px; padding: 18px; }
+
+/* 定义：基础信息 / 作用的类 / 写入模板 / 影响面 / 规则 */
+.as-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 26px; padding: 13px 15px; border: 1px solid #e6edf6; border-radius: 4px; background: #fbfcfe; }
+.as-info > div { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: baseline; gap: 8px; }
+.as-info > div.wide { grid-column: 1 / -1; }
+.as-info span { color: #7b8ca6; font-size: 11px; }
+.as-info span::after { content: "："; }
+.as-info b { overflow-wrap: anywhere; color: #22314d; font-size: 12.5px; font-weight: 600; }
+.as-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+.as-block { display: grid; gap: 11px; }
+.as-block-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 3px 12px; }
+.as-block-head h4 { grid-column: 1; margin: 0; color: var(--ink); font-size: 13.5px; font-weight: 650; }
+.as-block-head > em { grid-column: 1; max-width: 96ch; color: #8b9ab0; font-size: 11px; font-style: normal; line-height: 1.65; }
+.as-link { grid-row: 1 / span 2; grid-column: 2; align-self: start; padding: 0; border: 0; background: transparent; color: #1d4ed8; font-size: 11px; font-weight: 600; }
+.as-link:hover { text-decoration: underline; }
+
+.as-scope-card { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid #e6edf6; border-left: 3px solid #cbd9ed; border-radius: 4px; background: #fff; }
+.as-scope-card i { width: 10px; height: 10px; border-radius: 2px; }
+.as-scope-card b { color: var(--ink); font-size: 14px; font-weight: 650; }
+.as-scope-card span { color: #8b9ab0; font-size: 11px; }
+
+.as-table { width: 100%; border: 1px solid #e6edf6; border-radius: 4px; border-collapse: separate; border-spacing: 0; background: #fff; font-size: 12px; overflow: hidden; }
+.as-table th { padding: 8px 12px; border-bottom: 1px solid #e6edf6; background: #f7f9fc; color: #7b8ca6; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-align: left; text-transform: uppercase; }
+.as-table td { padding: 9px 12px; border-bottom: 1px solid #eef2f8; color: #3d5168; }
+.as-table tr:last-child td { border-bottom: 0; }
+.as-table td b { margin-right: 7px; color: #22314d; font-weight: 600; }
+.as-table td code { color: #7b8ca6; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10.5px; }
+
+/* 全页唯一的编号：操作序列是真的按顺序执行的。 */
+.as-sequence { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.as-sequence li { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: baseline; gap: 10px; padding: 9px 12px; border: 1px solid #e6edf6; background: #fff; color: #3d5168; font-size: 12px; line-height: 1.6; }
+.as-sequence li + li { border-top: 0; }
+.as-sequence li:first-child { border-radius: 4px 4px 0 0; }
+.as-sequence li:last-child { border-radius: 0 0 4px 4px; }
+.as-sequence li i { color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10.5px; font-style: normal; }
+.as-sequence li.quiet { grid-template-columns: minmax(0, 1fr); color: #8b9ab0; font-size: 11.5px; }
+
+.as-involve { display: flex; flex-wrap: wrap; gap: 7px; }
+.as-involve-chip { display: inline-flex; align-items: baseline; gap: 7px; padding: 5px 9px; border: 1px solid #e0e8f4; border-radius: 3px; background: #fff; color: #26456b; font-size: 11.5px; }
+.as-involve-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--mint); }
+.as-involve-chip.relation::before { border-radius: 1px; background: #7a8f8c; }
+.as-involve-chip em { color: #8b9ab0; font-size: 10px; font-style: normal; }
+
+.as-bind-list { display: grid; gap: 6px; }
+.as-bind { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid #e6edf6; border-radius: 3px; background: #fff; }
+.as-bind b { overflow: hidden; color: #22314d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.as-bind small { color: #8b9ab0; font-size: 10.5px; }
+
+.as-quiet { margin: 0; color: #8b9ab0; font-size: 11.5px; line-height: 1.7; }
+.as-warn { margin: 0; padding: 10px 12px; border: 1px solid #f0d3b4; border-left: 3px solid #d19a4a; border-radius: 3px; background: #fff8ec; color: #8a5a1f; font-size: 11.5px; line-height: 1.65; }
+.as-note { margin: 0; color: #6b7d92; font-size: 11.5px; line-height: 1.75; }
+
+/* 规则阶段 */
+.as-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.as-seg { display: inline-flex; overflow: hidden; border: 1px solid #dbe6f5; border-radius: 3px; background: #fff; }
+.as-seg button { height: 32px; padding: 0 12px; border: 0; background: transparent; color: #5a6b86; font-size: 11.5px; }
+.as-seg button + button { border-left: 1px solid #dbe6f5; }
+.as-seg button.selected { background: #eef4ff; color: #1d4ed8; font-weight: 650; }
+.as-rule-list { display: grid; gap: 8px; }
+.as-rule { display: grid; gap: 8px; padding: 12px 13px; border: 1px solid #e6edf6; border-radius: 4px; background: #fff; }
+.as-rule-top { display: flex; align-items: center; gap: 9px; }
+.as-rule-top b { overflow: hidden; min-width: 0; color: #22314d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.as-rule-meta { display: flex; flex-wrap: wrap; gap: 14px; margin: 0; color: #8b9ab0; font-size: 10.5px; }
+.as-rule-recipe { margin: 0; padding: 9px 11px; border-left: 2px solid #cbd9ed; background: #fafcff; color: #4b5b6b; font-size: 11.5px; line-height: 1.7; }
+
+/* 运行阶段 */
+.as-params { display: grid; gap: 10px; }
+.as-param-row { display: grid; grid-template-columns: minmax(170px, 240px) minmax(0, 520px); align-items: center; gap: 8px 14px; }
+.as-param-row .ted-input { width: 100%; }
 /* 主对象放在参数之前，并和参数区分开：先选"对谁执行"，再填参数。 */
 .as-subject-row { padding-bottom: 11px; border-bottom: 1px dashed #dbe6f5; }
 .as-subject-row .as-param-label b { color: #1e3a8a; }
 .as-param-label { display: grid; gap: 2px; }
 .as-param-label b { color: #16233b; font-size: 11.5px; }
 .as-param-label small { color: #8b9ab0; font-size: 10px; }
+.as-run-actions { display: flex; gap: 8px; justify-content: flex-start; }
+.as-run-actions .action { min-width: 132px; justify-content: center; }
 
-.as-run-actions { display: flex; gap: 8px; }
-.as-run-actions .action { flex: 1; justify-content: center; }
-
-.as-outcome { display: grid; gap: 10px; padding: 12px 13px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fbfcfe; }
+/* 运行结论 */
+.as-outcome { display: grid; gap: 10px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 4px; background: #fbfcfe; animation: as-rise .18s ease-out; }
 .as-outcome.passed { border-color: #cfe6d6; background: #f7fcf8; }
 .as-outcome.blocked { border-color: #f0ccc4; background: #fffaf8; }
 .as-verdict { display: flex; align-items: center; gap: 8px; }
@@ -68,43 +164,75 @@
 .as-finding b { display: flex; align-items: center; gap: 6px; color: #2c3f55; font-size: 11.5px; }
 .as-finding p { margin: 0; color: #55677d; font-size: 11px; line-height: 1.6; }
 .as-evidence { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
-.as-evidence li { color: #6b7d92; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; line-height: 1.55; }
+.as-evidence li { color: #6b7d92; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; line-height: 1.6; }
 
-.as-hidden-note { display: grid; gap: 4px; padding: 9px 10px; border-radius: 3px; border: 1px dashed #c8d2e0; background: #f5f7fa; }
+.as-hidden-note { display: grid; gap: 4px; padding: 9px 10px; border: 1px dashed #c8d2e0; border-radius: 3px; background: #f5f7fa; }
 .as-hidden-note b { display: flex; align-items: center; gap: 6px; color: #4a5769; font-size: 11.5px; }
 .as-hidden-note p { margin: 0; color: #66768c; font-size: 11px; line-height: 1.6; }
 .as-steps { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; counter-reset: as-step; }
 .as-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; color: #3d5168; font-size: 11px; line-height: 1.6; counter-increment: as-step; }
-.as-steps li::before { content: counter(as-step, decimal-leading-zero); color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-steps li::before { content: counter(as-step, decimal-leading-zero); color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
 .as-created { display: flex; flex-wrap: wrap; gap: 6px; }
-.as-created span { padding: 4px 7px; border-radius: 3px; background: #fff; border: 1px solid #dfe7f1; color: #3d5168; font-size: 10.5px; }
-.as-created code { color: #7186a4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-created span { padding: 4px 7px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: #3d5168; font-size: 10.5px; }
+.as-created code { color: #7186a4; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
 
-.as-decisions { display: grid; gap: 6px; }
-.as-decision { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 8px 9px; border: 1px solid #e6edf6; border-radius: 3px; background: #fff; }
-.as-decision > div { min-width: 0; display: grid; gap: 2px; }
-.as-decision b { color: #26364d; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-decision small { color: #8b9ab0; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-decision time { color: #98a5b6; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9.5px; white-space: nowrap; }
+/* 决策阶段：每条记录是一张"证据条"，左侧竖条就是结论。 */
+.as-ledger { display: grid; gap: 8px; }
+.as-ledger-row { position: relative; display: grid; gap: 7px; padding: 12px 14px 12px 17px; border: 1px solid #e6edf6; border-radius: 4px; background: #fff; }
+.as-ledger-row::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 3px; border-radius: 4px 0 0 4px; background: #2f6b4d; }
+.as-ledger-row.blocked::before { background: #b03a2e; }
+.as-ledger-top { display: flex; align-items: center; gap: 9px; }
+.as-ledger-top b { color: #22314d; font-size: 12.5px; }
+.as-ledger-top code { padding: 2px 6px; border-radius: 2px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
+.as-ledger-top time { margin-left: auto; color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
+.as-ledger-line { margin: 0; color: #6b7d92; font-size: 11.5px; }
+.as-ledger-hit { display: grid; gap: 4px; padding: 9px 11px; border-left: 2px solid #e3c0b8; background: #fffaf8; color: #7a4a41; font-size: 11px; line-height: 1.65; }
+.as-ledger-hit em { color: #b03a2e; font-style: normal; font-weight: 650; }
+.as-ledger-hit > span { color: #6d5049; }
+
+/* 空白工作区：说清楚下一步点哪里，而不是给一句"暂无数据"。 */
+.as-placeholder { display: grid; place-items: center; gap: 9px; padding: 74px 24px; text-align: center; }
+.as-placeholder-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #eef4ff; color: #1d4ed8; }
+.as-placeholder b { color: #22314d; font-size: 14px; }
+.as-placeholder span:last-child { max-width: 46ch; color: #8b9ab0; font-size: 11.5px; line-height: 1.75; }
+
+/* ── 共用零件 ─────────────────────────────────────────────────── */
+.as-empty { margin: 0; padding: 16px 14px; border: 1px dashed #ccd9ea; border-radius: 4px; background: #fbfcfe; color: #8b9ab0; font-size: 11px; line-height: 1.65; text-align: center; }
+.as-card-actions { display: flex; gap: 5px; margin-left: auto; }
+.as-card-meta { margin: 0; color: #7b8ca6; font-size: 10.5px; line-height: 1.6; }
+
+.as-chip { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-weight: 700; font-style: normal; white-space: nowrap; }
+.as-chip.blocker { background: #fdecea; color: #b03a2e; }
+.as-chip.warning { background: #fdf3e3; color: #a2622f; }
+.as-chip.hide { background: #eceef2; color: #4a5769; }
+.as-chip.muted { background: #eef2f8; color: #7b8ca6; }
+.as-chip.scope { background: #e7eefc; color: #1e3a8a; }
+.as-chip.passed { background: #eaf5ed; color: #2f6b4d; }
+.as-chip.off { background: #f1f3f6; color: #98a5b6; }
 
 /* 弹窗里的动作特有部分（外观底座继承 ted-*） */
-.as-edit-row { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fbfcfe; }
+.as-edit-row { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 4px; background: #fbfcfe; }
 .as-edit-head { display: flex; align-items: center; gap: 8px; }
-.as-edit-head > span { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-edit-head > span { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
 .as-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .as-assign { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .as-subhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #7b8ca6; font-size: 10px; }
 .as-inline-add { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px dashed #cbd9ed; border-radius: 4px; background: transparent; color: #315b9f; font-size: 10.5px; font-weight: 600; }
 .as-inline-add:hover { border-color: #a9c5ef; background: #eef4ff; color: #1d4ed8; }
+/* ted-input 是按单行输入框定的高度，多行文本要放开。 */
+.as-textarea { height: auto; min-height: 78px; padding: 9px 11px; line-height: 1.6; resize: vertical; }
 .as-rail-block { display: grid; gap: 6px; }
 .as-rail-block b { color: #1f3557; font-size: 11px; letter-spacing: .4px; }
 .as-rail-block p { margin: 0; padding: 9px 10px; border-left: 2px solid #cbd9ed; background: #fff; color: #4b5b6b; font-size: 10.5px; line-height: 1.7; }
 .as-rail-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .as-rail-list li { padding: 6px 8px; border: 1px solid #f0d3b4; border-radius: 3px; background: #fff8ec; color: #8a5a1f; font-size: 10px; line-height: 1.5; }
 
-@media (max-width: 1100px) {
-  .as-shell { grid-template-columns: minmax(0, 1fr); }
-}
+@keyframes as-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) { .as-workbench *, .as-outcome { transition: none !important; animation: none !important; } }
+@media (max-width: 1180px) { .as-body { grid-template-columns: minmax(0, 1fr); } .as-rail { position: static; } }
 @media (max-width: 720px) {
-  .as-edit-grid, .as-assign { grid-template-columns: minmax(0, 1fr); }
+  .as-topbar { align-items: flex-start; flex-direction: column; }
+  .as-edit-grid, .as-assign, .as-param-row { grid-template-columns: minmax(0, 1fr); }
+  .as-info > div { grid-template-columns: 62px minmax(0, 1fr); }
 }
