@@ -237,7 +237,8 @@ export type DataSourceHealth = {
  */
 export interface DataSourceConnector {
   test(): Promise<DataSourceHealth>;
-  listViews(options?: { schema?: string; search?: string; limit?: number }): Promise<DataViewSummary[]>;
+  /** refresh 为 true 表示绕过服务端结构缓存，直接回库重读（界面上「刷新结构」用它）。 */
+  listViews(options?: { schema?: string; search?: string; limit?: number; refresh?: boolean }): Promise<DataViewSummary[]>;
   describeView(view: DataViewRef): Promise<DataViewField[]>;
   previewView(view: DataViewRef, limit: number): Promise<DataViewPreview>;
 }

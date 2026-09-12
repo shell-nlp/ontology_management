@@ -42,6 +42,8 @@
 .drs-facts b { color: #14213d; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .drs-fact-ok { color: #4d7c0f !important; }
 .drs-fact-ok svg { align-self: center; }
+.drs-fact-pending { color: #1d4ed8 !important; }
+.drs-fact-pending svg { align-self: center; }
 
 /* ---------- 结构浏览 ---------- */
 /* 高度跟着视口走，让结构清单和数据预览尽量占满中间这块，不留大片空白。 */
@@ -56,6 +58,8 @@
 .drs-catalog-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .drs-scope { height: 26px; padding: 0 9px; color: #1d4ed8; font-size: 11.5px; background: #f2f7ff; border: 1px solid #d6e4ff; }
 .drs-scope:hover { background: #e8f0ff; }
+.drs-refresh { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.drs-refresh:disabled { cursor: progress; }
 .drs-list { flex: 1; min-height: 0; overflow: auto; }
 .drs-list-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 14px; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid #eef2f9; background: transparent; text-align: left; color: #334155; }
 .drs-list-row:hover { background: #f4f8ff; }
@@ -77,6 +81,7 @@
 .drs-placeholder span { max-width: 380px; font-size: 12px; line-height: 1.7; }
 .drs-view-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #e8eef7; }
 .drs-view-head h3 { margin: 2px 0 0; font-size: 14.5px; color: #14213d; word-break: break-all; }
+.drs-view-head-actions { display: flex; align-items: center; gap: 10px; flex: none; }
 .drs-view-meta { color: #7b8ca6; font-size: 11.5px; white-space: nowrap; }
 .drs-view-error { display: flex; align-items: center; gap: 7px; margin: 12px 14px; padding: 9px 11px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; font-size: 12px; }
 .drs-field-table { max-height: 46%; overflow: auto; border-bottom: 1px solid #e8eef7; }

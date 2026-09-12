@@ -150,6 +150,50 @@ function errorText(reason: unknown) {
   return typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。";
 }
 
+/**
+ * 会话内的读取缓存。
+ *
+ * 左侧切走再切回来，组件会重新挂载；没有这层缓存的话每次都要把资源清单、
+ * 结构清单（上千个对象的目录）和第一张表的预览重拉一遍。
+ * 这里只负责"秒开"：命中就先渲染，随后仍然后台取一份最新的换上去；
+ * 需要立刻回库重读时用「刷新结构」，它会带 refresh=1 穿透服务端的 TTL 缓存。
+ */
+const sessionCache = {
+  sources: null as PublicDataSource[] | null,
+  activeId: "",
+  catalogs: new Map<string, DataViewSummary[]>(),
+  details: new Map<string, { fields: DataViewField[]; preview: DataViewPreview }>(),
+  selected: new Map<string, string>(),
+};
+const CATALOG_CACHE_MAX = 12;
+const DETAIL_CACHE_MAX = 60;
+
+/** 连接信息改过之后，之前缓存的结构可能已经不是同一个库了，整条丢掉。 */
+function forgetSource(sourceId: string) {
+  for (const key of [...sessionCache.catalogs.keys()]) if (key.startsWith(`${sourceId}|`)) sessionCache.catalogs.delete(key);
+  for (const key of [...sessionCache.details.keys()]) if (key.startsWith(`${sourceId}|`)) sessionCache.details.delete(key);
+  sessionCache.selected.delete(sourceId);
+}
+
+/** 缓存只用于秒开，读的时候顺手裁到上限，免得连着翻几十张表把内存撑大。 */
+function rememberCatalog(key: string, views: DataViewSummary[]) {
+  sessionCache.catalogs.set(key, views);
+  while (sessionCache.catalogs.size > CATALOG_CACHE_MAX) {
+    const oldest = sessionCache.catalogs.keys().next().value;
+    if (oldest === undefined) break;
+    sessionCache.catalogs.delete(oldest);
+  }
+}
+
+function rememberDetail(key: string, value: { fields: DataViewField[]; preview: DataViewPreview }) {
+  sessionCache.details.set(key, value);
+  while (sessionCache.details.size > DETAIL_CACHE_MAX) {
+    const oldest = sessionCache.details.keys().next().value;
+    if (oldest === undefined) break;
+    sessionCache.details.delete(oldest);
+  }
+}
+
 /** 字段按类型族上色：文本、数值、时间各一色，其它保持中性。 */
 function typeFamily(dataType: string) {
   const value = dataType.toUpperCase();
@@ -157,6 +201,11 @@ function typeFamily(dataType: string) {
   if (/INT|NUMBER|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|MONEY/.test(value)) return "number";
   if (/DATE|TIME|INTERVAL/.test(value)) return "time";
   return "other";
+}
+
+/** 试连结果上带个时间，重复点也能看出刚才是哪一次。 */
+function probeClock(at: Date) {
+  return at.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
 function cellText(value: unknown) {
@@ -167,9 +216,9 @@ function cellText(value: unknown) {
 }
 
 export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean; notify: (text: string) => void; fail: (reason: unknown) => void }) {
-  const [sources, setSources] = useState<PublicDataSource[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeId, setActiveId] = useState("");
+  const [sources, setSources] = useState<PublicDataSource[]>(() => sessionCache.sources ?? []);
+  const [loading, setLoading] = useState(() => !sessionCache.sources);
+  const [activeId, setActiveId] = useState(() => sessionCache.activeId);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PublicDataSource | null>(null);
   // 上层的提示函数每次渲染都是新引用，放进 ref，避免把加载回调拖成无限循环。
@@ -180,10 +229,13 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
   const load = useCallback(async (focusId?: string) => {
     try {
       const rows = await api<PublicDataSource[]>("/api/data-sources");
+      sessionCache.sources = rows;
       setSources(rows);
       setActiveId((current) => {
-        const wanted = focusId ?? current;
-        return rows.some((item) => item.id === wanted) ? wanted : rows[0]?.id ?? "";
+        const wanted = focusId ?? current ?? sessionCache.activeId;
+        const next = rows.some((item) => item.id === wanted) ? wanted : rows[0]?.id ?? "";
+        sessionCache.activeId = next;
+        return next;
       });
     } catch (reason) {
       failRef.current(reason);
@@ -231,14 +283,14 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
       </aside>
 
       {active && <DataResourceBrowser
-        key={active.id}
+        key={`${active.id}|${active.host}|${active.port}|${active.databaseName}|${active.schemaName}`}
         source={active}
         canEdit={canEdit}
         notify={notify}
         fail={fail}
         onEdit={() => setEditing(active)}
         onChanged={() => load(active.id)}
-        onDeleted={async () => { notifyRef.current("数据资源已删除。"); await load(""); }}
+        onDeleted={async () => { forgetSource(active.id); notifyRef.current("数据资源已删除。"); await load(""); }}
       />}
     </div> : <div className="panel functional-panel drs-empty">
       <span className="drs-empty-marks">{DATA_SOURCE_KINDS.map((info) => <DataSourceMark key={info.kind} mark={info.mark} accent={info.accent} size={22} />)}</span>
@@ -247,7 +299,7 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
     </div>}
 
     {creating && <DataSourceDialog onClose={() => setCreating(false)} onSaved={async (saved) => { setCreating(false); notify("数据资源已登记，凭据已加密保存。"); await load(saved.id); }} fail={fail} />}
-    {editing && <DataSourceDialog source={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); notify("数据资源已更新。"); await load(editing.id); }} fail={fail} />}
+    {editing && <DataSourceDialog source={editing} onClose={() => setEditing(null)} onSaved={async () => { forgetSource(editing.id); setEditing(null); notify("数据资源已更新。"); await load(editing.id); }} fail={fail} />}
   </section>;
 }
 
@@ -264,27 +316,32 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   onDeleted: () => Promise<void> | void;
 }) {
   const info = dataSourceKindInfo(source.kind);
-  const [views, setViews] = useState<DataViewSummary[]>([]);
-  const [viewsBusy, setViewsBusy] = useState(true);
-  const [viewsError, setViewsError] = useState("");
   const [scope, setScope] = useState<"container" | "all">("container");
+  const catalogKey = `${source.id}|${scope}`;
+  const [views, setViews] = useState<DataViewSummary[]>(() => sessionCache.catalogs.get(`${source.id}|container`) ?? []);
+  const [viewsBusy, setViewsBusy] = useState(() => source.enabled && !sessionCache.catalogs.has(`${source.id}|container`));
+  const [viewsError, setViewsError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ScopeFilter>("all");
-  const [selectedName, setSelectedName] = useState("");
+  const [selectedName, setSelectedName] = useState(() => sessionCache.selected.get(source.id) ?? "");
   const [fields, setFields] = useState<DataViewField[]>([]);
   const [preview, setPreview] = useState<DataViewPreview | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [rows, setRows] = useState(20);
+  // 再点一次同一张表不会触发请求，所以给「重新取数」留一个显式的触发位。
+  const [detailToken, setDetailToken] = useState(0);
   const [health, setHealth] = useState<DataSourceHealth | null>(null);
+  const [probedAt, setProbedAt] = useState<Date | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState("");
   // 范围切换时前一次请求可能后回来，用序号丢弃过期结果。
   const catalogRun = useRef(0);
 
-  const loadViews = useCallback(async () => {
+  const loadViews = useCallback(async (options: { refresh?: boolean } = {}) => {
     const run = ++catalogRun.current;
-    setViewsBusy(true);
+    const key = catalogKey;
+    const cached = options.refresh ? undefined : sessionCache.catalogs.get(key);
     setViewsError("");
     // 停用的资源不读结构：清掉上一次的清单，免得停用后还显示着过期内容。
     if (!source.enabled) {
@@ -295,22 +352,33 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       setViewsBusy(false);
       return;
     }
+    // 有缓存先渲染出来，人不用等；刷新时保留旧清单，只在上面提示正在重读。
+    if (cached) setViews(cached);
+    setViewsBusy(true);
     try {
       const query = new URLSearchParams({ limit: "5000" });
       if (scope === "all") query.set("schema", "*");
+      if (options.refresh) query.set("refresh", "1");
       const data = await api<{ views: DataViewSummary[] }>(`/api/data-sources/${source.id}/views?${query.toString()}`);
       if (run !== catalogRun.current) return;
+      rememberCatalog(key, data.views);
       setViews(data.views);
-      setSelectedName((current) => (data.views.some((item) => item.name === current) ? current : data.views[0]?.name ?? ""));
+      setSelectedName((current) => {
+        const next = data.views.some((item) => item.name === current) ? current : data.views[0]?.name ?? "";
+        sessionCache.selected.set(source.id, next);
+        return next;
+      });
     } catch (reason) {
       if (run !== catalogRun.current) return;
-      setViews([]);
-      setSelectedName("");
+      if (!cached) {
+        setViews([]);
+        setSelectedName("");
+      }
       setViewsError(errorText(reason));
     } finally {
       if (run === catalogRun.current) setViewsBusy(false);
     }
-  }, [source.id, source.enabled, scope]);
+  }, [catalogKey, source.id, source.enabled, scope]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void loadViews(); }, 0);
@@ -319,17 +387,22 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
 
   useEffect(() => {
     let cancelled = false;
+    const key = `${source.id}|${scope}|${selectedName}|${rows}`;
     const handle = window.setTimeout(() => {
       if (!selectedName) { setFields([]); setPreview(null); setDetailError(""); return; }
-      setDetailBusy(true);
+      const cached = sessionCache.details.get(key);
+      // 先拿缓存铺满：换回来时不该先看到一片空白，再等一秒才出表。
+      if (cached) { setFields(cached.fields); setPreview(cached.preview); setDetailBusy(false); setDetailError(""); }
+      else { setDetailBusy(true); }
       setDetailError("");
+      // 表里的数据会变，缓存只负责秒开：后台再取一份最新的换上去。
       void api<{ fields: DataViewField[]; preview: DataViewPreview }>(`/api/data-sources/${source.id}/views/${encodeURIComponent(selectedName)}?limit=${rows}`)
-        .then((data) => { if (cancelled) return; setFields(data.fields); setPreview(data.preview); })
-        .catch((reason) => { if (cancelled) return; setFields([]); setPreview(null); setDetailError(errorText(reason)); })
+        .then((data) => { if (cancelled) return; rememberDetail(key, data); setFields(data.fields); setPreview(data.preview); })
+        .catch((reason) => { if (cancelled) return; if (!cached) { setFields([]); setPreview(null); } setDetailError(errorText(reason)); })
         .finally(() => { if (!cancelled) setDetailBusy(false); });
     }, 0);
     return () => { cancelled = true; window.clearTimeout(handle); };
-  }, [source.id, selectedName, rows]);
+  }, [source.id, scope, selectedName, rows, detailToken]);
 
   const needle = search.trim().toLowerCase();
   const matching = views.filter((item) => (filter === "all" || item.kind === filter) && (!needle || item.name.toLowerCase().includes(needle) || item.comment.toLowerCase().includes(needle)));
@@ -343,12 +416,17 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   const databaseLabel = info.fields.find((field) => field.key === "databaseName")?.label.replace(/（.*/, "") ?? "库";
   const containerLabel = info.containerLabel.replace(/（.*/, "");
 
+  // 试连要和本体存储页一样给出明确反馈：结果条 + 顶部提示，重复点也能看出「刚才那次是什么时候」。
   const probe = async () => {
     try {
       setProbing(true);
-      setHealth(await api<DataSourceHealth>(`/api/data-sources/${source.id}/test`, { method: "POST" }));
+      const result = await api<DataSourceHealth>(`/api/data-sources/${source.id}/test`, { method: "POST" });
+      setHealth(result);
+      setProbedAt(new Date());
+      notify(`连接成功：${result.agent}，读取范围 ${result.container}。`);
     } catch (reason) {
       setHealth(null);
+      setProbedAt(null);
       fail(reason);
     } finally {
       setProbing(false);
@@ -393,6 +471,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
           <input type="checkbox" checked={source.enabled} onChange={(event) => void toggleEnabled(event.target.checked)} />
           <span />
         </label>}
+        <button className="action compact" disabled={viewsBusy} onClick={() => void loadViews({ refresh: true })} title="回库重读结构清单，跳过 60 秒缓存">{viewsBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}{viewsBusy ? "读取中" : "刷新结构"}</button>
         <button className="action compact" disabled={probing} onClick={() => void probe()}>{probing ? <Loader2 size={13} className="drs-spin" /> : <PlugZap size={13} />}{probing ? "连接中" : "测试连接"}</button>
         {canEdit && <button className="action compact" onClick={onEdit}><Pencil size={13} />编辑连接</button>}
         {canEdit && <button className="action compact danger" disabled={busy === "delete"} onClick={() => void remove()}><Trash2 size={13} />{busy === "delete" ? "删除中" : "删除"}</button>}
@@ -405,7 +484,8 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       <span><b>{source.databaseName}</b>{databaseLabel}</span>
       <span><b>{source.schemaName || "按连接用户"}</b>{containerLabel}</span>
       <span><b>{source.username || "—"}</b>连接账号</span>
-      {health && <span className="drs-fact-ok"><Check size={13} />服务端自报 {health.agent}</span>}
+      {probing && <span className="drs-fact-pending" role="status"><Loader2 size={13} className="drs-spin" />正在测试连接…</span>}
+      {!probing && health && <span className="drs-fact-ok" role="status"><Check size={13} />连接正常 · {health.agent} · 读取范围 {health.container}{probedAt ? ` · ${probeClock(probedAt)}` : ""}</span>}
     </div>
 
     <div className="drs-split">
@@ -423,12 +503,12 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
             {canWiden && <button type="button" className="drs-scope" onClick={() => setScope(scope === "all" ? "container" : "all")} title={scope === "all" ? "只看这个模式" : "看这个库里的全部模式"}>
               {scope === "all" ? "全部模式" : `模式 ${source.schemaName}`}
             </button>}
-            <button type="button" className="action compact" disabled={viewsBusy} onClick={() => void loadViews()} title="重新读取结构"><RefreshCcw size={13} className={viewsBusy ? "drs-spin" : undefined} /></button>
+
           </div>
         </div>
         <div className="drs-list" role="listbox" aria-label="表与视图">
           {!source.enabled && <div className="drs-list-state">这个数据资源已停用。启用后就能继续读结构。</div>}
-          {source.enabled && viewsBusy && !views.length && <div className="drs-list-state"><Loader2 size={15} className="drs-spin" />正在读取结构清单…</div>}
+          {source.enabled && viewsBusy && <div className="drs-list-state"><Loader2 size={15} className="drs-spin" />正在读取结构清单…</div>}
           {viewsError && <div className="drs-list-state error"><TriangleAlert size={15} />{viewsError}<button type="button" className="action compact" onClick={() => void loadViews()}>重试</button></div>}
           {source.enabled && !viewsBusy && !viewsError && !matching.length && <div className="drs-list-state">{views.length ? "没有匹配的表或视图。" : "这个资源里没有表或视图。"}</div>}
           {matching.map((item) => <button
@@ -437,7 +517,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
             aria-selected={item.name === selectedName}
             key={`${item.schema}.${item.name}`}
             className={item.name === selectedName ? "drs-list-row active" : "drs-list-row"}
-            onClick={() => setSelectedName(item.name)}
+            onClick={() => { setSelectedName(item.name); sessionCache.selected.set(source.id, item.name); }}
           >
             <span className="drs-list-mark">{item.kind === "view" ? <Eye size={14} /> : <Table2 size={14} />}</span>
             <span className="drs-list-text"><b>{item.name}</b><small>{item.comment || `${item.columnCount} 个字段`}</small></span>
@@ -464,7 +544,10 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
               <span className="eyebrow">{selected.kind === "view" ? "视图" : "表"} · {selected.schema}</span>
               <h3>{selected.name}</h3>
             </div>
-            <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}</span>
+            <div className="drs-view-head-actions">
+              <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}</span>
+              <button type="button" className="action compact" disabled={detailBusy} onClick={() => setDetailToken((current) => current + 1)} title="重新读这一张表的字段和数据">{detailBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}重新取数</button>
+            </div>
           </div>
           {detailError && <div className="drs-view-error"><TriangleAlert size={15} />{detailError}</div>}
           {!detailError && fields.length > 0 && <div className="drs-field-table">
@@ -481,6 +564,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
               <span className="eyebrow">数据预览</span>
               <div className="drs-preview-actions">
                 <span className="drs-preview-note">只读 · 前 {rows} 行{preview?.truncated ? "（可能还有更多）" : ""}</span>
+
                 <div className="segmented drs-rows">{[20, 50, 100].map((value) => <button type="button" key={value} className={rows === value ? "active" : ""} onClick={() => setRows(value)}>{value}</button>)}</div>
               </div>
             </div>

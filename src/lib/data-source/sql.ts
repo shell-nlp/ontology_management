@@ -35,6 +35,43 @@ const PREVIEW_LIMIT_MAX = 200;
 const VIEW_LIMIT_MAX = 5000;
 const DEFAULT_PREVIEW_ROWS = 20;
 
+/**
+ * 结构清单一次读取不便宜：Oracle 要扫一遍数据字典，PG / MySQL 要走一次 ORM 的 getTables。
+ * 同一个连接 60 秒内复用上次的结果；界面上「刷新结构」会带 refresh=1 穿透缓存。
+ */
+const CATALOG_TTL_MS = 60_000;
+const CATALOG_CACHE_MAX = 24;
+const catalogCache = new Map<string, { at: number; objects: CatalogObject[] }>();
+
+/** 缓存键带上密文：改过连接信息（含密码）自然换一条缓存，不会拿旧结构糊弄人；密文本身不出内存。 */
+function catalogCacheKey(kind: DataSourceKind, record: DataSourceRecord, container: string) {
+  return [kind, record.host, record.port, record.database_name, container, record.username, record.credential_secret].join("|");
+}
+
+function readCachedCatalog(key: string, refresh?: boolean) {
+  if (refresh) {
+    catalogCache.delete(key);
+    return null;
+  }
+  const hit = catalogCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CATALOG_TTL_MS) {
+    catalogCache.delete(key);
+    return null;
+  }
+  return hit.objects;
+}
+
+function writeCachedCatalog(key: string, objects: CatalogObject[]) {
+  catalogCache.set(key, { at: Date.now(), objects });
+  // Map 保持插入顺序，超上限就丢最旧的一条。
+  while (catalogCache.size > CATALOG_CACHE_MAX) {
+    const oldest = catalogCache.keys().next().value;
+    if (oldest === undefined) break;
+    catalogCache.delete(oldest);
+  }
+}
+
 export type DataSourceCredentials = { username: string; password: string };
 
 /** 一个表/视图在结构清单里的最小信息。 */
@@ -292,6 +329,35 @@ async function readCatalogFromOracle(connection: DataSource, container: string):
   }));
 }
 
+/**
+ * 按名字精确定位一个表/视图：只查字典里这一个名字，不扫整库。
+ * 点开一张表时的字段和预览都靠它，省掉一整轮 all_tables 扫描。
+ */
+async function resolveOracleObject(connection: DataSource, container: string, objectName: string): Promise<CatalogObject | null> {
+  const owner = quoteLiteral(container);
+  const name = quoteLiteral(objectName);
+  const rows = (await connection.query(`
+    SELECT 'table' AS "object_kind", t.table_name AS "object_name", tc.comments AS "remarks"
+      FROM all_tables t
+      LEFT JOIN all_tab_comments tc ON tc.owner = t.owner AND tc.table_name = t.table_name
+     WHERE UPPER(t.owner) = UPPER(${owner}) AND UPPER(t.table_name) = UPPER(${name})
+    UNION ALL
+    SELECT 'view' AS "object_kind", v.view_name AS "object_name", NULL AS "remarks"
+      FROM all_views v
+     WHERE UPPER(v.owner) = UPPER(${owner}) AND UPPER(v.view_name) = UPPER(${name})`)) as Record<string, unknown>[];
+  const row = (Array.isArray(rows) ? rows : [])[0];
+  if (!row) return null;
+  // 库里怎么存的名字就用哪个：标识符拼进预览语句时必须用元数据里的原样名字。
+  const kind = String(row.object_kind ?? row.OBJECT_KIND ?? "table").toLowerCase() === "view" ? "view" as const : "table" as const;
+  return {
+    schema: container,
+    name: String(row.object_name ?? row.OBJECT_NAME ?? ""),
+    kind,
+    comment: String(row.remarks ?? row.REMARKS ?? ""),
+    columnCount: 0,
+  };
+}
+
 /** Oracle 的列信息：类型、可空、主键、注释、顺序，一次问全。 */
 async function readColumnsFromOracle(connection: DataSource, container: string, objectName: string) {
   const owner = quoteLiteral(container);
@@ -327,9 +393,35 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
   // Oracle 旧版本必须走 Thick 模式：在建连接之前先把 Instant Client 装上（幂等）。
   if (kind === "ORACLE") await ensureOracleClient();
 
+  const cacheKey = catalogCacheKey(kind, record, container);
   const readCatalog = (connection: DataSource) => kind === "ORACLE"
     ? readCatalogFromOracle(connection, container)
     : readCatalogFromOrm(connection, kind, container);
+
+  /** 结构清单：命中缓存就直接返回，连连接都不用建。 */
+  const catalogWithCache = async (connection: DataSource, refresh?: boolean) => {
+    const cached = readCachedCatalog(cacheKey, refresh);
+    if (cached) return cached;
+    const objects = await readCatalog(connection);
+    writeCachedCatalog(cacheKey, objects);
+    return objects;
+  };
+
+  /**
+   * 定位一个表/视图，拿到库里真实的名字再往下走。
+   * Oracle 按名字精确查字典（毫秒级）；其它库走一次目录（有缓存）。
+   */
+  const locate = async (connection: DataSource, objectName: string): Promise<CatalogObject> => {
+    if (kind === "ORACLE") {
+      const hit = await resolveOracleObject(connection, container, objectName);
+      if (!hit) throw new Error(`数据源里没有表或视图「${objectName}」。`);
+      return hit;
+    }
+    const catalog = await catalogWithCache(connection);
+    const hit = catalog.find((item) => item.name.toLowerCase() === objectName.toLowerCase());
+    if (!hit) throw new Error(`数据源里没有表或视图「${objectName}」。`);
+    return hit;
+  };
 
   const readColumns = async (connection: DataSource, objectName: string): Promise<DataViewField[]> => {
     if (kind === "ORACLE") return readColumnsFromOracle(connection, container, objectName);
@@ -360,24 +452,28 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
     },
 
     async listViews(options = {}): Promise<DataViewSummary[]> {
-      return withConnection(kind, record, credentials, async (_info, connection) => {
-        const catalog = await readCatalog(connection);
-        // 登记时填了容器就以它为默认范围；看全库传 "*" —— 界面上的「全部模式」就是这个值。
-        const scope = options.schema === "*" ? "" : options.schema ?? (kind === "MYSQL" ? "" : container);
+      // 登记时填了容器就以它为默认范围；看全库传 "*" —— 界面上的「全部模式」就是这个值。
+      const scope = options.schema === "*" ? "" : options.schema ?? (kind === "MYSQL" ? "" : container);
+      const shape = (catalog: CatalogObject[]) => {
         const needle = options.search?.trim().toLowerCase();
         return catalog
           .filter((item) => !scope || item.schema.toLowerCase() === scope.toLowerCase())
           .filter((item) => !needle || item.name.toLowerCase().includes(needle))
           .sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "table" ? -1 : 1)
           .slice(0, clampLimit(options.limit ?? 500, VIEW_LIMIT_MAX, 500));
+      };
+      const cached = readCachedCatalog(cacheKey, options.refresh);
+      if (cached) return shape(cached);
+      return withConnection(kind, record, credentials, async (_info, connection) => {
+        const objects = await readCatalog(connection);
+        writeCachedCatalog(cacheKey, objects);
+        return shape(objects);
       });
     },
 
     async describeView(view: DataViewRef): Promise<DataViewField[]> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
-        const catalog = await readCatalog(connection);
-        const hit = catalog.find((item) => item.name.toLowerCase() === view.name.toLowerCase());
-        if (!hit) throw new Error(`数据源里没有表或视图「${view.name}」。`);
+        const hit = await locate(connection, view.name);
         return readColumns(connection, hit.name);
       });
     },
@@ -387,9 +483,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       return withConnection(kind, record, credentials, async (_info, connection) => {
         // 先确认对象确实存在，再拿库自己的名字去拼语句：
         // 预览语句里的标识符只可能来自库的元数据，不接受调用方传来的任意字符串。
-        const catalog = await readCatalog(connection);
-        const hit = catalog.find((item) => item.name.toLowerCase() === view.name.toLowerCase());
-        if (!hit) throw new Error(`数据源里没有表或视图「${view.name}」。`);
+        const hit = await locate(connection, view.name);
         const statement = previewStatement(kind, hit.schema || undefined, hit.name, rows);
         const raw = await connection.query(statement);
         const list = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
