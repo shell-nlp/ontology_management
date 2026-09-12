@@ -266,7 +266,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
 
             <section className="ted-section">
               <div className="ted-section-head">
-                <h3>{kind === "entity" ? "属性规则" : "关系属性"}</h3>
+                <h3>{kind === "entity" ? "属性" : "关系属性"}</h3>
                 <em>{properties.length ? `${properties.length} 条` : "空"}</em>
               </div>
               {properties.length > 0 ? (
@@ -299,7 +299,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   ))}
                 </div>
               ) : (
-                <p className="ted-props-empty">还没有属性规则。在下面加一条，右侧预览会同步出现。</p>
+                <p className="ted-props-empty">还没有属性。在下面加一条，右侧预览会同步出现。</p>
               )}
               {/* 外层已经是表单，这里只能是 div：套 form 会触发 hydration 报错，回车改为直接提交这一行。 */}
               <div className="ted-add">

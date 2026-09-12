@@ -236,7 +236,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                     </div>
                   ))}
                 </div>
-              ) : <p className="ob-inspector-note">还没有属性规则。点「编辑」补上业务属性与必填约束。</p>}
+              ) : <p className="ob-inspector-note">还没有属性。点「编辑」补上业务属性与必填约束。</p>}
               <InvolvedActions definition={definition} entityTypeId={selectedEntity.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
                 <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
@@ -277,7 +277,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
             <div className="graph-inspector-empty">
               <LocateFixed size={20} />
               <b>选择一个元素</b>
-              <span>点类看它的属性规则；点连线看端点契约。拖节点可调整摆放，「自动整理」复位。</span>
+              <span>点类看它的属性；点连线看端点契约。拖节点可调整摆放，「自动整理」复位。</span>
             </div>
           </div>
         )}
