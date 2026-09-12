@@ -2,7 +2,7 @@
 
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
-import { GRAPH_TARGET_KINDS, PLANNED_GRAPH_TARGETS, graphTargetKindInfo, type GraphTargetKind, type GraphTargetMark } from "@/lib/graph/types";
+import { FRONTEND_GRAPH_TARGET_KINDS, PLANNED_GRAPH_TARGETS, graphTargetKindInfo, type GraphTargetKind, type GraphTargetMark } from "@/lib/graph/types";
 
 /**
  * 图数据库引擎标记。
@@ -48,9 +48,9 @@ export function GraphKindChoice({ value, onChange }: { value: GraphTargetKind; o
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // 只有引擎多到看不完时才给搜索框；四个选项配搜索框是装饰。
-  const searchable = GRAPH_TARGET_KINDS.length + PLANNED_GRAPH_TARGETS.length > 6;
+  const searchable = FRONTEND_GRAPH_TARGET_KINDS.length + PLANNED_GRAPH_TARGETS.length > 6;
   const needle = filter.trim().toLowerCase();
-  const supported = useMemo(() => GRAPH_TARGET_KINDS.filter((item) => !needle || `${item.label} ${item.description} ${item.queryLanguageLabel}`.toLowerCase().includes(needle)), [needle]);
+  const supported = useMemo(() => FRONTEND_GRAPH_TARGET_KINDS.filter((item) => !needle || `${item.label} ${item.description} ${item.queryLanguageLabel}`.toLowerCase().includes(needle)), [needle]);
   const planned = useMemo(() => PLANNED_GRAPH_TARGETS.filter((item) => !needle || `${item.label} ${item.description}`.toLowerCase().includes(needle)), [needle]);
 
   const moveFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -67,7 +67,7 @@ export function GraphKindChoice({ value, onChange }: { value: GraphTargetKind; o
     {searchable && <label className="kind-search"><Search size={14} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索图数据库类型" /></label>}
     <div className="kind-picker-body">
       <nav className="kind-picker-rail" aria-label="类型分类">
-        <button type="button" className={category === "supported" ? "active" : ""} onClick={() => setCategory("supported")}>已支持<span>{GRAPH_TARGET_KINDS.length}</span></button>
+        <button type="button" className={category === "supported" ? "active" : ""} onClick={() => setCategory("supported")}>已支持<span>{FRONTEND_GRAPH_TARGET_KINDS.length}</span></button>
         <button type="button" className={category === "planned" ? "active" : ""} onClick={() => setCategory("planned")}>规划中<span>{PLANNED_GRAPH_TARGETS.length}</span></button>
       </nav>
       <div className="kind-picker-grid" role="radiogroup" aria-label="图数据库类型">

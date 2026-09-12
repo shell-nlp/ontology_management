@@ -174,6 +174,10 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .target-group-head small { color:#7b8ca6; font-size:11px; }
 .target-kind-badge { display:inline-flex; align-items:center; gap:6px; height:21px; padding:0 8px; border:1px solid #c9daf6; border-radius:2px; background:#eef4ff; color:#1d4ed8; font-size:11px; font-weight:600; }
 .target-kind-badge em { color:#7b8ca6; font-family:ui-monospace, "Cascadia Code", monospace; font-size:9.5px; font-style:normal; font-weight:400; }
+/* 已从前端下线的引擎：仍能管理已有记录，但不作为新建选项 */
+.target-group.retired { border-top:1px dashed #e2e9f3; }
+.target-group.retired .target-kind-badge { border-color:#e2e6ee; background:#f4f6fa; color:#8394ac; }
+.target-retired-note { margin-left:auto; color:#98a6bb; font-size:10.5px; }
 
 /* 数据库类型选择器：触发区 + 引擎卡片弹层 */
 .field-block { display:grid; gap:7px; }

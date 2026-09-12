@@ -1,23 +1,24 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { GraphCanvas } from "@/components/graph-canvas";
-import { GraphKindBadge, GraphKindChoice, GraphKindMark, GraphKindPicker, capabilityLine } from "@/components/graph-kind-picker";
+import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
+import { OntologyStudio, type OntologySummary } from "@/components/ontology-studio";
 import { PropertyEditor } from "@/components/property-editor";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { DataResourceStudio } from "@/components/data-resource-studio";
 import { api } from "@/lib/api-client";
-import { GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
+import { DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, retiredGraphTargetKinds, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 import { entitySources, propertyTypeOptions, sourceName, type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "overview" | "ontology" | "actions" | "rules" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
+type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -27,7 +28,8 @@ const NEO4J_QUERY_TEMPLATE: QueryTemplate = { defaultQuery: "MATCH (n)-[r]->(m) 
 const JENA_QUERY_TEMPLATE: QueryTemplate = { defaultQuery: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", placeholder: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", visualizationHint: "以 ?s / ?p / ?o 为变量名返回三元组即可可视化；也可以用 CONSTRUCT 构造子图。" };
 
 function queryTemplateFor(kind: GraphTargetKind | undefined): QueryTemplate {
-  return kind === "JENA" ? JENA_QUERY_TEMPLATE : NEO4J_QUERY_TEMPLATE;
+  // Neo4j 已从前端下线；没拿到类型时默认按 Jena 的 SPARQL 工作台走。
+  return kind === "NEO4J" ? NEO4J_QUERY_TEMPLATE : JENA_QUERY_TEMPLATE;
 }
 
 /** 只用于前端即时提示；真正的写保护在服务端按后端能力判断。 */
@@ -296,10 +298,10 @@ function GraphSettingsDialog({ settings, onSave, onReset, onClose }: { settings:
 type NavItem = readonly [View, string, LucideIcon];
 
 const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
-  { label: "", items: [["overview", "总览", Activity]] },
+  { label: "", items: [["ontologies", "本体", Boxes], ["overview", "总览", Activity]] },
   { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
   { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
-  { label: "平台", items: [["data", "数据资源", Table2], ["targets", "本体存储", Database], ["settings", "设置", Settings2]] },
+  { label: "平台", items: [["data", "数据资源", Table2], ["targets", "存储资源", Database], ["settings", "设置", Settings2]] },
 ];
 
 const NAV_ITEMS: readonly NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
@@ -310,14 +312,16 @@ function navLabel(view: View) {
 export function FunctionalWorkbench() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [targets, setTargets] = useState<Target[]>([]);
+  const [ontologies, setOntologies] = useState<OntologySummary[]>([]);
   const [targetId, setTargetId] = useState("");
+  const [ontologyId, setOntologyId] = useState("");
   const [draft, setDraft] = useState<Version | null>(null);
   const [published, setPublished] = useState<Version | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [runtimeTypes, setRuntimeTypes] = useState<RuntimeTypeSet | null>(null);
   // draft / published 属于哪个本体存储：切换时旧版本在新目标上不成立，先别往下传。
   const [versionTargetId, setVersionTargetId] = useState("");
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("ontologies");
   const [newTargetOpen, setNewTargetOpen] = useState(false);
   // 从对象详情跳到「动作」页时带上的预填：动作 + 主对象。
   const [pendingRun, setPendingRun] = useState<{ actionId: string; subject: EntitySearchResult } | null>(null);
@@ -329,6 +333,10 @@ export function FunctionalWorkbench() {
   const { settings: displaySettings, update: updateDisplaySettings, reset: resetDisplaySettings } = useDisplaySettings();
 
   const selectedTarget = targets.find((target) => target.id === targetId) ?? null;
+  const selectedOntology = ontologies.find((item) => item.id === ontologyId) ?? null;
+  /** 选一个本体：它的落点决定后面所有图操作打在哪个存储上。 */
+  const openOntology = (ontology: OntologySummary) => { setOntologyId(ontology.id); setTargetId(ontology.storage?.id ?? ""); setVersionTargetId(""); setView("ontology"); };
+  const selectTarget = (id: string) => { setTargetId(id); setOntologyId(ontologies.find((item) => item.storage?.id === id || item.target_id === id)?.id ?? ""); };
   const instanceGraphIsLarge = runtimeTypes !== null && (runtimeTypes.entityCount > 120 || runtimeTypes.relationshipCount > 300);
   const typeOverviewAffordable = runtimeTypes !== null && runtimeTypes.labels.length <= 80 && runtimeTypes.relationshipTypes.length <= 120;
   const preferredGraphMode: "instances" | "ontology" = instanceGraphIsLarge && typeOverviewAffordable ? "ontology" : "instances";
@@ -342,8 +350,13 @@ export function FunctionalWorkbench() {
   const fail = (reason: unknown) => { setError(typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
   const dismiss = () => { setMessage(null); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
 
+  const loadOntologies = async () => {
+    const data = await api<OntologySummary[]>("/api/ontologies");
+    setOntologies(data);
+    setOntologyId((current) => current || data[0]?.id || "");
+  };
   const loadTargets = async () => {
-    const data = await api<Target[]>("/api/targets");
+    const [data] = await Promise.all([api<Target[]>("/api/targets"), loadOntologies()]);
     setTargets(data);
     setTargetId((current) => current || data[0]?.id || "");
   };
@@ -422,13 +435,14 @@ export function FunctionalWorkbench() {
   const userProp = user;
 
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体存储</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择本体存储</option>{GRAPH_TARGET_KINDS.map((kindInfo) => { const group = targets.filter((item) => item.kind === kindInfo.kind); return group.length ? <optgroup key={kindInfo.kind} label={kindInfo.label}>{group.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup> : null; })}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : selectedTarget?.name ?? "连接图数据库"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); setOntologyId(event.target.value); setTargetId(next?.storage?.id ?? ""); setVersionTargetId(""); }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
+    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "ontologies" ? "本体" : view === "targets" ? "存储资源" : selectedOntology?.name ?? "选择一个本体"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && view !== "targets" && view !== "data" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
+      {view === "ontologies" && <OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={userProp.role === "ADMIN"} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
-      {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { setTargetId(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}
+      {view === "targets" && <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}
       {view === "data" && <DataResourceStudio canEdit={userProp.role === "ADMIN"} notify={notify} fail={fail} />}
-      {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); setTargetId(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
+      {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); selectTarget(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
       {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialRun={pendingRun} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
@@ -596,12 +610,11 @@ function targetOptions(form: TargetFormState) {
 }
 
 /** 连接字段由后端类型元数据驱动，接入新的图数据库时这里不需要改动。 */
-function TargetFields({ form, setForm, editing = false, showKind = true }: { form: TargetFormState; setForm: (next: TargetFormState) => void; editing?: boolean; showKind?: boolean }) {
+function TargetFields({ form, setForm, editing = false }: { form: TargetFormState; setForm: (next: TargetFormState) => void; editing?: boolean }) {
   const info = graphTargetKindInfo(form.kind);
   const credentialRequired = info.credentials.required;
   return <>
     <label>名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：生产知识图谱" required /></label>
-    {showKind && <div className="field-block"><span>数据库类型</span><GraphKindPicker value={form.kind} onChange={(kind) => setForm({ ...defaultTargetForm(kind), name: form.name })} /></div>}
     <label>{info.endpoint.label}<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder={info.endpoint.placeholder} required /></label>
     {info.dataset && <label>{info.dataset.label}<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} placeholder={info.dataset.placeholder} required /></label>}
     {form.kind === "JENA" && <label>命名图（可选）<input value={form.namedGraph} onChange={(event) => setForm({ ...form, namedGraph: event.target.value })} placeholder="留空写入默认图，例如 urn:ontology" /></label>}
@@ -650,20 +663,24 @@ function TargetProbeResult({ result }: { result: { ok: boolean; text: string } |
 function TargetManager({ targets, refresh, selectedId, onSelect, onNew, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; selectedId: string; onSelect: (id: string) => void; onNew: () => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
   const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
   const remove = async (target: Target) => { if (!window.confirm(`确定删除本体存储“${target.name}”及其全部本体版本？`)) return; try { setDeleting(target.id); await api(`/api/targets/${target.id}`, { method: "DELETE" }); notify("本体存储已删除。"); await refresh(); } catch (reason) { fail(reason); } finally { setDeleting(""); } };
-  const groups = GRAPH_TARGET_KINDS.map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind) }));
-  const census = groups.filter((group) => group.items.length).map((group) => `${graphTargetKindInfo(group.info.kind).label} ${group.items.length}`).join(" · ");
+  // 前端只展示还在提供的引擎；已下线的 Neo4j 记录单独归到「已下线」组，数据不会凭空消失。
+  const groups = FRONTEND_GRAPH_TARGET_KINDS.map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind), retired: false }));
+  const retiredGroups = retiredGraphTargetKinds().map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind), retired: true })).filter((group) => group.items.length > 0);
+  const census = [...groups, ...retiredGroups].filter((group) => group.items.length).map((group) => `${group.info.label} ${group.items.length}${group.retired ? "（已下线）" : ""}`).join(" · ");
   return <section className="stack">
     <div className="panel functional-panel target-action-bar"><div><span className="eyebrow">本体存储</span><b>{targets.length} 个已登记本体存储</b><p className="subtle">{census ? `按图数据库类型分组：${census}。` : "还没有登记任何图数据库连接。"}凭据以 AES-256-GCM 加密保存在平台库，只有服务端能解密。</p></div><button className="action primary" onClick={onNew}><Plus size={15} />新建本体存储</button></div>
-    <div className="panel functional-panel target-list">{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><GraphKindBadge kind={info.kind} /><small>{info.description}</small></div>{items.map((target) => <div className={target.id === selectedId ? "target-row current" : "target-row"} key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span>{target.id === selectedId ? <span className="target-current"><Check size={12} />当前本体存储</span> : <button className="action compact" onClick={() => onSelect(target.id)}>打开</button>}<button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <div className="target-empty"><Database size={22} /><b>还没有本体存储</b><span>点右上角「新建本体存储」，先选图数据库类型，再填连接信息。</span></div>}</div>
+    <div className="panel functional-panel target-list">{targets.length ? [...groups, ...retiredGroups].map(({ info, items, retired: isRetired }) => items.length ? <div className={`target-group${isRetired ? " retired" : ""}`} key={info.kind}><div className="target-group-head"><GraphKindBadge kind={info.kind} /><small>{info.description}</small>{isRetired && <span className="target-retired-note">已从前端下线，仅为兼容已有数据保留</span>}</div>{items.map((target) => <div className={target.id === selectedId ? "target-row current" : "target-row"} key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span>{target.id === selectedId ? <span className="target-current"><Check size={12} />当前本体存储</span> : <button className="action compact" onClick={() => onSelect(target.id)}>打开</button>}<button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <div className="target-empty"><Database size={22} /><b>还没有本体存储</b><span>点右上角「新建本体存储」，填好 Fuseki 的 SPARQL 服务地址与数据集即可。</span></div>}</div>
     {editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("本体存储已更新。"); }} fail={fail} />}
   </section>;
 }
 
 /** 新建本体存储：先选类型，再填连接信息。两步都收在同一个弹窗里，页面不再常驻一张空表单。 */
 function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => void; onCreated: (target: Target) => void | Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
-  const [step, setStep] = useState<1 | 2>(1);
-  const [kind, setKind] = useState<GraphTargetKind>("NEO4J");
-  const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm("NEO4J"));
+  // 只有一个可选引擎时就没有「选类型」这一步，直接进连接表单。
+  const multipleKinds = FRONTEND_GRAPH_TARGET_KINDS.length > 1;
+  const [step, setStep] = useState<1 | 2>(multipleKinds ? 1 : 2);
+  const [kind, setKind] = useState<GraphTargetKind>(DEFAULT_GRAPH_TARGET_KIND);
+  const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm(DEFAULT_GRAPH_TARGET_KIND));
   const [busy, setBusy] = useState(false);
   const probe = useTargetProbe(form);
   const info = graphTargetKindInfo(kind);
@@ -690,21 +707,21 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <form className="dialog graph-dialog new-target-dialog" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
       <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
-      <span className="eyebrow">新建本体存储 · 步骤 {step} / 2</span>
+      <span className="eyebrow">新建本体存储{multipleKinds ? ` · 步骤 ${step} / 2` : ""}</span>
       <h2>{step === 1 ? "选择图数据库类型" : `连接 ${info.label}`}</h2>
       <p>{step === 1 ? "类型决定这个本体存储用什么查询语言、按什么模型存图。" : info.description}</p>
-      <ol className="wizard-steps">
+      {multipleKinds && <ol className="wizard-steps">
         <li className={step === 1 ? "active" : "done"}><span>{step === 1 ? "1" : <Check size={12} />}</span>选择类型<em>{info.label}</em></li>
         <li className={step === 2 ? "active" : ""}><span>2</span>填写连接信息</li>
-      </ol>
+      </ol>}
       {step === 1
         ? <GraphKindChoice value={kind} onChange={pickKind} />
-        : <div className="dialog-form"><TargetFields form={form} setForm={setForm} showKind={false} /></div>}
+        : <div className="dialog-form"><TargetFields form={form} setForm={setForm} /></div>}
       {step === 2 && <TargetProbeResult result={probe.result} />}
       <div className="kind-picker-foot">
         <span className="kind-picker-summary"><GraphKindMark mark={info.mark} accent={info.accent} size={16} />{info.label}<code>{capabilityLine(info)}</code></span>
         <div className="functional-actions">
-          {step === 2 && <button type="button" className="quiet-button" onClick={() => setStep(1)}>上一步</button>}
+          {step === 2 && multipleKinds && <button type="button" className="quiet-button" onClick={() => setStep(1)}>上一步</button>}
           {step === 1
             ? <><button type="button" className="quiet-button" onClick={onClose}>取消</button><button type="button" className="primary-button" onClick={() => setStep(2)}>下一步</button></>
             : <><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "登记中…" : "登记并选择"}</button></>}
@@ -996,7 +1013,7 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
     </div>
     {mode === "instances" ? <>
       <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? `节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 ${graphNoun(target)}。` : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
-      {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">{graphTargetKindInfo(target?.kind ?? "NEO4J").queryLanguageLabel} 只读查询</span><b>查询当前 {graphNoun(target)} 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} language={target?.kind === "JENA" ? "sparql" : "cypher"} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder={queryTemplate.placeholder} /><p className="cypher-hint">{queryTemplate.visualizationHint}</p><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
+      {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">{graphTargetKindInfo(target?.kind ?? DEFAULT_GRAPH_TARGET_KIND).queryLanguageLabel} 只读查询</span><b>查询当前 {graphNoun(target)} 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} language={target?.kind === "NEO4J" ? "cypher" : "sparql"} labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder={queryTemplate.placeholder} /><p className="cypher-hint">{queryTemplate.visualizationHint}</p><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
     </> : <>

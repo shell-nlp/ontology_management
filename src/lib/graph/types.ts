@@ -114,6 +114,28 @@ export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
   { key: "ELASTICSEARCH", label: "Elasticsearch", description: "文档检索与聚合，用于大图上的属性召回与倒排筛选。", capability: "检索 · 聚合", note: "规划中", accent: "#b45309", mark: "shards" },
 ];
 
+/**
+ * 前端对外提供的引擎。Neo4j 已从前端下线：
+ *
+ * Neo4j 社区版没有多库隔离、强约束也弱，界面上不再提供它的新建入口。
+ * 后端适配器（src/lib/graph/neo4j.ts）和已登记的 Neo4j 本体存储继续可用，
+ * 只是为了兼容历史数据，不再出现在「选择图数据库类型」里。
+ */
+export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS.filter((info) => info.kind !== "NEO4J");
+
+/** 前端新建本体存储时的默认引擎。 */
+export const DEFAULT_GRAPH_TARGET_KIND: GraphTargetKind = FRONTEND_GRAPH_TARGET_KINDS[0]?.kind ?? "JENA";
+
+/** 这个引擎是否还在前端提供。Neo4j 返回 false，但它的数据仍然可读可写。 */
+export function isFrontendGraphTargetKind(kind: GraphTargetKind): boolean {
+  return FRONTEND_GRAPH_TARGET_KINDS.some((item) => item.kind === kind);
+}
+
+/** 已从前端下线、但可能有历史存储记录的引擎。用于把它们单独归组，避免数据凭空消失。 */
+export function retiredGraphTargetKinds(): GraphTargetKindInfo[] {
+  return GRAPH_TARGET_KINDS.filter((info) => !isFrontendGraphTargetKind(info.kind));
+}
+
 export function isGraphTargetKind(value: unknown): value is GraphTargetKind {
   return typeof value === "string" && GRAPH_TARGET_KINDS.some((item) => item.kind === value);
 }

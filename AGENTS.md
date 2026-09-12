@@ -67,7 +67,7 @@
 | G3 | Jena 读路径请求数 | `hydrateNodes` / `readEdges` 每 200 个主语一次往返，大子图多轮请求 | 调大批次或改为一次 `CONSTRUCT` / 大 `VALUES` 取子图 |
 | G4 | 新增后端的契约测试模板 | 目前只有 ADR 0017 的文字说明；Jena 有单测，但没有通用的适配器契约用例 | 抽出契约测试（连接、读写、导出、原子替换、失败后图不变），新后端按模板补齐 |
 
-| G5 | 后端定位与许可 | 两个后端功能对等、界面上并列；但 Apache Jena 是 Apache-2.0，Neo4j Community 是 **GPL-3.0**（企业版为商业许可）——随产品分发 Neo4j 需要履行 GPLv3 义务（平台只是客户端，连接方式本身不传染） | Jena 作为**推理、元模型、多本体隔离**的默认推荐后端（Fuseki 用命名图/多数据集隔离，不必像 Neo4j 那样起多个实例）；Neo4j 定位为「实例存储 + 高性能遍历」，适合已有环境与深链场景（Fuseki/TDB2 是单机，SPARQL 深链慢）。**暂不删除**，等实际用量或维护成本给出信号再定 |
+| G5 | 后端定位与许可 | 两个后端功能对等、界面上并列；但 Apache Jena 是 Apache-2.0，Neo4j Community 是 **GPL-3.0**（企业版为商业许可）——随产品分发 Neo4j 需要履行 GPLv3 义务（平台只是客户端，连接方式本身不传染） | Jena 作为**推理、元模型、多本体隔离**的默认推荐后端（Fuseki 用命名图/多数据集隔离，不必像 Neo4j 那样起多个实例）；Neo4j 定位为「实例存储 + 高性能遍历」，适合已有环境与深链场景（Fuseki/TDB2 是单机，SPARQL 深链慢）。**暂不删除**，等实际用量或维护成本给出信号再定。2026-09-13 决定：**Neo4j 已从前端下线**——不再出现在「选择图数据库类型」与「新建本体」的存储下拉里（`FRONTEND_GRAPH_TARGET_KINDS` / `isFrontendGraphTargetKind`，见 `src/lib/graph/types.ts`）；后端适配器 `src/lib/graph/neo4j.ts` 与接口保留，已登记的 Neo4j 记录在「存储资源」页单独归到「已下线」组，仍可查看 / 测试 / 编辑 / 删除 |
 
 ### 本体核心模型
 
@@ -129,6 +129,31 @@ Neo4j Community 只能有一个库，而平台按「本体存储」登记连接�
 | N2 | 用 Fuseki/Jena 承载多本体 | 平台已支持：一个 Fuseki 下配多个 dataset，或同一 dataset 内用「命名图」（`options.namedGraph`）。社区版没有多库限制 |
 | N3 | 单实例逻辑隔离 | 给本体存储加 `namespace` 选项，Neo4j 适配器对标签/关系类型统一加前缀并让所有读路径按它过滤，查询工作台自动带上约束。落点：本体存储配置字段、`GraphStore` 读写路径、`/api/query` 与工作台提示 |
 | N4 | 升级 Enterprise / Aura | 真多库，`CREATE DATABASE`；现有代码本来就是按 `database_name` 建会话，属于最省事的功能路径 |
+
+### 本体一等公民（对标 bkn-studio）
+
+记录时间：2026-09-13。**用户方向：像 bkn-studio 的「知识网络管理」那样，在平台里直接建立不同的本体来做隔离**，
+而不是让用户先去理解「本体存储 / 数据集 / 命名图」。
+
+现状的问题是隔离单位错了：现在隔离粒度是**本体存储**（一个连接 = 一个本体，1:1），
+于是用户必须先想清楚"存哪"才能建本体，Neo4j 社区版一个库的限制就直接暴露在界面上。
+参照 bkn-studio：`KnowledgeNetworkRecord = { id, identifier, name, description, color, icon, tags,
+createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }`，
+对象类型 / 关系类型 / 动作类型全部挂在知识网络 id 下，存储完全不出现在用户面前。
+
+目标形态：
+
+```
+本体(ontology) ── 版本(draft/published) ── 对象 / 关系
+      └─ 落点：存储(target) + 空间(namespace)
+```
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| O1 | 「本体」成为一等公民 | 隔离粒度是本体存储，版本与快照都按 `target_id` 归类 | 新表 `ontology_platform.ontologies`：id / identifier / name / description / color / tags / created_by / created_at / updated_at / target_id / namespace；版本记录加 `ontology_id`，老数据迁移成一个默认本体（名字取原本体存储名）。快照磁盘结构不动 |
+| O2 | 落点自动分配 | Jena 的命名图写在 `target.options.namedGraph` 上，是整个存储一份；Neo4j 只能一个存储一个本体 | Jena：新建本体时自动分配 `urn:ontology:<id>`，命名图改为**按调用传入**（`jena.ts` 的 endpoints 解析 + `getGraphStore` 增加可选 namespace），于是一个 Fuseki 能承载多个本体；Neo4j：社区版一个库只能一个本体，实例被占用时提示"再起一个实例"（复用 `scripts/neo4j-instance.ps1` 与现有 409 逻辑） |
+| O3 | 本体列表页 | 左侧是「本体存储」下拉，没有本体概念 | 对标截图：卡片列表（名字 / 描述 / 标签 / 统计 / 创建人 / 更新时间）+「新建 / 导入 / 搜索 / 分页」；顶部「当前本体」选择器取代「当前本体存储」；原「本体存储」页改名「存储资源」，显示每个存储挂了几个本体 |
+| O4 | 本体统计 | 无 | 卡片上显示对象类型数 / 关系类型数 / 对象数 / 关系数（`statistics`），数据从版本快照 + 图库统计来 |
 
 ### 工程清洁
 

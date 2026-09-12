@@ -106,6 +106,26 @@ async function ensurePlatformSchemaOnce() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      // 本体：平台的隔离单位。一个本体占一份图数据（target_id 唯一），
+      // 「本体存储」退到后面当落点用；用户建本体时只需要挑一个存储资源。
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.ontologies (
+          id TEXT PRIMARY KEY,
+          identifier TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          color TEXT NOT NULL DEFAULT '',
+          tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+          target_id TEXT NOT NULL UNIQUE REFERENCES ontology_platform.graph_targets(id) ON DELETE CASCADE,
+          /** 用户挑的那个存储资源。Jena 上会另开一条受管记录，这里记住它从哪来。 */
+          owner_target_id TEXT REFERENCES ontology_platform.graph_targets(id) ON DELETE SET NULL,
+          /** Jena 的命名图；Neo4j 为空。 */
+          namespace TEXT,
+          created_by TEXT REFERENCES ontology_platform.users(id),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
     } finally {
       client.release();
     }

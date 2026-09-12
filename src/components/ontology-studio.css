@@ -1,0 +1,44 @@
+/* 本体列表：卡片是本体本身，落点与版本退到脚注，让"隔离"这件事看起来只是一个名字。 */
+.os-search { display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; height: 34px; background: #fff; border: 1px solid #dbe4f0; border-radius: 4px; }
+.os-search svg { flex: none; color: #93a6bd; }
+.os-search input { width: 190px; border: 0; outline: none; background: transparent; color: #1f3557; font-size: 12.5px; }
+.os-search input::placeholder { color: #a8b6c8; }
+
+.os-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.os-card { position: relative; display: grid; align-content: start; gap: 10px; padding: 15px 16px 12px; background: #fff; border: 1px solid #e3ebf5; border-radius: 4px; box-shadow: 0 1px 2px rgba(31, 53, 87, .04); }
+.os-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; border-radius: 4px 0 0 4px; background: #dbe4f0; }
+.os-card.selected { border-color: #b9d0ff; box-shadow: 0 0 0 1px #cddcfb, 0 2px 8px rgba(31, 53, 87, .07); }
+.os-card.selected::before { background: #1d4ed8; }
+
+.os-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.os-card-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 5px; color: #fff; flex: none; }
+.os-card-title { display: grid; gap: 2px; min-width: 0; }
+.os-card-title b { color: #183b72; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.os-card-title code { color: #8c9db4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; }
+
+.os-card-desc { margin: 0; min-height: 32px; color: #6b7f9b; font-size: 12px; line-height: 1.6; }
+
+.os-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.os-tags span { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; color: #5c7593; background: #f4f7fc; border: 1px solid #e3ebf5; border-radius: 999px; font-size: 10.5px; }
+
+.os-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 9px 10px; background: #f8fafd; border: 1px solid #eaf0f8; border-radius: 4px; }
+.os-stats span { display: grid; gap: 2px; color: #8c9db4; font-size: 10px; }
+.os-stats b { color: #1f3557; font-size: 14px; font-weight: 700; }
+
+.os-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.os-storage { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: #6b7f9b; font-size: 11px; }
+.os-storage svg { flex: none; color: #9fb0c5; }
+.os-storage em { color: #a4b2c6; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; font-style: normal; }
+.os-version { flex: none; padding: 2px 8px; color: #1d4ed8; background: #f2f6ff; border: 1px solid #dbe6fb; border-radius: 999px; font-size: 10.5px; }
+
+.os-card-actions { display: flex; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid #eef3f9; }
+.os-time { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #a4b2c6; font-size: 10.5px; }
+
+.os-empty { display: grid; justify-items: center; gap: 8px; padding: 52px 20px; color: #8c9db4; }
+.os-empty svg { color: #c3d0e2; }
+.os-empty b { color: #1f3557; font-size: 14px; }
+.os-empty span { font-size: 12px; }
+
+.os-pager { display: flex; align-items: center; justify-content: center; gap: 10px; color: #6b7f9b; font-size: 12px; }
+
+.os-dialog label { display: grid; gap: 6px; }
