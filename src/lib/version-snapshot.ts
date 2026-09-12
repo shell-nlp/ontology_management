@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
+import { validateEntitySources } from "@/lib/ontology-sources";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
@@ -566,8 +567,13 @@ export function runtimeTypesFromSnapshot(snapshot: VersionSnapshot): RuntimeType
 
 const MAX_INDEXED_VALUE_BYTES = 8191;
 
+/** 发布前检查的一条结论：severity 为 WARN 的只是提醒，不挡发布。 */
+export type SnapshotViolation = { rule: string; message: string; count: number; severity?: "WARN" };
+
 export function validateVersionSnapshot(snapshot: VersionSnapshot) {
-  const violations: { rule: string; message: string; count: number }[] = [];
+  const violations: SnapshotViolation[] = [];
+  // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
+  for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
@@ -631,7 +637,8 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     }).join("、");
     violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.nodes.length} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
-  return [...violations, ...validateActionDefinition(snapshot.definition)];
+  const actionViolations: SnapshotViolation[] = validateActionDefinition(snapshot.definition);
+  return [...violations, ...actionViolations];
 }
 
 /**

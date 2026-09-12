@@ -18,7 +18,10 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     if (!target) throw new Error("本体存储不存在。");
     const snapshot = await ensureVersionSnapshot(version.id, target);
     const violations = validateVersionSnapshot(snapshot);
-    if (violations.length) return { published: false as const, violations };
+    // 只拦自相矛盾的配置；「还没配完」的提示留在 warnings 里，不挡发布。
+    const blockers = violations.filter((violation) => violation.severity !== "WARN");
+    const warnings = violations.filter((violation) => violation.severity === "WARN");
+    if (blockers.length) return { published: false as const, violations: blockers };
 
     const store = getGraphStore(target);
     const { atomicReplace } = store.info.capabilities;
@@ -82,6 +85,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       relationshipCount: snapshot.relationships.length,
       strongRulesEnforced: canEnforceRequired,
       atomicReplace,
+      warnings,
     };
   });
 }

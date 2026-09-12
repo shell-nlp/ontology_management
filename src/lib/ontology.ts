@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LEGACY_PRIMARY_SOURCE_ID } from "@/lib/ontology-sources";
 
 /**
  * 本体定义（类 / 关系类型 / 属性规则 / 动作 / 规则）。
@@ -21,23 +22,45 @@ const propertySchema = z.object({
   indexed: z.boolean().default(false),
   /** 这个属性的值来自数据源里的哪一列；缺省或空表示还没映射（老快照里没有这一项）。 */
   sourceField: z.string().trim().max(200).optional(),
+  /**
+   * 这个属性取自哪一份来源（`entityTypes[].sources[].id`）。
+   * 空表示主来源；加多来源之前的老快照没有这一项，读出来也按主来源算。
+   */
+  sourceId: z.string().trim().max(64).optional(),
 });
 
 /**
- * 类的数据来源：一个类对应数据资源里的一张表或视图，属性按列映射。
+ * 类的一份数据来源：一张表或视图，属性按列映射。
  * 对象不单独绑表 —— 一个对象就是这张表里的一行，所以绑定写在类上。
- * 空 dataSourceId 表示这个类还没接来源（纯建模也能用）。
+ * 空 dataSourceId 表示这份来源还没接上（纯建模也能用）。
  */
 export const entitySourceSchema = z.object({
+  /** 这份来源在类里的标识：属性映射靠它指回来。只在本类内有意义，不是数据库对象。 */
+  id: z.string().trim().min(1).max(64),
   dataSourceId: z.union([z.string().uuid(), z.literal("")]).default(""),
   /** 表/视图所在的容器：PG 的模式、Oracle 的模式；MySQL 留空。 */
   schema: z.string().trim().max(200).default(""),
   view: z.string().trim().max(200).default(""),
-  /** 对象身份取这几列，支持复合主键。 */
+  /**
+   * 主来源：对象身份取这几列，支持复合主键；
+   * 补充来源：这几列按顺序和主来源的主键列一一对齐，就是连接条件。
+   */
   primaryKey: z.array(z.string().trim().max(200)).default([]),
-  /** 对象标题取这一列，等价于 Palantir 的 title property。 */
+  /** 对象标题取这一列，等价于 Palantir 的 title property；只有主来源用得上。 */
   titleField: z.string().trim().max(200).default(""),
 });
+
+/** 加多来源之前的老绑定：一个类只有一份来源，读进来当成主来源。 */
+const legacyEntitySourceSchema = entitySourceSchema.omit({ id: true });
+
+/**
+ * 一个类的数据来源清单，也就是 Palantir 的多来源对象类型（column-wise MDO）。
+ *
+ * `sources[0]` 是主来源：对象的身份（主键）和标题由它决定；
+ * 后面的每份补充来源都按主键逐列对齐连接过去，只往对象上补属性。
+ * 只做建模、还没接数据的类可以一份来源都不挂。
+ */
+export const entitySourcesSchema = z.array(entitySourceSchema).default([]);
 
 /** 动作参数：指向一个已有对象（ENTITY_REF），或者一个字面量（VALUE）。 */
 export const actionParameterSchema = z.object({
@@ -150,7 +173,13 @@ export const ontologyDefinitionSchema = z.object({
     description: z.string().max(500).default(""),
     displayProperty: z.string().max(120).optional().default(""),
     properties: z.array(propertySchema).default([]),
-    source: entitySourceSchema.default({ dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" }),
+    sources: entitySourcesSchema,
+    /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
+    source: legacyEntitySourceSchema.optional(),
+  }).transform(({ source, ...entity }) => {
+    if (entity.sources.length || !source) return entity;
+    const bound = Boolean(source.dataSourceId || source.view || source.primaryKey.length || source.titleField);
+    return { ...entity, sources: bound ? [{ ...source, id: LEGACY_PRIMARY_SOURCE_ID }] : [] };
   })).default([]),
   relationshipTypes: z.array(z.object({
     id: z.string().uuid(),
@@ -164,3 +193,6 @@ export const ontologyDefinitionSchema = z.object({
 });
 
 export type OntologyDefinition = z.infer<typeof ontologyDefinitionSchema>;
+
+export type EntitySource = z.infer<typeof entitySourceSchema>;
+

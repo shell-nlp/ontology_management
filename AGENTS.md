@@ -37,11 +37,22 @@
 | G3 | Jena 读路径请求数 | `hydrateNodes` / `readEdges` 每 200 个主语一次往返，大子图多轮请求 | 调大批次或改为一次 `CONSTRUCT` / 大 `VALUES` 取子图 |
 | G4 | 新增后端的契约测试模板 | 目前只有 ADR 0017 的文字说明；Jena 有单测，但没有通用的适配器契约用例 | 抽出契约测试（连接、读写、导出、原子替换、失败后图不变），新后端按模板补齐 |
 
+### 本体核心模型
+
+记录时间：2026-09-12。对照的是 Palantir Ontology 的 object type / object 关系：
+object type 是 schema 定义（属性、主键、标题、backing datasource），object 是它的一个实例，
+对象身份是 (object type, primary key)，用户的编辑、对象间的链接、权限都挂在这个身份上。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`neo4j.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
+| M2 | 接口（interfaces） | 完全没有 | Palantir 用接口表达共享能力与多继承：接口是抽象的、不能被直接实例化，object type 实现接口后按接口被消费，链接与动作也能定义在接口上。工作量在定义层语义（接口定义、类实现、属性/链接/动作的继承与覆盖）加图库落地方式，建议先出 ADR 再实现。参考 https://palantir.com/docs/foundry/interfaces/interface-overview/ |
+
 ### 数据资源
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| D1 | 用数据源实例化对象 | 类可以绑到表（`entityTypes[].source`），但不会把表里的行读成对象 | 按主键去重、按属性映射填值，先把行读成只读对象；写入另算（Palantir 也是写 user edits 层，不回写源表） |
+| D1 | 用数据源实例化对象 | 类可以绑到表（`entityTypes[].sources`，多来源已支持按主键合并），但不会把表里的行读成对象 | 按主键去重、按属性映射填值，先把行读成只读对象；写入另算（Palantir 也是写 user edits 层，不回写源表）。依赖 M1 先把对象身份定下来 |
 | D2 | 关系类型的数据来源 | 只有类有来源，关系还得手工连 | 参照 Palantir 的 link type backing dataset：用两张表的外键列关联，或绑定中间表 |
 | D3 | 连接池与超时 | 结构清单已有 60 秒 TTL 缓存（命中不建连接），但**建连接本身**仍是每次操作 `new DataSource()` + `initialize()` + `destroy()`：试连 ~400ms、点一张表 ~500ms 基本都是这部分开销。2026-09-12 出现过一次 dev server 直接退出（exit 3221225477 / 0xC0000005，崩前最后一条日志是 `POST /data-sources/:id/test 200`），重启后连续 16 次试连 + 2 次 HMR 未复现 | 按来源把连接池缓存到 `globalThis` 复用（凭据/host 变了再重建），加连接超时与并发上限，`options` 里暴露只读开关；顺带把 Oracle 的原生状态也放到 `globalThis` |
 | D4 | 非关系来源接入 | `PLANNED_DATA_SOURCES` 只列了 ES / REST / 文件，界面归到「规划中」 | 在 `openDataSourceConnector` 里分流到新实现，实现 `DataSourceConnector` 的四个方法即可 |

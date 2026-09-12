@@ -147,8 +147,45 @@
 .ted-chip input { width: 0; height: 0; margin: 0; opacity: 0; position: absolute; }
 .ted-chip:hover { border-color: #9bb9eb; }
 .ted-chip.active { color: #1d4ed8; background: #eef4ff; border-color: #b9d0ff; }
+.ted-chip.stored { border-style: dashed; }
 .ted-chip svg { color: #b45309; }
 .ted-maps { display: flex; flex-direction: column; gap: 3px; max-height: 168px; overflow: auto; padding: 7px; background: #fbfcfd; border: 1px solid #e3e8e7; }
 .ted-map { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: center; gap: 8px; }
 .ted-map b { font-size: 11.5px; font-weight: 600; color: #47605f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ted-map .ted-select { height: 28px; font-size: 11.5px; }
+
+/* 多份来源：左边一条竖脊把主来源和补充来源串起来，连接键画在对位上。 */
+.ted-source-empty { display: grid; gap: 9px; justify-items: start; padding: 11px 12px; border: 1px dashed var(--ted-line-strong); background: #fbfcfe; }
+.ted-source-empty p { margin: 0; color: var(--ted-muted); font-size: 11.5px; line-height: 1.6; }
+.ted-sources { display: grid; gap: 8px; }
+.ted-source-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); padding: 10px 11px 10px 0; border: 1px solid var(--ted-line); background: #fbfcfe; }
+.ted-source-card[data-primary="true"] { background: #fff; border-color: var(--ted-line-strong); }
+.ted-source-rail { position: relative; display: grid; align-content: start; justify-items: center; gap: 3px; }
+.ted-source-rail::before { content: ""; position: absolute; top: 16px; bottom: -14px; width: 1px; background: #d8e2f0; }
+.ted-source-card:last-of-type .ted-source-rail::before { display: none; }
+.ted-source-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: #c3ccda; box-shadow: 0 0 0 4px #f1f5fb; }
+.ted-source-card[data-primary="true"] .ted-source-dot { background: #1d4ed8; box-shadow: 0 0 0 4px #e8effb; }
+.ted-source-rail em { color: var(--ted-soft); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9px; font-style: normal; }
+.ted-source-body { display: grid; gap: 9px; min-width: 0; }
+.ted-source-head { display: flex; align-items: baseline; gap: 8px; }
+.ted-source-head b { color: #1f3557; font-size: 12px; font-weight: 700; }
+.ted-source-head span { flex: 1; min-width: 0; color: var(--ted-soft); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ted-source-head .ted-icon-button { align-self: center; }
+.ted-add-source { justify-self: start; }
+.ted-key-map { display: grid; gap: 4px; padding: 7px; background: #fff; border: 1px solid #e3e8e7; }
+.ted-key-row { display: grid; grid-template-columns: minmax(0, auto) 16px minmax(0, 1fr); align-items: center; gap: 6px; }
+.ted-key-row code { padding: 3px 6px; color: #1f3557; background: #f2f5fa; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ted-key-row svg { color: #9aa8bb; }
+.ted-key-row .ted-select { height: 30px; font-size: 11.5px; }
+.ted-map-source { grid-template-columns: minmax(0, .85fr) minmax(0, .95fr) minmax(0, 1fr); }
+.ted-source-issues { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.ted-source-issues li { display: flex; align-items: flex-start; gap: 6px; padding: 7px 9px; color: #a04a3a; background: #fdf3f1; border: 1px solid #f3d5ce; font-size: 11.5px; line-height: 1.55; }
+.ted-source-issues li[data-warn="true"] { color: #8a6100; background: #fff8ec; border-color: #fbe3bd; }
+.ted-source-issues svg { flex: none; margin-top: 2px; }
+.ted-preview-sources { display: grid; gap: 4px; padding: 9px 10px; background: #fff; border: 1px solid var(--ted-line); }
+.ted-preview-sources em { color: var(--ted-soft); font-size: 9.5px; font-style: normal; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; }
+.ted-preview-sources > span { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 2px 8px; align-items: baseline; }
+.ted-preview-sources code { color: #1d4ed8; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.ted-preview-sources b { color: #1f3557; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ted-preview-sources i { grid-column: 2; color: var(--ted-soft); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .ted-map-source { grid-template-columns: minmax(0, 1fr); } }

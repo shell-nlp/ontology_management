@@ -12,8 +12,8 @@ function validSnapshot(): VersionSnapshot {
   return {
     definition: {
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", properties: [{ name: "名称", dataType: "TEXT", required: true, unique: true, indexed: false }], source: { dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" } },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], source: { dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" } },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", properties: [{ name: "名称", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
