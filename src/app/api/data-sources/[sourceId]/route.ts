@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { encryptSecret } from "@/lib/crypto";
 import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
@@ -13,7 +13,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ so
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
     return NextResponse.json(publicDataSource(source));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取数据资源。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取数据资源。") }, { status: 400 });
   }
 }
 
@@ -49,8 +49,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ s
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_UPDATED", details: { dataSourceId: sourceId, name: next.name, kind: next.kind, enabled: next.enabled } });
     return NextResponse.json(publicDataSource({ ...current, ...next }));
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法更新数据资源。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法更新数据资源。") }, { status });
   }
 }
 
@@ -65,7 +65,7 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
     await platformQuery(`DELETE FROM ontology_platform.data_sources WHERE id = $1`, [sourceId]);
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法删除数据资源。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除数据资源。") }, { status });
   }
 }

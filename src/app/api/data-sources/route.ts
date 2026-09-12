@@ -3,7 +3,7 @@ import { encryptSecret } from "@/lib/crypto";
 import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { listDataSources, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET() {
@@ -12,7 +12,7 @@ export async function GET() {
     const sources = await listDataSources();
     return NextResponse.json(sources.map(publicDataSource));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取数据资源。" }, { status: 401 });
+    return NextResponse.json({ error: isUnauthorized(error) ? "未授权。" : "无法读取数据资源。" }, { status: 401 });
   }
 }
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_CREATED", details: { dataSourceId: record.id, name: record.name, kind: record.kind, host: record.host, databaseName: record.database_name } });
     return NextResponse.json(publicDataSource(record), { status: 201 });
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建数据资源。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建数据资源。") }, { status });
   }
 }

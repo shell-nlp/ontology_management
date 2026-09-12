@@ -172,6 +172,11 @@ export const ontologyDefinitionSchema = z.object({
     name: z.string().trim().min(1).max(100),
     description: z.string().max(500).default(""),
     displayProperty: z.string().max(120).optional().default(""),
+    /**
+     * 父类：这个类继承谁。可填多个（多继承），用来表达「专线产品用户也是一种用户」。
+     * 空数组表示这个类还没有层级（加字段之前的老快照读出来也是空数组）。
+     */
+    parents: z.array(z.string().uuid()).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
@@ -195,4 +200,3 @@ export const ontologyDefinitionSchema = z.object({
 export type OntologyDefinition = z.infer<typeof ontologyDefinitionSchema>;
 
 export type EntitySource = z.infer<typeof entitySourceSchema>;
-

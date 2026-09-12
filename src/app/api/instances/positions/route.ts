@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { ensureVersionSnapshot, updateSnapshotPositions } from "@/lib/version-snapshot";
@@ -22,6 +22,6 @@ export async function PUT(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_POSITIONS_UPDATED", details: { versionId: input.versionId, count: updated } });
     return NextResponse.json({ updated });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法保存节点位置。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法保存节点位置。") }, { status: 400 });
   }
 }

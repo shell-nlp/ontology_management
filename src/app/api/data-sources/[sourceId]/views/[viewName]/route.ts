@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getDataSource, openDataSource } from "@/lib/data-sources";
 
 /** 一个表/视图的字段清单与若干行预览；两条都只读，不改来源里的任何数据。 */
@@ -20,6 +20,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
     ]);
     return NextResponse.json({ fields, preview });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取表结构。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取表结构。") }, { status: 400 });
   }
 }

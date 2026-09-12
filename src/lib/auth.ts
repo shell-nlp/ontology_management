@@ -2,6 +2,27 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { platformQuery, type PlatformUser, type Role } from "@/lib/platform-db";
 
+/** 会话失效的哨兵值：路由用它判断状态码，不要把它当消息回给用户。 */
+const UNAUTHORIZED = "UNAUTHORIZED";
+
+export const AUTH_EXPIRED_MESSAGE = "登录已过期，请刷新页面重新登录。";
+
+export function isUnauthorized(error: unknown) {
+  return error instanceof Error && error.message === UNAUTHORIZED;
+}
+
+/** 服务端把异常转成给用户看的一句话：会话过期不外泄错误码，其余如实透出。 */
+export function apiErrorMessage(error: unknown, fallback: string) {
+  if (isUnauthorized(error)) return AUTH_EXPIRED_MESSAGE;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
+/** 会话失效一律 401，其余按业务错误走调用方给的状态码。 */
+export function apiErrorStatus(error: unknown, fallback = 400) {
+  return isUnauthorized(error) ? 401 : fallback;
+}
+
 const SESSION_COOKIE = "ontology_session";
 
 function secret() {
@@ -33,7 +54,7 @@ export async function currentUser() {
 
 export async function requireRole(role: Role) {
   const user = await currentUser();
-  if (!user || (role === "ADMIN" && user.role !== "ADMIN")) throw new Error("UNAUTHORIZED");
+  if (!user || (role === "ADMIN" && user.role !== "ADMIN")) throw new Error(UNAUTHORIZED);
   return user;
 }
 

@@ -12,8 +12,8 @@ function validSnapshot(): VersionSnapshot {
   return {
     definition: {
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", properties: [{ name: "名称", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", parents: [], properties: [{ name: "名称", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", parents: [], properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
@@ -49,7 +49,7 @@ describe("version snapshot", () => {
     snapshot.relationships.push({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sourceId: customerId, targetId: orderId, type: "不存在", properties: {} });
     const messages = validateVersionSnapshot(snapshot).map((violation) => violation.message);
     expect(messages).toContain("唯一属性存在重复值。");
-    expect(messages).toContain("关系端点不符合草稿中的类契约。");
+    expect(messages).toContain("关系端点不符合草稿中的对象类型契约。");
     expect(messages).toContain("关系使用了草稿中不存在的关系类型。");
   });
 

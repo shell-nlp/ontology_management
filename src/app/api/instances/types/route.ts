@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { getGraphStore } from "@/lib/graph";
 import { ensureVersionSnapshot, runtimeTypesFromSnapshot } from "@/lib/version-snapshot";
@@ -16,6 +16,6 @@ export async function GET(request: NextRequest) {
     const types = await getGraphStore(target).readRuntimeTypes();
     return NextResponse.json(types);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取运行时类型。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取运行时类型。") }, { status: 400 });
   }
 }

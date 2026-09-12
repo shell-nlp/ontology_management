@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getDataSource, openDataSource } from "@/lib/data-sources";
 
 /** 试连：只做一次连接与版本探测，不读业务数据。 */
@@ -15,6 +15,6 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ s
     const health = await connector.test();
     return NextResponse.json({ ...health, kind: source.kind });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "连接失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: 400 });
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { isUnauthorized, requireRole } from "@/lib/auth";
 import { getObjectIndex } from "@/lib/object-index";
 import { getTarget } from "@/lib/targets";
 
@@ -21,7 +21,7 @@ const searchSchema = z.object({
 });
 
 function fail(error: unknown, fallback: string) {
-  const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+  const unauthorized = isUnauthorized(error);
   const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? fallback) : error instanceof Error ? error.message : fallback;
   return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { deleteTargetVersions } from "@/lib/version-snapshot";
@@ -20,7 +20,7 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
     });
     return NextResponse.json({ reset: true, deletedVersions });
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "初始化失败。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "初始化失败。") }, { status });
   }
 }

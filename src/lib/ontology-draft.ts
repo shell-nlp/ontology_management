@@ -17,6 +17,8 @@ export type EntityType = {
   name: string;
   description: string;
   displayProperty?: string;
+  /** 父类：这个类继承谁；多继承就填多个。缺省表示还没有层级。 */
+  parents?: string[];
   properties: Property[];
   /** sources[0] 是主来源，决定对象身份与标题；后面的是按主键补充属性的来源。 */
   sources?: EntitySource[];

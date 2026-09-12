@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { currentUser } from "@/lib/auth";
+import { apiErrorMessage, currentUser } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -35,6 +35,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "GRAPH_QUERY_READ", details: { language: store.info.queryLanguage, query: statement } });
     return NextResponse.json({ ...result, mode: "READ", queryLanguage: store.info.queryLanguage });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "查询执行失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "查询执行失败。") }, { status: 400 });
   }
 }

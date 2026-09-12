@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     return NextResponse.json(await listVersionRecords(targetId));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取本体版本。" }, { status: 401 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体版本。") }, { status: 401 });
   }
 }
 
@@ -46,6 +46,6 @@ export async function POST(request: NextRequest) {
       }
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建本体草稿。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建本体草稿。") }, { status: 400 });
   }
 }

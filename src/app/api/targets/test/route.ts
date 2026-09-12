@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { isUnauthorized, requireRole } from "@/lib/auth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTarget, GraphTargetKind } from "@/lib/graph/types";
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const info = await getGraphStore(draft).testConnection();
     return NextResponse.json(info);
   } catch (error) {
-    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+    const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
 }

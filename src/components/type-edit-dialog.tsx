@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, Check, CircleDot, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, CircleDot, CornerDownRight, Database, KeyRound, Layers, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { ancestorsOf, inheritedPropertiesOf, indexNodes, selectableParentsOf, type HierarchyNode } from "@/lib/class-hierarchy";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import {
@@ -25,6 +26,8 @@ export type TypeEditPayload = {
   name: string;
   description?: string;
   displayProperty?: string;
+  /** 父类 id 列表；只有类带这一项。 */
+  parents?: string[];
   sourceEntityTypeId?: string;
   targetEntityTypeId?: string;
   properties: Property[];
@@ -53,6 +56,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
   const [description, setDescription] = useState(entity?.description ?? "");
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
+  const [parents, setParents] = useState<string[]>(kind === "entity" ? entity?.parents ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
   const [target, setTarget] = useState(relation?.targetEntityTypeId ?? "");
   const [properties, setProperties] = useState<Property[]>(kind === "entity" ? entity?.properties ?? [] : relation?.properties ?? []);
@@ -63,7 +67,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [propDraft, setPropDraft] = useState<Property | null>(null);
   const [localError, setLocalError] = useState("");
   const [busy, setBusy] = useState(false);
-  // 数据来源：只有类有这一块。第 0 份是主来源，其余是按主键补充属性的来源。
+  // 数据来源：只有对象类型有这一块。第 0 份是主来源，其余是按主键补充属性的来源。
   const [dataSources, setDataSources] = useState<PublicDataSource[]>([]);
   const [sourceDrafts, setSourceDrafts] = useState<EntitySource[]>(() => (kind === "entity" ? entitySources(entity) : []));
   const [fieldsBySource, setFieldsBySource] = useState<Record<string, { key: string; fields: DataViewField[] }>>({});
@@ -83,7 +87,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     return entry && entry.key === sourceFieldsKey(source) ? entry.fields : [];
   };
 
-  const noun = kind === "entity" ? "类" : "关系类型";
+  const noun = kind === "entity" ? "对象类型" : "关系类型";
   const title = mode === "create" ? `新增${noun}` : `编辑${noun}`;
   const trimmedName = name.trim();
   const named = trimmedName.length > 0;
@@ -101,8 +105,28 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
       ? item.primaryKey.map((column) => column.trim()).filter(Boolean)
       : primaryKeyColumns.map((_, position) => (item.primaryKey[position] ?? "").trim()),
   }));
-  const sourceIssues = kind === "entity" ? validateEntitySources({ name: trimmedName || "未命名类", sources: normalizedSources, properties }) : [];
+  const sourceIssues = kind === "entity" ? validateEntitySources({ name: trimmedName || "未命名对象类型", sources: normalizedSources, properties }) : [];
   const mappedCount = properties.filter((property) => property.sourceField).length;
+
+  /**
+   * 类层级：父类 → 祖先 → 继承来的属性。
+   *
+   * 这里把「正在编辑的这一个」本身也放进节点表，所以预览反映的是**还没保存**的改动：
+   * 勾上一个父类，右边立刻能看到它带来了哪些属性。全程纯计算——类只有几十个，
+   * 随手算，不碰网络也不碰图库。
+   */
+  // 这几步刻意不 memo：对象类型只有几十个，重算一次比维护一份可能过期的缓存更省心，
+  // 而且草稿正处在编辑中，缓存反而容易落后于输入。
+  const selfId = entity?.id ?? "__draft__";
+  const selfNode: HierarchyNode = { id: selfId, name: trimmedName || "新对象类型", parents, properties };
+  const hierarchyNodes: HierarchyNode[] = kind === "entity"
+    ? [selfNode, ...entityTypes.filter((item) => item.id !== selfId).map((item) => ({ id: item.id, name: item.name, parents: item.parents, properties: item.properties }))]
+    : [];
+  const hierarchyById = indexNodes(hierarchyNodes);
+  const ancestorNames = ancestorsOf(selfId, hierarchyById).map((id) => hierarchyById.get(id)?.name ?? id);
+  const inheritedProperties = inheritedPropertiesOf(selfNode, hierarchyById);
+  const parentCandidates = kind === "entity" ? selectableParentsOf(selfNode, hierarchyNodes) : [];
+  const toggleParent = (id: string) => setParents((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
 
   // 已登记的数据资源：只取一次，用来填下拉。
   useEffect(() => {
@@ -222,7 +246,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     setBusy(true);
     try {
       await onSave(kind === "entity"
-        ? { name, description, displayProperty, properties, sources: normalizedSources }
+        ? { name, description, displayProperty, parents, properties, sources: normalizedSources }
         : { name, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
       onClose();
     } finally {
@@ -260,11 +284,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   <label className="ted-field">
                     <span>名称</span>
                     <input className="ted-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required />
-                    <small>类在画布上的标题，也是它取色的依据。</small>
+                    <small>对象类型的名称，也是它在画布上的标题和取色依据。</small>
                   </label>
                   <label className="ted-field">
                     <span>说明</span>
-                    <input className="ted-input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类代表什么" />
+                    <input className="ted-input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个对象类型代表什么" />
                     <small>写给同事看的业务含义，可留空。</small>
                   </label>
                 </div>
@@ -276,6 +300,23 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   </select>
                   <small>节点上显示哪条属性；在本体草稿页「复制显示样式」可导出对应的 Neo4j Browser caption 规则。</small>
                 </label>
+                <div className="ted-field">
+                  <span><Layers size={12} />父类（继承）</span>
+                  {parentCandidates.length > 0 ? (
+                    <div className="ted-source-picker">
+                      {parentCandidates.map((candidate) => (
+                        <label key={candidate.id} className={parents.includes(candidate.id) ? "ted-chip active" : "ted-chip"}>
+                          <input type="checkbox" checked={parents.includes(candidate.id)} onChange={() => toggleParent(candidate.id)} />
+                          {candidate.name}
+                        </label>
+                      ))}
+                    </div>
+                  ) : <p className="ted-props-empty">草稿里还没有别的类，先把父类建出来再回来勾。</p>}
+                  {ancestorNames.length > 0 && (
+                    <p className="ted-inherit"><CornerDownRight size={12} />也属于：{ancestorNames.join("、")}</p>
+                  )}
+                  <small>勾上父类，子类就自动拥有父类的属性。比如「专线产品用户」勾上「用户」，就不必再单独建一条「包含」关系。</small>
+                </div>
               </>
             ) : (
               <>
@@ -283,7 +324,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   <label className="ted-field">
                     <span>名称</span>
                     <input className="ted-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：负责" required />
-                    <small>画布上这条连线标注的关系名。</small>
+                    <small>画布上这条连线标注的关系类型名。</small>
                   </label>
                   <div className="ted-field">
                     <span>方向</span>
@@ -297,16 +338,16 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 </div>
                 <div className="ted-grid-2">
                   <label className="ted-field">
-                    <span>起始类</span>
+                    <span>起始对象类型</span>
                     <select className="ted-select" value={source} onChange={(event) => setSource(event.target.value)} required>
-                      <option value="">选择类型</option>
+                      <option value="">选择对象类型</option>
                       {entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
                     </select>
                   </label>
                   <label className="ted-field">
-                    <span>终止类</span>
+                    <span>终止对象类型</span>
                     <select className="ted-select" value={target} onChange={(event) => setTarget(event.target.value)} required>
-                      <option value="">选择类型</option>
+                      <option value="">选择对象类型</option>
                       {entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
                     </select>
                   </label>
@@ -316,7 +357,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
 
             <section className="ted-section">
               <div className="ted-section-head">
-                <h3>{kind === "entity" ? "属性" : "关系属性"}</h3>
+                <h3>{kind === "entity" ? "属性" : "关系类型属性"}</h3>
                 <em>{properties.length ? `${properties.length} 条` : "空"}</em>
               </div>
               {properties.length > 0 ? (
@@ -371,8 +412,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 {sourceDrafts.length === 0 ? (
                   <div className="ted-source-empty">
                     <p>{dataSources.length
-                      ? "这个类还没接数据。一个类可以从多张表拼出来：主来源定对象身份，其余来源按主键补充属性。"
-                      : "还没有数据资源。先去左侧「数据资源」页登记一个数据库连接，再回来把类绑到表上。"}</p>
+                      ? "这个对象类型还没接数据。一个对象类型可以从多张表拼出来：主来源定对象身份，其余来源按主键补充属性。"
+                      : "还没有数据资源。先去左侧「数据资源」页登记一个数据库连接，再回来把对象类型绑到表上。"}</p>
                     <button type="button" className="ted-add-button" disabled={!dataSources.length} onClick={addSource}><Plus size={13} />绑定数据来源</button>
                   </div>
                 ) : (
@@ -443,7 +484,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
           <aside className="ted-preview">
             <div className="ted-preview-head">
               <b>画布预览</b>
-              <span>{kind === "entity" ? "保存后，它就以这颗圆点出现在本体草稿画布上。" : "保存后，它就以这条连线出现在两个类之间。"}</span>
+              <span>{kind === "entity" ? "保存后，它就以这颗圆点出现在本体草稿画布上。" : "保存后，它就以这条连线出现在两个对象类型之间。"}</span>
             </div>
             <div className="ted-stage">
               {kind === "entity" ? (
@@ -488,10 +529,24 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   <code>{prop.required ? `${prop.dataType} · 必填` : prop.dataType}</code>
                 </span>
               ))}
-              {properties.length === 0 && <span className="ted-preview-empty">{kind === "entity" ? "还没有属性" : "这条关系没有额外属性"}</span>}
+              {properties.length === 0 && inheritedProperties.length === 0 && <span className="ted-preview-empty">{kind === "entity" ? "还没有属性" : "这条关系类型没有额外属性"}</span>}
             </div>
             {properties.length > previewProperties.length && <p className="ted-preview-more">还有 {properties.length - previewProperties.length} 条属性未列出</p>}
-            <p className="ted-note">画布按类型名取色：名字改了，这里的颜色和画布上的圆点一起变。</p>
+            {kind === "entity" && inheritedProperties.length > 0 && (
+              <div className="ted-inherit-list">
+                <em>从父类继承</em>
+                {inheritedProperties.slice(0, 6).map(({ property, from }) => (
+                  <span key={property.name}>
+                    <CornerDownRight size={11} />
+                    <b>{property.name}</b>
+                    <i>来自 {from}</i>
+                    <code>{property.dataType}</code>
+                  </span>
+                ))}
+                {inheritedProperties.length > 6 && <p className="ted-preview-more">还有 {inheritedProperties.length - 6} 条继承属性未列出</p>}
+              </div>
+            )}
+            <p className="ted-note">画布按对象类型名取色：名字改了，这里的颜色和画布上的圆点一起变。</p>
           </aside>
         </div>
 

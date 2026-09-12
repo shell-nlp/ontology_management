@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { listAuditEntries } from "@/lib/platform-db";
 import { getVersionRecord } from "@/lib/version-snapshot";
 
@@ -21,6 +21,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
     });
     return NextResponse.json({ entries });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取决策记录。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取决策记录。") }, { status: 400 });
   }
 }

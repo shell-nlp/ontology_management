@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { getObjectIndex } from "@/lib/object-index";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
@@ -55,8 +55,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const updated = await getTarget(targetId);
     return NextResponse.json(publicTarget(updated!));
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法更新本体存储。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法更新本体存储。") }, { status });
   }
 }
 
@@ -80,12 +80,12 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
         // 本体存储这一行已经删了，审计只能挂空 targetId，把 id 放进 details 里。
         targetId: undefined,
         action: "TARGET_INDEX_CLEANUP_FAILED",
-        details: { targetId, name: target.name, error: error instanceof Error ? error.message : "未知错误" },
+        details: { targetId, name: target.name, error: apiErrorMessage(error, "未知错误") },
       });
     }
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法删除本体存储。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体存储。") }, { status });
   }
 }

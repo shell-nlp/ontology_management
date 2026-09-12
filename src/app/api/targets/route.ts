@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetConflict, findTargetConflict, listTargets, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
@@ -26,7 +26,7 @@ export async function GET() {
     const targets = await listTargets();
     return NextResponse.json(targets.map(publicTarget));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取本体存储。" }, { status: 401 });
+    return NextResponse.json({ error: isUnauthorized(error) ? "未授权。" : "无法读取本体存储。" }, { status: 401 });
   }
 }
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "TARGET_CREATED", details: { name: target.name, kind: target.kind, uri: target.uri } });
     return NextResponse.json(publicTarget(target), { status: 201 });
   } catch (error) {
-    const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建本体存储。" }, { status });
+    const status = isUnauthorized(error) ? 401 : 400;
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建本体存储。") }, { status });
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getDataSource, openDataSource } from "@/lib/data-sources";
 
 /** 结构清单：这个来源里有哪些表和视图。 */
@@ -18,6 +18,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
     const views = await connector.listViews({ search, schema, limit, refresh });
     return NextResponse.json({ views, container: source.schema_name || source.database_name });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取结构清单。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取结构清单。") }, { status: 400 });
   }
 }

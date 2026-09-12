@@ -198,7 +198,7 @@ describe("动作引擎", () => {
 
   it("定义体检：动作没选作用的类会被报出来", () => {
     const violations = validateActionDefinition(definition({ studentQualified: false }));
-    expect(violations.some((item) => item.message.includes("需要选择作用的类"))).toBe(true);
+    expect(violations.some((item) => item.message.includes("需要选择作用的对象类型"))).toBe(true);
   });
 
   it("旧数据的「级别 + 闸门」读出来归一成处置", () => {

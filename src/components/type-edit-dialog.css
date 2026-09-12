@@ -107,6 +107,18 @@
 .ted-preview-props code { flex: none; color: #7186a4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
 .ted-preview-props > span.ted-preview-empty { display: block; border-style: dashed; color: var(--ted-soft); text-align: center; }
 .ted-preview-more { padding: 0 2px; color: var(--ted-soft); font-size: 10px; }
+
+/* 继承：父类带来的东西。左侧一条虚线脊把"派生出来的"和"本类自己写的"分开——
+   靠层级感说话，不靠再堆一个强调色。 */
+.ted-inherit { display: flex; align-items: center; gap: 5px; margin: 0; padding: 5px 8px; color: #1d4ed8; background: #f2f6ff; border: 1px solid #d8e4fb; border-radius: 3px; font-size: 10.5px; line-height: 1.5; }
+.ted-inherit svg { flex: none; color: #6d8ac9; }
+.ted-inherit-list { display: grid; gap: 5px; margin-left: 3px; padding-left: 10px; border-left: 1px dashed #c8d5ea; }
+.ted-inherit-list > em { color: var(--ted-soft); font-size: 9.5px; font-style: normal; font-weight: 700; letter-spacing: .6px; }
+.ted-inherit-list > span { display: flex; align-items: baseline; gap: 6px; color: #47605f; font-size: 11px; }
+.ted-inherit-list svg { flex: none; align-self: center; color: #9aa8bb; }
+.ted-inherit-list b { font-weight: 600; }
+.ted-inherit-list i { color: var(--ted-soft); font-size: 10px; font-style: normal; }
+.ted-inherit-list code { margin-left: auto; color: #7186a4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
 .ted-note { margin: 0; padding: 9px 10px; border-left: 2px solid #cbd9ed; background: #fff; color: var(--ted-muted); font-size: 10.5px; line-height: 1.55; }
 
 .ted-foot { display: flex; align-items: center; gap: 14px; padding: 13px 24px; border-top: 1px solid var(--ted-line); background: #fbfcfe; }

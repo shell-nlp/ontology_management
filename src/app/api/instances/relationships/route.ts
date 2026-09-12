@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     const rows = await getGraphStore(target).listRelationships({ type: type || null, search: search || null, limit });
     return NextResponse.json({ rows });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取关系。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系。") }, { status: 400 });
   }
 }
 
@@ -54,6 +54,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_CREATED", details: { versionId: input.versionId, relationshipId: relationship.id, relationshipType: relationship.type } });
     return NextResponse.json(relationship, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法创建关系。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建关系。") }, { status: 400 });
   }
 }

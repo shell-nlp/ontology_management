@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot, getVersionRecord, runSnapshotAction, visibleSnapshotActions } from "@/lib/version-snapshot";
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
     await ensureVersionSnapshot(versionId, target);
     return NextResponse.json({ actions: await visibleSnapshotActions(versionId, subjectEntityId) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取动作可见性。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取动作可见性。") }, { status: 400 });
   }
 }
 
@@ -83,6 +83,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ve
       applied,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "动作执行失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "动作执行失败。") }, { status: 400 });
   }
 }

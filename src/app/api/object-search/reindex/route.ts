@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { getObjectIndex } from "@/lib/object-index";
 import { buildIndexEntries } from "@/lib/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -49,8 +49,8 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ indexed, versionId: record.id, entityCount: snapshot.nodes.length, tookMs });
   } catch (error) {
-    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
-    const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : error instanceof Error ? error.message : "重建检索索引失败。";
+    const unauthorized = isUnauthorized(error);
+    const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "重建检索索引失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
 }

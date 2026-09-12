@@ -202,7 +202,7 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
   const scopeType = definition.entityTypes.find((item) => item.id === action.scopeEntityTypeId);
   let subject: ActionNode | undefined;
   if (action.scopeEntityTypeId) {
-    if (!scopeType) throw new Error("动作的作用的类不存在，请先在动作定义里重新选择。");
+    if (!scopeType) throw new Error("动作的作用对象类型不存在，请先在动作定义里重新选择。");
     if (!subjectEntityId) throw new Error(`动作「${action.name}」用在带「${scopeType.name}」标签的对象上，请先选择要执行的对象。`);
     subject = nodes.find((item) => item.id === subjectEntityId);
     if (!subject) throw new Error("要执行动作的对象不在当前草稿快照里。");
@@ -242,7 +242,7 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
   for (const edit of action.edits) {
     if (edit.op === "CREATE_ENTITY") {
       const type = definition.entityTypes.find((item) => item.id === edit.entityTypeId);
-      if (!type) throw new Error("动作要新建的类不存在。");
+      if (!type) throw new Error("动作要新建的对象类型不存在。");
       const node: ActionNode = { id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawFromAssignments(edit.assignments, params)) };
       nodes.push(node);
       if (edit.alias) refs.set(refKey("EDIT", edit.alias), node.id);
@@ -255,7 +255,7 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
       const node = nodeOf(id);
       if (!node) throw new Error("动作要修改的对象不存在。");
       const type = definition.entityTypes.find((item) => item.name === managedLabel(definition, node));
-      if (!type) throw new Error("动作要修改的对象没有对应的类。");
+      if (!type) throw new Error("动作要修改的对象没有对应的对象类型。");
       const raw = { ...node.properties, ...rawFromAssignments(edit.assignments, params) };
       node.properties = parsePropertyValues(type.properties, raw);
       const detail = edit.assignments.map((item) => `${item.property}=${rawFromAssignments([item], params)[item.property] ?? ""}`).join("、");
@@ -413,13 +413,13 @@ export function validateActionDefinition(definition: OntologyDefinition) {
 
   for (const action of definition.actionTypes) {
     const codes = new Set<string>();
-    if (!action.scopeEntityTypeId) push(`动作.${action.name}`, `动作「${action.name}」需要选择作用的类：动作定义在这个类上，也只能在这个类的对象上执行。`);
-    else if (!entityTypeById.has(action.scopeEntityTypeId)) push(`动作.${action.name}`, `动作「${action.name}」的作用的类不存在。`);
+    if (!action.scopeEntityTypeId) push(`动作.${action.name}`, `动作「${action.name}」需要选择作用的对象类型：动作定义在这个对象类型上，也只能在这个对象类型的对象上执行。`);
+    else if (!entityTypeById.has(action.scopeEntityTypeId)) push(`动作.${action.name}`, `动作「${action.name}」的作用对象类型不存在。`);
     for (const parameter of action.params) {
       if (codes.has(parameter.code)) push(`动作.${action.name}`, `动作「${action.name}」的参数标识「${parameter.code}」重复。`);
       codes.add(parameter.code);
       if (parameter.kind === "ENTITY_REF" && (!parameter.entityTypeId || !entityTypeById.has(parameter.entityTypeId))) {
-        push(`动作.${action.name}`, `动作「${action.name}」的参数「${parameter.name}」需要选择一个类。`);
+        push(`动作.${action.name}`, `动作「${action.name}」的参数「${parameter.name}」需要选择一个对象类型。`);
       }
     }
     const aliases = new Set<string>();
@@ -432,7 +432,7 @@ export function validateActionDefinition(definition: OntologyDefinition) {
     for (const edit of action.edits) {
       if (edit.op === "CREATE_ENTITY") {
         const type = entityTypeById.get(edit.entityTypeId);
-        if (!type) { push(`动作.${action.name}`, `动作「${action.name}」要新建的类不存在。`); continue; }
+        if (!type) { push(`动作.${action.name}`, `动作「${action.name}」要新建的对象类型不存在。`); continue; }
         if (!edit.alias) push(`动作.${action.name}`, `动作「${action.name}」新建「${type.name}」时需要填一个别名，后续步骤才能引用它。`);
         for (const assignment of edit.assignments) {
           if (!type.properties.some((property) => property.name === assignment.property)) push(`动作.${action.name}`, `动作「${action.name}」给「${type.name}」赋值的属性「${assignment.property}」不存在。`);

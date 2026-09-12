@@ -8,6 +8,7 @@ import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology-sources";
+import { validateClassHierarchy } from "@/lib/class-hierarchy";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
@@ -574,6 +575,8 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const violations: SnapshotViolation[] = [];
   // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
   for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
+  // 类层级同样只在定义里：父类是否存在、有没有绕成环、继承来的属性有没有打架。
+  violations.push(...validateClassHierarchy(snapshot.definition.entityTypes));
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
@@ -583,7 +586,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
-      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的类。", count: 1 });
+      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的对象类型。", count: 1 });
       continue;
     }
     const type = entityTypes.get(managed[0])!;
@@ -617,7 +620,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     const sourceType = entityTypesById.get(type.sourceEntityTypeId);
     const targetType = entityTypesById.get(type.targetEntityTypeId);
     if (!sourceType || !targetType || !source.labels.includes(sourceType.name) || !target.labels.includes(targetType.name)) {
-      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的类契约。", count: 1 });
+      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的对象类型契约。", count: 1 });
     }
     try { parsePropertyValues(type.properties, relationship.properties); } catch (error) {
       violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
@@ -680,7 +683,7 @@ export async function runSnapshotAction(versionId: string, actionId: string, inp
 export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
-    if (!type) throw new Error("类未在当前草稿中定义。");
+    if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawProperties) });
     snapshot.nodes.push(node);
     return entityFromSnapshot(node);
@@ -692,7 +695,7 @@ export async function updateSnapshotEntity(versionId: string, entityId: string, 
     const node = snapshot.nodes.find((item) => item.id === entityId);
     if (!node) return null;
     const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
-    if (!type) throw new Error("类未在当前草稿中定义。");
+    if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
     node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
     return entityFromSnapshot(node);

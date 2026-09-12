@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
@@ -20,6 +20,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
     await writeAuditEntry({ actorId: user.id, targetId: version.target_id, action: "VERSION_DEFINITION_UPDATED", details: { versionId } });
     return NextResponse.json({ saved: true, definition: savedDefinition });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "保存草稿失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "保存草稿失败。") }, { status: 400 });
   }
 }

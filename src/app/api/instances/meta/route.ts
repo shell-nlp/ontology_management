@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot } from "@/lib/version-snapshot";
@@ -22,6 +22,6 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json(await getGraphStore(target).readMeta());
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法读取 Schema 元数据。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取 Schema 元数据。") }, { status: 400 });
   }
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { isUnauthorized, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 
@@ -12,6 +12,6 @@ export async function GET(_: Request, context: { params: Promise<{ targetId: str
     const result = await getGraphStore(target).readSchemaGraph();
     return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取运行时 Schema。" }, { status: 500 });
+    return NextResponse.json({ error: isUnauthorized(error) ? "未授权。" : "无法读取运行时 Schema。" }, { status: 500 });
   }
 }

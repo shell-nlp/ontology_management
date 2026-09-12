@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { isUnauthorized, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTargetKind } from "@/lib/graph/types";
 import { describeTargetError, getTarget } from "@/lib/targets";
@@ -16,7 +16,7 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
     const info = await getGraphStore(target).testConnection();
     return NextResponse.json(info);
   } catch (error) {
-    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+    const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
 }

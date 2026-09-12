@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/version-snapshot";
 import { getTarget } from "@/lib/targets";
 
@@ -17,6 +17,6 @@ export async function POST(_: Request, context: { params: Promise<{ versionId: s
     const warnings = violations.filter((violation) => violation.severity === "WARN");
     return NextResponse.json({ valid: blockers.length === 0, violations: blockers, warnings });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "本体校验失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "本体校验失败。") }, { status: 400 });
   }
 }

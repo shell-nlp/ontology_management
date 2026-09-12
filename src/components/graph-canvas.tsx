@@ -606,7 +606,7 @@ export function GraphCanvas({
           <div className="graph-inspector-body">
             <div className="graph-inspector-head"><div><span style={{ background: "#7a8f8c" }} />{viewMode === "ontology" ? "关系类型" : "关系事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
             <h3>{selectedEdge.type}</h3>
-            <p>{viewMode === "ontology" ? <><span>起点类</span> {ontologySource?.name ?? (graphSource ? graphLabel(graphSource) : "未定义")}<br /><span>终点类</span> {ontologyTarget?.name ?? (graphTarget ? graphLabel(graphTarget) : "未定义")}</> : <><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</>}</p>
+            <p>{viewMode === "ontology" ? <><span>起点对象类型</span> {ontologySource?.name ?? (graphSource ? graphLabel(graphSource) : "未定义")}<br /><span>终点对象类型</span> {ontologyTarget?.name ?? (graphTarget ? graphLabel(graphTarget) : "未定义")}</> : <><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</>}</p>
             {viewMode !== "ontology" && <code className="graph-element-id">{selectedEdge.id}</code>}
             {viewMode === "ontology" ? (
               ontologyRelationship ? <><p className="ontology-property-title">属性定义（{ontologyRelationship.properties.length}）</p><OntologyPropertyList properties={ontologyRelationship.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该关系类型的属性。</p>
@@ -665,7 +665,7 @@ function RelationshipDialog({ typeOptions, definition, onClose, onCreate }: { ty
         <p>在已选择的两个节点之间创建一条关系。</p>
         <label>关系类型
           <select value={type} onChange={(event) => setType(event.target.value)} required>
-            <option value="">选择类型</option>
+            <option value="">选择对象类型</option>
             {typeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         </label>

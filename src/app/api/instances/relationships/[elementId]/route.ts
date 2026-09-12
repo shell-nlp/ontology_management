@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { deleteSnapshotRelationship, ensureVersionSnapshot, updateSnapshotRelationship } from "@/lib/version-snapshot";
@@ -30,8 +30,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_UPDATED", details: { versionId, relationshipId: elementId } });
     return NextResponse.json(updated);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "无法更新关系。";
-    return NextResponse.json({ error: message }, { status: message === "UNAUTHORIZED" ? 403 : 400 });
+    const message = apiErrorMessage(error, "无法更新关系。");
+    return NextResponse.json({ error: message }, { status: isUnauthorized(error) ? 401 : 400 });
   }
 }
 
@@ -49,6 +49,6 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_DELETED", details: { versionId, relationshipId: elementId } });
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "无法删除关系。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除关系。") }, { status: 400 });
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { openDataSourceConnector } from "@/lib/data-source";
 import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
 import { normalizeDataSourceKind } from "@/lib/data-sources";
@@ -33,6 +33,6 @@ export async function POST(request: NextRequest) {
     const health = await connector.test();
     return NextResponse.json({ ...health, kind });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "连接失败。" }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: 400 });
   }
 }

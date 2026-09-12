@@ -295,7 +295,7 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
     </div> : <div className="panel functional-panel drs-empty">
       <span className="drs-empty-marks">{DATA_SOURCE_KINDS.map((info) => <DataSourceMark key={info.kind} mark={info.mark} accent={info.accent} size={22} />)}</span>
       <b>还没有数据资源</b>
-      <span>数据资源是外部数据库的只读连接：先把库连上，再看里面有哪些表，最后把类的属性映射到表字段。点右上角「新建数据资源」开始。</span>
+      <span>数据资源是外部数据库的只读连接：先把库连上，再看里面有哪些表，最后把对象类型的属性映射到表字段。点右上角「新建数据资源」开始。</span>
     </div>}
 
     {creating && <DataSourceDialog onClose={() => setCreating(false)} onSaved={async (saved) => { setCreating(false); notify("数据资源已登记，凭据已加密保存。"); await load(saved.id); }} fail={fail} />}
@@ -444,7 +444,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   };
 
   const remove = async () => {
-    if (!window.confirm(`删除数据资源“${source.name}”？引用它的类绑定会失去来源，但库里的数据不会被动。`)) return;
+    if (!window.confirm(`删除数据资源“${source.name}”？引用它的对象类型绑定会失去来源，但库里的数据不会被动。`)) return;
     try {
       setBusy("delete");
       await api(`/api/data-sources/${source.id}`, { method: "DELETE" });

@@ -108,7 +108,7 @@ function parseRef(value: string): ActionRef {
   return { kind: kind as ActionRef["kind"], code };
 }
 
-/** 动作作用的类名；没配就是空串。 */
+/** 动作作用的对象类型名；没配就是空串。 */
 function scopeName(definition: Definition, action: ActionType | null | undefined) {
   if (!action?.scopeEntityTypeId) return "";
   return typeName(definition, action.scopeEntityTypeId);
@@ -135,7 +135,7 @@ function refOptions(definition: Definition, action: ActionType | null, options: 
 }
 
 function describeRef(definition: Definition, action: ActionType, ref: ActionRef) {
-  if (ref.kind === "SUBJECT") return `主对象（${scopeName(definition, action) || "未选类型"}）`;
+  if (ref.kind === "SUBJECT") return `主对象（${scopeName(definition, action) || "未选对象类型"}）`;
   if (ref.kind === "PARAM") return `入参「${action.params.find((item) => item.code === ref.code)?.name ?? ref.code ?? "未选择"}」`;
   const index = action.edits.findIndex((item) => item.op === "CREATE_ENTITY" && item.alias === ref.code);
   return `第 ${index + 1} 步新建的「${ref.code || "未命名"}」`;
@@ -149,13 +149,13 @@ function describeValue(action: ActionType, value: { kind: "PARAM" | "CONST" | "N
 
 function describeEdit(definition: Definition, action: ActionType, edit: ActionEdit) {
   const assignments = edit.assignments.map((item) => `${item.property} ← ${describeValue(action, item.value)}`).join("、");
-  if (edit.op === "CREATE_ENTITY") return `新建 ${typeName(definition, edit.entityTypeId) || "（未选类型）"}${edit.alias ? `（记为 ${edit.alias}）` : ""}${assignments ? `：${assignments}` : ""}`;
+  if (edit.op === "CREATE_ENTITY") return `新建 ${typeName(definition, edit.entityTypeId) || "（未选对象类型）"}${edit.alias ? `（记为 ${edit.alias}）` : ""}${assignments ? `：${assignments}` : ""}`;
   if (edit.op === "SET_PROPERTY") return `修改 ${describeRef(definition, action, edit.entityRef)}：${assignments || "（未配置）"}`;
-  return `建立 ${describeRef(definition, action, edit.sourceRef)} —${relationName(definition, edit.relationshipTypeId) || "（未选关系）"}→ ${describeRef(definition, action, edit.targetRef)}`;
+  return `建立 ${describeRef(definition, action, edit.sourceRef)} —${relationName(definition, edit.relationshipTypeId) || "（未选关系类型）"}→ ${describeRef(definition, action, edit.targetRef)}`;
 }
 
 function describeCondition(definition: Definition, action: ActionType | null, condition: RuleCondition) {
-  // 绑在「全部动作」上的规则没有作用类，这时不要渲染出空的括号。
+  // 绑在「全部动作」上的规则没有作用对象类型，这时不要渲染出空的括号。
   const scope = scopeName(definition, action);
   const subject = condition.subject.kind === "SUBJECT"
     ? scope ? `主对象（${scope}）` : "主对象"
@@ -186,7 +186,7 @@ export function effectClass(effect: RuleEffect) {
 
 /** 一条规则命中后会发生什么，用一句话说清楚。 */
 export function effectSentence(effect: RuleEffect) {
-  if (effect === "HIDE") return "这个动作不出现在这类对象上";
+  if (effect === "HIDE") return "这个动作不出现在这个对象类型的对象上";
   if (effect === "BLOCK") return "拒绝执行";
   return "给出提示";
 }
@@ -299,13 +299,13 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                       <b>{action.name || "（未命名动作）"}</b>
                       <small><code>{action.code || "no-code"}</code> · {action.edits.length} 步{bound ? ` · ${bound} 条规则` : ""}</small>
                     </span>
-                    <em>{scope || "未选类"}</em>
+                    <em>{scope || "未选对象类型"}</em>
                   </button>
                 );
               })}
             </div>
           ) : (
-            <p className="as-empty">还没有动作。先建一个「购票」这样的动作，把它要写哪些对象、哪些关系配成模板，规则再挂上去。</p>
+            <p className="as-empty">还没有动作。先建一个「购票」这样的动作，把它要写哪些对象、哪些关系类型配成模板，规则再挂上去。</p>
           )}
         </aside>
 
@@ -315,7 +315,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
               <div className="as-ws-head">
                 <div className="as-ws-title">
                   <span className="as-ws-eyebrow">
-                    {scopeName(definition, selected) ? <><i className="as-scope-dot" style={{ background: graphColor(scopeName(definition, selected)) }} />定义在类「{scopeName(definition, selected)}」上</> : "还没有选作用的类"}
+                    {scopeName(definition, selected) ? <><i className="as-scope-dot" style={{ background: graphColor(scopeName(definition, selected)) }} />定义在对象类型「{scopeName(definition, selected)}」上</> : "还没有选作用的类"}
                   </span>
                   <h3>{selected.name || "（未命名动作）"}<code className="as-ws-code">{selected.code || "no-code"}</code></h3>
                 </div>
@@ -346,8 +346,8 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
 
                   <section className="as-block">
                     <header className="as-block-head">
-                      <h4>作用的类</h4>
-                      <em>动作定义在这个类上，执行时先选一个属于它的对象（实例），规则和操作里用「主对象」引用它。</em>
+                      <h4>作用的对象类型</h4>
+                      <em>动作定义在这个对象类型上，执行时先选一个属于它的对象（实例），规则和操作里用「主对象」引用它。</em>
                     </header>
                     {scopeName(definition, selected) ? (
                       <div className="as-scope-card">
@@ -356,7 +356,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                         <span>执行时选中的那个对象，就是主对象</span>
                       </div>
                     ) : (
-                      <p className="as-warn">还没有选作用的类：动作没有定义在哪个类上，就没法执行。点右上角「编辑定义」补上。</p>
+                      <p className="as-warn">还没有选作用的对象类型：动作没有定义在哪个对象类型上，就没法执行。点右上角「编辑定义」补上。</p>
                     )}
                   </section>
 
@@ -389,12 +389,12 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
 
                   <section className="as-block">
                     <header className="as-block-head">
-                      <h4>影响到的类与关系</h4>
+                      <h4>影响到的类与关系类型</h4>
                       <em>从参数与操作模板推导出来，动作改了这里就跟着变。</em>
                     </header>
                     {(() => {
                       const involvement = actionInvolvement(definition, selected);
-                      if (!involvement.entityTypes.length && !involvement.relationshipTypes.length) return <p className="as-quiet">还没有引用任何类或关系。</p>;
+                      if (!involvement.entityTypes.length && !involvement.relationshipTypes.length) return <p className="as-quiet">还没有引用任何类或关系类型。</p>;
                       return (
                         <div className="as-involve">
                           {involvement.entityTypes.map((item) => <span className="as-involve-chip entity" key={item.id}>{item.name}<em>{item.roles.join(" · ")}</em></span>)}
@@ -468,13 +468,13 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
 
               {stage === "run" && (
                 <div className="as-stage-body">
-                  <p className="as-note">{scopeName(definition, selected) ? `这个动作定义在类「${scopeName(definition, selected)}」上：先选一个具体的${scopeName(definition, selected)}（属于这个类的对象），再填参数。` : ""}干跑只算不写，把执行后的样子算出来给规则看；点「执行」才会写进草稿快照，被拦截时快照保持原样。</p>
+                  <p className="as-note">{scopeName(definition, selected) ? `这个动作定义在对象类型「${scopeName(definition, selected)}」上：先选一个具体的${scopeName(definition, selected)}（属于这个类的对象），再填参数。` : ""}干跑只算不写，把执行后的样子算出来给规则看；点「执行」才会写进草稿快照，被拦截时快照保持原样。</p>
                   <div className="as-params">
                     {selected.scopeEntityTypeId && (
                       <div className="as-param-row as-subject-row">
                         <div className="as-param-label">
                           <b>对哪个{scopeName(definition, selected) || "对象"}执行</b>
-                          <small>主对象 · {scopeName(definition, selected) || "未选类型"}</small>
+                          <small>主对象 · {scopeName(definition, selected) || "未选对象类型"}</small>
                         </div>
                         {versionId && targetId ? (
                           <EntitySearchPicker
@@ -718,7 +718,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
   const save = async () => {
     if (!draft.name.trim()) return setError("请填写动作名称。");
     if (!draft.code.trim()) return setError("请填写动作标识，它将来是给模型用的工具名。");
-    if (!draft.scopeEntityTypeId) return setError("请选择作用对象：每个动作都要定义在一个类上。");
+    if (!draft.scopeEntityTypeId) return setError("请选择作用对象：每个动作都要定义在一个对象类型上。");
     if (issues.length) return setError(issues[0]);
     setBusy(true);
     try { await onSave({ ...draft, name: draft.name.trim(), code: draft.code.trim() }); onClose(); }
@@ -744,14 +744,14 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
               <label className="ted-field"><span>动作名称</span><input className="ted-input" value={draft.name} onChange={(event) => patch({ name: event.target.value })} placeholder="例如：购票" /></label>
               <label className="ted-field"><span>动作标识</span><input className="ted-input" value={draft.code} onChange={(event) => patch({ code: event.target.value })} placeholder="例如：buyTicket" /></label>
             </div>
-            <label className="ted-field"><span>作用的类</span>
+            <label className="ted-field"><span>作用的对象类型</span>
               <select className="ted-select" value={draft.scopeEntityTypeId} onChange={(event) => patch({ scopeEntityTypeId: event.target.value })}>
-                <option value="">选择这个动作定义在哪个类上</option>
+                <option value="">选择这个动作定义在哪个对象类型上</option>
                 {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
               </select>
               <small>{draft.scopeEntityTypeId
-                ? `动作定义在类「${typeName(definition, draft.scopeEntityTypeId)}」上：执行时必须先选一个属于这个类的对象（实例），规则和操作里用「主对象」引用它。`
-                : "动作定义在类上，执行时针对属于这个类的一个对象（实例）。"}</small>
+                ? `动作定义在类「${typeName(definition, draft.scopeEntityTypeId)}」上：执行时必须先选一个属于这个对象类型的对象（实例），规则和操作里用「主对象」引用它。`
+                : "动作定义在对象类型上，执行时针对属于这个对象类型的一个对象（实例）。"}</small>
             </label>
             <label className="ted-field"><span>说明</span><input className="ted-input" value={draft.description} onChange={(event) => patch({ description: event.target.value })} placeholder="这个动作在一次业务里代表什么" /></label>
 
@@ -773,9 +773,9 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                       </select>
                     </label>
                     {parameter.kind === "ENTITY_REF" ? (
-                      <label className="ted-field"><span>类</span>
+                      <label className="ted-field"><span>对象类型</span>
                         <select className="ted-select" value={parameter.entityTypeId} onChange={(event) => patch({ params: draft.params.map((item, i) => i === index ? { ...item, entityTypeId: event.target.value } : item) })}>
-                          <option value="">选择类型</option>
+                          <option value="">选择对象类型</option>
                           {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
                         </select>
                       </label>
@@ -810,9 +810,9 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                   {edit.op === "CREATE_ENTITY" && (
                     <>
                       <div className="as-edit-grid">
-                        <label className="ted-field"><span>类</span>
+                        <label className="ted-field"><span>对象类型</span>
                           <select className="ted-select" value={edit.entityTypeId} onChange={(event) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, entityTypeId: event.target.value } : item) })}>
-                            <option value="">选择类型</option>
+                            <option value="">选择对象类型</option>
                             {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
                           </select>
                         </label>
@@ -833,7 +833,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                     <>
                       <label className="ted-field"><span>关系类型</span>
                         <select className="ted-select" value={edit.relationshipTypeId} onChange={(event) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, relationshipTypeId: event.target.value } : item) })}>
-                          <option value="">选择关系</option>
+                          <option value="">选择关系类型</option>
                           {definition.relationshipTypes.map((relation) => <option key={relation.id} value={relation.id}>{relation.name}（{typeName(definition, relation.sourceEntityTypeId) || "?"} → {typeName(definition, relation.targetEntityTypeId) || "?"}）</option>)}
                         </select>
                       </label>
@@ -854,7 +854,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
             <div className="as-rail-block">
               <b>这份配置会做什么</b>
               <p>
-                {draft.scopeEntityTypeId ? `定义在「${typeName(definition, draft.scopeEntityTypeId)}」上的动作` : "还没有选作用的类"}
+                {draft.scopeEntityTypeId ? `定义在「${typeName(definition, draft.scopeEntityTypeId)}」上的动作` : "还没有选作用的对象类型"}
                 <br />
                 输入：{draft.params.length ? draft.params.map((item) => `${item.name || item.code || "?"}（${item.kind === "ENTITY_REF" ? typeName(definition, item.entityTypeId) || "未选类型" : item.dataType}）`).join(" · ") : "无参数"}
                 <br />

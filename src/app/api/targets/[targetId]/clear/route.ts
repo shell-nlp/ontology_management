@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTargetKind } from "@/lib/graph/types";
 import { getObjectIndex } from "@/lib/object-index";
@@ -21,7 +21,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ targetId:
     const types = await getGraphStore(target).readRuntimeTypes();
     return NextResponse.json({ nodes: types.entityCount, relationships: types.relationshipCount });
   } catch (error) {
-    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+    const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
 }
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ta
     try {
       await getObjectIndex().deleteTargetObjects(targetId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "未知错误";
+      const message = apiErrorMessage(error, "未知错误");
       await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_INDEX_CLEAR_FAILED", details: { name: target.name, error: message } });
       return NextResponse.json(
         { error: `图数据已清空，但检索索引清理失败：${message}。请重新执行清空以恢复一致。` },
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ta
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_GRAPH_CLEARED", details: { name: target.name, kind: target.kind } });
     return NextResponse.json({ cleared: true });
   } catch (error) {
-    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+    const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
 }
