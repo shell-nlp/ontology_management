@@ -1,7 +1,7 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { GraphCanvas } from "@/components/graph-canvas";
@@ -526,6 +526,43 @@ function TargetFields({ form, setForm, editing = false, showKind = true }: { for
   </>;
 }
 
+/**
+ * 弹窗里的「测试连接」。
+ * 拿表单里当前的值试一次（编辑时密码留空就沿用已保存的凭据），不必先保存再回头验证。
+ * 按钮和结果分成两块，由弹窗决定摆在哪：结果是整行的一行字，不用挤在按钮中间。
+ */
+function useTargetProbe(form: TargetFormState, targetId?: string) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const run = async () => {
+    try {
+      setBusy(true);
+      setResult(null);
+      const health = await api<{ agent: string; address: string }>("/api/targets/test", {
+        method: "POST",
+        body: JSON.stringify({ kind: form.kind, uri: form.uri, databaseName: form.databaseName, username: form.username, password: form.password, options: targetOptions(form), targetId }),
+      });
+      setResult({ ok: true, text: `连上了：${health.agent} · ${health.address}` });
+    } catch (reason) {
+      setResult({ ok: false, text: reason instanceof Error ? reason.message : "连接失败。" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, result, run };
+}
+
+function TargetProbeButton({ busy, onRun }: { busy: boolean; onRun: () => void }) {
+  return <span className="probe-slot">
+    <button type="button" className="quiet-button" disabled={busy} onClick={onRun}>{busy ? <Loader2 size={14} className="probe-spin" /> : <PlugZap size={14} />}{busy ? "连接中…" : "测试连接"}</button>
+  </span>;
+}
+
+function TargetProbeResult({ result }: { result: { ok: boolean; text: string } | null }) {
+  if (!result) return null;
+  return <p className={result.ok ? "probe-text ok" : "probe-text error"}>{result.ok ? <Check size={13} /> : <AlertCircle size={13} />}{result.text}</p>;
+}
+
 function TargetManager({ targets, refresh, selectedId, onSelect, onNew, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; selectedId: string; onSelect: (id: string) => void; onNew: () => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
   const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
   const remove = async (target: Target) => { if (!window.confirm(`确定删除本体存储“${target.name}”及其全部本体版本？`)) return; try { setDeleting(target.id); await api(`/api/targets/${target.id}`, { method: "DELETE" }); notify("本体存储已删除。"); await refresh(); } catch (reason) { fail(reason); } finally { setDeleting(""); } };
@@ -544,6 +581,7 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
   const [kind, setKind] = useState<GraphTargetKind>("NEO4J");
   const [form, setForm] = useState<TargetFormState>(() => defaultTargetForm("NEO4J"));
   const [busy, setBusy] = useState(false);
+  const probe = useTargetProbe(form);
   const info = graphTargetKindInfo(kind);
 
   useEffect(() => {
@@ -578,13 +616,14 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
       {step === 1
         ? <GraphKindChoice value={kind} onChange={pickKind} />
         : <div className="dialog-form"><TargetFields form={form} setForm={setForm} showKind={false} /></div>}
+      {step === 2 && <TargetProbeResult result={probe.result} />}
       <div className="kind-picker-foot">
         <span className="kind-picker-summary"><GraphKindMark mark={info.mark} accent={info.accent} size={16} />{info.label}<code>{capabilityLine(info)}</code></span>
         <div className="functional-actions">
           {step === 2 && <button type="button" className="quiet-button" onClick={() => setStep(1)}>上一步</button>}
           {step === 1
             ? <><button type="button" className="quiet-button" onClick={onClose}>取消</button><button type="button" className="primary-button" onClick={() => setStep(2)}>下一步</button></>
-            : <button className="primary-button" disabled={busy}>{busy ? "登记中…" : "登记并选择"}</button>}
+            : <><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "登记中…" : "登记并选择"}</button></>}
         </div>
       </div>
     </form>
@@ -594,8 +633,9 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
 function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; onClose: () => void; onSaved: () => Promise<void>; fail: (reason: unknown) => void }) {
   const [form, setForm] = useState<TargetFormState>(() => formFromTarget(target));
   const [busy, setBusy] = useState(false);
+  const probe = useTargetProbe(form, target.id);
   const save = async (event: FormEvent) => { event.preventDefault(); try { setBusy(true); const payload: Record<string, unknown> = { name: form.name, kind: form.kind, uri: form.uri, databaseName: form.databaseName, username: form.username, options: targetOptions(form) }; if (form.password) payload.password = form.password; await api<Target>(`/api/targets/${target.id}`, { method: "PATCH", body: JSON.stringify(payload) }); await onSaved(); onClose(); } catch (reason) { fail(reason); } finally { setBusy(false); } };
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑本体存储</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog target-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑本体存储</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><TargetProbeResult result={probe.result} /><div className="dialog-actions"><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
 function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, onOpenActions, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; onOpenActions: () => void; fail: (reason: unknown) => void }) {
