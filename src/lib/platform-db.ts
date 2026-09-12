@@ -1,4 +1,4 @@
-import { Pool, type QueryResultRow } from "pg";
+import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { DATA_SOURCE_KINDS } from "@/lib/data-source/types";
 import { GRAPH_TARGET_KINDS } from "@/lib/graph/types";
 
@@ -115,6 +115,30 @@ async function ensurePlatformSchemaOnce() {
 export async function platformQuery<T extends QueryResultRow>(text: string, values: unknown[] = []) {
   await ensurePlatformSchema();
   return getPool().query<T>(text, values);
+}
+
+/**
+ * 需要多条语句原子生效时用这个（典型场景：删掉旧索引 + 写入新索引）。
+ * 与 platformQuery 共用同一个连接池；回调里拿到的 client 只在回调内使用，不要外传。
+ */
+export async function withPlatformTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  await ensurePlatformSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // 连接已经断开时回滚也会失败；保留原始错误更有诊断价值。
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

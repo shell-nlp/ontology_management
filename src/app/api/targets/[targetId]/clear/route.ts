@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTargetKind } from "@/lib/graph/types";
+import { getObjectIndex } from "@/lib/object-index";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetError, getTarget } from "@/lib/targets";
 
@@ -42,6 +43,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ta
       return NextResponse.json({ error: "确认文字与本体存储名称不一致，已取消清空。" }, { status: 400 });
     }
     await getGraphStore(target).clearGraph();
+    try {
+      await getObjectIndex().deleteTargetObjects(targetId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_INDEX_CLEAR_FAILED", details: { name: target.name, error: message } });
+      return NextResponse.json(
+        { error: `图数据已清空，但检索索引清理失败：${message}。请重新执行清空以恢复一致。` },
+        { status: 400 },
+      );
+    }
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_GRAPH_CLEARED", details: { name: target.name, kind: target.kind } });
     return NextResponse.json({ cleared: true });
   } catch (error) {

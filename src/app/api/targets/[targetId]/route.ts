@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
+import { getObjectIndex } from "@/lib/object-index";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
@@ -69,6 +70,19 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [targetId]);
     await removeTargetSnapshotDirectory(targetId);
+    // 检索索引是派生数据，但它的行以 target_id 为键，不跟着本体存储一起删就会留下孤儿。
+    // 删本体存储是用户的最终意图，这里失败不挡请求，只留一条审计说明该清没清干净。
+    try {
+      await getObjectIndex().deleteTargetObjects(targetId);
+    } catch (error) {
+      await writeAuditEntry({
+        actorId: user.id,
+        // 本体存储这一行已经删了，审计只能挂空 targetId，把 id 放进 details 里。
+        targetId: undefined,
+        action: "TARGET_INDEX_CLEANUP_FAILED",
+        details: { targetId, name: target.name, error: error instanceof Error ? error.message : "未知错误" },
+      });
+    }
     return NextResponse.json({ deleted: true });
   } catch (error) {
     const status = error instanceof Error && error.message === "UNAUTHORIZED" ? 401 : 400;

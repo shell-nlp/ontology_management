@@ -37,6 +37,8 @@
 | G3 | Jena 读路径请求数 | `hydrateNodes` / `readEdges` 每 200 个主语一次往返，大子图多轮请求 | 调大批次或改为一次 `CONSTRUCT` / 大 `VALUES` 取子图 |
 | G4 | 新增后端的契约测试模板 | 目前只有 ADR 0017 的文字说明；Jena 有单测，但没有通用的适配器契约用例 | 抽出契约测试（连接、读写、导出、原子替换、失败后图不变），新后端按模板补齐 |
 
+| G5 | 后端定位与许可 | 两个后端功能对等、界面上并列；但 Apache Jena 是 Apache-2.0，Neo4j Community 是 **GPL-3.0**（企业版为商业许可）——随产品分发 Neo4j 需要履行 GPLv3 义务（平台只是客户端，连接方式本身不传染） | Jena 作为**推理、元模型、多本体隔离**的默认推荐后端（Fuseki 用命名图/多数据集隔离，不必像 Neo4j 那样起多个实例）；Neo4j 定位为「实例存储 + 高性能遍历」，适合已有环境与深链场景（Fuseki/TDB2 是单机，SPARQL 深链慢）。**暂不删除**，等实际用量或维护成本给出信号再定 |
+
 ### 本体核心模型
 
 记录时间：2026-09-12。对照的是 Palantir Ontology 的 object type / object 关系：
@@ -48,6 +50,8 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`neo4j.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
 | M2 | 接口（interfaces） | 完全没有 | Palantir 用接口表达共享能力与多继承：接口是抽象的、不能被直接实例化，object type 实现接口后按接口被消费，链接与动作也能定义在接口上。工作量在定义层语义（接口定义、类实现、属性/链接/动作的继承与覆盖）加图库落地方式，建议先出 ADR 再实现。参考 https://palantir.com/docs/foundry/interfaces/interface-overview/ |
 
+| M3 | 类层级与类型传播（第一档推理） | 定义层没有任何层级表达：`entityTypes` 没有父类/接口字段，`relationshipTypes` 没有逆关系/传递标记；发布时只写 `?s rdf:type bkn:class:X`（`jena.ts` 第 811 行），图里没有类公理，全仓库也没有推理机 | 定义层加「父类」（可多选），发布时算一次祖先闭包（类只有几十个，O(类数)，毫秒级）；编辑器展示「继承自 / 继承来的属性」并提示属性冲突。查询侧：Jena 可用 `rdf:type/rdfs:subClassOf*` 属性路径，Neo4j 需按标记展开。推理的输入是**模式**不是数据，因此不依赖 D1；是 M2（接口）的前置 |
+
 ### 数据资源
 
 | 编号 | 事项 | 现状 | 建议做法 |
@@ -57,12 +61,27 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | D3 | 连接池与超时 | 结构清单已有 60 秒 TTL 缓存（命中不建连接），但**建连接本身**仍是每次操作 `new DataSource()` + `initialize()` + `destroy()`：试连 ~400ms、点一张表 ~500ms 基本都是这部分开销。2026-09-12 出现过一次 dev server 直接退出（exit 3221225477 / 0xC0000005，崩前最后一条日志是 `POST /data-sources/:id/test 200`），重启后连续 16 次试连 + 2 次 HMR 未复现 | 按来源把连接池缓存到 `globalThis` 复用（凭据/host 变了再重建），加连接超时与并发上限，`options` 里暴露只读开关；顺带把 Oracle 的原生状态也放到 `globalThis` |
 | D4 | 非关系来源接入 | `PLANNED_DATA_SOURCES` 只列了 ES / REST / 文件，界面归到「规划中」 | 在 `openDataSourceConnector` 里分流到新实现，实现 `DataSourceConnector` 的四个方法即可 |
 
+### 对象检索层
+
+记录时间：2026-09-12。**决定：引入对象检索层，第一版落在 PostgreSQL**（全文 + `pg_trgm` 模糊 +
+`jsonb` 过滤 + `pgvector` 向量），取代原计划的 Elasticsearch——理由是 Elasticsearch 的
+SSPL / ELv2 / AGPLv3 三选一对闭源产品分发都有风险（详见 `docs/adr/0018-对象检索层走PostgreSQL索引.md`）。
+检索索引是派生数据，可随时从已发布快照重建（`POST /api/object-search/reindex`）。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| R1 | 前端接入对象检索 | 接口 `/api/object-search` 已可用（全文 + 模糊 + 属性过滤 + 向量 + 分页），但对象页的搜索与筛选仍走图库的 `searchEntities` | 对象页搜索与筛选改走检索接口，接口报错时退回图库；图谱页的属性筛选同样接入 |
+| R2 | embedding 提供方 | 向量列（维度 1536）、HNSW 索引与向量检索都已实现并验证过，但没有生成向量的能力，`embedding` 目前恒为 NULL | 接入 embedding 模型（本地或远端）后，在发布与重建索引时写入向量；改维度需要 ALTER 列并重建索引 |
+| R3 | 大对象集的总数统计 | 每次检索都跑一次 `COUNT(*)`；当前规模无影响 | 命中集超阈值时改为估算行数，或让前端只在需要时请求总数 |
+
 ### 界面
 
 | 编号 | 事项 | 现状 |
 | --- | --- | --- |
 | U2 | 审计记录查看界面 | 发布 / 失败 / 本体存储变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
 | U3 | 弹窗层级低于图谱控件 | sigma 的缩放控件 z-index 为 `--sigma-controls-zindex`（100），全局 `.dialog-backdrop` 只有 10，弹窗够高时控件会浮在弹窗上。本次只在类型编辑弹窗用 `.ted-backdrop` 抬到 120 规避，其它弹窗（新建本体存储、新建关系、新建对象）仍有此问题 |
+
+| U4 | 本体骨架从图库反推 | 「本体骨架」读的是 `db.schema.visualization()` / 实例的 `rdf:type`，所以图库一空骨架就空——草稿里定义了类也看不见，而且图里的标签可能与定义漂移 | 骨架改为直接渲染版本快照里的类与关系类型；图库侧只作为「已发布生效结构」的对照 |
 
 ### 多本体隔离（Neo4j 社区版）
 

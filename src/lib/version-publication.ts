@@ -1,4 +1,6 @@
 import { getGraphStore } from "@/lib/graph";
+import { getObjectIndex } from "@/lib/object-index";
+import { buildIndexEntries } from "@/lib/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, validateVersionSnapshot, withTargetLock, type VersionStatus } from "@/lib/version-snapshot";
@@ -41,9 +43,14 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
 
     let canEnforceRequired = false;
     let graphReplaced = false;
+    let indexSynced = false;
     try {
       await store.replaceGraph(snapshot);
       graphReplaced = true;
+      // 检索索引是派生数据，但必须和发布同时成立：索引落后会让搜索结果指向不存在的对象，比发布失败更难排查。
+      // 索引写失败时图数据已替换、版本仍是 DRAFT，走下面同一条「重新发布以恢复一致」的路径。
+      await getObjectIndex().replaceTargetObjects(target.id, buildIndexEntries(snapshot.definition, snapshot.nodes), { versionId: version.id });
+      indexSynced = true;
       canEnforceRequired = (await store.reconcileStrongRules(snapshot.definition)).enforced;
       for (const record of await listVersionRecords(version.target_id)) {
         if (record.id !== version.id && record.status === "PUBLISHED") await updateVersionRecord(record.id, { status: "ARCHIVED" });
@@ -55,7 +62,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
         actorId: user.id,
         targetId: version.target_id,
         action: "VERSION_PUBLISH_FAILED",
-        details: { versionId: version.id, kind: target.kind, atomicReplace, graphReplaced, error: message },
+        details: { versionId: version.id, kind: target.kind, atomicReplace, graphReplaced, indexSynced, error: message },
       });
       // 原子替换的后端失败时图数据没动，可以明确告诉用户；非原子后端只能说“可能已改动”。
       throw new Error(graphReplaced
