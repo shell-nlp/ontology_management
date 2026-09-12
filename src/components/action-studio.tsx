@@ -5,11 +5,11 @@ import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, Tra
 import { api } from "@/lib/api-client";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { actionInvolvement, validateActionDefinition } from "@/lib/action-engine";
-import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition } from "@/lib/ontology-draft";
+import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology-draft";
 import type { OntologyDefinition } from "@/lib/ontology";
 import "./action-studio.css";
 
-export type ActionFinding = { ruleId: string; ruleName: string; severity: "BLOCKER" | "WARNING"; message: string; evidence: string[] };
+export type ActionFinding = { ruleId: string; ruleName: string; effect: RuleEffect; message: string; evidence: string[] };
 
 export type ActionRunOutcome = {
   actionId: string;
@@ -18,8 +18,10 @@ export type ActionRunOutcome = {
   verdict: "PASSED" | "BLOCKED";
   blockers: ActionFinding[];
   warnings: ActionFinding[];
+  hidden: ActionFinding[];
   steps: string[];
   createdEntities: { id: string; label: string; display: string }[];
+  subject: { id: string; label: string; display: string } | null;
   dryRun: boolean;
   applied: boolean;
 };
@@ -29,7 +31,7 @@ type DecisionEntry = {
   action: string;
   actorEmail: string | null;
   createdAt: string;
-  details: { actionName?: string; actionCode?: string; dryRun?: boolean; verdict?: string; blockers?: { ruleName: string; message: string }[] };
+  details: { actionName?: string; actionCode?: string; dryRun?: boolean; verdict?: string; subject?: { display?: string } | null; blockers?: { ruleName: string; message: string }[] };
 };
 
 type Props = {
@@ -37,14 +39,16 @@ type Props = {
   versionId?: string;
   targetId?: string;
   canEdit: boolean;
+  /** 从对象详情页点动作进来时带上：直接选中这个动作，并预填主对象。 */
+  initialRun?: { actionId: string; subject: EntitySearchResult } | null;
   onSave: (definition: Definition) => Promise<void>;
   onRan: () => void;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
 };
 
-const newAction = (): ActionType => ({ id: crypto.randomUUID(), name: "", code: "", description: "", params: [], edits: [] });
-const newRule = (actionId = ""): OntologyRule => ({ id: crypto.randomUUID(), name: "", severity: "BLOCKER", priority: 1, enabled: true, actionId, gate: true, conditions: [], message: "" });
+const newAction = (scopeEntityTypeId = ""): ActionType => ({ id: crypto.randomUUID(), name: "", code: "", description: "", scopeEntityTypeId, params: [], edits: [] });
+const newRule = (actionId = ""): OntologyRule => ({ id: crypto.randomUUID(), name: "", effect: "BLOCK", priority: 1, enabled: true, actionId, conditions: [], message: "" });
 const newParam = (): ActionParameter => ({ code: "", name: "", kind: "ENTITY_REF", entityTypeId: "", dataType: "TEXT", required: true });
 const newEdit = (): ActionEdit => ({ op: "CREATE_ENTITY", alias: "", entityTypeId: "", relationshipTypeId: "", entityRef: { kind: "PARAM", code: "" }, sourceRef: { kind: "PARAM", code: "" }, targetRef: { kind: "PARAM", code: "" }, assignments: [] });
 const newCondition = (): RuleCondition => ({ subject: { kind: "PARAM", code: "", relationshipTypeId: "", direction: "OUT" }, property: "", operator: "EQUALS", compareValue: "" });
@@ -76,17 +80,50 @@ function propertiesOfRelationType(definition: Definition, id: string): Property[
   return definition.relationshipTypes.find((item) => item.id === id)?.properties ?? [];
 }
 
-/** 条件主体的可选值：动作入参里的对象 + 本次新建出来的对象。 */
-function subjectOptions(action: ActionType | null) {
-  if (!action) return [] as { value: string; label: string }[];
-  const params = action.params.filter((item) => item.kind === "ENTITY_REF").map((item) => ({ value: `PARAM:${item.code}`, label: `入参「${item.name}」` }));
-  const edits = action.edits.filter((item) => item.op === "CREATE_ENTITY" && item.alias).map((item) => ({ value: `EDIT:${item.alias}`, label: `新建的「${item.alias}」` }));
-  return [...params, ...edits];
+type ActionRef = { kind: "SUBJECT" | "PARAM" | "EDIT"; code: string };
+
+/** 下拉里用 "KIND:code" 表示一个引用；SUBJECT 没有 code，所以拼出来是 "SUBJECT:"。 */
+function encodeRef(ref: ActionRef) {
+  return ref.kind === "SUBJECT" ? "SUBJECT:" : ref.code ? `${ref.kind}:${ref.code}` : "";
 }
 
-function describeRef(action: ActionType, ref: { kind: "PARAM" | "EDIT"; code: string }) {
-  if (ref.kind === "PARAM") return action.params.find((item) => item.code === ref.code)?.name ?? ref.code ?? "（未选择）";
-  return `上一步的 ${ref.code || "（未命名）"}`;
+function parseRef(value: string): ActionRef {
+  if (!value) return { kind: "PARAM", code: "" };
+  const [kind, code = ""] = value.split(":");
+  return { kind: kind as ActionRef["kind"], code };
+}
+
+/** 动作作用的类名；没配就是空串。 */
+function scopeName(definition: Definition, action: ActionType | null | undefined) {
+  if (!action?.scopeEntityTypeId) return "";
+  return typeName(definition, action.scopeEntityTypeId);
+}
+
+/**
+ * 可以选作条件主体 / 操作对象的三种东西，按"最好理解"的顺序排：
+ * 先主对象（动作作用在谁身上），再入参，最后是本次新建出来的对象。
+ */
+function refOptions(definition: Definition, action: ActionType | null, options: { beforeIndex?: number } = {}) {
+  if (!action) return [] as { value: string; label: string }[];
+  const list: { value: string; label: string }[] = [];
+  const scope = scopeName(definition, action);
+  if (scope) list.push({ value: "SUBJECT:", label: `主对象（执行时选的那个${scope}）` });
+  for (const parameter of action.params) {
+    if (parameter.kind !== "ENTITY_REF") continue;
+    list.push({ value: `PARAM:${parameter.code}`, label: `入参：${parameter.name || parameter.code}（${typeName(definition, parameter.entityTypeId) || "未选类型"}）` });
+  }
+  action.edits.slice(0, options.beforeIndex ?? action.edits.length).forEach((edit, index) => {
+    if (edit.op !== "CREATE_ENTITY" || !edit.alias) return;
+    list.push({ value: `EDIT:${edit.alias}`, label: `第 ${index + 1} 步新建的${typeName(definition, edit.entityTypeId) || "对象"}（${edit.alias}）` });
+  });
+  return list;
+}
+
+function describeRef(definition: Definition, action: ActionType, ref: ActionRef) {
+  if (ref.kind === "SUBJECT") return `主对象（${scopeName(definition, action) || "未选类型"}）`;
+  if (ref.kind === "PARAM") return `入参「${action.params.find((item) => item.code === ref.code)?.name ?? ref.code ?? "未选择"}」`;
+  const index = action.edits.findIndex((item) => item.op === "CREATE_ENTITY" && item.alias === ref.code);
+  return `第 ${index + 1} 步新建的「${ref.code || "未命名"}」`;
 }
 
 function describeValue(action: ActionType, value: { kind: "PARAM" | "CONST" | "NOW"; code: string; value: string }) {
@@ -98,14 +135,16 @@ function describeValue(action: ActionType, value: { kind: "PARAM" | "CONST" | "N
 function describeEdit(definition: Definition, action: ActionType, edit: ActionEdit) {
   const assignments = edit.assignments.map((item) => `${item.property} ← ${describeValue(action, item.value)}`).join("、");
   if (edit.op === "CREATE_ENTITY") return `新建 ${typeName(definition, edit.entityTypeId) || "（未选类型）"}${edit.alias ? `（记为 ${edit.alias}）` : ""}${assignments ? `：${assignments}` : ""}`;
-  if (edit.op === "SET_PROPERTY") return `修改 ${describeRef(action, edit.entityRef)}：${assignments || "（未配置）"}`;
-  return `建立 ${describeRef(action, edit.sourceRef)} —${relationName(definition, edit.relationshipTypeId) || "（未选关系）"}→ ${describeRef(action, edit.targetRef)}`;
+  if (edit.op === "SET_PROPERTY") return `修改 ${describeRef(definition, action, edit.entityRef)}：${assignments || "（未配置）"}`;
+  return `建立 ${describeRef(definition, action, edit.sourceRef)} —${relationName(definition, edit.relationshipTypeId) || "（未选关系）"}→ ${describeRef(definition, action, edit.targetRef)}`;
 }
 
 function describeCondition(definition: Definition, action: ActionType | null, condition: RuleCondition) {
-  const subject = condition.subject.kind === "PARAM"
-    ? action?.params.find((item) => item.code === condition.subject.code)?.name ?? condition.subject.code
-    : `上一步的 ${condition.subject.code}`;
+  const subject = condition.subject.kind === "SUBJECT"
+    ? `主对象（${scopeName(definition, action)}）`
+    : condition.subject.kind === "PARAM"
+      ? `入参「${action?.params.find((item) => item.code === condition.subject.code)?.name ?? condition.subject.code}」`
+      : `第 ${(action?.edits.findIndex((item) => item.op === "CREATE_ENTITY" && item.alias === condition.subject.code) ?? -1) + 1} 步新建的「${condition.subject.code}」`;
   const hop = condition.subject.relationshipTypeId ? `沿「${relationName(definition, condition.subject.relationshipTypeId)}」${condition.subject.direction === "OUT" ? "出" : "入"}向的` : "";
   const operator = ruleOperatorOptions.find((item) => item.value === condition.operator)?.label ?? condition.operator;
   const value = ruleOperatorsWithoutValue.includes(condition.operator) ? "" : ` ${condition.compareValue}`;
@@ -113,10 +152,28 @@ function describeCondition(definition: Definition, action: ActionType | null, co
 }
 
 /** 草稿不存在时动作无处可写，界面必须说清楚，而不是给一个按不动的按钮。 */
-export function ActionStudio({ definition, versionId, targetId, canEdit, onSave, onRan, notify, fail }: Props) {
+export const ruleEffectOptions: { value: RuleEffect; label: string; hint: string }[] = [
+  { value: "HIDE", label: "隐藏", hint: "命中后这个动作不出现在符合条件的主对象上（只看动作执行前就有的数据）。" },
+  { value: "BLOCK", label: "拦截", hint: "命中后拒绝执行，并把原因与证据给用户看。" },
+  { value: "WARN", label: "提示", hint: "命中后照常执行，只把原因提示给用户。" },
+];
+
+export function effectLabel(effect: RuleEffect) {
+  return ruleEffectOptions.find((item) => item.value === effect)?.label ?? effect;
+}
+
+/** 一条规则命中后会发生什么，用一句话说清楚。 */
+export function effectSentence(effect: RuleEffect) {
+  if (effect === "HIDE") return "这个动作不出现在这类对象上";
+  if (effect === "BLOCK") return "拒绝执行";
+  return "给出提示";
+}
+
+export function ActionStudio({ definition, versionId, targetId, canEdit, initialRun, onSave, onRan, notify, fail }: Props) {
   const actions = definition.actionTypes;
   const rules = definition.rules;
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(initialRun?.actionId ?? "");
+  const [subject, setSubject] = useState<EntitySearchResult | null>(initialRun?.subject ?? null);
   const [actionDialog, setActionDialog] = useState<{ mode: "create" | "edit"; action: ActionType } | null>(null);
   const [ruleDialog, setRuleDialog] = useState<{ mode: "create" | "edit"; rule: OntologyRule } | null>(null);
   const [values, setValues] = useState<Record<string, { entity: EntitySearchResult | null; text: string }>>({});
@@ -164,12 +221,13 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
   const run = async (dryRun: boolean) => {
     if (!selected) return;
     if (!versionId) { fail("当前目标还没有草稿：动作只能写入草稿快照，请先在本体草稿页创建草稿。"); return; }
+    if (selected.scopeEntityTypeId && !subject) { fail(`动作「${selected.name}」作用在「${scopeName(definition, selected)}」上，请先选择要执行的对象。`); return; }
     setBusy(true);
     try {
       const inputs = selected.params.map((parameter) => parameter.kind === "ENTITY_REF"
         ? { code: parameter.code, entityId: values[parameter.code]?.entity?.id ?? "" }
         : { code: parameter.code, value: values[parameter.code]?.text ?? "" });
-      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, dryRun, inputs }) });
+      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, dryRun, inputs }) });
       setOutcome(result);
       if (result.applied) { notify(`动作「${result.actionName}」已写入草稿快照。`); onRan(); }
       else if (result.verdict === "BLOCKED") notify(`动作「${result.actionName}」被规则拦截，没有写入任何数据。`);
@@ -198,6 +256,9 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
                   <div className="as-card-top">
                     <b>{action.name || "（未命名动作）"}</b>
                     <code>{action.code || "no-code"}</code>
+                    {scopeName(definition, action)
+                      ? <span className="as-chip scope">定义在类「{scopeName(definition, action)}」上</span>
+                      : <span className="as-chip blocker">未选主对象</span>}
                     <span className="as-chip muted">{boundRules(action.id)} 条规则</span>
                     <div className="as-card-actions">
                       <button className="ted-icon-button" title="编辑动作" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); setActionDialog({ mode: "edit", action }); }}><Pencil size={13} /></button>
@@ -233,7 +294,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
             <div>
               <span className="eyebrow">规则</span>
               <h2>规则清单</h2>
-              <p>规则绑在动作上，命中「紧急 + 写路径闸门」时直接拒绝执行，并给出规则名、级别与证据。</p>
+              <p>规则绑在动作上，命中后有三种处置：隐藏（这个动作不出现在该对象上）、拦截（拒绝执行）、提示（只提醒）。结论都带规则名与证据。</p>
             </div>
             <button className="action" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "create", rule: newRule(selected?.id ?? "") })}><Plus size={15} />新建规则</button>
           </div>
@@ -244,9 +305,9 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
                 return (
                   <div key={rule.id} className="as-card">
                     <div className="as-card-top">
-                      <span className={rule.severity === "BLOCKER" ? "as-chip blocker" : "as-chip warning"}>{rule.severity === "BLOCKER" ? "紧急" : "提示"}</span>
+                      <span className={`as-chip ${rule.effect === "BLOCK" ? "blocker" : rule.effect === "HIDE" ? "hide" : "warning"}`}>{effectLabel(rule.effect)}</span>
                       <b>{rule.name || "（未命名规则）"}</b>
-                      {rule.enabled ? (rule.gate && rule.severity === "BLOCKER" ? <span className="as-chip gate">写路径闸门</span> : null) : <span className="as-chip off">已停用</span>}
+                      {rule.enabled ? null : <span className="as-chip off">已停用</span>}
                       <div className="as-card-actions">
                         <button className="ted-icon-button" title={rule.enabled ? "停用规则" : "启用规则"} disabled={!canEdit} onClick={() => void toggleRule(rule).catch(fail)}>{rule.enabled ? <CircleSlash size={13} /> : <Check size={13} />}</button>
                         <button className="ted-icon-button" title="编辑规则" disabled={!canEdit} onClick={() => setRuleDialog({ mode: "edit", rule })}><Pencil size={13} /></button>
@@ -254,7 +315,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
                       </div>
                     </div>
                     <p className="as-card-meta">绑定：{action ? action.name : "全部动作"} · 优先级 {rule.priority} · {rule.conditions.length} 个条件</p>
-                    <p className="as-card-recipe">当 {rule.conditions.length ? rule.conditions.map((condition) => describeCondition(definition, action, condition)).join(" 且 ") : "（未配置条件）"} 时，{rule.severity === "BLOCKER" && rule.gate ? "拒绝执行" : "给出提示"}{rule.message ? `：${rule.message}` : "。"}</p>
+                    <p className="as-card-recipe">当 {rule.conditions.length ? rule.conditions.map((condition) => describeCondition(definition, action, condition)).join(" 且 ") : "（未配置条件）"} 时，{effectSentence(rule.effect)}{rule.message ? `：${rule.message}` : "。"}</p>
                   </div>
                 );
               })}
@@ -269,12 +330,31 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
             <div>
               <span className="eyebrow">运行</span>
               <h2>{selected ? `运行「${selected.name || "未命名动作"}」` : "运行动作"}</h2>
-              <p>干跑只算不写：把执行后的样子算出来给规则看。执行才会写进草稿快照；被拦截时快照保持原样。</p>
+              <p>{selected && scopeName(definition, selected) ? `这个动作定义在类「${scopeName(definition, selected)}」上：先选一个具体的${scopeName(definition, selected)}（属于这个类的对象），再填参数。干跑只算不写，执行才会写进草稿快照。` : "干跑只算不写：把执行后的样子算出来给规则看。执行才会写进草稿快照；被拦截时快照保持原样。"}</p>
             </div>
           </div>
           {selected ? (
             <>
               <div className="as-list">
+                {selected.scopeEntityTypeId && (
+                  <div className="as-param-row as-subject-row">
+                    <div className="as-param-label">
+                      <b>对哪个{scopeName(definition, selected) || "对象"}执行</b>
+                      <small>主对象 · {scopeName(definition, selected) || "未选类型"}</small>
+                    </div>
+                    {versionId && targetId ? (
+                      <EntitySearchPicker
+                        targetId={targetId}
+                        versionId={versionId}
+                        labels={scopeName(definition, selected) ? [scopeName(definition, selected)] : []}
+                        definition={definition}
+                        placeholder={`搜索${scopeName(definition, selected) || "对象"}…`}
+                        value={subject}
+                        onChange={setSubject}
+                      />
+                    ) : <span className="as-chip muted">需要先用草稿保存一次</span>}
+                  </div>
+                )}
                 {selected.params.length ? selected.params.map((parameter) => (
                   <div className="as-param-row" key={parameter.code}>
                     <div className="as-param-label">
@@ -299,7 +379,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
                       <input className="ted-input" value={values[parameter.code]?.text ?? ""} onChange={(event) => setValues((current) => ({ ...current, [parameter.code]: { entity: current[parameter.code]?.entity ?? null, text: event.target.value } }))} placeholder={`填写${parameter.name || "参数"}`} />
                     )}
                   </div>
-                )) : <p className="as-empty">这个动作没有参数，直接干跑即可。</p>}
+                )) : <p className="as-empty">这个动作没有参数，选好主对象就可以直接干跑。</p>}
               </div>
               <div className="as-run-actions">
                 <button className="action" disabled={!canEdit || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
@@ -330,7 +410,10 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, onSave,
                     <span className={blocked ? "as-chip blocker" : "as-chip passed"}>{blocked ? "拦截" : entry.action === "ACTION_EXECUTED" ? "已执行" : "干跑"}</span>
                     <div>
                       <b>{entry.details?.actionName ?? "（动作）"}{dryRun ? "（干跑）" : ""}</b>
-                      <small>{blocked && entry.details?.blockers?.length ? "命中：" + entry.details.blockers.map((item) => item.ruleName).join("、") : entry.actorEmail ?? "系统"}</small>
+                      <small>
+                        {entry.details?.subject?.display ? `作用于 ${entry.details.subject.display} · ` : ""}
+                        {blocked && entry.details?.blockers?.length ? "命中：" + entry.details.blockers.map((item) => item.ruleName).join("、") : entry.actorEmail ?? "系统"}
+                      </small>
                     </div>
                     <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
                   </div>
@@ -374,9 +457,16 @@ function OutcomePanel({ outcome }: { outcome: ActionRunOutcome }) {
         {blocked ? <AlertTriangle size={16} /> : <Check size={16} />}
         <b>{blocked ? "被规则拦截，未写入" : outcome.applied ? "执行成功，已写入草稿快照" : "干跑通过，未写入"}</b>
         <span>{outcome.actionName} · {outcome.actionCode}</span>
+        {outcome.subject && <span className="as-verdict-subject">作用于 {outcome.subject.label}「{outcome.subject.display}」</span>}
       </div>
       {outcome.blockers.map((finding) => <Finding key={finding.ruleId} finding={finding} level="blocker" />)}
       {outcome.warnings.map((finding) => <Finding key={finding.ruleId} finding={finding} level="warning" />)}
+      {outcome.hidden.length > 0 && (
+        <div className="as-hidden-note">
+          <b><CircleSlash size={12} />这个动作本不该出现在该对象上</b>
+          {outcome.hidden.map((finding) => <p key={finding.ruleId}>{finding.ruleName}{finding.message ? `：${finding.message}` : ""}</p>)}
+        </div>
+      )}
       {outcome.steps.length > 0 && (
         <div className="as-rail-block">
           <b>{outcome.applied ? "已执行的操作" : "计划的操作"}</b>
@@ -395,7 +485,7 @@ function OutcomePanel({ outcome }: { outcome: ActionRunOutcome }) {
 function Finding({ finding, level }: { finding: ActionFinding; level: "blocker" | "warning" }) {
   return (
     <div className={`as-finding ${level}`}>
-      <b>{level === "blocker" ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}{finding.ruleName}<span className="as-chip muted">{finding.severity === "BLOCKER" ? "紧急" : "提示"}</span></b>
+      <b>{level === "blocker" ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}{finding.ruleName}<span className="as-chip muted">{effectLabel(finding.effect)}</span></b>
       {finding.message && <p>{finding.message}</p>}
       {finding.evidence.length > 0 && <ul className="as-evidence">{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul>}
     </div>
@@ -403,14 +493,11 @@ function Finding({ finding, level }: { finding: ActionFinding; level: "blocker" 
 }
 
 /** 引用一个对象：可以是动作入参，也可以是本动作前面新建出来的对象。 */
-function RefSelect({ value, options, onChange, placeholder }: { value: { kind: "PARAM" | "EDIT"; code: string }; options: { value: string; label: string }[]; onChange: (ref: { kind: "PARAM" | "EDIT"; code: string }) => void; placeholder: string }) {
-  const current = value.code ? `${value.kind}:${value.code}` : "";
+function RefSelect({ value, options, onChange, placeholder }: { value: ActionRef; options: { value: string; label: string }[]; onChange: (ref: ActionRef) => void; placeholder: string }) {
+  const current = encodeRef(value);
   return (
     <select className="ted-select" value={current} onChange={(event) => {
-      const next = event.target.value;
-      if (!next) { onChange({ kind: "PARAM", code: "" }); return; }
-      const [kind, code] = next.split(":");
-      onChange({ kind: kind as "PARAM" | "EDIT", code });
+      onChange(parseRef(event.target.value));
     }}>
       <option value="">{placeholder}</option>
       {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -472,17 +559,13 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
   const save = async () => {
     if (!draft.name.trim()) return setError("请填写动作名称。");
     if (!draft.code.trim()) return setError("请填写动作标识，它将来是给模型用的工具名。");
+    if (!draft.scopeEntityTypeId) return setError("请选择作用对象：每个动作都要定义在一个类上。");
     if (issues.length) return setError(issues[0]);
     setBusy(true);
     try { await onSave({ ...draft, name: draft.name.trim(), code: draft.code.trim() }); onClose(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败。"); }
     finally { setBusy(false); }
   };
-
-  const refOptions = (index: number) => [
-    ...draft.params.filter((item) => item.kind === "ENTITY_REF").map((item) => ({ value: `PARAM:${item.code}`, label: `入参「${item.name || item.code}」` })),
-    ...draft.edits.slice(0, index).filter((item) => item.op === "CREATE_ENTITY" && item.alias).map((item) => ({ value: `EDIT:${item.alias}`, label: `步 ${draft.edits.indexOf(item) + 1} 新建的「${item.alias}」` })),
-  ];
 
   useEscapeToClose(onClose);
   return (
@@ -502,6 +585,15 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
               <label className="ted-field"><span>动作名称</span><input className="ted-input" value={draft.name} onChange={(event) => patch({ name: event.target.value })} placeholder="例如：购票" /></label>
               <label className="ted-field"><span>动作标识</span><input className="ted-input" value={draft.code} onChange={(event) => patch({ code: event.target.value })} placeholder="例如：buyTicket" /></label>
             </div>
+            <label className="ted-field"><span>作用的类</span>
+              <select className="ted-select" value={draft.scopeEntityTypeId} onChange={(event) => patch({ scopeEntityTypeId: event.target.value })}>
+                <option value="">选择这个动作定义在哪个类上</option>
+                {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              </select>
+              <small>{draft.scopeEntityTypeId
+                ? `动作定义在类「${typeName(definition, draft.scopeEntityTypeId)}」上：执行时必须先选一个属于这个类的对象（实例），规则和操作里用「主对象」引用它。`
+                : "动作定义在类上，执行时针对属于这个类的一个对象（实例）。"}</small>
+            </label>
             <label className="ted-field"><span>说明</span><input className="ted-input" value={draft.description} onChange={(event) => patch({ description: event.target.value })} placeholder="这个动作在一次业务里代表什么" /></label>
 
             <section className="ted-section">
@@ -522,7 +614,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                       </select>
                     </label>
                     {parameter.kind === "ENTITY_REF" ? (
-                      <label className="ted-field"><span>对象类型</span>
+                      <label className="ted-field"><span>类</span>
                         <select className="ted-select" value={parameter.entityTypeId} onChange={(event) => patch({ params: draft.params.map((item, i) => i === index ? { ...item, entityTypeId: event.target.value } : item) })}>
                           <option value="">选择类型</option>
                           {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
@@ -559,7 +651,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                   {edit.op === "CREATE_ENTITY" && (
                     <>
                       <div className="as-edit-grid">
-                        <label className="ted-field"><span>对象类型</span>
+                        <label className="ted-field"><span>类</span>
                           <select className="ted-select" value={edit.entityTypeId} onChange={(event) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, entityTypeId: event.target.value } : item) })}>
                             <option value="">选择类型</option>
                             {definition.entityTypes.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
@@ -573,7 +665,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                   {edit.op === "SET_PROPERTY" && (
                     <>
                       <label className="ted-field"><span>修改哪个对象</span>
-                        <RefSelect value={edit.entityRef} options={refOptions(index)} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, entityRef: ref } : item) })} placeholder="选择对象" />
+                        <RefSelect value={edit.entityRef} options={refOptions(definition, draft, { beforeIndex: index })} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, entityRef: ref } : item) })} placeholder="选择对象" />
                       </label>
                       <AssignmentList action={draft} properties={[]} rows={edit.assignments} freeText onChange={(rows) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, assignments: rows } : item) })} />
                     </>
@@ -587,8 +679,8 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                         </select>
                       </label>
                       <div className="as-edit-grid">
-                        <label className="ted-field"><span>起点</span><RefSelect value={edit.sourceRef} options={refOptions(index)} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, sourceRef: ref } : item) })} placeholder="选择起点" /></label>
-                        <label className="ted-field"><span>终点</span><RefSelect value={edit.targetRef} options={refOptions(index)} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, targetRef: ref } : item) })} placeholder="选择终点" /></label>
+                        <label className="ted-field"><span>起点</span><RefSelect value={edit.sourceRef} options={refOptions(definition, draft, { beforeIndex: index })} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, sourceRef: ref } : item) })} placeholder="选择起点" /></label>
+                        <label className="ted-field"><span>终点</span><RefSelect value={edit.targetRef} options={refOptions(definition, draft, { beforeIndex: index })} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, targetRef: ref } : item) })} placeholder="选择终点" /></label>
                       </div>
                       <AssignmentList action={draft} properties={propertiesOfRelationType(definition, edit.relationshipTypeId)} rows={edit.assignments} onChange={(rows) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, assignments: rows } : item) })} />
                     </>
@@ -603,6 +695,8 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
             <div className="as-rail-block">
               <b>这份配置会做什么</b>
               <p>
+                {draft.scopeEntityTypeId ? `定义在「${typeName(definition, draft.scopeEntityTypeId)}」上的动作` : "还没有选作用的类"}
+                <br />
                 输入：{draft.params.length ? draft.params.map((item) => `${item.name || item.code || "?"}（${item.kind === "ENTITY_REF" ? typeName(definition, item.entityTypeId) || "未选类型" : item.dataType}）`).join(" · ") : "无参数"}
                 <br />
                 然后：{draft.edits.length ? draft.edits.map((edit) => describeEdit(definition, draft, edit)).join(" → ") : "（还没有操作）"}
@@ -637,7 +731,9 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
   const [error, setError] = useState("");
   const patch = (next: Partial<OntologyRule>) => setDraft((current) => ({ ...current, ...next }));
   const action = actions.find((item) => item.id === draft.actionId) ?? null;
-  const subjects = subjectOptions(action);
+  // 隐藏只看动作执行前就存在的值，所以主体只能是主对象（或它的邻域）。
+  const allSubjects = refOptions(definition, action);
+  const subjects = draft.effect === "HIDE" ? allSubjects.filter((option) => option.value.startsWith("SUBJECT:")) : allSubjects;
   const issues = useMemo(() => {
     const candidate: Definition = { ...definition, rules: definition.rules.some((item) => item.id === draft.id) ? definition.rules.map((item) => item.id === draft.id ? draft : item) : [...definition.rules, draft] };
     return validateActionDefinition(candidate as OntologyDefinition).filter((item) => item.rule === `规则.${draft.name}`).map((item) => item.message);
@@ -654,6 +750,11 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
 
   const updateCondition = (index: number, next: Partial<RuleCondition>) => patch({ conditions: draft.conditions.map((item, i) => i === index ? { ...item, ...next } : item) });
   const updateSubject = (index: number, next: Partial<RuleCondition["subject"]>) => patch({ conditions: draft.conditions.map((item, i) => i === index ? { ...item, subject: { ...item.subject, ...next } } : item) });
+  /** 切到「隐藏」时把条件主体收回主对象：入参与新建对象在动作跑起来之前根本不存在。 */
+  const applyEffect = (effect: RuleEffect) => {
+    if (effect !== "HIDE") return patch({ effect });
+    patch({ effect, conditions: draft.conditions.map((condition) => condition.subject.kind === "SUBJECT" ? condition : { ...condition, subject: { ...condition.subject, kind: "SUBJECT" as const, code: "" } }) });
+  };
 
   useEscapeToClose(onClose);
   return (
@@ -680,16 +781,15 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
               </label>
             </div>
             <div className="ted-grid-2">
-              <label className="ted-field"><span>级别</span>
-                <select className="ted-select" value={draft.severity} onChange={(event) => patch({ severity: event.target.value as OntologyRule["severity"] })}>
-                  <option value="BLOCKER">紧急</option>
-                  <option value="WARNING">提示</option>
+              <label className="ted-field"><span>命中后</span>
+                <select className="ted-select" value={draft.effect} onChange={(event) => applyEffect(event.target.value as RuleEffect)}>
+                  {ruleEffectOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
+                <small>{ruleEffectOptions.find((item) => item.value === draft.effect)?.hint}</small>
               </label>
               <label className="ted-field"><span>优先级</span><input className="ted-input" type="number" value={draft.priority} onChange={(event) => patch({ priority: Number(event.target.value) || 0 })} /></label>
             </div>
             <div className="ted-grid-2">
-              <label className="ted-toggle"><input type="checkbox" checked={draft.gate} onChange={(event) => patch({ gate: event.target.checked })} />写路径闸门</label>
               <label className="ted-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => patch({ enabled: event.target.checked })} />启用</label>
             </div>
 
@@ -704,13 +804,11 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
                   </div>
                   <div className="as-edit-grid">
                     <label className="ted-field"><span>主体</span>
-                      <select className="ted-select" value={condition.subject.code ? `${condition.subject.kind}:${condition.subject.code}` : ""} onChange={(event) => {
-                        const value = event.target.value;
-                        if (!value) { updateSubject(index, { kind: "PARAM", code: "" }); return; }
-                        const [kind, code] = value.split(":");
-                        updateSubject(index, { kind: kind as "PARAM" | "EDIT", code });
+                        <select className="ted-select" value={encodeRef(condition.subject)} onChange={(event) => {
+                        const ref = parseRef(event.target.value);
+                        updateSubject(index, { kind: ref.kind, code: ref.code });
                       }}>
-                        <option value="">选择主体</option>
+                        <option value="">选择要判断的对象</option>
                         {subjects.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
@@ -745,7 +843,11 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
                   )}
                 </div>
               ))}
-              <button type="button" className="as-inline-add" disabled={!action} onClick={() => patch({ conditions: [...draft.conditions, { ...newCondition(), subject: { ...newCondition().subject, code: subjects[0]?.value.split(":")[1] ?? "", kind: (subjects[0]?.value.split(":")[0] as "PARAM" | "EDIT") ?? "PARAM" } }] })}><Plus size={12} />添加条件</button>
+              <button type="button" className="as-inline-add" disabled={!action} onClick={() => {
+                const first = parseRef(subjects[0]?.value ?? "");
+                const condition = newCondition();
+                patch({ conditions: [...draft.conditions, { ...condition, subject: { ...condition.subject, kind: first.kind, code: first.code } }] });
+              }}><Plus size={12} />添加条件</button>
             </section>
 
             <section className="ted-section">
@@ -759,13 +861,13 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
           <aside className="ted-preview">
             <div className="as-rail-block">
               <b>这条规则读出来是</b>
-              <p>当 {draft.conditions.length ? draft.conditions.map((condition) => describeCondition(definition, action, condition)).join(" 且 ") : "（未配置条件）"} 时，{draft.severity === "BLOCKER" && draft.gate ? "拒绝执行" : "给出提示"}{draft.message ? `，并说明：${draft.message}` : "。"}</p>
+              <p>当 {draft.conditions.length ? draft.conditions.map((condition) => describeCondition(definition, action, condition)).join(" 且 ") : "（未配置条件）"} 时，{effectSentence(draft.effect)}{draft.message ? `，并说明：${draft.message}` : "。"}</p>
             </div>
             <div className="as-rail-block">
               <b>定义体检</b>
               {issues.length ? <ul className="as-rail-list">{issues.map((message) => <li key={message}>{message}</li>)}</ul> : <p>引用都成立。</p>}
             </div>
-            <p className="ted-note">只有「紧急 + 写路径闸门」才会真的挡住写入；其余情况只是提示。级别和闸门分开，是为了让「必须拦」和「提醒一下」能配在同一条规则里切换。</p>
+            <p className="ted-note">「隐藏」决定这个动作在这个对象上出不出得来，只能看动作执行前就有的数据；「拦截」拒绝执行；「提示」只提醒不拦。三种处置用同一条规则切换，条件不用重配。</p>
           </aside>
         </div>
         <footer className="ted-foot">

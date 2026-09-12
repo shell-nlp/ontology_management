@@ -24,7 +24,7 @@
 .as-card-meta { color: #7b8ca6; font-size: 10.5px; line-height: 1.55; }
 .as-card-recipe { margin: 0; padding: 8px 9px; border-left: 2px solid #dbe6f5; background: #fafcff; color: #4b5b6b; font-size: 11px; line-height: 1.65; }
 
-/* 动作与对象/关系类型的关联：从参数与操作模板推导，双向可见。 */
+/* 动作与类、关系类型的关联：从参数与操作模板推导，双向可见。 */
 .as-card-types { display: flex; flex-wrap: wrap; gap: 6px; }
 .as-type-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 7px; border: 1px solid #dbe6f5; border-radius: 3px; background: #f7faff; color: #26456b; font-size: 10.5px; }
 .as-type-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #1d4ed8; }
@@ -35,12 +35,16 @@
 .as-chip { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-weight: 700; font-style: normal; white-space: nowrap; }
 .as-chip.blocker { background: #fdecea; color: #b03a2e; }
 .as-chip.warning { background: #fdf3e3; color: #a2622f; }
-.as-chip.gate { background: #eef3fb; color: #1e3a8a; }
+.as-chip.hide { background: #eceef2; color: #4a5769; }
 .as-chip.muted { background: #eef2f8; color: #7b8ca6; }
+.as-chip.scope { background: #e7eefc; color: #1e3a8a; }
 .as-chip.passed { background: #eaf5ed; color: #2f6b4d; }
 .as-chip.off { background: #f1f3f6; color: #98a5b6; }
 
 .as-param-row { display: grid; grid-template-columns: minmax(0, 1.1fr) auto; gap: 8px; align-items: center; }
+/* 主对象放在参数之前，并和参数区分开：先选"对谁执行"，再填参数。 */
+.as-subject-row { padding-bottom: 11px; border-bottom: 1px dashed #dbe6f5; }
+.as-subject-row .as-param-label b { color: #1e3a8a; }
 .as-param-label { display: grid; gap: 2px; }
 .as-param-label b { color: #16233b; font-size: 11.5px; }
 .as-param-label small { color: #8b9ab0; font-size: 10px; }
@@ -56,6 +60,7 @@
 .as-outcome.passed .as-verdict b { color: #2f6b4d; }
 .as-outcome.blocked .as-verdict b { color: #b03a2e; }
 .as-verdict span { color: #7b8ca6; font-size: 10.5px; }
+.as-verdict span.as-verdict-subject { margin-left: auto; color: #1e3a8a; }
 
 .as-finding { display: grid; gap: 5px; padding: 9px 10px; border-radius: 3px; border-left: 3px solid; }
 .as-finding.blocker { border-color: #d1604a; background: #fdf2ef; }
@@ -65,6 +70,9 @@
 .as-evidence { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
 .as-evidence li { color: #6b7d92; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; line-height: 1.55; }
 
+.as-hidden-note { display: grid; gap: 4px; padding: 9px 10px; border-radius: 3px; border: 1px dashed #c8d2e0; background: #f5f7fa; }
+.as-hidden-note b { display: flex; align-items: center; gap: 6px; color: #4a5769; font-size: 11.5px; }
+.as-hidden-note p { margin: 0; color: #66768c; font-size: 11px; line-height: 1.6; }
 .as-steps { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; counter-reset: as-step; }
 .as-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; color: #3d5168; font-size: 11px; line-height: 1.6; counter-increment: as-step; }
 .as-steps li::before { content: counter(as-step, decimal-leading-zero); color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }

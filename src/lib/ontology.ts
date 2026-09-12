@@ -1,14 +1,14 @@
 import { z } from "zod";
 
 /**
- * 本体定义（对象类 / 关系类 / 属性规则 / 动作 / 规则）。
+ * 本体定义（类 / 关系类型 / 属性规则 / 动作 / 规则）。
  *
  * 这里只保留与图数据库无关的定义结构。落地到具体图库的读写能力
  * （校验必填、同步唯一约束与索引、整体替换图数据）由
  * @/lib/graph 的 GraphStore 适配器实现，不再和 Cypher 绑定。
  *
- * 动作（actionTypes）与规则（rules）是本体的一等公民，不是某个对象类型的字段：
- * 一个动作可以跨多个对象类型写入，规则挂在动作上拦截写入。
+ * 动作（actionTypes）与规则（rules）是本体的一等公民，不是某个类的字段：
+ * 一个动作可以跨多个类写入，规则挂在动作上拦截写入。
  * 具体执行语义见 @/lib/action-engine。
  */
 export const propertyDataTypeSchema = z.enum(["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"]);
@@ -31,9 +31,14 @@ export const actionParameterSchema = z.object({
   required: z.boolean().default(true),
 });
 
-/** 动作里指向一个对象：来自入参（PARAM），或本次动作前一步新建的对象（EDIT 别名）。 */
+/**
+ * 动作里指向一个对象，三种来源：
+ * SUBJECT = 动作主对象（接受动作的那个对象实例，Palantir 里的 object context）；
+ * PARAM = 动作入参；
+ * EDIT = 本次动作前一步新建出来的对象（别名）。
+ */
 export const actionRefSchema = z.object({
-  kind: z.enum(["PARAM", "EDIT"]),
+  kind: z.enum(["SUBJECT", "PARAM", "EDIT"]),
   code: z.string().trim().default(""),
 });
 
@@ -66,6 +71,11 @@ export const actionTypeSchema = z.object({
   /** 稳定的机器名，将来暴露给 AI 工具时就是工具名。 */
   code: z.string().trim().min(1).max(100),
   description: z.string().max(500).default(""),
+  /**
+   * 作用的类：动作定义在这个类上，也只能在这个类的对象上执行。
+   * 空字符串表示还没选（校验会拦下来），兼容加字段之前存下来的动作。
+   */
+  scopeEntityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
   params: z.array(actionParameterSchema).default([]),
   edits: z.array(actionEditSchema).default([]),
 });
@@ -76,7 +86,7 @@ export const actionTypeSchema = z.object({
  */
 export const ruleConditionSchema = z.object({
   subject: z.object({
-    kind: z.enum(["PARAM", "EDIT"]),
+    kind: z.enum(["SUBJECT", "PARAM", "EDIT"]),
     code: z.string().trim().default(""),
     /** 非空表示先沿这条关系跳到邻域（任一邻域对象命中即算命中）；空表示就取主体自身。 */
     relationshipTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
@@ -87,20 +97,32 @@ export const ruleConditionSchema = z.object({
   compareValue: z.string().default(""),
 });
 
+/**
+ * 规则命中后的效果，三档：
+ * HIDE  = 这个动作不出现在该对象上（适用性，只看主对象自身已有的属性）；
+ * BLOCK = 拒绝执行，并给出原因（提交校验，可以看本次新建出来的对象）；
+ * WARN  = 只提示，不拦。
+ */
+export const ruleEffectSchema = z.enum(["HIDE", "BLOCK", "WARN"]);
+
 export const ontologyRuleSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1).max(100),
-  /** BLOCKER = 紧急（拦住写入），WARNING = 提示（只提醒）。 */
-  severity: z.enum(["BLOCKER", "WARNING"]).default("WARNING"),
+  effect: ruleEffectSchema.default("BLOCK"),
   priority: z.number().int().default(0),
   enabled: z.boolean().default(true),
   /** 绑定的动作；空字符串表示对所有动作生效。 */
   actionId: z.union([z.string().uuid(), z.literal("")]).default(""),
-  /** 写路径闸门：勾选后命中即拒绝执行，否则只作为提示。 */
-  gate: z.boolean().default(true),
+  /** 旧数据里的「级别 + 写路径闸门」，读取时归一成 effect，不再写回。 */
+  severity: z.enum(["BLOCKER", "WARNING"]).optional(),
+  gate: z.boolean().optional(),
   conditions: z.array(ruleConditionSchema).default([]),
-  /** 拦截时给用户看的原因。 */
+  /** 拦截或提示时给用户看的原因。 */
   message: z.string().max(500).default(""),
+}).transform((rule) => {
+  const { severity, gate, ...rest } = rule;
+  if (!severity) return rest;
+  return { ...rest, effect: severity === "BLOCKER" ? (gate === false ? "WARN" as const : "BLOCK" as const) : "WARN" as const };
 });
 
 export const ontologyDefinitionSchema = z.object({

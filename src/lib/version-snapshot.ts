@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
-import { ActionBlockedError, runAction, validateActionDefinition, type ActionOutcome, type ActionRunInput } from "@/lib/action-engine";
+import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -577,7 +577,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
-      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的对象类型。", count: 1 });
+      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的类。", count: 1 });
       continue;
     }
     const type = entityTypes.get(managed[0])!;
@@ -611,7 +611,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     const sourceType = entityTypesById.get(type.sourceEntityTypeId);
     const targetType = entityTypesById.get(type.targetEntityTypeId);
     if (!sourceType || !targetType || !source.labels.includes(sourceType.name) || !target.labels.includes(targetType.name)) {
-      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的对象类型契约。", count: 1 });
+      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的类契约。", count: 1 });
     }
     try { parsePropertyValues(type.properties, relationship.properties); } catch (error) {
       violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
@@ -635,20 +635,30 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
 }
 
 /**
+ * 这个对象上应该看到哪些动作。
+ *
+ * 隐藏规则只看动作执行前就有的数据，所以读的是快照当前的样子，不跑动作。
+ */
+export async function visibleSnapshotActions(versionId: string, subjectEntityId: string): Promise<ActionVisibility[]> {
+  const snapshot = await readVersionSnapshot(versionId);
+  return visibleActions(snapshot.definition, snapshot, subjectEntityId);
+}
+
+/**
  * 运行动作。
  *
  * 干跑只读快照、返回"会发生什么"；执行则在草稿锁内按最新快照重算一次再落盘，
  * 命中闸门规则时抛出 `ActionBlockedError`，快照文件保持原样。
  */
-export async function runSnapshotAction(versionId: string, actionId: string, inputs: ActionRunInput[], options: { dryRun: boolean }): Promise<{ outcome: ActionOutcome; applied: boolean }> {
+export async function runSnapshotAction(versionId: string, actionId: string, inputs: ActionRunInput[], options: { dryRun: boolean; subjectEntityId?: string }): Promise<{ outcome: ActionOutcome; applied: boolean }> {
   const row = await getVersionRecord(versionId);
   if (!row) throw new Error("本体版本不存在。");
   if (row.status !== "DRAFT") throw new Error("只有草稿版本可以运行动作，请先创建草稿。");
   const snapshot = await readVersionSnapshot(versionId);
-  const preview = runAction(snapshot.definition, snapshot, actionId, inputs);
+  const preview = runAction(snapshot.definition, snapshot, actionId, inputs, { subjectEntityId: options.subjectEntityId });
   if (options.dryRun || preview.verdict === "BLOCKED") return { outcome: preview, applied: false };
   const outcome = await mutateDraftSnapshot<ActionOutcome>(versionId, (current) => {
-    const fresh = runAction(current.definition, current, actionId, inputs);
+    const fresh = runAction(current.definition, current, actionId, inputs, { subjectEntityId: options.subjectEntityId });
     if (fresh.verdict === "BLOCKED") throw new ActionBlockedError(fresh);
     current.nodes = fresh.graph.nodes;
     current.relationships = fresh.graph.relationships;
@@ -663,7 +673,7 @@ export async function runSnapshotAction(versionId: string, actionId: string, inp
 export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
-    if (!type) throw new Error("对象类型未在当前草稿中定义。");
+    if (!type) throw new Error("类未在当前草稿中定义。");
     const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawProperties) });
     snapshot.nodes.push(node);
     return entityFromSnapshot(node);
@@ -675,7 +685,7 @@ export async function updateSnapshotEntity(versionId: string, entityId: string, 
     const node = snapshot.nodes.find((item) => item.id === entityId);
     if (!node) return null;
     const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
-    if (!type) throw new Error("对象类型未在当前草稿中定义。");
+    if (!type) throw new Error("类未在当前草稿中定义。");
     const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
     node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
     return entityFromSnapshot(node);

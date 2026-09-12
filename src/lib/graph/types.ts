@@ -218,7 +218,7 @@ export type ListEntitiesOptions = {
   labels?: string[];
   search?: string | null;
   limit?: number;
-  /** 对象类名 -> 展示属性名，来自已发布本体。 */
+  /** 类名 -> 展示属性名，来自已发布本体。 */
   displayProperties?: Record<string, string>;
 };
 
@@ -256,7 +256,7 @@ export interface GraphStore {
   readSchemaGraph(): Promise<QueryResult>;
   /** 图谱筛选用的类型元数据。 */
   readMeta(): Promise<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>;
-  /** 运行时类型统计（对象类 / 关系类 / 属性类型推断）。 */
+  /** 运行时类型统计（类 / 关系类型 / 属性类型推断）。 */
   readRuntimeTypes(): Promise<RuntimeTypeSet>;
   /** 读取实例子图。 */
   readGraph(options?: ReadGraphOptions): Promise<GraphData>;

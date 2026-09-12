@@ -26,7 +26,7 @@ type Props = {
 };
 
 /**
- * 对象类型 / 关系类型的定义面板：左栏写契约（身份、端点、属性规则），
+ * 类 / 关系类型的定义面板：左栏写契约（身份、端点、属性规则），
  * 右栏按画布的真实规则预览——取色用 graphColor(name)，标签用 compactGraphLabel，
  * 所以改一个名字，这里的圆点和画布上的圆点一起换色。
  *
@@ -100,7 +100,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     }
   };
 
-  const noun = kind === "entity" ? "对象类型" : "关系类型";
+  const noun = kind === "entity" ? "类" : "关系类型";
   const title = mode === "create" ? `新增${noun}` : `编辑${noun}`;
   const trimmedName = name.trim();
   const named = trimmedName.length > 0;
@@ -139,11 +139,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   <label className="ted-field">
                     <span>名称</span>
                     <input className="ted-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required />
-                    <small>对象类型在画布上的标题，也是它取色的依据。</small>
+                    <small>类在画布上的标题，也是它取色的依据。</small>
                   </label>
                   <label className="ted-field">
                     <span>说明</span>
-                    <input className="ted-input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类型代表什么" />
+                    <input className="ted-input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类代表什么" />
                     <small>写给同事看的业务含义，可留空。</small>
                   </label>
                 </div>
@@ -176,14 +176,14 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 </div>
                 <div className="ted-grid-2">
                   <label className="ted-field">
-                    <span>起始对象类型</span>
+                    <span>起始类</span>
                     <select className="ted-select" value={source} onChange={(event) => setSource(event.target.value)} required>
                       <option value="">选择类型</option>
                       {entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
                     </select>
                   </label>
                   <label className="ted-field">
-                    <span>终止对象类型</span>
+                    <span>终止类</span>
                     <select className="ted-select" value={target} onChange={(event) => setTarget(event.target.value)} required>
                       <option value="">选择类型</option>
                       {entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
@@ -245,7 +245,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
           <aside className="ted-preview">
             <div className="ted-preview-head">
               <b>画布预览</b>
-              <span>{kind === "entity" ? "保存后，它就以这颗圆点出现在本体草稿画布上。" : "保存后，它就以这条连线出现在两个对象类型之间。"}</span>
+              <span>{kind === "entity" ? "保存后，它就以这颗圆点出现在本体草稿画布上。" : "保存后，它就以这条连线出现在两个类之间。"}</span>
             </div>
             <div className="ted-stage">
               {kind === "entity" ? (

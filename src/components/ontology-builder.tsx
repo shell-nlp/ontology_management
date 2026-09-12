@@ -15,7 +15,7 @@ import "./ontology-builder.css";
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 
 /**
- * 没被手动摆放过的对象类型：度数最高的那个居中，其余绕成一圈。
+ * 没被手动摆放过的类：度数最高的那个居中，其余绕成一圈。
  * 换一个 seed 就是绕轴转一圈，所以「自动整理」看得见变化，布局本身仍是确定的。
  */
 function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) {
@@ -61,13 +61,13 @@ type Props = {
   onUpdateRelation: (id: string, payload: RelationPayload) => Promise<void>;
   onDeleteRelation: (id: string) => Promise<void>;
   onExtract: () => void;
-  /** 跳去「动作」页：对象类型与动作的关联在这里点开。 */
+  /** 跳去「动作」页：类与动作的关联在这里点开。 */
   onOpenActions?: () => void;
   onFail: (reason: unknown) => void;
 };
 
 /**
- * 本体草稿的可视化工作台：对象类型是节点，关系契约是带箭头的连线。
+ * 本体草稿的可视化工作台：类是节点，关系契约是带箭头的连线。
  *
  * 画布上做的每一次改动都会立刻写回草稿（和表单模式同一套保存路径），
  * 摆放位置只记在本机浏览器，不属于草稿定义。
@@ -165,24 +165,24 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
 
       <div className="ob-toolbar">
         <button className="graph-tool-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}>
-          <Plus size={14} />对象类型
+          <Plus size={14} />类
         </button>
         <button
           className={connectFrom ? "graph-tool-action" : "ob-tool-action"}
           disabled={!canEdit || definition.entityTypes.length < 2}
           onClick={() => (connectFrom ? setConnectFrom(null) : setConnectFrom(selectedEntity?.id ?? definition.entityTypes[0]?.id ?? null))}
-          title={connectFrom ? "取消连线" : "先点起点对象类型，再点终点对象类型"}
+          title={connectFrom ? "取消连线" : "先点起点类，再点终点类"}
         >
           <Link2 size={14} />{connectFrom ? "退出连线" : "新建关系"}
         </button>
         <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
-        <span className="ob-count">{definition.entityTypes.length} 对象类型 · {definition.relationshipTypes.length} 关系类型</span>
+        <span className="ob-count">{definition.entityTypes.length} 类 · {definition.relationshipTypes.length} 关系类型</span>
       </div>
 
       {connectFrom && (
         <div className="ob-connect-hint" role="status">
           <Link2 size={13} />
-          正在从「{entityById.get(connectFrom)?.name ?? "对象类型"}」连线，点另一个对象类型作为终点
+          正在从「{entityById.get(connectFrom)?.name ?? "类"}」连线，点另一个类作为终点
           <button onClick={() => setConnectFrom(null)}>取消</button>
         </div>
       )}
@@ -202,10 +202,10 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       {!definition.entityTypes.length && (
         <div className="ob-empty">
           <CircleDot size={26} />
-          <b>画布上还没有对象类型</b>
-          <span>先落一个对象类型，从它拉出关系契约，再补端点和属性。每次改动都会立刻存进草稿。</span>
+          <b>画布上还没有类</b>
+          <span>先落一个类，从它拉出关系契约，再补端点和属性。每次改动都会立刻存进草稿。</span>
           <div>
-            <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}><Plus size={15} />新建对象类型</button>
+            <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}><Plus size={15} />新建类</button>
             {hasSnapshot && <button className="graph-action" disabled={!canEdit} onClick={onExtract}><Database size={15} />从快照提取类型</button>}
           </div>
         </div>
@@ -216,7 +216,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         {selectedEntity ? (
           <>
             <div className="graph-inspector-head">
-              <div><span style={{ background: graphColor(selectedEntity.name) }} />对象类型</div>
+              <div><span style={{ background: graphColor(selectedEntity.name) }} />类</div>
               <button aria-label="关闭详情" onClick={() => setSelected(null)}><X size={15} /></button>
             </div>
             <div className="graph-inspector-body">
@@ -242,7 +242,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                 <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action" disabled={!canEdit || definition.entityTypes.length < 2} onClick={() => startConnection(selectedEntity.id)}><Link2 size={13} />连一条关系</button>
               </div>
-              <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteEntity(selectedEntity.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除对象类型</button>
+              <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteEntity(selectedEntity.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除类</button>
             </div>
           </>
         ) : selectedRelation ? (
@@ -277,7 +277,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
             <div className="graph-inspector-empty">
               <LocateFixed size={20} />
               <b>选择一个元素</b>
-              <span>点对象类型看它的属性规则；点连线看端点契约。拖节点可调整摆放，「自动整理」复位。</span>
+              <span>点类看它的属性规则；点连线看端点契约。拖节点可调整摆放，「自动整理」复位。</span>
             </div>
           </div>
         )}
@@ -316,7 +316,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
 }
 
 /**
- * 对象类型 / 关系类型这一侧看"谁在动我"。
+ * 类 / 关系类型这一侧看"谁在动我"。
  * 关联由动作的参数与操作模板推导（actionInvolvement），不是另存的一张表。
  */
 function InvolvedActions({ definition, entityTypeId, relationTypeId, onOpen }: { definition: Definition; entityTypeId?: string; relationTypeId?: string; onOpen?: () => void }) {
@@ -329,18 +329,37 @@ function InvolvedActions({ definition, entityTypeId, relationTypeId, onOpen }: {
       return hit ? { action, roles: hit.roles } : null;
     })
     .filter((item): item is { action: ActionType; roles: string[] } => Boolean(item));
+  const targetName = entityTypeId ? definition.entityTypes.find((item) => item.id === entityTypeId)?.name ?? "" : definition.relationshipTypes.find((item) => item.id === relationTypeId)?.name ?? "";
+  const scoped = entries.filter((item) => item.roles.includes("主对象"));
+  const referenced = entries.filter((item) => !item.roles.includes("主对象"));
   if (!entries.length) {
-    return <p className="ob-inspector-note">还没有动作引用这个类型。在「动作」页新建动作时，参数和操作选了它，这里就会出现。</p>;
+    return <p className="ob-inspector-note">还没有动作定义在类「{targetName}」上；在「动作」页新建动作时把作用的类选成它，这里就会出现，并能直接执行。</p>;
   }
   return (
-    <div className="ob-actions">
-      <b>涉及的动作</b>
-      {entries.map(({ action, roles }) => (
-        <button key={action.id} onClick={onOpen} disabled={!onOpen} title="去「动作」页运行或编辑">
-          <span>{action.name || action.code || "未命名动作"}</span>
-          <em>{roles.join(" · ")}</em>
-        </button>
-      ))}
-    </div>
+    <>
+      <p className="ob-inspector-note">类在数据里体现为节点上的这个标签。动作定义在类上，作用在属于它的对象（实例）上。</p>
+      {scoped.length > 0 && (
+        <div className="ob-actions">
+          <b>{relationTypeId ? "会建出这条关系的动作" : "定义在这个类上的动作"}</b>
+          {scoped.map(({ action, roles }) => (
+            <button key={action.id} onClick={onOpen} disabled={!onOpen} title="去「动作」页运行或编辑">
+              <span>{action.name || action.code || "未命名动作"}</span>
+              <em>{roles.join(" · ")}</em>
+            </button>
+          ))}
+        </div>
+      )}
+      {referenced.length > 0 && (
+        <div className="ob-actions">
+          <b>引用这个类的动作</b>
+          {referenced.map(({ action, roles }) => (
+            <button key={action.id} onClick={onOpen} disabled={!onOpen} title="去「动作」页运行或编辑">
+              <span>{action.name || action.code || "未命名动作"}</span>
+              <em>{roles.join(" · ")}</em>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

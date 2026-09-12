@@ -367,7 +367,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     return `VALUES ?${variable} { ${terms.map(termToken).join(" ")} }`;
   }
 
-  /** 读取一组主语的对象类标签与字面量属性。 */
+  /** 读取一组主语的类标签与字面量属性。 */
   async function hydrateNodes(terms: string[]) {
     const nodes = new Map<string, GraphNode>();
     // 具体化关系 / 类 / 属性这些 RDF 资源不算实例节点，单独回报给调用方。
@@ -457,7 +457,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     return { relationships: [...relationships.values()], discovered };
   }
 
-  /** 按对象类 / 关键词筛选主语。 */
+  /** 按类 / 关键词筛选主语。 */
   async function selectSubjects(options: { labels?: string[]; search?: string | null; limit?: number } = {}) {
     const labels = options.labels ?? [];
     const search = options.search?.trim() || null;

@@ -577,12 +577,12 @@ export function GraphCanvas({
       <aside className="graph-inspector open">
         {selectedNode && (
           <div className="graph-inspector-body">
-            <div className="graph-inspector-head"><div><span style={{ background: graphColor(ontologyEntity ? ontologyEntity.name : selectedNode.labels[0] ?? "未标注") }} />{viewMode === "ontology" ? "对象类型" : "节点事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
+            <div className="graph-inspector-head"><div><span style={{ background: graphColor(ontologyEntity ? ontologyEntity.name : selectedNode.labels[0] ?? "未标注") }} />{viewMode === "ontology" ? "类" : "节点事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
             <h3>{graphLabel(selectedNode, displayProps)}</h3>
-            <p>{viewMode === "ontology" ? ontologyEntity?.description || "数据库架构中已存在的对象类型" : selectedNode.labels.join(" · ") || "未标注类型"}</p>
+            <p>{viewMode === "ontology" ? ontologyEntity?.description || "数据库架构中已存在的类" : selectedNode.labels.join(" · ") || "未标注类型"}</p>
             {viewMode !== "ontology" && <code className="graph-element-id">{selectedNode.id}</code>}
                 {viewMode === "ontology" ? (
-                  ontologyEntity ? <><p className="ontology-property-title">属性定义（{ontologyEntity.properties.length}）</p><OntologyPropertyList properties={ontologyEntity.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该对象类型的属性规则。</p>
+                  ontologyEntity ? <><p className="ontology-property-title">属性定义（{ontologyEntity.properties.length}）</p><OntologyPropertyList properties={ontologyEntity.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该类的属性规则。</p>
                 ) : admin && editing ? (
                   <>
                     <PropertyEditor key={selectedNode.id} definitions={nodeDefinitions ?? []} values={selectedNode.properties} mode={nodeDefinitions ? "managed" : "raw"} onChange={setDraftProps} />
@@ -606,7 +606,7 @@ export function GraphCanvas({
           <div className="graph-inspector-body">
             <div className="graph-inspector-head"><div><span style={{ background: "#7a8f8c" }} />{viewMode === "ontology" ? "关系类型" : "关系事实"}</div><button aria-label="关闭详情" onClick={() => setEditTarget(null)}><X size={15} /></button></div>
             <h3>{selectedEdge.type}</h3>
-            <p>{viewMode === "ontology" ? <><span>起点对象类型</span> {ontologySource?.name ?? (graphSource ? graphLabel(graphSource) : "未定义")}<br /><span>终点对象类型</span> {ontologyTarget?.name ?? (graphTarget ? graphLabel(graphTarget) : "未定义")}</> : <><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</>}</p>
+            <p>{viewMode === "ontology" ? <><span>起点类</span> {ontologySource?.name ?? (graphSource ? graphLabel(graphSource) : "未定义")}<br /><span>终点类</span> {ontologyTarget?.name ?? (graphTarget ? graphLabel(graphTarget) : "未定义")}</> : <><span>起始</span> {selectedEdge.source}<br /><span>终止</span> {selectedEdge.target}</>}</p>
             {viewMode !== "ontology" && <code className="graph-element-id">{selectedEdge.id}</code>}
             {viewMode === "ontology" ? (
               ontologyRelationship ? <><p className="ontology-property-title">属性定义（{ontologyRelationship.properties.length}）</p><OntologyPropertyList properties={ontologyRelationship.properties} /></> : <p className="ontology-missing-definition">已发布本体尚未定义该关系类型的属性规则。</p>
@@ -628,7 +628,7 @@ export function GraphCanvas({
           </div>
         )}
         {!selectedNode && !selectedEdge && (
-          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击对象类型或关系类型，查看端点契约及每一项属性规则。拖拽节点可调整摆放，位置只记在本机；需要复原时点“自动整理”。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "拖拽节点可调整摆放（只记在本机）；查看节点属性，或在查询结果中继续扩展。"}</>}</span></div>
+          <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一个元素</b><span>{viewMode === "ontology" ? "点击类或关系类型，查看端点契约及每一项属性规则。拖拽节点可调整摆放，位置只记在本机；需要复原时点“自动整理”。" : <>点击节点或连线查看与编辑属性。{admin ? "拖拽节点可保存位置；从节点详情发起新建关系后选择目标节点。" : "拖拽节点可调整摆放（只记在本机）；查看节点属性，或在查询结果中继续扩展。"}</>}</span></div>
         )}
       </aside>
 
