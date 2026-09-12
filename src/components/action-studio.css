@@ -1,0 +1,102 @@
+/* 动作工作台。
+   页面本身是本平台既有的 panel/卡片词汇；弹窗外观沿用 type-edit-dialog.css 的 ted-*
+   词汇（同为"本体定义的编辑弹窗"，保持同一套观感），这里只补动作特有的部分。 */
+
+.as-shell { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.as-panel { display: grid; align-content: start; gap: 12px; padding: 16px 18px 18px; }
+.as-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.as-head h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 17px; font-weight: 600; color: #16233b; }
+.as-head p { margin: 5px 0 0; color: #7b8ca6; font-size: 11px; line-height: 1.55; }
+.as-count { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+
+.as-list { display: grid; gap: 8px; }
+.as-empty { margin: 0; padding: 16px 14px; border: 1px dashed #ccd9ea; border-radius: 4px; background: #fbfcfe; color: #8b9ab0; font-size: 11px; line-height: 1.6; text-align: center; }
+
+.as-card { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fff; text-align: left; }
+.as-card.selectable { cursor: pointer; transition: border-color .14s ease, background .14s ease; }
+.as-card.selectable:hover { border-color: #b9d1f5; background: #fafcff; }
+.as-card.selected { border-color: #1d4ed8; background: #f6faff; box-shadow: inset 2px 0 0 #1d4ed8; }
+.as-card:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+.as-card-top { display: flex; align-items: center; gap: 8px; }
+.as-card-top b { min-width: 0; color: #16233b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-card-top code { flex: none; padding: 2px 6px; border-radius: 3px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-card-actions { display: flex; gap: 5px; margin-left: auto; }
+.as-card-meta { color: #7b8ca6; font-size: 10.5px; line-height: 1.55; }
+.as-card-recipe { margin: 0; padding: 8px 9px; border-left: 2px solid #dbe6f5; background: #fafcff; color: #4b5b6b; font-size: 11px; line-height: 1.65; }
+
+/* 动作与对象/关系类型的关联：从参数与操作模板推导，双向可见。 */
+.as-card-types { display: flex; flex-wrap: wrap; gap: 6px; }
+.as-type-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 7px; border: 1px solid #dbe6f5; border-radius: 3px; background: #f7faff; color: #26456b; font-size: 10.5px; }
+.as-type-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #1d4ed8; }
+.as-type-chip.entity::before { background: #1d4ed8; }
+.as-type-chip.relation::before { border-radius: 1px; background: #7a8f8c; }
+.as-type-chip em { color: #8b9ab0; font-size: 9.5px; font-style: normal; }
+
+.as-chip { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-weight: 700; font-style: normal; white-space: nowrap; }
+.as-chip.blocker { background: #fdecea; color: #b03a2e; }
+.as-chip.warning { background: #fdf3e3; color: #a2622f; }
+.as-chip.gate { background: #eef3fb; color: #1e3a8a; }
+.as-chip.muted { background: #eef2f8; color: #7b8ca6; }
+.as-chip.passed { background: #eaf5ed; color: #2f6b4d; }
+.as-chip.off { background: #f1f3f6; color: #98a5b6; }
+
+.as-param-row { display: grid; grid-template-columns: minmax(0, 1.1fr) auto; gap: 8px; align-items: center; }
+.as-param-label { display: grid; gap: 2px; }
+.as-param-label b { color: #16233b; font-size: 11.5px; }
+.as-param-label small { color: #8b9ab0; font-size: 10px; }
+
+.as-run-actions { display: flex; gap: 8px; }
+.as-run-actions .action { flex: 1; justify-content: center; }
+
+.as-outcome { display: grid; gap: 10px; padding: 12px 13px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fbfcfe; }
+.as-outcome.passed { border-color: #cfe6d6; background: #f7fcf8; }
+.as-outcome.blocked { border-color: #f0ccc4; background: #fffaf8; }
+.as-verdict { display: flex; align-items: center; gap: 8px; }
+.as-verdict b { font-size: 13px; }
+.as-outcome.passed .as-verdict b { color: #2f6b4d; }
+.as-outcome.blocked .as-verdict b { color: #b03a2e; }
+.as-verdict span { color: #7b8ca6; font-size: 10.5px; }
+
+.as-finding { display: grid; gap: 5px; padding: 9px 10px; border-radius: 3px; border-left: 3px solid; }
+.as-finding.blocker { border-color: #d1604a; background: #fdf2ef; }
+.as-finding.warning { border-color: #d19a4a; background: #fff8ec; }
+.as-finding b { display: flex; align-items: center; gap: 6px; color: #2c3f55; font-size: 11.5px; }
+.as-finding p { margin: 0; color: #55677d; font-size: 11px; line-height: 1.6; }
+.as-evidence { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.as-evidence li { color: #6b7d92; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; line-height: 1.55; }
+
+.as-steps { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; counter-reset: as-step; }
+.as-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; color: #3d5168; font-size: 11px; line-height: 1.6; counter-increment: as-step; }
+.as-steps li::before { content: counter(as-step, decimal-leading-zero); color: #a3b1c4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-created { display: flex; flex-wrap: wrap; gap: 6px; }
+.as-created span { padding: 4px 7px; border-radius: 3px; background: #fff; border: 1px solid #dfe7f1; color: #3d5168; font-size: 10.5px; }
+.as-created code { color: #7186a4; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+
+.as-decisions { display: grid; gap: 6px; }
+.as-decision { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 8px 9px; border: 1px solid #e6edf6; border-radius: 3px; background: #fff; }
+.as-decision > div { min-width: 0; display: grid; gap: 2px; }
+.as-decision b { color: #26364d; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-decision small { color: #8b9ab0; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-decision time { color: #98a5b6; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9.5px; white-space: nowrap; }
+
+/* 弹窗里的动作特有部分（外观底座继承 ted-*） */
+.as-edit-row { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fbfcfe; }
+.as-edit-head { display: flex; align-items: center; gap: 8px; }
+.as-edit-head > span { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.as-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.as-assign { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.as-subhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #7b8ca6; font-size: 10px; }
+.as-inline-add { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px dashed #cbd9ed; border-radius: 4px; background: transparent; color: #315b9f; font-size: 10.5px; font-weight: 600; }
+.as-inline-add:hover { border-color: #a9c5ef; background: #eef4ff; color: #1d4ed8; }
+.as-rail-block { display: grid; gap: 6px; }
+.as-rail-block b { color: #1f3557; font-size: 11px; letter-spacing: .4px; }
+.as-rail-block p { margin: 0; padding: 9px 10px; border-left: 2px solid #cbd9ed; background: #fff; color: #4b5b6b; font-size: 10.5px; line-height: 1.7; }
+.as-rail-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.as-rail-list li { padding: 6px 8px; border: 1px solid #f0d3b4; border-radius: 3px; background: #fff8ec; color: #8a5a1f; font-size: 10px; line-height: 1.5; }
+
+@media (max-width: 1100px) {
+  .as-shell { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .as-edit-grid, .as-assign { grid-template-columns: minmax(0, 1fr); }
+}

@@ -3,9 +3,10 @@
 import { useCallback, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { AlertTriangle, CircleDot, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import { actionInvolvement } from "@/lib/action-engine";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
-import type { Definition, EntityType, RelationType } from "@/lib/ontology-draft";
+import type { ActionType, Definition, EntityType, RelationType } from "@/lib/ontology-draft";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 // 画布上的浮层沿用「图谱」页的样式（graph-canvas.css 已随 GraphCanvas 进入同一份页面样式）。
@@ -60,6 +61,8 @@ type Props = {
   onUpdateRelation: (id: string, payload: RelationPayload) => Promise<void>;
   onDeleteRelation: (id: string) => Promise<void>;
   onExtract: () => void;
+  /** 跳去「动作」页：对象类型与动作的关联在这里点开。 */
+  onOpenActions?: () => void;
   onFail: (reason: unknown) => void;
 };
 
@@ -69,7 +72,7 @@ type Props = {
  * 画布上做的每一次改动都会立刻写回草稿（和表单模式同一套保存路径），
  * 摆放位置只记在本机浏览器，不属于草稿定义。
  */
-export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onExtract, onFail }: Props) {
+export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onExtract, onOpenActions, onFail }: Props) {
   const [selected, setSelected] = useState<Selection>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -234,6 +237,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   ))}
                 </div>
               ) : <p className="ob-inspector-note">还没有属性规则。点「编辑」补上业务属性与必填约束。</p>}
+              <InvolvedActions definition={definition} entityTypeId={selectedEntity.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
                 <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action" disabled={!canEdit || definition.entityTypes.length < 2} onClick={() => startConnection(selectedEntity.id)}><Link2 size={13} />连一条关系</button>
@@ -261,6 +265,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   ))}
                 </div>
               ) : <p className="ob-inspector-note">这条关系没有额外属性。</p>}
+              <InvolvedActions definition={definition} relationTypeId={selectedRelation.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
                 <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteRelation(selectedRelation.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除</button>
@@ -306,6 +311,36 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 对象类型 / 关系类型这一侧看"谁在动我"。
+ * 关联由动作的参数与操作模板推导（actionInvolvement），不是另存的一张表。
+ */
+function InvolvedActions({ definition, entityTypeId, relationTypeId, onOpen }: { definition: Definition; entityTypeId?: string; relationTypeId?: string; onOpen?: () => void }) {
+  const entries = definition.actionTypes
+    .map((action) => {
+      const involvement = actionInvolvement(definition, action);
+      const hit = entityTypeId
+        ? involvement.entityTypes.find((item) => item.id === entityTypeId)
+        : involvement.relationshipTypes.find((item) => item.id === relationTypeId);
+      return hit ? { action, roles: hit.roles } : null;
+    })
+    .filter((item): item is { action: ActionType; roles: string[] } => Boolean(item));
+  if (!entries.length) {
+    return <p className="ob-inspector-note">还没有动作引用这个类型。在「动作」页新建动作时，参数和操作选了它，这里就会出现。</p>;
+  }
+  return (
+    <div className="ob-actions">
+      <b>涉及的动作</b>
+      {entries.map(({ action, roles }) => (
+        <button key={action.id} onClick={onOpen} disabled={!onOpen} title="去「动作」页运行或编辑">
+          <span>{action.name || action.code || "未命名动作"}</span>
+          <em>{roles.join(" · ")}</em>
+        </button>
+      ))}
     </div>
   );
 }

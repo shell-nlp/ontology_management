@@ -18,6 +18,8 @@ function validSnapshot(): VersionSnapshot {
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
       ],
+      actionTypes: [],
+      rules: [],
     },
     nodes: [
       { id: customerId, labels: ["客户"], properties: { 名称: "商客", fx: 12, fy: 30 } },

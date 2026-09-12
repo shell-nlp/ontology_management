@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
+import { ActionBlockedError, runAction, validateActionDefinition, type ActionOutcome, type ActionRunInput } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -630,7 +631,33 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     }).join("、");
     violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.nodes.length} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
-  return violations;
+  return [...violations, ...validateActionDefinition(snapshot.definition)];
+}
+
+/**
+ * 运行动作。
+ *
+ * 干跑只读快照、返回"会发生什么"；执行则在草稿锁内按最新快照重算一次再落盘，
+ * 命中闸门规则时抛出 `ActionBlockedError`，快照文件保持原样。
+ */
+export async function runSnapshotAction(versionId: string, actionId: string, inputs: ActionRunInput[], options: { dryRun: boolean }): Promise<{ outcome: ActionOutcome; applied: boolean }> {
+  const row = await getVersionRecord(versionId);
+  if (!row) throw new Error("本体版本不存在。");
+  if (row.status !== "DRAFT") throw new Error("只有草稿版本可以运行动作，请先创建草稿。");
+  const snapshot = await readVersionSnapshot(versionId);
+  const preview = runAction(snapshot.definition, snapshot, actionId, inputs);
+  if (options.dryRun || preview.verdict === "BLOCKED") return { outcome: preview, applied: false };
+  const outcome = await mutateDraftSnapshot<ActionOutcome>(versionId, (current) => {
+    const fresh = runAction(current.definition, current, actionId, inputs);
+    if (fresh.verdict === "BLOCKED") throw new ActionBlockedError(fresh);
+    current.nodes = fresh.graph.nodes;
+    current.relationships = fresh.graph.relationships;
+    return fresh;
+  }).catch((reason: unknown) => {
+    if (reason instanceof ActionBlockedError) return reason.outcome;
+    throw reason;
+  });
+  return { outcome, applied: outcome.verdict === "PASSED" };
 }
 
 export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {

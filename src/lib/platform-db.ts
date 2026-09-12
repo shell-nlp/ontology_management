@@ -125,3 +125,49 @@ export async function writeAuditEntry(input: {
     [crypto.randomUUID(), input.actorId ?? null, input.targetId ?? null, input.action, JSON.stringify(input.details ?? {})],
   );
 }
+
+export type AuditEntry = {
+  id: string;
+  actorId: string | null;
+  actorEmail: string | null;
+  targetId: string | null;
+  action: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+};
+
+/**
+ * 读审计记录。动作的决策记录（干跑 / 执行 / 被拦截）也走这张表，
+ * 因此按 action 前缀过滤就能同时服务"审计"和"决策记录"两个界面。
+ */
+export async function listAuditEntries(input: { targetId: string; actions?: string[]; versionId?: string; limit?: number }): Promise<AuditEntry[]> {
+  const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 50)));
+  const result = await platformQuery<{
+    id: string;
+    actor_id: string | null;
+    actor_email: string | null;
+    target_id: string | null;
+    action: string;
+    details: Record<string, unknown>;
+    created_at: Date | string;
+  }>(
+    `SELECT a.id, a.actor_id, u.email AS actor_email, a.target_id, a.action, a.details, a.created_at
+       FROM ontology_platform.audit_entries a
+       LEFT JOIN ontology_platform.users u ON u.id = a.actor_id
+      WHERE a.target_id = $1
+        AND ($2::text[] IS NULL OR a.action = ANY($2))
+        AND ($4::text IS NULL OR a.details->>'versionId' = $4)
+      ORDER BY a.created_at DESC
+      LIMIT $3`,
+    [input.targetId, input.actions && input.actions.length ? input.actions : null, limit, input.versionId ?? null],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    actorId: row.actor_id,
+    actorEmail: row.actor_email,
+    targetId: row.target_id,
+    action: row.action,
+    details: row.details ?? {},
+    createdAt: new Date(row.created_at).toISOString(),
+  }));
+}

@@ -1,19 +1,22 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { ActionStudio } from "@/components/action-studio";
+import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, GraphKindPicker, capabilityLine } from "@/components/graph-kind-picker";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
 import { PropertyEditor } from "@/components/property-editor";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
+import { api } from "@/lib/api-client";
 import { GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 import { propertyTypeOptions, type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "overview" | "ontology" | "graph" | "entities" | "relations" | "targets" | "settings";
+type View = "overview" | "ontology" | "actions" | "graph" | "entities" | "relations" | "targets" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -37,15 +40,8 @@ function graphNoun(target: Target | null | undefined) {
   return target ? graphTargetKindInfo(target.kind).label : "图数据库";
 }
 
-const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [] };
+const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [], actionTypes: [], rules: [] };
 const typeOptions = propertyTypeOptions;
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
-  return data as T;
-}
 
 function Notice({ message, error, onDismiss }: { message: string | null; error?: boolean; onDismiss?: () => void }) {
   if (!message) return null;
@@ -390,14 +386,15 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前连接目标</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择目标</option>{GRAPH_TARGET_KINDS.map((kindInfo) => { const group = targets.filter((item) => item.kind === kindInfo.kind); return group.length ? <optgroup key={kindInfo.kind} label={kindInfo.label}>{group.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup> : null; })}</select></label><nav>{([
-      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database], ["settings", "设置", Settings2],
+      ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["actions", "动作", ShieldAlert], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2], ["targets", "连接目标", Database], ["settings", "设置", Settings2],
     ] as const).map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => setView(id)}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {view}</p><h1>{selectedTarget?.name ?? "连接图数据库"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记目标"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && view !== "targets" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
       {view === "targets" && <TargetManager targets={targets} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { setTargetId(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); setTargetId(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
-      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} fail={fail} />}
+      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
+      {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
       {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} entityLimit={displaySettings.entityLimit} />}
@@ -591,7 +588,7 @@ function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; 
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑目标</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
-function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, onOpenActions, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; onOpenActions: () => void; fail: (reason: unknown) => void }) {
   const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [rel, setRel] = useState({ name: "", source: "", target: "" });
   const [editingEntity, setEditingEntity] = useState<EntityType | null>(null);
   const [editingRelation, setEditingRelation] = useState<RelationType | null>(null);
@@ -670,7 +667,7 @@ function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refr
     const content = ["/* Ontology 导出：Neo4j Browser 样式（GraSS）。运行 :style 打开样式查看器，粘贴以下规则或另存为 .grass 后拖入即可。 */", ...rules].join("\n");
     try { await navigator.clipboard.writeText(content); notify("已复制 Neo4j Browser 显示样式规则。"); } catch (reason) { fail(reason); }
   };
-  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN" || !runtimeTypes} onClick={() => void extractTypesFromSnapshot()} title="从当前版本快照提取对象和关系类型并合并到草稿"><Database size={16} />从快照提取类型</button><button className="action" onClick={refreshRuntimeTypes} title="重新读取当前版本快照中的对象、关系、端点和属性推断"><RefreshCcw size={16} />刷新快照数据</button><button className="action" onClick={() => void copyGrass()} title="生成可在 Neo4j Browser 样式查看器（:style）使用的节点 caption 规则"><TableProperties size={16} />复制显示样式</button><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div>{mode === "visual" ? <p className="subtle">在画布上直接搭模型：加对象类型、从节点拉出关系契约、点开补属性与端点，每次改动都会立刻存进草稿。</p> : <p className="subtle">类型修改会先保存为草稿；发布前将检查快照中的对象和关系、端点契约及必填属性。请先在下方切换到「对象类型」或「关系类型」标签，再对单个类型点击「编辑」一并配置其属性。</p>}</div><div className="graph-view-switcher" aria-label="本体编辑方式"><button className={mode === "visual" ? "active" : ""} aria-pressed={mode === "visual"} onClick={() => setMode("visual")}>可视化建模</button><button className={mode === "form" ? "active" : ""} aria-pressed={mode === "form"} onClick={() => setMode("form")}>表单</button></div>{mode === "visual" ? <OntologyBuilder definition={definition} targetId={targetId} canEdit={user.role === "ADMIN"} hasSnapshot={Boolean(runtimeTypes)} onCreateEntity={createEntity} onUpdateEntity={async (id, payload) => updateEntity(id, { name: payload.name, description: payload.description, displayProperty: payload.displayProperty, properties: payload.properties })} onDeleteEntity={deleteEntity} onCreateRelation={createRelation} onUpdateRelation={async (id, payload) => updateRelation(id, { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId, targetEntityTypeId: payload.targetEntityTypeId, properties: payload.properties })} onDeleteRelation={deleteRelation} onExtract={extractTypesFromSnapshot} onFail={fail} /> : <>
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN" || !runtimeTypes} onClick={() => void extractTypesFromSnapshot()} title="从当前版本快照提取对象和关系类型并合并到草稿"><Database size={16} />从快照提取类型</button><button className="action" onClick={refreshRuntimeTypes} title="重新读取当前版本快照中的对象、关系、端点和属性推断"><RefreshCcw size={16} />刷新快照数据</button><button className="action" onClick={() => void copyGrass()} title="生成可在 Neo4j Browser 样式查看器（:style）使用的节点 caption 规则"><TableProperties size={16} />复制显示样式</button><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div>{mode === "visual" ? <p className="subtle">在画布上直接搭模型：加对象类型、从节点拉出关系契约、点开补属性与端点，每次改动都会立刻存进草稿。</p> : <p className="subtle">类型修改会先保存为草稿；发布前将检查快照中的对象和关系、端点契约及必填属性。请先在下方切换到「对象类型」或「关系类型」标签，再对单个类型点击「编辑」一并配置其属性。</p>}</div><div className="graph-view-switcher" aria-label="本体编辑方式"><button className={mode === "visual" ? "active" : ""} aria-pressed={mode === "visual"} onClick={() => setMode("visual")}>可视化建模</button><button className={mode === "form" ? "active" : ""} aria-pressed={mode === "form"} onClick={() => setMode("form")}>表单</button></div>{mode === "visual" ? <OntologyBuilder definition={definition} targetId={targetId} canEdit={user.role === "ADMIN"} hasSnapshot={Boolean(runtimeTypes)} onCreateEntity={createEntity} onUpdateEntity={async (id, payload) => updateEntity(id, { name: payload.name, description: payload.description, displayProperty: payload.displayProperty, properties: payload.properties })} onDeleteEntity={deleteEntity} onCreateRelation={createRelation} onUpdateRelation={async (id, payload) => updateRelation(id, { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId, targetEntityTypeId: payload.targetEntityTypeId, properties: payload.properties })} onDeleteRelation={deleteRelation} onExtract={extractTypesFromSnapshot} onOpenActions={onOpenActions} onFail={fail} /> : <>
       <div className="graph-view-switcher" aria-label="本体编辑视图"><button className={tab === "entity" ? "active" : ""} aria-pressed={tab === "entity"} onClick={() => switchTab("entity")}>对象类型</button><button className={tab === "relation" ? "active" : ""} aria-pressed={tab === "relation"} onClick={() => switchTab("relation")}>关系类型</button></div>{tab === "entity" ? <div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addEntity}><span className="eyebrow">对象类型</span><h2>新增对象类型</h2><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="业务含义" /></label><button className="action primary"><Plus size={16} />加入草稿</button></form><div className="panel functional-panel type-list"><span className="eyebrow">对象类型清单</span><h2>{definition.entityTypes.length} 个对象类型</h2>{definition.entityTypes.map((item) => <div className="type-row" key={item.id}><CircleDot size={17} /><b>{item.name}</b><span>{item.description || "未填写说明"}</span><em>{item.properties.length} 属性</em><button className="action compact" disabled={user.role !== "ADMIN"} onClick={() => setEditingEntity(item)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={user.role !== "ADMIN"} onClick={() => void deleteEntity(item.id)}><Trash2 size={13} />删除</button></div>)}{!definition.entityTypes.length && <p className="empty">尚未创建对象类型。</p>}</div></div> : <div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addRelation}><span className="eyebrow">关系契约</span><h2>新增关系类型</h2><label>关系名称<input value={rel.name} onChange={(event) => setRel({ ...rel, name: event.target.value })} placeholder="例如：负责" required /></label><label>起始对象类型<select value={rel.source} onChange={(event) => setRel({ ...rel, source: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>终止对象类型<select value={rel.target} onChange={(event) => setRel({ ...rel, target: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><button className="action primary"><Plus size={16} />加入草稿</button></form><div className="panel functional-panel type-list"><span className="eyebrow">关系契约清单</span><h2>{definition.relationshipTypes.length} 个关系类型</h2>{definition.relationshipTypes.map((item) => <div className="type-row" key={item.id}><Link2 size={17} /><b>{item.name}</b><span>{item.sourceEntityTypeId ? definition.entityTypes.find((e) => e.id === item.sourceEntityTypeId)?.name ?? "?" : "未指定"} → {item.targetEntityTypeId ? definition.entityTypes.find((e) => e.id === item.targetEntityTypeId)?.name ?? "?" : "未指定"}</span><em>{item.properties.length} 属性</em><button className="action compact" disabled={user.role !== "ADMIN"} onClick={() => setEditingRelation(item)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={user.role !== "ADMIN"} onClick={() => void deleteRelation(item.id)}><Trash2 size={13} />删除</button></div>)}{!definition.relationshipTypes.length && <p className="empty">尚未创建关系类型。</p>}</div></div>}</>}
       {editingEntity && <TypeEditDialog kind="entity" entity={editingEntity} entityTypes={definition.entityTypes} onClose={() => setEditingEntity(null)} onSave={async (payload) => { await updateEntity(editingEntity.id, { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", properties: payload.properties }); setEditingEntity(null); }} />}{editingRelation && <TypeEditDialog kind="relation" relation={editingRelation} entityTypes={definition.entityTypes} onClose={() => setEditingRelation(null)} onSave={async (payload) => { await updateRelation(editingRelation.id, { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties }); setEditingRelation(null); }} />}
       {importPlan && <div className="dialog-backdrop" role="presentation"><div className="dialog graph-dialog"><button type="button" className="close-button" onClick={() => setImportPlan(null)} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">从快照提取类型</span><h2>选择提取方式</h2><p>当前快照中共有 {runtimeTypes?.labels.length ?? 0} 个标签、{runtimeTypes?.relationshipTypes.length ?? 0} 个关系类型。{importPlan.newEntities.length || importPlan.newRelations.length ? <>草稿缺少 {importPlan.newEntities.length} 个对象类型、{importPlan.newRelations.length} 个关系类型；</> : <>草稿已包含快照中的全部类型；</>}{importPlan.changedRelations || importPlan.changedEntities ? <>可为 {importPlan.changedEntities} 个已有对象类型、{importPlan.changedRelations} 个已有关系类型补齐属性或端点。</> : ""}</p><p>属性将按现有数据推断：名称、取值类型，以及是否必填（该类型全部实例均含此键）与是否唯一（取值互不相同），共约 {importPlan.inferredProperties} 个属性。<br /><b>合并</b>：保留草稿中的现有配置，仅补充缺失类型并为空属性、空端点补齐。<br /><b>覆盖</b>：用快照类型整体替换草稿的类型清单，草稿中已配置的说明、显示属性与属性定义会被清空。</p>{importPlan.unresolved > 0 && <p>{importPlan.unresolved} 个关系类型仍无法确定起始/终止对象类型，导入后需手动补选。</p>}<div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setImportPlan(null)}>取消</button><button type="button" className="action" onClick={() => void mergeImport()}><Merge size={16} />合并</button><button type="button" className="action primary" onClick={() => void overwriteImport()}><RefreshCcw size={16} />覆盖</button></div></div></div>}</section>;
@@ -1029,8 +1026,6 @@ function RelationshipManager({ target, user, version, draft, runtimeTypes, ensur
   </ResizableManagerGrid>;
 }
 
-type EntitySearchResult = { id: string; labels: string[]; properties: Record<string, unknown>; matched: string[]; rank: number };
-
 function nodeDisplayName(labels: string[] | undefined, properties: Record<string, unknown> | undefined, definition: Definition | null): string {
   if (!properties) return "";
   const entityType = definition?.entityTypes.find((item) => labels?.includes(item.name));
@@ -1044,14 +1039,6 @@ function relationshipEndpoints(row: RelationshipRow, definition: Definition | nu
   return { source: nodeDisplayName(row.sourceLabels, row.sourceProperties, definition), target: nodeDisplayName(row.targetLabels, row.targetProperties, definition) };
 }
 
-function entityDisplayName(node: EntitySearchResult, definition: Definition | null): string {
-  const entityType = definition?.entityTypes.find((item) => node.labels.includes(item.name));
-  const primary = entityType?.displayProperty;
-  if (primary && node.properties[primary] != null) return String(node.properties[primary]);
-  for (const key of ["name", "名称", "title", "label"]) if (node.properties[key] != null) return String(node.properties[key]);
-  return node.id;
-}
-
 function EndpointCard({ side, elementId, displayName, labels, detail, loading, open, onToggle }: { side: string; elementId: string; displayName: string; labels: string[] | undefined; detail: { labels: string[]; properties: Record<string, unknown> } | undefined; loading: boolean; open: boolean; onToggle: () => void }) {
   return <div className="endpoint-card">
     <div className="endpoint-card-head">
@@ -1061,46 +1048,6 @@ function EndpointCard({ side, elementId, displayName, labels, detail, loading, o
     {open && detail && <div className="endpoint-props">{Object.entries(detail.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div>}
     {open && !detail && !loading && <p className="empty">暂无数据。</p>}
   </div>;
-}
-
-function EntitySearchPicker({ targetId, versionId, labels, definition, placeholder, value, onChange }: { targetId: string; versionId: string; labels: string[]; definition: Definition | null; placeholder: string; value: EntitySearchResult | null; onChange: (node: EntitySearchResult | null) => void }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<EntitySearchResult[]>([]);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [searched, setSearched] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const labelKey = labels.join("|");
-  const runSearch = useCallback(async (term: string) => {
-    const trimmed = term.trim();
-    if (!trimmed) { setResults([]); setSearched(false); setLoading(false); setError(null); return; }
-    setLoading(true); setError(null);
-    try {
-      const params = new URLSearchParams({ targetId, versionId, q: trimmed, limit: "12" });
-      if (labelKey) params.set("labels", JSON.stringify(labelKey.split("|")));
-      const data = await api<{ results: EntitySearchResult[] }>(`/api/instances/search?${params.toString()}`);
-      setResults(data.results); setSearched(true); setHighlight(0);
-    } catch (reason) {
-      setResults([]); setSearched(true); setError(reason instanceof Error ? reason.message : "搜索失败。");
-    } finally { setLoading(false); }
-  }, [targetId, versionId, labelKey]);
-  useEffect(() => { const handle = window.setTimeout(() => { void runSearch(query); }, 250); return () => window.clearTimeout(handle); }, [query, runSearch]);
-  useEffect(() => {
-    const onDown = (event: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(event.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-  const select = (node: EntitySearchResult) => { onChange(node); setQuery(""); setResults([]); setOpen(false); setSearched(false); };
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { setOpen(true); setHighlight((h) => Math.min(h + 1, results.length - 1)); } }
-    else if (event.key === "ArrowUp") { event.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
-    else if (event.key === "Enter") { event.preventDefault(); const candidate = results[highlight] ?? results[0]; if (candidate) select(candidate); }
-    else if (event.key === "Escape") { setOpen(false); }
-  };
-  const menuOpen = open && !value && query.trim().length > 0;
-  return <div className="entity-picker" ref={boxRef}>{value ? <div className="entity-picker-selected"><span className="entity-chip"><span className="entity-chip-label">{value.labels[0] ?? "?"}</span><b>{entityDisplayName(value, definition)}</b></span><span className="entity-chip-id">{value.id}</span><button type="button" className="entity-chip-clear" title="移除" onClick={() => onChange(null)}><X size={13} /></button></div> : <div className="entity-picker-input"><Search size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onKeyDown={onKeyDown} onFocus={() => { if (query.trim() && results.length) setOpen(true); }} placeholder={placeholder} autoComplete="off" spellCheck={false} />{loading && <Loader2 size={14} className="entity-spinner" />}</div>}{menuOpen && <div className="entity-picker-menu">{loading && !results.length && !error ? <div className="entity-picker-empty"><Loader2 size={14} className="entity-spinner" />正在搜索…</div> : error ? <div className="entity-picker-empty">{error}</div> : results.length ? results.map((node, index) => <button type="button" className={index === highlight ? "entity-result selected" : "entity-result"} key={node.id} onMouseEnter={() => setHighlight(index)} onClick={() => select(node)}><span className="entity-result-label">{node.labels.slice(0, 2).join(" · ") || "?"}</span><span className="entity-result-name">{entityDisplayName(node, definition)}</span><span className="entity-result-id">{node.id.slice(0, 12)}</span></button>) : <div className="entity-picker-empty"><Search size={14} />没有匹配的对象</div>}</div>}</div>;
 }
 
 function EntityCreateDialog({ published, runtimeTypes, onClose, onCreate }: { published: Version | null; runtimeTypes: RuntimeTypeSet | null; onClose: () => void; onCreate: (label: string, properties: Record<string, unknown>) => Promise<void> }) {

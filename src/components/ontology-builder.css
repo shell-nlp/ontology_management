@@ -31,6 +31,14 @@
 .ob-facts b { color: #183b72; font-weight: 700; }
 
 .ob-inspector-note { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
+
+/* 对象类型 / 关系类型看"谁在动我"：动作为动作页的入口。 */
+.ob-actions { display: grid; gap: 5px; }
+.ob-actions > b { color: #315b9f; font-size: 10px; font-weight: 700; }
+.ob-actions button { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid #dfe7f1; border-radius: 4px; background: #fbfcfe; color: #26456b; font-size: 11px; text-align: left; }
+.ob-actions button:hover:not(:disabled) { border-color: #b9d1f5; background: #f2f7ff; }
+.ob-actions button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-actions button em { flex: none; color: #8b9ab0; font-size: 9.5px; font-style: normal; }
 .ob-inspector-warning { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 8px 9px; color: #8a5a1f; background: #fff8ec; border-left: 3px solid #d19a4a; font-size: 11px; line-height: 1.5; }
 .ob-inspector-warning svg { flex: none; margin-top: 1px; }
 
