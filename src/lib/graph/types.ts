@@ -273,6 +273,12 @@ export interface GraphStore {
    * 实现必须保证原子性：失败时图数据保持替换前的状态，不能留下半成品。
    */
   replaceGraph(snapshot: GraphWriteSnapshot): Promise<void>;
+
+  /**
+   * 清空这个本体存储里的图数据（全部节点与关系）。
+   * 只动图库本身：平台自己的版本记录与快照不受影响，重新发布一次就能写回来。
+   */
+  clearGraph(): Promise<void>;
   /** 校验本体定义在图库上的约束违反情况。 */
   validateDefinition(definition: GraphDefinitionLike): Promise<GraphViolation[]>;
   /** 同步图库侧的强约束，返回是否支持必填约束。 */

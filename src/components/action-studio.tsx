@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, ShieldCheck, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { actionInvolvement, validateActionDefinition } from "@/lib/action-engine";
@@ -54,6 +54,8 @@ type Props = {
   canEdit: boolean;
   /** 从对象详情页点动作进来时带上：直接选中这个动作，并预填主对象。 */
   initialRun?: { actionId: string; subject: EntitySearchResult } | null;
+  /** 从左侧「规则」进来时直接落在规则阶段。 */
+  initialStage?: Stage;
   onSave: (definition: Definition) => Promise<void>;
   onRan: () => void;
   notify: (text: string) => void;
@@ -189,7 +191,7 @@ export function effectSentence(effect: RuleEffect) {
   return "给出提示";
 }
 
-export function ActionStudio({ definition, versionId, targetId, canEdit, initialRun, onSave, onRan, notify, fail }: Props) {
+export function ActionStudio({ definition, versionId, targetId, canEdit, initialRun, initialStage, onSave, onRan, notify, fail }: Props) {
   const actions = definition.actionTypes;
   const rules = definition.rules;
   const [selectedId, setSelectedId] = useState(initialRun?.actionId ?? "");
@@ -201,7 +203,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
   const [busy, setBusy] = useState(false);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
   // 从对象详情跳进来时直接落在「运行」：用户是带着一个对象来执行动作的。
-  const [stage, setStage] = useState<Stage>(initialRun ? "run" : "define");
+  const [stage, setStage] = useState<Stage>(initialStage ?? (initialRun ? "run" : "define"));
   const [ruleScope, setRuleScope] = useState<"action" | "all">("action");
   const [ledgerScope, setLedgerScope] = useState<"action" | "all">("action");
 
@@ -567,9 +569,18 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
             </>
           ) : (
             <div className="as-placeholder">
-              <span className="as-placeholder-mark"><ShieldAlert size={20} /></span>
-              <b>先选一个动作</b>
-              <span>左边是这个本体存储里已经定义好的动作。选中之后，这里会显示它的定义、规则、运行与决策。</span>
+              <span className="as-placeholder-mark">{stage === "rules" ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}</span>
+              {stage === "rules" ? (
+                <>
+                  <b>规则要挂在动作上</b>
+                  <span>规则是动态安全：决定一个动作什么时候出现（隐藏）、什么时候被拦（拦截）或只提示（提醒）。先在左边建一个动作、选中它，这里就能给它加规则。</span>
+                </>
+              ) : (
+                <>
+                  <b>先选一个动作</b>
+                  <span>左边是这个本体存储里已经定义好的动作。选中之后，这里会显示它的定义、规则、运行与决策。</span>
+                </>
+              )}
             </div>
           )}
         </section>

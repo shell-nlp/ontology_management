@@ -57,6 +57,14 @@
 
 ## 能力概览
 
+按 Palantir 的说法，本体由两部分组成，左侧导航也是按这个分的：
+
+| | 是什么 | 平台里的位置 |
+| --- | --- | --- |
+| **语义模型** | 本体「是什么」：类（对象类型）与属性、关系类型，以及它们的对象与关系实例 | 本体草稿 · 图谱 · 对象 · 关系 |
+| **动力模型** | 本体「能做什么」：动作（唯一的业务写入口），以及挂在动作上的规则 / 动态安全 | 动作 · 规则 |
+
+数据资源（本体脚下来自哪张表）与本体存储（本体落在哪个图库）是平台层，单独一组。
 | | 模块 | 说明 |
 | :---: | --- | --- |
 | 📐 | **本体草稿** | 类、关系类型、端点契约与属性规则；校验后发布 |
@@ -211,6 +219,8 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `GET` / `PATCH` / `DELETE` | `/api/targets/:targetId` | 查看 / 更新 / 删除 |
 | `GET` | `/api/targets/:targetId/schema` | 运行时 Schema |
 | `POST` | `/api/targets/:targetId/test` | 连接测试 |
+| `GET` | `/api/targets/:targetId/clear` | 清空前的预览：当前有多少对象与关系 |
+| `POST` | `/api/targets/:targetId/clear` | 清空图数据（全部节点与关系）；需键入本体存储名称确认，仅动图库，平台版本与快照保留 |
 | `POST` | `/api/targets/:targetId/reset` | 重置本体存储状态 |
 
 </details>
@@ -293,7 +303,31 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 RDF 与属性图的映射：`?s rdf:type ?t` → 节点标签，字面量三元组 → 节点属性，资源三元组 → 关系；关系自身属性用 `urn:bkn:Relationship` 具体化表达，同时保留一条直接三元组，外部 SPARQL 工具照常可查。
 
+### 多个本体放在哪（隔离）
+
+平台的「发布」是**整图替换**：Neo4j 执行 `MATCH (n) DETACH DELETE n` 后重建，Jena 清掉目标图或默认图后重写。
+因此**同一个库上不能登记两个本体存储**——两边会互相看见数据，发布时互相清空。
+新建 / 编辑本体存储时平台会拦下这种情况（HTTP 409），并说明怎么改。
+
+| 做法 | 适用 | 说明 |
+| --- | --- | --- |
+| 多实例（默认做法） | Neo4j 社区版 | 一个实例一个库，一个库一个本体；端口错开即可，隔离最彻底 |
+| 多 dataset / 命名图 | Apache Jena | 一个 Fuseki 下配多个 dataset，或同一 dataset 内用「命名图」，社区版没有多库限制 |
+| 多库 | Neo4j Enterprise / Aura | `CREATE DATABASE`，登记时把库名填对即可 |
+
+再加一个 Neo4j 本体，一条命令：
+
+```powershell
+pwsh scripts/neo4j-instance.ps1 -Name ontology-neo4j-c -BoltPort 7689 -HttpPort 7476
+pwsh scripts/neo4j-instance.ps1 -List          # 看现有实例和端口
+pwsh scripts/neo4j-instance.ps1 -Stop <容器名>  # 停掉，数据卷保留
+```
+
+脚本会打印登记用的四项（URI `bolt://localhost:7689`、库名 `neo4j`、账号、密码），
+填进「本体存储」新建向导、点「测试连接」通过即可。每个实例一份数据卷 `${名称}-data`，删容器不丢数据。
+
 ### 新增图后端
+*** End Patch
 
 1. 在 `GraphTargetKind` 登记类型，并在 `GRAPH_TARGET_KINDS` 补齐连接表单元数据；
 2. 新增实现 `GraphStore` 的适配器；

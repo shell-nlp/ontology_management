@@ -1,7 +1,7 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { GraphCanvas } from "@/components/graph-canvas";
@@ -17,7 +17,7 @@ import { propertyTypeOptions, type Definition, type EntityType, type Property, t
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "overview" | "ontology" | "actions" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
+type View = "overview" | "ontology" | "actions" | "rules" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -278,10 +278,23 @@ function GraphSettingsDialog({ settings, onSave, onReset, onClose }: { settings:
   );
 }
 
-/** 左侧导航；面包屑复用同一份标签，避免导航写中文、面包屑还露着英文 id。 */
-const NAV_ITEMS = [
-  ["overview", "总览", Activity], ["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2], ["actions", "动作", ShieldAlert], ["data", "数据资源", Table2], ["targets", "本体存储", Database], ["settings", "设置", Settings2],
-] as const;
+/**
+ * 左侧导航，按 Palantir 的说法分成两半：
+ * 语义模型是「本体是什么」（类与属性、关系类型，以及它们的对象与关系实例）；
+ * 动力模型是「本体能做什么」（动作，以及挂在动作上的规则 / 动态安全）。
+ * 数据资源与本体存储是本体脚下的输入与落库位置，单独归到「平台」。
+ * 面包屑复用同一份标签，避免导航写中文、面包屑还露着英文 id。
+ */
+type NavItem = readonly [View, string, LucideIcon];
+
+const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
+  { label: "", items: [["overview", "总览", Activity]] },
+  { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
+  { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
+  { label: "平台", items: [["data", "数据资源", Table2], ["targets", "本体存储", Database], ["settings", "设置", Settings2]] },
+];
+
+const NAV_ITEMS: readonly NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
 
 function navLabel(view: View) {
   return NAV_ITEMS.find(([id]) => id === view)?.[1] ?? view;
@@ -294,6 +307,8 @@ export function FunctionalWorkbench() {
   const [published, setPublished] = useState<Version | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [runtimeTypes, setRuntimeTypes] = useState<RuntimeTypeSet | null>(null);
+  // draft / published 属于哪个本体存储：切换时旧版本在新目标上不成立，先别往下传。
+  const [versionTargetId, setVersionTargetId] = useState("");
   const [view, setView] = useState<View>("overview");
   const [newTargetOpen, setNewTargetOpen] = useState(false);
   // 从对象详情跳到「动作」页时带上的预填：动作 + 主对象。
@@ -310,8 +325,10 @@ export function FunctionalWorkbench() {
   const typeOverviewAffordable = runtimeTypes !== null && runtimeTypes.labels.length <= 80 && runtimeTypes.relationshipTypes.length <= 120;
   const preferredGraphMode: "instances" | "ontology" = instanceGraphIsLarge && typeOverviewAffordable ? "ontology" : "instances";
   const activeGraphMode = graphModeTargetId === targetId ? graphMode : preferredGraphMode;
-  const workspaceVersion = draft ?? published;
-  const definition = draft?.definition ?? published?.definition ?? emptyDefinition;
+  // 版本列表按本体存储逐个加载；还没加载完就不能拿上一个存储的版本去查它的对象。
+  const versionsReady = versionTargetId === targetId;
+  const workspaceVersion = versionsReady ? draft ?? published : null;
+  const definition = versionsReady ? draft?.definition ?? published?.definition ?? emptyDefinition : emptyDefinition;
 
   const notify = (text: string) => { setMessage(text); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); messageTimer.current = setTimeout(() => setMessage(null), 5000); };
   const fail = (reason: unknown) => { setError(typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
@@ -331,6 +348,7 @@ export function FunctionalWorkbench() {
     setVersions(versions);
     setDraft(nextDraft);
     setPublished(nextPublished);
+    setVersionTargetId(id);
     const workspace = nextDraft ?? nextPublished;
     const versionParam = workspace ? `&versionId=${workspace.id}` : "";
     const types = await api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(id)}${versionParam}`);
@@ -396,7 +414,7 @@ export function FunctionalWorkbench() {
   const userProp = user;
 
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体存储</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择本体存储</option>{GRAPH_TARGET_KINDS.map((kindInfo) => { const group = targets.filter((item) => item.kind === kindInfo.kind); return group.length ? <optgroup key={kindInfo.kind} label={kindInfo.label}>{group.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup> : null; })}</select></label><nav>{NAV_ITEMS.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体存储</span><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">选择本体存储</option>{GRAPH_TARGET_KINDS.map((kindInfo) => { const group = targets.filter((item) => item.kind === kindInfo.kind); return group.length ? <optgroup key={kindInfo.kind} label={kindInfo.label}>{group.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup> : null; })}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : selectedTarget?.name ?? "连接图数据库"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && view !== "targets" && view !== "data" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
@@ -405,6 +423,7 @@ export function FunctionalWorkbench() {
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); setTargetId(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
       {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialRun={pendingRun} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
+      {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
       {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0 } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} />}
@@ -427,6 +446,7 @@ function SettingsManager({ target, user, versions, displaySettings, onSaveDispla
   const [draft, setDraft] = useState<DisplaySettings>(displaySettings);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
 
   const initialize = async () => {
     if (!target) return;
@@ -461,10 +481,66 @@ function SettingsManager({ target, user, versions, displaySettings, onSaveDispla
         <div className="functional-actions">
           <button className="action danger" disabled={user.role !== "ADMIN" || resetting} onClick={() => setConfirmOpen(true)}><RotateCcw size={15} />{resetting ? "初始化中…" : "初始化版本数据"}</button>
         </div>
+        <div className="danger-split">
+          <h2>清空图数据</h2>
+          <p className="subtle">删除「{target.name}」图库里的<b>全部节点与关系</b>（只动图库，平台的版本记录与快照保留）。清空后重新发布一次，就能把快照重新写回图库；适合把演示数据清掉、从干净状态重来。</p>
+          <div className="functional-actions">
+            <button className="action danger" disabled={user.role !== "ADMIN"} onClick={() => setClearOpen(true)}><Eraser size={15} />清空图数据</button>
+          </div>
+        </div>
       </> : <p className="empty">请先选择一个本体存储。</p>}
     </div>
+    {clearOpen && target && <ClearGraphDialog target={target} onClose={() => setClearOpen(false)} onCleared={async () => { await onReset(); notify(`「${target.name}」的图数据已清空。重新发布一次即可把快照写回图库。`); }} fail={fail} />}
     {confirmOpen && target && <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); void initialize(); }}><button type="button" className="close-button" onClick={() => setConfirmOpen(false)} title="关闭"><X size={18} /></button><div className="dialog-icon"><RotateCcw size={22} /></div><span className="eyebrow">危险操作</span><h2>初始化「{target.name}」？</h2><p>将删除该本体存储的 {versions.length} 个版本记录及全部快照文件，此操作无法撤销。图数据不会被修改。</p><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setConfirmOpen(false)}>取消</button><button className="primary-button" disabled={resetting}>{resetting ? "初始化中…" : "确认初始化"}</button></div></form></div>}
   </section>;
+}
+
+/**
+ * 清空图数据的确认弹窗。
+ *
+ * 这是会把图库清空的动作，所以：先统计要删多少、再要求键入本体存储名称才能提交，
+ * 并且明确说明平台的版本记录与快照不受影响（重新发布即可写回）。
+ */
+function ClearGraphDialog({ target, onClose, onCleared, fail }: { target: Target; onClose: () => void; onCleared: () => Promise<void>; fail: (reason: unknown) => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [counts, setCounts] = useState<{ nodes: number; relationships: number } | null>(null);
+  const [counting, setCounting] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ nodes: number; relationships: number }>(`/api/targets/${target.id}/clear`)
+      .then((data) => { if (!cancelled) setCounts(data); })
+      .catch(() => { if (!cancelled) setCounts(null); })
+      .finally(() => { if (!cancelled) setCounting(false); });
+    return () => { cancelled = true; };
+  }, [target.id]);
+
+  const matched = text.trim() === target.name;
+  const run = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      await api(`/api/targets/${target.id}/clear`, { method: "POST", body: JSON.stringify({ confirm: text }) });
+      await onCleared();
+      onClose();
+    } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <form className="dialog graph-dialog" onSubmit={run}>
+      <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
+      <div className="dialog-icon"><Eraser size={22} /></div>
+      <span className="eyebrow">危险操作</span>
+      <h2>清空「{target.name}」的图数据？</h2>
+      <p>将删除这个图库里的全部节点与关系{counting ? "（正在统计…）" : counts ? `（当前 ${counts.nodes} 个对象、${counts.relationships} 条关系）` : ""}，无法撤销。平台的版本记录与快照不会被删除，重新发布一次即可写回。</p>
+      <label>键入本体存储名称 <b>{target.name}</b> 以确认<input value={text} onChange={(event) => setText(event.target.value)} placeholder={target.name} autoFocus /></label>
+      <div className="dialog-actions">
+        <button type="button" className="quiet-button" onClick={onClose}>取消</button>
+        <button className="primary-button" disabled={!matched || busy}>{busy ? "清空中…" : "确认清空"}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 function Login({ onSuccess }: { onSuccess: (user: User) => Promise<void> }) {

@@ -53,6 +53,23 @@
 | U2 | 审计记录查看界面 | 发布 / 失败 / 本体存储变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
 | U3 | 弹窗层级低于图谱控件 | sigma 的缩放控件 z-index 为 `--sigma-controls-zindex`（100），全局 `.dialog-backdrop` 只有 10，弹窗够高时控件会浮在弹窗上。本次只在类型编辑弹窗用 `.ted-backdrop` 抬到 120 规避，其它弹窗（新建本体存储、新建关系、新建对象）仍有此问题 |
 
+### 多本体隔离（Neo4j 社区版）
+
+Neo4j Community 只能有一个库，而平台按「本体存储」登记连接、发布时整库替换
+（`neo4j.ts` 的 `replaceGraph` 是 `MATCH (n) DETACH DELETE n`，读路径也是 `MATCH (n)`），
+所以同一个库上登记两个本体存储会互相看见、发布时互相清空 —— 需要真正的隔离手段。
+记录时间：2026-09-12。**2026-09-12 决定采用 N1（多实例）**，并已落地两件事：
+新建 / 编辑本体存储时拦截"同一个库上再登记一个"（HTTP 409 + 说明怎么改），
+以及 `scripts/neo4j-instance.ps1`（起 / 停 / 列出实例）。本机已登记 B 实例
+`bolt://localhost:7688`（容器 `ontology-neo4j-b`），实测在 B 上发布不影响 A（7687）。
+
+| 编号 | 方案 | 说明 |
+| --- | --- | --- |
+| N1 | 多实例 | 一台机器跑多个 Neo4j Community（不同端口/容器），各登记一个本体存储。零改动，隔离最彻底，代价是每个实例一份进程与内存 |
+| N2 | 用 Fuseki/Jena 承载多本体 | 平台已支持：一个 Fuseki 下配多个 dataset，或同一 dataset 内用「命名图」（`options.namedGraph`）。社区版没有多库限制 |
+| N3 | 单实例逻辑隔离 | 给本体存储加 `namespace` 选项，Neo4j 适配器对标签/关系类型统一加前缀并让所有读路径按它过滤，查询工作台自动带上约束。落点：本体存储配置字段、`GraphStore` 读写路径、`/api/query` 与工作台提示 |
+| N4 | 升级 Enterprise / Aura | 真多库，`CREATE DATABASE`；现有代码本来就是按 `database_name` 建会话，属于最省事的功能路径 |
+
 ### 工程清洁
 
 | 编号 | 事项 | 说明 |

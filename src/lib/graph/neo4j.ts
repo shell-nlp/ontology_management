@@ -446,6 +446,20 @@ export function createNeo4jStore(target: GraphTarget): GraphStore {
       }
     },
 
+    /** 清空整个库：节点带关系一起删，和发布时的整库替换用的是同一条语句。 */
+    async clearGraph() {
+      const driver = createNeo4jDriver(target);
+      const session = driver.session({ database: target.database_name });
+      try {
+        await session.executeWrite(async (transaction) => {
+          await transaction.run("MATCH (n) DETACH DELETE n");
+        });
+      } finally {
+        await session.close();
+        await driver.close();
+      }
+    },
+
     async validateDefinition(definition: GraphDefinitionLike): Promise<GraphViolation[]> {
       const violations: GraphViolation[] = [];
       const entityNameById = new Map(definition.entityTypes.filter((entity) => entity.id).map((entity) => [entity.id as string, entity.name]));

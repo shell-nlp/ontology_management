@@ -24,7 +24,17 @@ function getPool() {
 }
 
 export async function ensurePlatformSchema() {
-  schemaPromise ??= (async () => {
+  schemaPromise ??= ensurePlatformSchemaOnce().catch((error) => {
+    // 失败的 promise 不能留在缓存里：一次并发竞争或连接抖动，会让这个进程后续所有请求都失败。
+    schemaPromise = undefined;
+    throw error;
+  });
+  return schemaPromise;
+}
+
+async function ensurePlatformSchemaOnce() {
+  // DDL 里有 DROP + ADD 约束这种两步操作，并发请求会互相踩（约束已存在）。用数据库层面的锁串起来。
+  return withAdvisoryLock("ontology_platform_schema", async () => {
     const client = await getPool().connect();
     try {
       await client.query("CREATE SCHEMA IF NOT EXISTS ontology_platform");
@@ -99,9 +109,7 @@ export async function ensurePlatformSchema() {
     } finally {
       client.release();
     }
-  })();
-
-  return schemaPromise;
+  });
 }
 
 export async function platformQuery<T extends QueryResultRow>(text: string, values: unknown[] = []) {

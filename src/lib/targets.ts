@@ -37,6 +37,62 @@ export function parseTargetOptions(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, item]) => item === null || ["string", "number", "boolean"].includes(typeof item)));
 }
 
+/** 已登记的本体存储列表；冲突检查与 GET 接口共用一份读取。 */
+export async function listTargets(): Promise<GraphTarget[]> {
+  const result = await platformQuery<GraphTarget>(
+    `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
+     FROM ontology_platform.graph_targets ORDER BY kind, name`,
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    kind: isGraphTargetKind(row.kind) ? row.kind : "NEO4J",
+    options: (row.options ?? {}) as Record<string, unknown>,
+  }));
+}
+
+/** 端点归一成 host:port：bolt:// 与 neo4j:// 指向同一台机器时算同一个。 */
+function endpointKey(kind: GraphTargetKind, uri: string) {
+  try {
+    const url = new URL(uri);
+    return `${url.hostname.toLowerCase()}:${url.port || (kind === "JENA" ? "3030" : "7687")}`;
+  } catch {
+    return uri.trim().toLowerCase();
+  }
+}
+
+/**
+ * 找出会互相覆盖的已登记本体存储。
+ *
+ * 发布走的是「整图替换」：Neo4j 是 `MATCH (n) DETACH DELETE n`，Jena 是清掉目标图或默认图。
+ * 所以同一个库（Neo4j 的 实例+库名、Jena 的 数据集+命名图）上登记两个本体存储，
+ * 发布时会把对方清空 —— 这里提前拦下来，并把「怎么办」写进提示。
+ * Neo4j 社区版一个实例只有一个库，多本体要靠多实例（不同端口）。
+ */
+export function findTargetConflict(
+  candidate: Pick<GraphTarget, "kind" | "uri" | "database_name" | "options">,
+  existing: GraphTarget[],
+  ignoreId?: string,
+) {
+  const key = (target: Pick<GraphTarget, "kind" | "uri" | "database_name" | "options">) => [
+    target.kind,
+    endpointKey(target.kind, target.uri),
+    (target.database_name ?? "").toLowerCase(),
+    target.kind === "JENA" ? String(target.options?.namedGraph ?? "") : "",
+  ].join("|");
+  const wanted = key(candidate);
+  return existing.find((item) => item.id !== ignoreId && key(item) === wanted) ?? null;
+}
+
+/** 冲突时给用户看的说明：说清为什么不能这么登记、以及怎么改。 */
+export function describeTargetConflict(conflict: GraphTarget, candidate: Pick<GraphTarget, "kind">) {
+  const label = graphTargetKindInfo(candidate.kind).label;
+  const scope = candidate.kind === "JENA" ? "同一个数据集 / 命名图" : "同一个库";
+  const advice = candidate.kind === "NEO4J"
+    ? "Neo4j 社区版一个实例只有一个库，发布时是整库替换，两个本体存储会互相清空 —— 请再起一个实例（换一组端口，例如 7475/7688）后登记。"
+    : "发布时会清掉这一份图数据，两个本体存储会互相清空 —— 请换一个数据集，或给它们配不同的命名图。";
+  return `${scope}上已经登记了「${conflict.name}」（${label}）。${advice}`;
+}
+
 export function publicTarget(target: GraphTarget) {
   return {
     id: target.id,

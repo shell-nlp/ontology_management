@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
-import { normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
+import { describeTargetConflict, findTargetConflict, listTargets, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { graphTargetKindInfo, type GraphTarget } from "@/lib/graph/types";
 
 const targetInput = z.object({
@@ -23,8 +23,8 @@ const targetInput = z.object({
 export async function GET() {
   try {
     await requireRole("VIEWER");
-    const targets = await platformQuery<GraphTarget>("SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at FROM ontology_platform.graph_targets ORDER BY kind, name");
-    return NextResponse.json(targets.rows.map(publicTarget));
+    const targets = await listTargets();
+    return NextResponse.json(targets.map(publicTarget));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error && error.message === "UNAUTHORIZED" ? "未授权。" : "无法读取本体存储。" }, { status: 401 });
   }
@@ -44,6 +44,9 @@ export async function POST(request: NextRequest) {
       credential_secret: encryptSecret(input.password), created_at: new Date(),
       options: parseTargetOptions(input.options),
     };
+    // 同一个库上再登记一个，两边发布时会互相清空 —— 这里直接拦下来。
+    const conflict = findTargetConflict(target, await listTargets());
+    if (conflict) return NextResponse.json({ error: describeTargetConflict(conflict, target) }, { status: 409 });
     await platformQuery(
       `INSERT INTO ontology_platform.graph_targets (id, name, kind, uri, database_name, username, credential_secret, options)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,

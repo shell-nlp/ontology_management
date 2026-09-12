@@ -850,6 +850,11 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       }
     },
 
+    /** 清空目标图：命名图就清那张，否则清默认图；平台快照不动。 */
+    async clearGraph() {
+      await update(clearGraphUpdate(namedGraph));
+    },
+
     async validateDefinition(definition: GraphDefinitionLike): Promise<GraphViolation[]> {
       const violations: GraphViolation[] = [];
       const entityNameById = new Map(definition.entityTypes.filter((entity) => entity.id).map((entity) => [entity.id as string, entity.name]));
@@ -923,10 +928,15 @@ export type ReplacePlan = { requests: string[]; cleanup: string | null };
  * 所以小图用「清空 + 插入」的单请求；大图先把三元组写进影子图（这批写入不可见），
  * 再用一个请求「清空目标 + ADD 影子图 + 删影子图」原子切换，避免超大请求体。
  */
+/** 清空目标图的 SPARQL Update：配了命名图就清那张图，否则清默认图。 */
+export function clearGraphUpdate(namedGraph: string | null) {
+  return namedGraph ? `CLEAR SILENT GRAPH <${namedGraph}>` : "CLEAR SILENT DEFAULT";
+}
+
 export function planReplaceRequests(statements: string[], options: { namedGraph: string | null; singleRequestLimit?: number }): ReplacePlan {
   const { namedGraph } = options;
   const limit = Math.max(1, options.singleRequestLimit ?? DEFAULT_SINGLE_REPLACE_LIMIT);
-  const clear = namedGraph ? `CLEAR SILENT GRAPH <${namedGraph}>` : "CLEAR SILENT DEFAULT";
+  const clear = clearGraphUpdate(namedGraph);
   const targetRef = namedGraph ? `<${namedGraph}>` : "DEFAULT";
   const wrap = (body: string, graph: string | null) => (graph ? `GRAPH <${graph}> { ${body} }` : body);
   if (!statements.length) return { requests: [clear], cleanup: null };
