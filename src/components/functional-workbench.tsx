@@ -363,16 +363,35 @@ export function FunctionalWorkbench() {
   const loadOntologies = async () => {
     const data = await api<OntologySummary[]>("/api/ontologies");
     setOntologies(data);
-    setOntologyId((current) => current || data[0]?.id || "");
+    // 本体列表变了（新建 / 删除）时，「当前本体」与落点一起收敛，别停在已被删掉的存储上。
+    const nextId = ontologyId && data.some((item) => item.id === ontologyId) ? ontologyId : (data[0]?.id ?? "");
+    setOntologyId(nextId);
+    const storageId = data.find((item) => item.id === nextId)?.storage?.id ?? "";
+    if (storageId && storageId !== targetId) { setTargetId(storageId); setVersionTargetId(""); }
   };
   const loadTargets = async () => {
-    const [data] = await Promise.all([api<Target[]>("/api/targets"), loadOntologies()]);
+    const [data, ontologyList] = await Promise.all([api<Target[]>("/api/targets"), api<OntologySummary[]>("/api/ontologies")]);
     setTargets(data);
-    setTargetId((current) => current || data[0]?.id || "");
+    setOntologies(ontologyList);
+    // 「当前本体」是主选择，落点跟着它走。两边各自取第一个是不行的：
+    // 本体列表与存储列表的顺序无关，会让侧边栏显示 A、实际却在操作 B。
+    setOntologyId((current) => (current && ontologyList.some((item) => item.id === current) ? current : (ontologyList[0]?.id ?? "")));
+    setTargetId((current) => {
+      if (current && data.some((item) => item.id === current)) return current;
+      return ontologyList[0]?.storage?.id ?? data[0]?.id ?? "";
+    });
   };
 
   const loadVersions = async (id: string) => {
     if (!id) return;
+    if (id !== versionTargetId) {
+      // 换本体：先清掉上一个本体的版本与统计。否则切换的一瞬间，页头与版本条
+      // 显示的仍是别人的草稿（「当前本体」显示 A、草稿却是 B 的）。
+      setVersions([]);
+      setDraft(null);
+      setPublished(null);
+      setRuntimeTypes(null);
+    }
     const versions = await api<Version[]>(`/api/ontology?targetId=${encodeURIComponent(id)}`);
     const nextDraft = versions.find((item) => item.status === "DRAFT") ?? null;
     const nextPublished = versions.find((item) => item.status === "PUBLISHED") ?? null;
