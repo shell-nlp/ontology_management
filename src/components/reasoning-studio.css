@@ -1,0 +1,101 @@
+/* 推理页：左边是"怎么推的"，右边是"推出了什么"，证据可以点回对象页核对。 */
+
+.rs-root { gap: 14px; }
+.rs-ask .title-row { align-items: flex-start; }
+.rs-ask h2 { margin: 2px 0 0; }
+
+.rs-model {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px;
+  border: 1px solid #c9daf6; border-radius: 3px; background: #eef4ff; color: #1d4ed8;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.rs-model.off { border-color: #f0d6bd; background: #fdf4ea; color: #b45309; }
+
+.rs-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-top: 12px; }
+.rs-input textarea {
+  width: 100%; padding: 10px 12px; border: 1px solid #dbe4f0; border-radius: 4px;
+  background: #fff; color: #16233b; font: inherit; font-size: 13px; line-height: 1.6; resize: vertical;
+}
+.rs-input textarea:focus { outline: none; border-color: #8db2f0; box-shadow: 0 0 0 3px rgba(37, 99, 235, .10); }
+.rs-input .action { height: 38px; padding: 0 18px; white-space: nowrap; }
+
+.rs-hint { margin: 10px 0 0; padding: 8px 10px; border-left: 3px solid #e2b03a; background: #fdf8ec; color: #8a6a1d; font-size: 12px; }
+
+.rs-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.rs-examples > span { color: #8b9ab0; font-size: 11.5px; }
+.rs-examples button {
+  padding: 4px 9px; border: 1px solid #e2e9f3; border-radius: 3px; background: #f8fbff;
+  color: #5c6b82; font-size: 11.5px; cursor: pointer;
+}
+.rs-examples button:hover:not(:disabled) { border-color: #b9d1f5; color: #1d4ed8; }
+.rs-examples button:disabled { opacity: .55; cursor: not-allowed; }
+
+.rs-error { display: flex; align-items: center; gap: 8px; border-color: #f0cfcf; background: #fdf3f3; color: #b42318; font-size: 12.5px; }
+
+.rs-result { display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .rs-result { grid-template-columns: 1fr; } .rs-input { grid-template-columns: 1fr; } }
+
+.rs-steps .title-row, .rs-answer > .eyebrow { margin-bottom: 4px; }
+.rs-step-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.rs-step { border: 1px solid #e6eef9; border-radius: 4px; background: #fbfdff; overflow: hidden; }
+.rs-step.failed { border-color: #f0cfcf; background: #fdf7f7; }
+.rs-step-head {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  width: 100%; padding: 8px 10px; border: 0; background: transparent; text-align: left; cursor: pointer;
+}
+.rs-step-head:hover { background: #f4f8ff; }
+.rs-step-index {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: #eaf1ff; color: #1d4ed8; font-size: 10.5px; font-weight: 700;
+}
+.rs-step.failed .rs-step-index { background: #fbe9e9; color: #b42318; }
+.rs-step-main { display: grid; gap: 1px; min-width: 0; }
+.rs-step-main b { color: #16233b; font-size: 12.5px; }
+.rs-step-main code { color: #98a6bb; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.rs-step-main small { color: #7b8ca6; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-step-state { display: inline-flex; align-items: center; gap: 6px; color: #4b9e6a; font-size: 10.5px; }
+.rs-step.failed .rs-step-state { color: #b42318; }
+.rs-step-state em { color: #8b9ab0; font-style: normal; }
+.rs-step-state i { color: #a6b3c6; font-style: normal; font-family: ui-monospace, monospace; }
+.rs-step-state svg:last-child { color: #a6b3c6; transition: transform .14s ease; }
+.rs-step-state svg.is-open { transform: rotate(180deg); }
+.rs-step-result {
+  margin: 0; padding: 10px 12px; border-top: 1px dashed #e6eef9; background: #f7faff;
+  color: #4a5b74; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; line-height: 1.6;
+  max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.rs-step-empty { color: #8b9ab0; font-size: 12px; padding: 6px 2px; }
+
+.rs-markdown { margin: 8px 0 0; color: #24344d; font-size: 13px; line-height: 1.75; }
+.rs-markdown p { margin: 0 0 9px; }
+.rs-markdown h4 { margin: 12px 0 6px; color: #16233b; font-size: 13.5px; }
+.rs-markdown ul { margin: 0 0 9px; padding-left: 20px; }
+.rs-markdown li { margin-bottom: 3px; }
+.rs-markdown b { color: #16233b; }
+.rs-markdown code {
+  padding: 1px 5px; border-radius: 3px; background: #eef3fb; color: #33507f;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11.5px;
+}
+.rs-table-wrap { overflow-x: auto; margin: 0 0 10px; }
+.rs-markdown table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.rs-markdown th, .rs-markdown td { border: 1px solid #e6eef9; padding: 6px 9px; text-align: left; vertical-align: top; }
+.rs-markdown th { background: #f5f9ff; color: #33507f; font-weight: 650; }
+
+.rs-evidence { margin-top: 14px; }
+.rs-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.rs-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+  border: 1px solid #e2e9f3; border-radius: 3px; background: #f8fbff; color: #4a5b74; font-size: 11.5px;
+}
+button.rs-chip { cursor: pointer; }
+button.rs-chip:hover { border-color: #b9d1f5; background: #eef4ff; color: #1d4ed8; }
+
+.rs-meta {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  margin-top: 16px; padding-top: 10px; border-top: 1px solid #eef2f8; color: #98a6bb; font-size: 11px;
+}
+.rs-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.rs-meta em { color: #b45309; font-style: normal; }
+
+.rs-spin { animation: rs-spin 1s linear infinite; }
+@keyframes rs-spin { to { transform: rotate(360deg); } }

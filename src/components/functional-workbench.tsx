@@ -1,7 +1,7 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Sparkles, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
@@ -9,6 +9,7 @@ import { GraphCanvas } from "@/components/graph-canvas";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
 import { OntologyStudio, type OntologySummary } from "@/components/ontology-studio";
+import { ReasoningStudio } from "@/components/reasoning-studio";
 import { PropertyEditor } from "@/components/property-editor";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { DataResourceStudio } from "@/components/data-resource-studio";
@@ -19,7 +20,7 @@ import { entitySources, propertyTypeOptions, sourceName, type Definition, type E
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
+type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "reasoning" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -311,6 +312,7 @@ const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
   { label: "", items: [["ontologies", "本体", Boxes], ["overview", "总览", Activity]] },
   { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
   { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
+  { label: "能力验证", items: [["reasoning", "推理", Sparkles]] },
   { label: "平台", items: [["data", "数据资源", Table2], ["targets", "存储资源", Database], ["settings", "设置", Settings2]] },
 ];
 
@@ -333,6 +335,8 @@ export function FunctionalWorkbench() {
   const [versionTargetId, setVersionTargetId] = useState("");
   const [view, setView] = useState<View>("ontologies");
   const [newTargetOpen, setNewTargetOpen] = useState(false);
+  // 推理页点证据跳到对象页时带上的目标对象：到了就清空，避免下次进来又跳一次。
+  const [focusEntityId, setFocusEntityId] = useState<string | null>(null);
   // 从对象详情跳到「动作」页时带上的预填：动作 + 主对象。
   const [pendingRun, setPendingRun] = useState<{ actionId: string; subject: EntitySearchResult } | null>(null);
   const [graphMode, setGraphMode] = useState<"instances" | "ontology">("instances");
@@ -345,7 +349,14 @@ export function FunctionalWorkbench() {
   const selectedTarget = targets.find((target) => target.id === targetId) ?? null;
   const selectedOntology = ontologies.find((item) => item.id === ontologyId) ?? null;
   /** 选一个本体：它的落点决定后面所有图操作打在哪个存储上。 */
-  const openOntology = (ontology: OntologySummary) => { setOntologyId(ontology.id); setTargetId(ontology.storage?.id ?? ""); setVersionTargetId(""); setView("ontology"); };
+  const openOntology = (ontology: OntologySummary) => {
+    // 落点没变就不要清 versionTargetId：清了但 targetId 没变，加载效应不会再跑，
+    // 界面会永远停在"没有版本"的状态（选同一个本体时最容易踩）。
+    const nextTargetId = ontology.storage?.id ?? "";
+    setOntologyId(ontology.id);
+    if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); }
+    setView("ontology");
+  };
   const selectTarget = (id: string) => { setTargetId(id); setOntologyId(ontologies.find((item) => item.storage?.id === id || item.target_id === id)?.id ?? ""); };
   const instanceGraphIsLarge = runtimeTypes !== null && (runtimeTypes.entityCount > 120 || runtimeTypes.relationshipCount > 300);
   const typeOverviewAffordable = runtimeTypes !== null && runtimeTypes.labels.length <= 80 && runtimeTypes.relationshipTypes.length <= 120;
@@ -464,8 +475,8 @@ export function FunctionalWorkbench() {
   const userProp = user;
 
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); setOntologyId(event.target.value); setTargetId(next?.storage?.id ?? ""); setVersionTargetId(""); }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "ontologies" ? "本体" : view === "targets" ? "存储资源" : selectedOntology?.name ?? "选择一个本体"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
+    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "ontologies" ? "本体" : view === "targets" ? "存储资源" : view === "reasoning" ? "推理" : selectedOntology?.name ?? "选择一个本体"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && view !== "targets" && view !== "data" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "ontologies" && <OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={userProp.role === "ADMIN"} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
@@ -477,7 +488,15 @@ export function FunctionalWorkbench() {
       {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
-      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0 } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} />}
+      {view === "reasoning" && <ReasoningStudio
+        targetId={targetId}
+        ontologyName={selectedOntology?.name ?? "未选择本体"}
+        published={versionsReady && published !== null}
+        onOpenObject={(objectId) => { setFocusEntityId(objectId); setView("entities"); }}
+        notify={notify}
+        fail={fail}
+      />}
+      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0 } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
       {view === "settings" && <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} />}
     </section>
   </main>;
@@ -1092,31 +1111,42 @@ function ScopedActions({ definition, versionId, subjectId, labels, disabled, onR
   );
 }
 
-function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown> }) => void; fail: (reason: unknown) => void; entityLimit: number }) {
+function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown> }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 推理页点证据跳过来时，直接把光标落在那个对象上（组件是切视图时重新挂载的，初值就够）。
+  const [selectedId, setSelectedId] = useState<string | null>(focusEntityId ?? null);
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id) => {
-    if (!target) return;
+  const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
+    if (!target) return [];
     try {
       const params = new URLSearchParams({ targetId: target.id });
       if (versionId) params.set("versionId", versionId);
       if (nextLabel) params.set("label", nextLabel);
       if (nextSearch) params.set("search", nextSearch);
       params.set("limit", String(entityLimit));
-      setRows(await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows));
-    } catch (reason) { fail(reason); }
+      const rows = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows);
+      setRows(rows);
+      return rows;
+    } catch (reason) { fail(reason); return []; }
   }, [target, version?.id, fail, entityLimit]);
 
   useEffect(() => {
     if (!target) return;
     const versionParam = version ? `&versionId=${version.id}` : "";
-    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}${versionParam}&limit=${entityLimit}`).then((data) => setRows(data.rows)).catch(fail);
+    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}${versionParam}&limit=${entityLimit}`).then((data) => {
+      setRows(data.rows);
+      // 带着目标对象进来时，把编辑缓冲也初始化成它的业务属性，否则点"保存"会用空值覆盖。
+      if (focusEntityId) {
+        const hit = data.rows.find((row) => row.id === focusEntityId);
+        if (hit) setDraftProps(Object.fromEntries(Object.entries(hit.properties).filter(([key]) => key !== "fx" && key !== "fy")));
+        onFocusHandled?.();
+      }
+    }).catch(fail);
     // Entity list is re-fetched when the selected target, version or display limit changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id, version?.id, entityLimit]);

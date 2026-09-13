@@ -171,6 +171,38 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 `loadTargets` / `loadOntologies` 只从本体列表决定 `targetId`；`loadVersions` 在目标变化时先清空
 版本与运行时统计，避免切换的一瞬间显示上一个本体的草稿。改动这块时别把两者再拆成独立取值。
 
+### 推理（能力验证）
+
+记录时间：2026-09-13。**对标 bkn-studio 的「能力验证」：用大模型编排本体工具，多步查询后给带证据的结论。**
+bkn 那边的形态是 `search_schema / query_object_instance / query_instance_subgraph / execute_action`
+一组 MCP 工具 + LLM 编排（`bkn-studio/src/modules/knowledge-network/services/agent-chat.service.ts`），
+工具实现落在 `bkn-foundry/adp/bkn/ontology-query`。平台这一版把同样的闭环做进来，工具层自己实现。
+
+已落地：
+
+- `src/lib/reasoning/tools.ts`：五个**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
+  `get_object_type`（属性含继承、父类、端点关系、动作）、`query_object_instance`（走图库，带类型传播）、
+  `query_instance_subgraph`、`list_actions`。排序是纯函数（`rankSchemaConcepts`），有单测。
+- `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
+  事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
+- `src/lib/reasoning/llm.ts`：OpenAI 兼容客户端，只读 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL`。
+  没配时 `/api/reasoning/status` 明确上报未配置，界面显示而不是静默失败。
+- `POST /api/reasoning/run`、`GET /api/reasoning/status`；每次运行写一条 `REASONING_RUN` 审计。
+- 前端「能力验证 → 推理」页（`src/components/reasoning-studio.tsx`）：提问 → 左侧步骤时间线（可展开看原始结果）
+  → 右侧结论（表格/列表）+ 证据 chips（**点对象证据直接跳到对象页并选中它**）+ 用量与耗时。
+
+两条刻意的边界，改动时别无意破坏：
+
+1. **只在已发布版本上推理**。草稿的定义与图库里的数据不是同一份，混着推会得出"定义说有、图里没有"的矛盾结论。
+2. **工具只读**。让模型直接写图库风险太大（它可能编造对象 id）；写入继续走动作引擎 + 人工确认。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| L1 | 推理过程流式返回 | 一次运行同步等待（实测 7~15s），界面只能转圈 | `/api/reasoning/run` 改 SSE，逐步推 `step` 事件；前端时间线边跑边长 |
+| L2 | 历史推理记录 | 只写进 `audit_entries`，界面上看不到（同 U2） | 推理页加「历史记录」侧栏：问题、步数、结论、证据；与审计界面一起做 |
+| L3 | 语义检索用向量 | `search_schema` 是关键词 + 中文 2 元组匹配，没有语义召回 | 等 R2 接上 embedding 后，给概念建向量索引，与关键词分数融合 |
+| L4 | 让模型执行动作 | 工具全只读，动作只能看不能跑 | 若要开放，走"模型提议 + 人确认"：`execute_action` 返回待确认项，由界面二次确认后调动作引擎。不要直接给写权限 |
+| L5 | 多轮追问 | 一次运行一问一答，没有上下文 | 会话表 + 把上一轮结论压缩进 system；注意结论里的 id 仍是真实的才能复用 |
 ### 工程清洁
 
 | 编号 | 事项 | 说明 |
