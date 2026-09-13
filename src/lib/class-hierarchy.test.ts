@@ -3,9 +3,11 @@ import {
   ancestorsOf,
   descendantsOf,
   effectivePropertiesOf,
+  expandLabelFilter,
   findInheritanceCycles,
   indexNodes,
   inheritedPropertiesOf,
+  mergeInheritedProperties,
   selectableParentsOf,
   validateClassHierarchy,
   type HierarchyNode,
@@ -132,5 +134,64 @@ describe("validateClassHierarchy", () => {
     const violations = validateClassHierarchy([parent, clash, loose]);
     expect(violations.find((item) => item.message.includes("两边对不上"))?.severity).toBeUndefined();
     expect(violations.find((item) => item.message.includes("被改成非必填"))?.severity).toBe("WARN");
+  });
+});
+
+describe("mergeInheritedProperties", () => {
+  it("把祖先的属性并进来，近的祖先优先，自己写的排在最前", () => {
+    const merged = mergeInheritedProperties(专线, graph);
+    expect(merged.map((property) => property.name)).toEqual(["套餐", "姓名", "手机号", "创建时间"]);
+  });
+
+  it("同名属性以本类为准，不会把祖先那份也塞进来", () => {
+    const override = { id: "id-override", name: "覆盖", parents: ["id-用户"], properties: [{ name: "姓名", dataType: "INTEGER" }] };
+    const merged = mergeInheritedProperties(override, [...graph, override]);
+    expect(merged.filter((property) => property.name === "姓名")).toHaveLength(1);
+    expect(merged.find((property) => property.name === "姓名")!.dataType).toBe("INTEGER");
+  });
+
+  it("没有父类的类只返回自己的属性", () => {
+    expect(mergeInheritedProperties(订单, graph)).toEqual([]);
+    expect(mergeInheritedProperties(主体, graph).map((property) => property.name)).toEqual(["创建时间"]);
+  });
+
+  it("遇到环时停止上溯，不会挂死", () => {
+    const a = { id: "a", name: "A", parents: ["b"], properties: [{ name: "甲", dataType: "TEXT" }] };
+    const b = { id: "b", name: "B", parents: ["a"], properties: [{ name: "乙", dataType: "TEXT" }] };
+    expect(mergeInheritedProperties(a, [a, b]).map((property) => property.name)).toEqual(["甲", "乙"]);
+  });
+
+  it("保留调用方自己的属性结构（unique / indexed 不丢）", () => {
+    const base = { id: "base", name: "基类", parents: [], properties: [{ name: "编码", dataType: "TEXT", unique: true, indexed: true }] };
+    const leaf = { id: "leaf", name: "子类", parents: ["base"], properties: [{ name: "自己的", dataType: "TEXT" }] };
+    const merged = mergeInheritedProperties(leaf, [base, leaf]);
+    expect(merged.find((property) => property.name === "编码")).toMatchObject({ unique: true, indexed: true });
+  });
+});
+
+describe("expandLabelFilter", () => {
+  it("按父类筛时把整条子类链都带上", () => {
+    expect(new Set(expandLabelFilter(["主体"], graph))).toEqual(new Set(["主体", "用户", "专线产品用户"]));
+    expect(new Set(expandLabelFilter(["用户"], graph))).toEqual(new Set(["用户", "专线产品用户"]));
+  });
+
+  it("叶子类不会反向带出父类或无关的类", () => {
+    expect(expandLabelFilter(["专线产品用户"], graph)).toEqual(["专线产品用户"]);
+    expect(expandLabelFilter(["订单"], graph)).toEqual(["订单"]);
+  });
+
+  it("多个父类各走各的路，去重后返回", () => {
+    const multi = [...graph, node("id-双亲", "双亲", ["id-用户", "id-专线"])];
+    expect(new Set(expandLabelFilter(["主体"], multi))).toEqual(new Set(["主体", "用户", "专线产品用户", "双亲"]));
+  });
+
+  it("层级里没有的名字原样保留，外部数据的标签不会被吞掉", () => {
+    expect(expandLabelFilter(["外部标签"], graph)).toEqual(["外部标签"]);
+    expect(expandLabelFilter([], graph)).toEqual([]);
+  });
+
+  it("只有带 id 的节点参与：没有 id 的类本来也不可能有父类", () => {
+    const noId = [{ name: "无 id 的类", parents: ["id-用户"] } as unknown as HierarchyNode];
+    expect(expandLabelFilter(["用户"], noId)).toEqual(["用户"]);
   });
 });

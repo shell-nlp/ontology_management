@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
+import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
 import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
-import type { GraphTarget } from "@/lib/graph/types";
+import type { GraphDefinitionLike, GraphTarget } from "@/lib/graph/types";
 
 function target(overrides: Partial<GraphTarget> = {}): GraphTarget {
   return {
@@ -152,5 +152,63 @@ describe("planReplaceRequests", () => {
 
   it("默认单请求上限是给发布用的保守值", () => {
     expect(DEFAULT_SINGLE_REPLACE_LIMIT).toBe(5000);
+  });
+});
+
+describe("schemaStatements", () => {
+  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+  const OWL_CLASS = "http://www.w3.org/2002/07/owl#Class";
+  const OWL_OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#ObjectProperty";
+  const SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+  const DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+  const RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
+
+  function definition(): GraphDefinitionLike {
+    return {
+      entityTypes: [
+        { id: "t-user", name: "用户", properties: [] },
+        { id: "t-line", name: "专线产品用户", parents: ["t-user"], properties: [] },
+      ],
+      relationshipTypes: [
+        { name: "下单", sourceEntityTypeId: "t-user", targetEntityTypeId: "t-line", properties: [] },
+      ],
+    };
+  }
+
+  it("每个类同时声明 owl:Class 与平台的元模型标记", () => {
+    const statements = schemaStatements(definition());
+    for (const name of ["用户", "专线产品用户"]) {
+      expect(statements).toContain(`<urn:bkn:class:${name}> <${RDF_TYPE}> <${OWL_CLASS}> .`);
+      expect(statements).toContain(`<urn:bkn:class:${name}> <${RDF_TYPE}> <urn:bkn:Class> .`);
+    }
+  });
+
+  it("父类写成 rdfs:subClassOf：这是读路径做类型传播的依据", () => {
+    const statements = schemaStatements(definition());
+    expect(statements).toContain(`<urn:bkn:class:专线产品用户> <${SUBCLASS}> <urn:bkn:class:用户> .`);
+  });
+
+  it("父类 id 找不到时跳过，不写出指向空节点的三元组", () => {
+    const statements = schemaStatements({
+      entityTypes: [{ id: "t-x", name: "孤儿", parents: ["t-missing"], properties: [] }],
+      relationshipTypes: [],
+    });
+    expect(statements.some((statement) => statement.includes(SUBCLASS))).toBe(false);
+  });
+
+  it("关系类型写 domain / range，并带上元模型标记", () => {
+    const statements = schemaStatements(definition());
+    expect(statements).toContain(`<urn:bkn:reltype:下单> <${RDF_TYPE}> <${OWL_OBJECT_PROPERTY}> .`);
+    expect(statements).toContain("<urn:bkn:reltype:下单> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:bkn:Property> .");
+    expect(statements).toContain(`<urn:bkn:reltype:下单> <${DOMAIN}> <urn:bkn:class:用户> .`);
+    expect(statements).toContain(`<urn:bkn:reltype:下单> <${RANGE}> <urn:bkn:class:专线产品用户> .`);
+  });
+
+  it("端点没指定就不写 domain / range", () => {
+    const statements = schemaStatements({
+      entityTypes: [{ id: "t-user", name: "用户", properties: [] }],
+      relationshipTypes: [{ name: "泛关系", properties: [] }],
+    });
+    expect(statements.some((statement) => statement.includes(DOMAIN) || statement.includes(RANGE))).toBe(false);
   });
 });

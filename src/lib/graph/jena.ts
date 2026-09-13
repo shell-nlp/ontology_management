@@ -90,6 +90,21 @@ const STRUCTURAL_PREDICATES = [
 const STRUCTURAL_FILTER = STRUCTURAL_PREDICATES.map((predicate) => `<${predicate}>`).join(", ");
 const STRUCTURAL_LOCAL_NAMES = STRUCTURAL_PREDICATES.map((predicate) => localName(predicate));
 
+/**
+ * 平台自己的元模型标记。
+ *
+ * 发布时会声明每个类与每个关系类型。声明用的主语（`urn:bkn:class:指标`）本身也是
+ * RDF 资源，如果不加标记，它们会被实例查询当成对象，污染对象数、对象类型分布与导出。
+ * 所以声明时同时写一条自有类型，实例读路径统一用它把元模型排除掉：
+ * `owl:Class` 给外部工具看，`urn:bkn:Class` 给平台自己过滤用。
+ */
+const BKN_CLASS_META = `${BKN}Class`;
+const BKN_PROPERTY_META = `${BKN}Property`;
+const META_TYPES = [BKN_RELATIONSHIP, OWL_CLASS, RDFS_CLASS, OWL_OBJECT_PROPERTY, RDF_PROPERTY, BKN_CLASS_META, BKN_PROPERTY_META];
+const META_TYPE_IRIS = META_TYPES.map((type) => `<${type}>`).join(", ");
+/** 「?s 不是元模型资源」：加在所有以 ?s 为主语的实例级查询上。 */
+const NOT_META_SUBJECT = `FILTER NOT EXISTS { ?s <${RDF_TYPE}> ?metaType FILTER(?metaType IN (${META_TYPE_IRIS})) }`;
+
 export type SparqlTerm = { type: string; value: string; datatype?: string; "xml:lang"?: string };
 export type SparqlEndpoints = { query: string; update: string; dataset: string; namedGraph: string | null };
 
@@ -328,6 +343,41 @@ export function sparqlQueryForm(query: string) {
   return /^([A-Za-z]+)/.exec(text)?.[1]?.toUpperCase() ?? "";
 }
 
+/**
+ * 把本体定义里的类层级与端点契约翻成 RDF 三元组，随发布一起写进图库。
+ *
+ * - `rdfs:subClassOf`：类层级落到图里，读路径才能用属性路径做类型传播；
+ * - `rdfs:domain` / `rdfs:range`：关系两端的类，供外部 SPARQL 工具与后续校验使用；
+ * - 每个类同时声明 `owl:Class` 与 `urn:bkn:Class`：前者是标准说法，后者是平台的
+ *   元模型标记，实例查询靠它把类排除在对象之外。
+ *
+ * 纯函数，便于单测；发布流程负责把它和实例三元组一起提交。
+ */
+export function schemaStatements(definition: GraphDefinitionLike): string[] {
+  const statements: string[] = [];
+  const nameById = new Map(definition.entityTypes.filter((entity) => entity.id).map((entity) => [entity.id as string, entity.name]));
+  for (const entity of definition.entityTypes) {
+    const classIri = `<${BKN_CLASS_PREFIX}${iriSegment(entity.name)}>`;
+    statements.push(`${classIri} <${RDF_TYPE}> <${OWL_CLASS}> .`);
+    statements.push(`${classIri} <${RDF_TYPE}> <${BKN_CLASS_META}> .`);
+    for (const parentId of entity.parents ?? []) {
+      const parent = nameById.get(parentId);
+      if (!parent) continue;
+      statements.push(`${classIri} <${RDFS_SUBCLASS}> <${BKN_CLASS_PREFIX}${iriSegment(parent)}> .`);
+    }
+  }
+  for (const relationship of definition.relationshipTypes) {
+    const predicate = `<${BKN_REL_TYPE_PREFIX}${iriSegment(relationship.name)}>`;
+    statements.push(`${predicate} <${RDF_TYPE}> <${OWL_OBJECT_PROPERTY}> .`);
+    statements.push(`${predicate} <${RDF_TYPE}> <${BKN_PROPERTY_META}> .`);
+    const source = relationship.sourceEntityTypeId ? nameById.get(relationship.sourceEntityTypeId) : undefined;
+    const target = relationship.targetEntityTypeId ? nameById.get(relationship.targetEntityTypeId) : undefined;
+    if (source) statements.push(`${predicate} <${RDFS_DOMAIN}> <${BKN_CLASS_PREFIX}${iriSegment(source)}> .`);
+    if (target) statements.push(`${predicate} <${RDFS_RANGE}> <${BKN_CLASS_PREFIX}${iriSegment(target)}> .`);
+  }
+  return statements;
+}
+
 export function createJenaStore(target: GraphTarget): GraphStore {
   const endpoints = resolveSparqlEndpoints(target);
   const auth = authorizationHeader(target);
@@ -383,7 +433,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
         const subject = row.s?.value;
         const type = row.t?.value;
         if (!subject || !type) continue;
-        if (type === BKN_RELATIONSHIP || type === OWL_CLASS || type === RDFS_CLASS || type === OWL_OBJECT_PROPERTY || type === RDF_PROPERTY) {
+        if (META_TYPES.includes(type)) {
           relationshipNodes.add(subject);
           continue;
         }
@@ -462,8 +512,10 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     const labels = options.labels ?? [];
     const search = options.search?.trim() || null;
     const limit = Math.min(200000, Math.max(1, Math.floor(options.limit ?? 300)));
+    // 类型传播：?labelType 是实例的直接类，?labelType rdfs:subClassOf* ?labelTarget
+    // 沿层级向上走到被请求的类。所以按父类筛能把子类的对象一并带出来。
     const labelPattern = labels.length
-      ? `?s <${RDF_TYPE}> ?labelType FILTER(?labelType IN (${labels.map((label) => `<${BKN_CLASS_PREFIX}${iriSegment(label)}>`).join(", ")}))`
+      ? `?s <${RDF_TYPE}> ?labelType . ?labelType <${RDFS_SUBCLASS}>* ?labelTarget FILTER(?labelTarget IN (${labels.map((label) => `<${BKN_CLASS_PREFIX}${iriSegment(label)}>`).join(", ")}))`
       : null;
     const searchPattern = search
       ? `{ { ?s ?searchPredicate ?searchValue FILTER(isLiteral(?searchValue) && CONTAINS(LCASE(STR(?searchValue)), LCASE(${sparqlString(search)}))) } UNION { ?s <${RDF_TYPE}> ?searchType FILTER(CONTAINS(LCASE(STR(?searchType)), LCASE(${sparqlString(search)}))) } }`
@@ -472,7 +524,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     const patterns = ["?s ?seedPredicate ?seedObject", labelPattern, searchPattern].filter((pattern): pattern is string => Boolean(pattern));
     const rows = await select(`SELECT DISTINCT ?s WHERE {
         ${scope(patterns.join(" . "))}
-        FILTER NOT EXISTS { ${scope(`?s <${RDF_TYPE}> <${BKN_RELATIONSHIP}>`)} }
+        ${NOT_META_SUBJECT}
       } LIMIT ${limit}`);
     return rows.rows.map((row) => row.s?.value).filter((value): value is string => Boolean(value));
   }
@@ -571,43 +623,55 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     }),
 
     async readSchemaGraph(): Promise<QueryResult> {
-      const rows = await select(`SELECT ?sourceType ?predicate ?targetType (COUNT(*) AS ?count) WHERE {
-          ${scope(`?source <${RDF_TYPE}> ?sourceType . ?source ?predicate ?target . ?target <${RDF_TYPE}> ?targetType
-            FILTER(isIRI(?target) || isBlank(?target))
-            FILTER(?predicate NOT IN (${STRUCTURAL_FILTER}))`)}
-        } GROUP BY ?sourceType ?predicate ?targetType ORDER BY DESC(?count)`);
+      const [instanceRows, classRows, subclassRows] = await Promise.all([
+        select(`SELECT ?sourceType ?predicate ?targetType (COUNT(*) AS ?count) WHERE {
+            ${scope(`?source <${RDF_TYPE}> ?sourceType . ?source ?predicate ?target . ?target <${RDF_TYPE}> ?targetType
+              FILTER(isIRI(?target) || isBlank(?target))
+              FILTER(?predicate NOT IN (${STRUCTURAL_FILTER}))`)}
+          } GROUP BY ?sourceType ?predicate ?targetType ORDER BY DESC(?count)`),
+        select(`SELECT DISTINCT ?class ?label WHERE {
+            ${scope(`{ ?class <${RDF_TYPE}> <${OWL_CLASS}> } UNION { ?class <${RDF_TYPE}> <${RDFS_CLASS}> }`)}
+            OPTIONAL { ${scope(`?class <${RDFS_LABEL}> ?label`)} }
+          }`),
+        select(`SELECT DISTINCT ?child ?parent WHERE { ${scope(`?child <${RDFS_SUBCLASS}> ?parent`)} }`),
+      ]);
       const nodes = new Map<string, GraphNode>();
       const relationships: GraphRelationship[] = [];
-      for (const row of rows.rows) {
+      const ensure = (name: string) => {
+        if (!nodes.has(name)) nodes.set(name, { id: name, labels: [name], properties: {} });
+        return nodes.get(name)!;
+      };
+      // 声明过的类即使一个实例都没有也要画出来。
+      for (const row of classRows.rows) {
+        const iri = row.class?.value;
+        if (!iri) continue;
+        const node = ensure(localName(iri));
+        if (row.label) node.properties.label = String(termValue(row.label));
+      }
+      // 类层级来自定义（发布时写入的 rdfs:subClassOf），不是从实例反推的。
+      for (const row of subclassRows.rows) {
+        const child = row.child?.value;
+        const parent = row.parent?.value;
+        if (!child || !parent) continue;
+        const childName = localName(child);
+        const parentName = localName(parent);
+        ensure(childName);
+        ensure(parentName);
+        const id = `${childName}|subClassOf|${parentName}`;
+        if (!relationships.some((relationship) => relationship.id === id)) {
+          relationships.push({ id, type: "subClassOf", source: childName, target: parentName, properties: {} });
+        }
+      }
+      // 实例层面的类型推导：哪些类之间有关系、各多少条。
+      for (const row of instanceRows.rows) {
         const source = row.sourceType ? nodeLabelFromTerm(row.sourceType) : null;
         const predicate = row.predicate?.value;
         const target = row.targetType ? nodeLabelFromTerm(row.targetType) : null;
         if (!source || !predicate || !target) continue;
-        if (!nodes.has(source)) nodes.set(source, { id: source, labels: [source], properties: {} });
-        if (!nodes.has(target)) nodes.set(target, { id: target, labels: [target], properties: {} });
+        ensure(source);
+        ensure(target);
         const type = localName(predicate);
         relationships.push({ id: `${source}|${type}|${target}`, type, source, target, properties: { count: Number(row.count?.value ?? 0) } });
-      }
-      if (!nodes.size) {
-        const [classRows, subclassRows] = await Promise.all([
-          select(`SELECT DISTINCT ?class ?label WHERE {
-              ${scope(`{ ?class <${RDF_TYPE}> <${OWL_CLASS}> } UNION { ?class <${RDF_TYPE}> <${RDFS_CLASS}> } UNION { ?child <${RDFS_SUBCLASS}> ?class } UNION { ?class <${RDFS_SUBCLASS}> ?parent }`)}
-              OPTIONAL { ${scope(`?class <${RDFS_LABEL}> ?label`)} }
-            }`),
-          select(`SELECT ?child ?parent WHERE { ${scope(`?child <${RDFS_SUBCLASS}> ?parent`)} }`),
-        ]);
-        for (const row of classRows.rows) {
-          const iri = row.class?.value;
-          if (!iri) continue;
-          const name = localName(iri);
-          nodes.set(name, { id: name, labels: [name], properties: { label: row.label ? String(termValue(row.label)) : name } });
-        }
-        for (const row of subclassRows.rows) {
-          const child = row.child?.value;
-          const parent = row.parent?.value;
-          if (!child || !parent) continue;
-          relationships.push({ id: `${child}|subClassOf|${parent}`, type: "subClassOf", source: localName(child), target: localName(parent), properties: {} });
-        }
       }
       return { keys: [], records: [], graph: { nodes: [...nodes.values()], relationships }, summary: "RDF Schema / 实例类型推导" };
     },
@@ -620,8 +684,10 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       ]);
       const names = (rows: { value?: string }[]) =>
         [...new Set(rows.map((row) => row.value).filter((value): value is string => typeof value === "string" && value.length > 0).map(localName))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+      // 元模型类型（owl:Class / urn:bkn:Class / owl:ObjectProperty…）不是对象的类，不能进标签清单。
+      const metaIris = new Set(META_TYPES);
       return {
-        labels: names(typeRows.rows.map((row) => ({ value: row.value?.value }))).filter((name) => name !== localName(BKN_RELATIONSHIP)),
+        labels: names(typeRows.rows.filter((row) => row.value?.value && !metaIris.has(row.value.value)).map((row) => ({ value: row.value?.value }))),
         relationshipTypes: names(resourcePredicateRows.rows.map((row) => ({ value: row.value?.value }))).filter((name) => !STRUCTURAL_LOCAL_NAMES.includes(name)),
         propertyKeys: names(literalPredicateRows.rows.map((row) => ({ value: row.value?.value }))),
       };
@@ -631,7 +697,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       const [typeRows, relationshipRows, nodeCountRows, relationshipCountRows, endpointRows, propertyRows, relationshipPropertyRows] = await Promise.all([
         select(`SELECT ?t (COUNT(DISTINCT ?s) AS ?count) WHERE { ${scope(`?s <${RDF_TYPE}> ?t`)} } GROUP BY ?t ORDER BY DESC(?count)`),
         select(`SELECT ?p (COUNT(*) AS ?count) WHERE { ${scope(`?s ?p ?o FILTER(isIRI(?o) || isBlank(?o)) FILTER(?p NOT IN (${STRUCTURAL_FILTER}))`)} } GROUP BY ?p ORDER BY DESC(?count)`),
-        select(`SELECT (COUNT(DISTINCT ?s) AS ?count) WHERE { ${scope(`?s ?p ?o FILTER NOT EXISTS { ?s <${RDF_TYPE}> <${BKN_RELATIONSHIP}> }`)} }`),
+        select(`SELECT (COUNT(DISTINCT ?s) AS ?count) WHERE { ${scope(`?s ?p ?o ${NOT_META_SUBJECT}`)} }`),
         select(`SELECT (COUNT(*) AS ?count) WHERE { ${scope(`?s ?p ?o FILTER(isIRI(?o) || isBlank(?o)) FILTER(?p NOT IN (${STRUCTURAL_FILTER}))`)} }`),
         select(`SELECT ?p ?sourceType ?targetType (COUNT(*) AS ?count) WHERE {
             ${scope(`?s ?p ?o . ?s <${RDF_TYPE}> ?sourceType . ?o <${RDF_TYPE}> ?targetType
@@ -671,7 +737,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       }
       return {
         labels: typeRows.rows
-          .filter((row) => row.t?.value && row.t.value !== BKN_RELATIONSHIP)
+          .filter((row) => row.t?.value && !META_TYPES.includes(row.t.value))
           .map((row) => {
             const name = localName(row.t!.value);
             return { name, count: Number(row.count?.value ?? 0), properties: labelProperties.get(name) };
@@ -783,7 +849,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     },
 
     async exportGraph(): Promise<GraphExport> {
-      const rows = await select(`SELECT DISTINCT ?s WHERE { ${scope("?s ?p ?o")} FILTER NOT EXISTS { ${scope(`?s <${RDF_TYPE}> <${BKN_RELATIONSHIP}>`)} } }`);
+      const rows = await select(`SELECT DISTINCT ?s WHERE { ${scope("?s ?p ?o")} ${NOT_META_SUBJECT} }`);
       const terms = rows.rows.map((row) => row.s?.value).filter((value): value is string => Boolean(value));
       const [hydrated, edges] = await Promise.all([hydrateNodes(terms), readEdges(terms)]);
       const nodes = hydrated.nodes;
@@ -840,6 +906,8 @@ export function createJenaStore(target: GraphTarget): GraphStore {
           }
         }
       }
+      // 类层级与端点契约和实例数据一起提交：发布完成后图里就有 rdfs:subClassOf。
+      statements.push(...schemaStatements(snapshot.definition));
       const plan = planReplaceRequests(statements, { namedGraph, singleRequestLimit: replaceSingleRequestLimit(target) });
       try {
         for (const request of plan.requests) await update(request);

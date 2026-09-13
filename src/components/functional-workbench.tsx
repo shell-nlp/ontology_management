@@ -4,6 +4,7 @@ import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEve
 import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
+import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
@@ -41,6 +42,15 @@ function isWriteStatement(kind: GraphTargetKind | undefined, statement: string) 
 
 function graphNoun(target: Target | null | undefined) {
   return target ? graphTargetKindInfo(target.kind).label : "图数据库";
+}
+
+/**
+ * 对象实际生效的属性：本类自己的 + 从父类继承来的。
+ * 编辑器与写入共用这一份判断，避免「界面显示继承来的属性、保存却被拒」。
+ */
+function effectivePropertiesFor(definition: Definition | null, labels: string[]): Property[] | null {
+  const type = definition?.entityTypes.find((item) => labels.includes(item.name));
+  return type ? mergeInheritedProperties(type, definition!.entityTypes) : null;
 }
 
 const emptyDefinition: Definition = { entityTypes: [], relationshipTypes: [], actionTypes: [], rules: [] };
@@ -1093,7 +1103,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
   }, [target?.id, version?.id, entityLimit]);
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
-  const definitions = selected ? (version?.definition.entityTypes.find((item) => selected.labels.includes(item.name))?.properties ?? null) : null;
+  const definitions = selected ? effectivePropertiesFor(version?.definition ?? null, selected.labels) : null;
   const managed = Boolean(definitions);
 
   const save = async () => {
@@ -1245,7 +1255,7 @@ function EntityCreateDialog({ published, runtimeTypes, onClose, onCreate }: { pu
   const [label, setLabel] = useState("");
   const [properties, setProperties] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const definitions = published?.definition.entityTypes.find((item) => item.name === label)?.properties ?? null;
+  const definitions = effectivePropertiesFor(published?.definition ?? null, [label]);
   const options = useMemo(() => [...new Set([...(published?.definition.entityTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.labels.map((item) => item.name) ?? [])])], [published, runtimeTypes]);
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog" onSubmit={(event) => { event.preventDefault(); if (!label.trim()) return; setBusy(true); void onCreate(label.trim(), properties).finally(() => setBusy(false)); }}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><CircleDot size={22} /></div><span className="eyebrow">新建对象</span><h2>选择节点标签</h2><label>标签<select value={label} onChange={(event) => setLabel(event.target.value)} required><option value="">选择标签</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><PropertyEditor definitions={definitions ?? []} values={properties} mode="managed" onChange={setProperties} /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!label.trim() || busy}>{busy ? "创建中…" : "创建对象"}</button></div></form></div>;
 }

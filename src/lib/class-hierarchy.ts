@@ -62,6 +62,30 @@ export function descendantsOf(id: string, nodes: readonly HierarchyNode[], byId:
 }
 
 /**
+ * 按对象类型筛选时，把「父类」展开成「父类 + 它的所有后代类」。
+ *
+ * 这是模式层的类型传播：图谱与快照筛选传进来的是类名（不是 id），所以按 name 匹配。
+ * 没在层级里出现过的名字原样保留——外部数据里的标签不会被吞掉。
+ * 只有带 id 的节点能参与：父类引用的是 id，没有 id 的类本来也不可能有层级。
+ */
+export function expandLabelFilter(labels: readonly string[], nodes: readonly HierarchyNode[]): string[] {
+  const wanted = new Set(labels.filter((label) => label?.trim()));
+  if (!wanted.size) return [...wanted];
+  const indexed = nodes.filter((node) => Boolean(node.id));
+  if (!indexed.length) return [...wanted];
+  const byId = indexNodes(indexed);
+  for (const node of indexed) {
+    if (wanted.has(node.name)) continue;
+    const inherited = ancestorsOf(node.id, byId).some((id) => {
+      const ancestor = byId.get(id);
+      return ancestor ? wanted.has(ancestor.name) : false;
+    });
+    if (inherited) wanted.add(node.name);
+  }
+  return [...wanted];
+}
+
+/**
  * 从祖先继承来、且本类没有覆盖的属性。近的祖先优先：
  * 同名属性只要本类写了，就以本类为准，不再列为继承。
  */
@@ -83,6 +107,42 @@ export function inheritedPropertiesOf(node: HierarchyNode, byId: Map<string, Hie
 /** 最终生效的属性：自己写的 + 继承来的，自己写的优先。 */
 export function effectivePropertiesOf(node: HierarchyNode, byId: Map<string, HierarchyNode>): HierarchyProperty[] {
   return [...(node.properties ?? []), ...inheritedPropertiesOf(node, byId).map((item) => item.property)];
+}
+
+/**
+ * 通用版的「最终生效属性」。
+ *
+ * 和 effectivePropertiesOf 是一回事，但保留调用方自己的属性结构（Property 有
+ * unique / indexed / sourceField，HierarchyProperty 没有），所以写实例、渲染表单、
+ * 校验唯一值都能直接拿去用，不必再各写一份。
+ *
+ * 近的祖先优先；同名属性只要本类（或更近的祖先）写过，就不再从远处覆盖。
+ * 草稿可能暂时有环，用 visited 兜底，只是停止向上走，不会挂死。
+ */
+export function mergeInheritedProperties<P extends { name: string }>(
+  node: { id: string; parents?: string[]; properties?: P[] },
+  nodes: readonly { id: string; parents?: string[]; properties?: P[] }[],
+): P[] {
+  const result = [...(node.properties ?? [])];
+  const seen = new Set(result.map((property) => property.name));
+  if (!seen.size && !parentIdsOf(node).length) return result;
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  const queue = parentIdsOf(node);
+  const visited = new Set<string>([node.id]);
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const ancestor = byId.get(id);
+    if (!ancestor) continue;
+    for (const property of ancestor.properties ?? []) {
+      if (seen.has(property.name)) continue;
+      seen.add(property.name);
+      result.push(property);
+    }
+    queue.push(...parentIdsOf(ancestor));
+  }
+  return result;
 }
 
 /**

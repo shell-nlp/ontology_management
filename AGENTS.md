@@ -69,6 +69,8 @@
 
 | G5 | 后端定位与许可 | 两个后端功能对等、界面上并列；但 Apache Jena 是 Apache-2.0，Neo4j Community 是 **GPL-3.0**（企业版为商业许可）——随产品分发 Neo4j 需要履行 GPLv3 义务（平台只是客户端，连接方式本身不传染） | Jena 作为**推理、元模型、多本体隔离**的默认推荐后端（Fuseki 用命名图/多数据集隔离，不必像 Neo4j 那样起多个实例）；Neo4j 定位为「实例存储 + 高性能遍历」，适合已有环境与深链场景（Fuseki/TDB2 是单机，SPARQL 深链慢）。**暂不删除**，等实际用量或维护成本给出信号再定。2026-09-13 决定：**Neo4j 已从前端下线**——不再出现在「选择图数据库类型」与「新建本体」的存储下拉里（`FRONTEND_GRAPH_TARGET_KINDS` / `isFrontendGraphTargetKind`，见 `src/lib/graph/types.ts`）；后端适配器 `src/lib/graph/neo4j.ts` 与接口保留，已登记的 Neo4j 记录在「存储资源」页单独归到「已下线」组，仍可查看 / 测试 / 编辑 / 删除 |
 
+| G6 | Neo4j 侧的类层级 | Jena 已落地「发布写 `rdfs:subClassOf` + 读路径类型传播」，Neo4j 没有等价实现 | 若 Neo4j 重新上架才做：自建 `(:Class)` 节点保存层级并让读路径按层级展开；难点是元模型节点与实例节点的隔离（同 G5）。当前已从前端下线，暂不投入 |
+
 ### 本体核心模型
 
 记录时间：2026-09-12。对照的是 Palantir Ontology 的 object type / object 关系：
@@ -80,7 +82,14 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`neo4j.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
 | M2 | 接口（interfaces） | 完全没有 | Palantir 用接口表达共享能力与多继承：接口是抽象的、不能被直接实例化，object type 实现接口后按接口被消费，链接与动作也能定义在接口上。工作量在定义层语义（接口定义、类实现、属性/链接/动作的继承与覆盖）加图库落地方式，建议先出 ADR 再实现。参考 https://palantir.com/docs/foundry/interfaces/interface-overview/ |
 
-| M3 | 类层级与类型传播（第一档推理） | **定义层与编辑器已落地**：`entityTypes[].parents`（可多选）、祖先/后代闭包、继承属性解析（近的祖先优先），以及校验——父类不存在 / 继承成环 / 同名属性类型对不上会挡发布，必填被放宽只提示；类编辑弹窗显示「也属于」与「从父类继承」，画布检视器显示「继承自」和继承来的属性。**还没落到图里**：发布时只写 `?s rdf:type bkn:class:X`（`jena.ts` 第 811 行），没有 `rdfs:subClassOf` 三元组，读路径也还没按子类展开 | 接着做发布与读路径：Jena 发布时补写 `rdfs:subClassOf` / `rdfs:domain` / `rdfs:range` 三元组，读路径用 `rdf:type/rdfs:subClassOf*` 属性路径做类型传播；Neo4j 要自建 `(:Class)` 节点并解决元模型与实例节点的隔离（见 G5）。M2（接口）仍排在其后 |
+**M3（类层级与类型传播，第一档推理）已于 2026-09-13 完成（Jena 侧）**，记录如下：
+
+- 发布时按定义写元模型：每个类声明 `owl:Class`，有 `parents` 的写 `rdfs:subClassOf`，关系类型写 `rdfs:domain` / `rdfs:range`（`jena.ts` 的 `schemaStatements`，纯函数、有单测）。
+- 元模型与实例隔离：类声明同时盖 `urn:bkn:Class`、关系类型盖 `urn:bkn:Property`，所有实例级查询用 `NOT_META_SUBJECT` 统一排除。没有这一步，类会混进对象数、对象类型分布、标签清单与整图导出。
+- 读路径做类型传播：图库侧用 `?s rdf:type ?t . ?t rdfs:subClassOf* <类>`（`selectSubjects`）；快照侧用 `expandLabelFilter`（`class-hierarchy.ts`，界面默认走这条）。两条路径结果一致：按父类筛，子类的对象也出现。
+- 继承属性对实例生效：`mergeInheritedProperties` 用于对象写入、发布前校验（必填 / 唯一）、运行时类型清单与对象编辑表单。不补这一层，子类的对象连父类定义的字段都填不了。
+- 本体视图（`readSchemaGraph`）改为**始终**画出声明的类与 `subClassOf` 边，不再只在图库为空时才回退到 RDF Schema。
+- Neo4j 侧没有等价实现，已作为 G6 记录（Neo4j 已从前端下线，暂不补）。
 
 ### 数据资源
 
@@ -89,6 +98,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | D1 | 用数据源实例化对象 | 类可以绑到表（`entityTypes[].sources`，多来源已支持按主键合并），但不会把表里的行读成对象 | 按主键去重、按属性映射填值，先把行读成只读对象；写入另算（Palantir 也是写 user edits 层，不回写源表）。依赖 M1 先把对象身份定下来 |
 | D2 | 关系类型的数据来源 | 只有类有来源，关系还得手工连 | 参照 Palantir 的 link type backing dataset：用两张表的外键列关联，或绑定中间表 |
 | D3 | 连接池与超时 | 结构清单已有 60 秒 TTL 缓存（命中不建连接），但**建连接本身**仍是每次操作 `new DataSource()` + `initialize()` + `destroy()`：试连 ~400ms、点一张表 ~500ms 基本都是这部分开销。2026-09-12 出现过一次 dev server 直接退出（exit 3221225477 / 0xC0000005，崩前最后一条日志是 `POST /data-sources/:id/test 200`），重启后连续 16 次试连 + 2 次 HMR 未复现 | 按来源把连接池缓存到 `globalThis` 复用（凭据/host 变了再重建），加连接超时与并发上限，`options` 里暴露只读开关；顺带把 Oracle 的原生状态也放到 `globalThis` |
+
 | D4 | 非关系来源接入 | `PLANNED_DATA_SOURCES` 只列了 ES / REST / 文件，界面归到「规划中」 | 在 `openDataSourceConnector` 里分流到新实现，实现 `DataSourceConnector` 的四个方法即可 |
 
 ### 对象检索层

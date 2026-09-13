@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphFromSnapshot, validateVersionSnapshot, type VersionSnapshot } from "@/lib/version-snapshot";
+import { graphFromSnapshot, listSnapshotEntities, validateVersionSnapshot, type VersionSnapshot } from "@/lib/version-snapshot";
 
 const customerTypeId = "11111111-1111-4111-8111-111111111111";
 const orderTypeId = "22222222-2222-4222-8222-222222222222";
@@ -62,5 +62,51 @@ describe("version snapshot", () => {
     expect(match).toBeDefined();
     expect(match!.rule).toBe("客户.名称");
     expect(match!.count).toBe(1);
+  });
+});
+
+describe("类型传播：按父类筛子类的对象", () => {
+  const 用户类 = "11111111-1111-4111-8111-111111111111";
+  const 专线类 = "22222222-2222-4222-8222-222222222222";
+  const 用户对象 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const 专线对象 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  function hierarchySnapshot(): VersionSnapshot {
+    return {
+      definition: {
+        entityTypes: [
+          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", parents: [], properties: [{ name: "姓名", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+          { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", parents: [用户类], properties: [], sources: [] },
+        ],
+        relationshipTypes: [],
+        actionTypes: [],
+        rules: [],
+      },
+      nodes: [
+        { id: 用户对象, labels: ["用户"], properties: { 姓名: "张三" } },
+        { id: 专线对象, labels: ["专线产品用户"], properties: { 姓名: "李四" } },
+      ],
+      relationships: [],
+    };
+  }
+
+  it("按父类筛对象，子类的对象也算", () => {
+    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "用户" });
+    expect(rows.map((row) => row.id)).toEqual([用户对象, 专线对象]);
+  });
+
+  it("按子类筛不会把父类的对象带出来", () => {
+    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "专线产品用户" });
+    expect(rows.map((row) => row.id)).toEqual([专线对象]);
+  });
+
+  it("图谱筛选走同一份类型传播", () => {
+    const graph = graphFromSnapshot(hierarchySnapshot(), { labels: ["用户"] });
+    expect(graph.nodes.map((node) => node.id)).toEqual([用户对象, 专线对象]);
+  });
+
+  it("传了不存在的标签时不会误伤：只匹配真实存在的类名", () => {
+    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "订单" });
+    expect(rows).toEqual([]);
   });
 });
