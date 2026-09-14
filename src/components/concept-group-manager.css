@@ -13,7 +13,7 @@
 .cg-colors .auto.active { color: #1d4ed8; border-color: #a9c5ef; background: #eef4ff; }
 .cg-colors .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #ffffff; border-radius: 50%; box-shadow: 0 0 0 1px #d7e2f0; }
 .cg-colors .swatch.active { box-shadow: 0 0 0 2px #1d4ed8; }
-.cg-members { display: grid; gap: 2px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #e3ebf5; border-radius: 4px; background: #fbfcfe; }
+.cg-members { display: grid; gap: 2px; align-content: start; max-height: 288px; overflow: auto; padding: 6px; border: 1px solid #e3ebf5; border-radius: 4px; background: #fbfcfe; }
 .cg-members label { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 3px; color: #3f5b7d; font-size: 11px; }
 .cg-members label:hover { background: #f2f7ff; }
 .cg-members label.checked { color: #1d4ed8; font-weight: 600; background: #eef4ff; }

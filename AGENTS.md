@@ -223,7 +223,10 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 - 界面：本体卡片上的「导出」；页头「导入本体包」。
 - **导入接受两种文件**：平台自己的 `ontology.bundle`，以及 bkn-foundry 导出的知识网络
   （`module_type: knowledge_network`）。后者由 `src/lib/bkn-import.ts` 先转成标准本体包，
-  **转换时丢掉的每一类东西都进 warnings**（概念域分组、指标、关系连接规则、平台不认的属性类型……），不静默丢。
+  **转换时丢掉的每一类东西都进 warnings**（指标、关系连接规则、平台不认的属性类型……），不静默丢。
+- **概念域分组会一起搬**（2026-09-14 起）：bkn 的 `concept_groups` → `definition.groups`，
+  成员在 bkn 里写在分组这一侧（`object_type_ids`）、平台写在对象类型那一侧，转换时按 `idMap` 铺到 `groupId`；
+  一个类型挂在多个分组时按文件顺序保留第一个（并报一条 warning），成员 id 找不到对象类型也会报出来。
 
 三条不变量，改动时别破：
 
@@ -235,7 +238,7 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
 | E1 | 带实例导出 | 只导结构，`statistics.objects` 只是"导出端当时有多少" | 加可选 `instances` 字段（nodes / relationships），导入同样换 id、按类名认对象类型。因为是可选字段，格式版本不用动 |
-| E2 | 概念域分组与指标 | 本体模型里**没有**这两个概念（bkn 的 `concept_groups` / `metrics`） | 先在定义层加模型，再进本体包。别为了"和 bkn 对齐"往包里塞平台不认识的段 |
+| E2 | ~~概念域分组~~ / 指标 | **概念域分组已于 2026-09-14 支持**：bkn 的 `concept_groups` 转成平台的概念分组（见「概念分组（业务域）」一节），导入自带、已实测。**指标（`metrics`）仍没有模型**，逐条进 warnings | 指标要等定义层有了模型再进本体包。别为了"和 bkn 对齐"往包里塞平台不认识的段 |
 | E3 | 包与已有本体合并 | 导入只有"新建"，不能"并进已有本体" | 要合并得按名字匹配类/关系类型并让人确认冲突，属于独立特性，别顺手做 |
 | E4 | bkn 的关系连接规则 | 导入 bkn 知识网络时 `mapping_rules`（两边哪些字段相等就连边）没有模型可落，逐条进了 warnings | 即「关系类型的数据来源」（D2）。先在定义层给关系类型加映射模型，再让 bkn 转换与本体包都带上 |
 ### 属性与关系类型的说明文本
@@ -480,6 +483,8 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   不再让人随手填一个新名字；可视化的右栏也有同一个下拉，方便边看边调。
 - **看效果的两处**：本体草稿可视化画布（`ontology-builder.tsx`，工具栏「概念分组 N」直接跳配置页）
   与「图谱 → 查看本体」（`graph-canvas.tsx` 的 `viewMode === "ontology"`）都有 `layout-switcher.tsx` 的布局切换器。
+- **导入自带分组**：bkn 知识网络里的 `concept_groups` 由 `bkn-import.ts` 转成 `groups` + `entityTypes[].groupId`
+  （成员写在分组那一侧，转换时反过来铺；一个类型挂多个分组时保留文件里的第一个并报 warning）。
 - 布局三种：**默认布局**（按关系铺开 + 记住手工摆放）、**圆形布局**、**按逻辑分组**（`groupedLayoutPositions`：
   组内小圈 + 组心大圈 + 未归组最外圈，`orderFramesByEdges` 让连边多的组排相邻）。后两种是算出来的：
   **不写本机位置、也不允许拖节点**（拖了也会被下一次重算覆盖），「自动整理」在后两种布局下只是换个 seed 转一圈。

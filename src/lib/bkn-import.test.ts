@@ -114,10 +114,39 @@ describe("bkn → 本体包", () => {
     const joined = warnings.join("\n");
     expect(joined).toContain("geopoint");
     expect(joined).toContain("mapping_rules");
-    expect(joined).toContain("概念域分组");
     expect(joined).toContain("指标");
     expect(joined).toContain("请在类型编辑里为它选一次数据资源");
     expect(joined).toContain("主键（customer_id）改记在属性上");
+  });
+
+  it("概念分组搬过来：分组名、颜色、成员都落在对象类型那一侧", () => {
+    const { bundle } = fromBknKnowledgeNetwork(knowledgeNetwork());
+    expect(bundle.definition.groups).toHaveLength(1);
+    const [group] = bundle.definition.groups;
+    expect(group.name).toBe("客户域");
+    const 集团客户 = bundle.definition.entityTypes.find((item) => item.name === "集团客户")!;
+    // 成员在 bkn 里写在分组这一侧，转换后要落到对象类型的 groupId 上，并且是**新的**分组 id
+    expect(集团客户.groupId).toBe(group.id);
+    expect(bundle.definition.entityTypes.find((item) => item.name === "客户")?.groupId).toBe("");
+    expect(bundle.definition.groups[0].color).toBe("");
+  });
+
+  it("成员指向文件里没有的对象类型、或一个类型挂两个分组时，如实报出来", () => {
+    const raw = knowledgeNetwork();
+    raw.concept_groups = [
+      { id: "g1", name: "客户域", comment: "", object_type_ids: ["t1", "customer", "查无此类"] },
+      { id: "g2", name: "第二域", comment: "", object_type_ids: ["customer"] },
+    ];
+    const { bundle, warnings } = fromBknKnowledgeNetwork(raw);
+    const joined = warnings.join("\n");
+    expect(bundle.definition.groups.map((group) => group.name)).toEqual(["客户域", "第二域"]);
+    const 客户 = bundle.definition.entityTypes.find((item) => item.name === "客户")!;
+    // 按文件顺序保留第一个分组
+    expect(客户.groupId).toBe(bundle.definition.groups[0].id);
+    expect(joined).toContain("找不到对应对象类型");
+    expect(joined).toContain("只保留了第一个");
+    // 分组 id 与对象类型 id 共用一套 id 空间，不能把分组 id 泄成文本引用
+    expect(bundle.definition.groups.every((group) => group.id !== "g1" && group.id !== "g2")).toBe(true);
   });
 
   it("空文件与坏输入给得出话", () => {

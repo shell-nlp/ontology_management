@@ -8,7 +8,8 @@ import type { OntologyDefinition } from "@/lib/ontology";
  * `ontology.bundle`，照样走 `POST /api/ontologies/import`（换 id、接数据资源、写草稿都在那边）。
  *
  * bkn 的字段比我们多，转换时**只搬我们装得下的，其余逐条报出来** —— 静默丢内容比报错更糟。
- * 已知装不下的（见 warnings）：概念域分组、指标、关系类型的连接规则（mapping_rules）。
+ * 装得下：对象类型（含属性 / 主键 / 数据来源）、关系类型（含说明）、概念分组（concept_groups → `groups`）。
+ * 已知装不下的（见 warnings）：指标、关系类型的连接规则（mapping_rules）。
  *
  * 记录时间：2026-09-14。
  */
@@ -152,8 +153,37 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
   });
 
   if (droppedMappings > 0) warnings.push(`bkn 里的 ${droppedMappings} 条关系连接规则（mapping_rules，靠两边哪些字段相等来连边）平台还没有对应的模型，本次没有导入。`);
-  const groups = Array.isArray(source.concept_groups) ? source.concept_groups : [];
-  if (groups.length) warnings.push(`bkn 里的 ${groups.length} 个概念域分组（${groups.map((group) => text((group as Unknown).name)).filter(Boolean).join("、")}）平台还没有对应的模型，本次没有导入。`);
+
+  /*
+   * 概念域分组（concept_groups）→ 平台的概念分组。
+   *
+   * 分组成员在 bkn 里写在分组这一侧（`object_type_ids`），平台的 `groupId` 写在对象类型那一侧，
+   * 所以这里反过来铺一次；成员 id 可能是 UUID，也可能是 `account` 这样的短标识，都按 idMap 找。
+   * 一个对象类型只能属于一个分组：文件里挂在多个分组时按文件顺序保留第一个，并把条数报出来。
+   */
+  const conceptGroups = Array.isArray(source.concept_groups) ? (source.concept_groups as Unknown[]) : [];
+  const groups: OntologyDefinition["groups"] = [];
+  const groupOfEntity = new Map<string, string>();
+  let missingMembers = 0;
+  let duplicateMembers = 0;
+  for (const entry of conceptGroups) {
+    const groupName = text(entry.name);
+    if (!groupName) continue;
+    const groupId = crypto.randomUUID();
+    groups.push({ id: groupId, name: groupName, color: text(entry.color).slice(0, 32) });
+    for (const memberId of list(entry.object_type_ids)) {
+      const entityId = idMap.get(memberId);
+      if (!entityId) { missingMembers += 1; continue; }
+      if (groupOfEntity.has(entityId)) { duplicateMembers += 1; continue; }
+      groupOfEntity.set(entityId, groupId);
+    }
+  }
+  if (missingMembers > 0) warnings.push(`概念分组里有 ${missingMembers} 个成员在本文件里找不到对应对象类型，已跳过。`);
+  if (duplicateMembers > 0) warnings.push(`有 ${duplicateMembers} 个对象类型同时挂在多个概念分组里，按文件顺序只保留了第一个（一个对象类型只能属于一个分组）。`);
+  const grouped = entityTypes.map((entity) => {
+    const groupId = groupOfEntity.get(entity.id);
+    return groupId ? { ...entity, groupId } : entity;
+  });
   const metrics = Array.isArray(source.metrics) ? source.metrics : [];
   if (metrics.length) warnings.push(`bkn 里的 ${metrics.length} 条指标（${metrics.map((metric) => text((metric as Unknown).name)).filter(Boolean).join("、")}）平台还没有对应的模型，本次没有导入。`);
 
@@ -165,7 +195,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       color: text(source.color),
       tags: list(source.tags),
     },
-    definition: { groups: [], entityTypes, relationshipTypes: mappings, actionTypes: [], rules: [] },
+    definition: { groups, entityTypes: grouped, relationshipTypes: mappings, actionTypes: [], rules: [] },
   });
 
   return { bundle, warnings };
