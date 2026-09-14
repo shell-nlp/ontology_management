@@ -185,9 +185,14 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   `query_instance_subgraph`、`list_actions`。排序是纯函数（`rankSchemaConcepts`），有单测。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
   事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
-- `src/lib/reasoning/llm.ts`：OpenAI 兼容客户端，只读 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL`。
-  没配时 `/api/reasoning/status` 明确上报未配置，界面显示而不是静默失败。
-- `POST /api/reasoning/run`、`GET /api/reasoning/status`；每次运行写一条 `REASONING_RUN` 审计。
+- `src/lib/reasoning/provider.ts`：把"OpenAI 兼容端点 + 三个环境变量"翻译成 AI SDK 的模型对象，
+  只读 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL`。没配时 `/api/reasoning/status` 明确上报未配置，界面显示而不是静默失败。
+- **编排层用 Vercel AI SDK v7**（`ai` 的 `ToolLoopAgent`，provider 用 `@ai-sdk/openai-compatible`），
+  不再手写"调模型 → 解析工具调用 → 回灌结果"的循环。选型口径：本端点是**非标准代理**
+  （自建 `thinking` 参数、思考走 DeepSeek 的 `reasoning_content`），`@ai-sdk/openai-compatible`
+  两点都支持，且会把 `providerOptions` 里不认识的自定义字段**原样合并进请求体**。
+- `POST /api/reasoning/run`（一次性）、`POST /api/reasoning/stream`（SSE）、`GET /api/reasoning/status`；
+  每次运行写一条 `REASONING_RUN` 审计。
 - 前端「能力验证」两页（2026-09-14 重做，对标 bkn-studio 的「智能问答 / MCP 调试」）：
   - **智能问答**（`src/components/qa-studio.tsx`）：会话流。用户的话是右侧小气泡，Agent 的回复是通栏报告，
     结构固定为 **求证轨迹 → 结论 → 依据 → 用量**。求证轨迹是这一区的签名元素：一条可展开的步骤带
@@ -197,6 +202,24 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
     对象实例与关系子图查询」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
     页面调的是**真实 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用。
 
+**流式与思考开关已落地**（2026-09-14）：
+
+- 走的全是流式（`includeUsage: true`，否则流式下统计不到 token）。工具调用分片由 SDK 按 `index` 归并，
+  不会拼出半截 JSON。
+- `agent.ts` 消费 `ToolLoopAgent.stream()` 的 `fullStream`，往外发 `thinking` / `answer` / `answerReset` /
+  `step` / `done`（对应 `reasoning-delta` / `text-delta` / `tool-call` / `tool-result` / `finish`）；
+  `/api/reasoning/stream` 再把它们转成 SSE 帧。**校验与权限必须在开流之前做完**，一开流就没法改状态码了。
+- **`providerOptions` 只能放在 `new ToolLoopAgent({...})` 构造层**，不能放进 `agent.stream()` 的参数 ——
+  `AgentCallParameters`（`stream()` / `generate()` 的入参）没有这个字段，放错会直接 typecheck 失败。
+- `answerReset` 的用途：模型调工具前常会先吐一句旁白，那不是结论。界面收到后把它**挪进思考过程**再清空正文 ——
+  既不让结论区闪出半句话，也不把这段过程丢掉（关掉思考时模型尤其爱这样旁白）。
+- **思考开关**：`thinking: false` 经 `providerOptions` 下发 `thinking.type=disabled`，`reasoning_content` 变空、
+  通常更快（实测同一问题 4.6s → 3.8s；迁移到 SDK 后复测 5.9s → 3.5s，思考 197 字 → 0 字）。
+  界面在问答页头有个「思考 开/关」，按**每一轮**记录，所以同一会话里开着问一轮、关着问一轮，两轮的展示各自正确。
+  注意：`chat_template_kwargs.thinking=false` / `enable_thinking=false` 会被这个端点**静默忽略**（返回 200 但照样有思考）。
+- 实测事件流（迁移到 SDK 后复测）：思考 1→53→191→345 字、步骤 0→4、正文 0→95→251→349 字，都是边跑边长出来的；
+  收尾后「思考过程 / 求证轨迹」会按设计自动收起（`open = manual ?? live`），展开仍能看到完整内容。
+
 两条刻意的边界，改动时别无意破坏：
 
 1. **只在已发布版本上推理**。草稿的定义与图库里的数据不是同一份，混着推会得出"定义说有、图里没有"的矛盾结论。
@@ -204,10 +227,9 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| L1 | 推理过程流式返回 | 一次运行同步等待（实测 7~15s），界面只能转圈 | `/api/reasoning/run` 改 SSE，逐步推 `step` 事件；前端时间线边跑边长 |
 | L2 | 历史推理记录 | 只写进 `audit_entries`，界面上看不到（同 U2） | 推理页加「历史记录」侧栏：问题、步数、结论、证据；与审计界面一起做 |
 | L3 | 语义检索用向量 | `search_schema` 是关键词 + 中文 2 元组匹配，没有语义召回 | 等 R2 接上 embedding 后，给概念建向量索引，与关键词分数融合 |
-| L4 | 让模型执行动作 | 工具全只读，动作只能看不能跑 | 若要开放，走"模型提议 + 人确认"：`execute_action` 返回待确认项，由界面二次确认后调动作引擎。不要直接给写权限 |
+| L4 | 让模型执行动作 | 工具全只读，动作只能看不能跑 | 若要开放，走"模型提议 + 人确认"：用 AI SDK 的 `toolApproval`（`new ToolLoopAgent({ tools, toolApproval: { name: 'user-approval' } })`）让工具返回审批请求而不是直接执行，流里会给到 `tool-approval-request`，由界面二次确认后再落到动作引擎。不要直接给写权限 |
 | L5 | 多轮追问 | 一次运行一问一答，没有上下文（智能问答页只是把多轮**并列**展示） | 会话表 + 把上一轮结论压缩进 system；注意结论里的 id 仍是真实的才能复用 |
 
 **MCP 服务端已落地**（`src/lib/reasoning/mcp.ts` + `src/app/api/mcp/route.ts`）：
@@ -224,7 +246,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | V1 | MCP 调用审计 | 平台内的运行写 `REASONING_RUN` 审计，但**外部客户端经 MCP 调用没有留痕** | 在 `tools/call` 里写一条 `MCP_TOOL_CALL`（谁、哪个本体、哪个工具、耗时、命中数）；配合 U2 的审计界面一起看 |
 | V2 | MCP 鉴权粒度 | 单一静态令牌：谁拿到都能查所有本体，也不能按用户吊销 | 改成平台 API Key（每人一个、可吊销），并把令牌绑定到本体范围；令牌轮换后写审计 |
 | V3 | MCP 的 resources / prompts | 只实现了 tools 能力 | 若要给客户端直接挂"本体说明书"，可以加 `resources/list` 暴露本体概览；先等真实客户端需求 |
-| V4 | MCP 流式与长任务 | 工具是同步返回；大子图查询会让客户端等 | 与 L1 一起做：先让 `/api/reasoning/run` 走 SSE，再评估 MCP 侧的 progress 通知 |
+| V4 | MCP 侧的长任务通知 | 平台内的问答已经走 SSE 边跑边显示；MCP 工具仍是同步返回，大子图查询会让客户端干等 | 评估 MCP 的 progress 通知（`notifications/progress`），先看真实客户端是否需要 |
 ### 工程清洁
 
 | 编号 | 事项 | 说明 |

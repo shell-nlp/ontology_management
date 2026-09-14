@@ -1,19 +1,20 @@
-import { complete, llmConfig, type LlmMessage } from "@/lib/reasoning/llm";
-import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
+import { ToolLoopAgent, stepCountIs, type ModelMessage } from "ai";
+import { llmModel, llmSettings, thinkingProviderOptions } from "@/lib/reasoning/provider";
+import { reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
 import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 
 /**
  * 本体推理闭环的编排层。
  *
- * 模型只负责"下一步该查什么"，事实全部来自 tools.ts 的确定性查询；
- * 每一步都留痕（工具、入参、结果、耗时、引用的真实 id），
- * 界面上因此能展示"这个结论是怎么推出来的"，而不是一个黑箱答案。
+ * 循环本身交给 AI SDK 的 ToolLoopAgent（模型选工具 → 执行 → 结果回灌 → 再选），
+ * 这一层只做三件事：
+ * 1. 把本体的概念清单塞进 instructions，省掉模型一次"先看看有什么"的往返；
+ * 2. 把工具集装配起来，并按 toolCallId 回收每一步引用了哪些真实对象（证据）；
+ * 3. 把 SDK 的 fullStream 翻译成我们自己的事件（思考 / 正文 / 步 / 收尾），
+ *    上层 SSE 与前端界面因此完全不感知换过框架。
  */
 
 const DEFAULT_MAX_STEPS = 8;
-const SCHEMA_RESULT_CAP = 14_000;
-const DATA_RESULT_CAP = 9_000;
-const SCHEMA_TOOLS = new Set(["search_schema", "get_object_type", "list_actions"]);
 
 const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经建好一个业务本体，并在图数据库中发布了实例数据。
 
@@ -31,26 +32,25 @@ const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经�
 
 输出要求：用中文回答，先给结论，再列依据（引用了哪些对象类型/关系类型/对象）。结论要能追溯到上面的工具结果。`;
 
+/** 流式事件：SSE 接口把它原样转成帧，前端按 type 分发。 */
+export type AgentEvent =
+  | { type: "thinking"; text: string }
+  | { type: "answer"; text: string }
+  /** 这一轮的文字其实是"要调工具"的过渡语，界面要把它清掉，别和最终结论混在一起。 */
+  | { type: "answerReset" }
+  | { type: "step"; step: ReasoningStep }
+  | { type: "done"; run: ReasoningRun };
+
 export type RunReasoningOptions = {
   question: string;
   context: ToolContext;
   maxSteps?: number;
+  /** 是否让模型先思考。默认交给服务端（实测默认开启）；false 会显式下发 thinking.type=disabled。 */
+  thinking?: boolean;
+  /** 客户端断开时把整个运行也停掉。 */
+  abortSignal?: AbortSignal;
+  onEvent?: (event: AgentEvent) => void;
 };
-
-function parseArguments(text: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(text || "{}") as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function capResult(text: string, tool: string) {
-  const limit = SCHEMA_TOOLS.has(tool) ? SCHEMA_RESULT_CAP : DATA_RESULT_CAP;
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}\n...[结果过长已截断，剩余 ${text.length - limit} 个字符。请用更精确的条件或更小的 limit 重新查询，不要把它当成完整数据。]`;
-}
 
 /** 给模型的"本体概览"：只要名字清单，字段细节让它自己按需查，省 token。 */
 function schemaBrief(context: ToolContext) {
@@ -69,72 +69,137 @@ function schemaBrief(context: ToolContext) {
 }
 
 export async function runReasoning(options: RunReasoningOptions): Promise<ReasoningRun> {
-  const config = llmConfig();
-  if (!config) throw new Error("还没有配置推理模型：请在 .env.local 里填 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL，然后重启开发服务。");
+  const settings = llmSettings();
+  if (!settings) throw new Error("还没有配置推理模型：请在 .env.local 里填 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL，然后重启开发服务。");
   const question = options.question.trim();
   if (!question) throw new Error("问题不能为空。");
 
+  const emit = options.onEvent ?? (() => {});
   const maxSteps = Math.min(16, Math.max(1, Math.floor(options.maxSteps ?? DEFAULT_MAX_STEPS)));
   const startedAt = Date.now();
-  const messages: LlmMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "system", content: `当前本体的概念清单（括号里是对象数）：\n${schemaBrief(options.context)}` },
-    { role: "user", content: question },
-  ];
 
+  // 工具执行时按 toolCallId 把证据记在旁边，读流时再取回来 —— 不放进给模型看的返回值里。
+  const evidenceByCall = new Map<string, ReasoningEvidence[]>();
+  const running = new Map<string, { tool: string; args: Record<string, unknown>; startedAt: number }>();
   const steps: ReasoningStep[] = [];
   const evidence: ReasoningEvidence[] = [];
-  const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let reasoning = "";
   let answer = "";
-  let truncated = false;
+  /** 当前这一轮已经流出去的文字；模型若在这一轮调工具，它就是过渡语。 */
+  let stepText = "";
+  let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-  for (let turn = 0; turn < maxSteps; turn += 1) {
-    const completion = await complete(config, { messages, tools: REASONING_TOOLS, maxTokens: 4096, timeoutMs: 150_000 });
-    usage.promptTokens += completion.usage.promptTokens;
-    usage.completionTokens += completion.usage.completionTokens;
-    usage.totalTokens += completion.usage.totalTokens;
+  const agent = new ToolLoopAgent({
+    model: llmModel(settings),
+    instructions: `${SYSTEM_PROMPT}\n\n当前本体的概念清单（括号里是对象数）：\n${schemaBrief(options.context)}`,
+    tools: reasoningToolSet(options.context, (toolCallId, items) => {
+      evidenceByCall.set(toolCallId, items.map((item) => ({ ...item, step: 0 })));
+    }),
+    stopWhen: stepCountIs(maxSteps),
+    // 思考开关必须放在构造层：AgentCallParameters（stream()/generate() 的入参）没有 providerOptions。
+    providerOptions: thinkingProviderOptions(options.thinking),
+  });
 
-    if (!completion.toolCalls.length) {
-      answer = completion.content.trim();
-      break;
-    }
+  const messages: ModelMessage[] = [{ role: "user", content: question }];
+  const result = await agent.stream({
+    messages,
+    abortSignal: options.abortSignal,
+  });
 
-    messages.push({ role: "assistant", content: completion.content, toolCalls: completion.toolCalls });
-    for (const call of completion.toolCalls) {
-      const stepStarted = Date.now();
-      const args = parseArguments(call.argumentsText);
-      let ok = true;
-      let result: string;
-      let stepEvidence: Omit<ReasoningEvidence, "step">[] = [];
-      try {
-        const outcome = await runReasoningTool(call.name, args, options.context);
-        result = capResult(JSON.stringify(outcome.payload), call.name);
-        stepEvidence = outcome.evidence;
-      } catch (error) {
-        ok = false;
-        result = `错误：${error instanceof Error ? error.message : String(error)}`;
+  for await (const part of result.fullStream) {
+    switch (part.type) {
+      case "reasoning-delta":
+        reasoning += part.text;
+        emit({ type: "thinking", text: part.text });
+        break;
+
+      case "text-delta":
+        stepText += part.text;
+        answer += part.text;
+        emit({ type: "answer", text: part.text });
+        break;
+
+      case "start-step":
+        stepText = "";
+        break;
+
+      case "tool-call": {
+        // 模型要调工具了：刚流出去的那段文字是过渡语，不算结论。
+        if (stepText.trim()) {
+          emit({ type: "answerReset" });
+          answer = answer.slice(0, answer.length - stepText.length);
+        }
+        stepText = "";
+        running.set(part.toolCallId, { tool: part.toolName, args: (part.input ?? {}) as Record<string, unknown>, startedAt: Date.now() });
+        break;
       }
-      const index = steps.length + 1;
-      const recorded = stepEvidence.map((item) => ({ ...item, step: index }));
-      steps.push({ index, tool: call.name, arguments: args, result, ok, elapsedMs: Date.now() - stepStarted, evidence: recorded });
-      evidence.push(...recorded);
-      messages.push({ role: "tool", toolCallId: call.id, content: result });
-    }
 
-    if (turn === maxSteps - 1) truncated = true;
+      case "tool-result": {
+        const current = running.get(part.toolCallId);
+        running.delete(part.toolCallId);
+        const index = steps.length + 1;
+        const recorded = (evidenceByCall.get(part.toolCallId) ?? []).map((item) => ({ ...item, step: index }));
+        const step: ReasoningStep = {
+          index,
+          tool: part.toolName,
+          arguments: current?.args ?? {},
+          result: JSON.stringify(part.output, null, 1).slice(0, 8000),
+          ok: true,
+          elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
+          evidence: recorded,
+        };
+        steps.push(step);
+        evidence.push(...recorded);
+        emit({ type: "step", step });
+        break;
+      }
+
+      case "tool-error": {
+        const current = running.get(part.toolCallId);
+        running.delete(part.toolCallId);
+        const step: ReasoningStep = {
+          index: steps.length + 1,
+          tool: part.toolName,
+          arguments: current?.args ?? {},
+          result: `错误：${part.error instanceof Error ? part.error.message : String(part.error)}`,
+          ok: false,
+          elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
+          evidence: [],
+        };
+        steps.push(step);
+        emit({ type: "step", step });
+        break;
+      }
+
+      case "finish":
+        usage = {
+          promptTokens: part.totalUsage.inputTokens ?? 0,
+          completionTokens: part.totalUsage.outputTokens ?? 0,
+          totalTokens: part.totalUsage.totalTokens ?? 0,
+        };
+        break;
+
+      case "error":
+        throw part.error instanceof Error ? part.error : new Error(String(part.error));
+
+      default:
+        break;
+    }
   }
 
-  if (!answer) answer = truncated ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。" : "模型没有给出结论。";
-
+  const finalAnswer = answer.trim() || (steps.length >= maxSteps ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。" : "模型没有给出结论。");
   const deduped = [...new Map(evidence.map((item) => [`${item.kind}\u0000${item.id}`, item])).values()];
-  return {
+  const run: ReasoningRun = {
     question,
-    answer,
+    answer: finalAnswer,
+    reasoning,
     steps,
     evidence: deduped,
     usage,
     elapsedMs: Date.now() - startedAt,
-    model: config.model,
-    truncated,
+    model: settings.modelId,
+    truncated: steps.length >= maxSteps,
   };
+  emit({ type: "done", run });
+  return run;
 }

@@ -1,8 +1,8 @@
+import { jsonSchema, tool } from "ai";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { LlmToolDefinition } from "@/lib/reasoning/llm";
-import type { ToolOutcome } from "@/lib/reasoning/types";
+import type { ToolOutcome, ToolSpec } from "@/lib/reasoning/types";
 
 /**
  * 本体工具集：模型能调用的全部动作都在这里，且每个都只读、确定性、
@@ -38,7 +38,12 @@ export type SchemaMatch = {
   detail: string;
 };
 
-export const REASONING_TOOLS: LlmToolDefinition[] = [
+const SCHEMA_RESULT_CAP = 14_000;
+const DATA_RESULT_CAP = 9_000;
+/** 返回"结构"而不是"数据"的工具：给更大的截断上限。 */
+const SCHEMA_TOOL_NAMES = new Set(["search_schema", "get_object_type", "list_actions"]);
+
+export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
@@ -255,6 +260,37 @@ function clamp(value: unknown, fallback: number, max: number) {
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric) || numeric < 1) return fallback;
   return Math.min(max, Math.floor(numeric));
+}
+
+/**
+ * 把这批工具包成 AI SDK 的 ToolSet，交给 ToolLoopAgent。
+ *
+ * 证据（每一步引用了哪些真实对象）不在工具的返回值里 —— 那会把给模型看的内容撑大。
+ * 改成执行时按 toolCallId 记到旁边，由 agent 在流里读到 `tool-result` 时取回。
+ */
+export function reasoningToolSet(
+  context: ToolContext,
+  onEvidence: (toolCallId: string, evidence: ToolOutcome["evidence"]) => void,
+) {
+  const build = (spec: ToolSpec) => tool({
+    description: spec.description,
+    inputSchema: jsonSchema(spec.parameters),
+    execute: async (input: unknown, { toolCallId }: { toolCallId: string }) => {
+      const outcome = await runReasoningTool(spec.name, (input ?? {}) as Record<string, unknown>, context);
+      onEvidence(toolCallId, outcome.evidence);
+      // 截断必须在这里做：execute 的返回值就是模型看到的东西。
+      // 超长时给一个明确说"被截断"的对象，而不是喂半截 JSON —— 后者会让模型当成完整数据。
+      const text = JSON.stringify(outcome.payload);
+      const limit = SCHEMA_TOOL_NAMES.has(spec.name) ? SCHEMA_RESULT_CAP : DATA_RESULT_CAP;
+      if (text.length <= limit) return outcome.payload;
+      return {
+        truncated: true,
+        note: `结果过长已截断（原 ${text.length} 字符，上限 ${limit}）。请用更精确的条件或更小的 limit 重新查询，不要把它当成完整数据。`,
+        preview: text.slice(0, limit),
+      };
+    },
+  });
+  return Object.fromEntries(REASONING_TOOLS.map((spec) => [spec.name, build(spec)]));
 }
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {

@@ -43,7 +43,24 @@
 }
 .qa-model.off { border-color: #f3e0c0; background: var(--qa-caution-bg); color: var(--qa-caution); }
 
-/* ---------- 会话流 ---------- */
+.qa-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* 思考开关：默认开。关掉更快，但少了"怎么想出来的"那一段。 */
+.qa-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px;
+  border: 1px solid var(--qa-line); border-radius: 4px; background: #fff; color: #64748b;
+  font-size: 11.5px; cursor: pointer;
+}
+.qa-toggle:hover:not(:disabled) { border-color: #93b4f5; color: #2563eb; }
+.qa-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.qa-toggle em {
+  padding: 1px 6px; border-radius: 999px; background: #eef2f7; color: #64748b;
+  font-style: normal; font-size: 10.5px; font-weight: 700;
+}
+.qa-toggle.on { border-color: #cfe0fb; background: #f5f8ff; color: #2563eb; }
+.qa-toggle.on em { background: #dbe7fd; color: #1d4ed8; }
+
+/* ---------- 会话流 ---------- ---------- 会话流 ---------- */
 
 /* 底部留出输入条的高度：它是 sticky 的，不留白的话最后一段内容会被永久盖住。 */
 .qa-feed { display: flex; flex-direction: column; gap: 22px; flex: 1; padding: 4px 2px 92px; }
@@ -150,7 +167,7 @@
   background: #0f172a; color: #cbd5e1; font-family: ui-monospace, "Cascadia Code", monospace;
   font-size: 10.5px; line-height: 1.65; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
 }
-.qa-trail-empty { padding: 6px 0 6px 31px; color: var(--qa-faint); font-size: 12px; }
+.qa-trail-empty { display: flex; align-items: center; gap: 6px; padding: 6px 0 6px 31px; color: var(--qa-faint); font-size: 12px; }
 
 /* ---------- 结论（Markdown） ---------- */
 
@@ -213,6 +230,40 @@
 .qa-compose textarea:disabled { background: #f1f5f9; }
 .qa-compose .action { height: 44px; padding: 0 20px; }
 
+/* ---------- 思考过程 ---------- */
+
+.qa-thinking { border: 1px solid var(--qa-line); border-radius: 6px; background: #fcfdff; overflow: hidden; }
+.qa-thinking-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px;
+  border: 0; background: transparent; color: #64748b; font-size: 11.5px; text-align: left; cursor: pointer;
+}
+.qa-thinking-head:hover { background: #f4f7fd; }
+.qa-thinking-head span { font-weight: 650; }
+.qa-thinking-head em {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  color: #94a3b8; font-style: normal; font-size: 10.5px;
+}
+.qa-thinking-head svg:last-child { color: var(--qa-faint); transition: transform .16s ease; }
+.qa-thinking-head svg.is-open { transform: rotate(180deg); }
+.qa-thinking.open .qa-thinking-head { color: #8b5cf6; }
+.qa-thinking-body {
+  margin: 0; padding: 10px 13px 12px; border-top: 1px dashed var(--qa-line);
+  max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  color: #6b7a90; font-size: 12px; line-height: 1.75;
+  font-family: inherit;
+}
+
+/* ---------- 流式正文 ---------- */
+
+.qa-stream { position: relative; }
+/* 流式期间在末尾留一个光标，明确"还在写"。 */
+.qa-stream.live .qa-markdown > *:last-child::after {
+  content: ""; display: inline-block; width: 7px; height: 14px; margin-left: 3px;
+  background: #2563eb; vertical-align: -2px; animation: qa-caret 1s steps(2) infinite;
+}
+@keyframes qa-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .qa-stream.live .qa-markdown > *:last-child::after { animation: none; } }
+
 .qa-spin { animation: qa-spin 1s linear infinite; }
 @keyframes qa-spin { to { transform: rotate(360deg); } }
 
@@ -227,3 +278,5 @@
   .qa-trail-step > button { grid-template-columns: 22px minmax(0, 1fr) auto; }
   .qa-trail-step code { display: none; }
 }
+/* 关掉思考时的一句说明：让「没有思考过程」看起来是设置，而不是坏了。 */
+.qa-nothink { margin: 0; color: var(--qa-faint); font-size: 11.5px; }

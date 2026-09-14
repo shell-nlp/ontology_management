@@ -1,8 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Boxes, ChevronDown, CircleDot, Eraser, Link2, Loader2, Play, Send, Sparkles } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, Eraser, Link2, Loader2, Send, Sparkles } from "lucide-react";
 import type { ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import "./qa-studio.css";
 
@@ -12,6 +11,8 @@ import "./qa-studio.css";
  * 设计取的是"实验记录"而不是"聊天"：Agent 的回复不是气泡，而是一份通栏的求证报告 ——
  * 最上面一条「求证轨迹」说明它查了哪几步，下面是结论，再下面是能点回对象页的证据。
  * 页面唯一的签名元素就是这条轨迹，其它地方都刻意安静。
+ *
+ * 全程走 SSE：思考、每一步、正文都是边跑边长出来的，所以轨迹在推理过程中就是活的。
  */
 
 const TOOL_LABELS: Record<string, string> = {
@@ -32,9 +33,14 @@ const EXAMPLES = [
 type Turn = {
   id: string;
   question: string;
+  thinking: string;
+  answer: string;
+  steps: ReasoningStep[];
   run: ReasoningRun | null;
   error: string | null;
   busy: boolean;
+  /** 这一轮有没有开思考。关掉时不显示「思考过程」，否则会挂一个永远空着的块。 */
+  thinkingOn: boolean;
 };
 
 type Props = {
@@ -105,35 +111,34 @@ function Markdown({ text }: { text: string }) {
   return <div className="qa-markdown">{blocks}</div>;
 }
 
-/** 单步展开后的原始返回；抽出来是因为轨迹里每一步都用它。 */
-function StepResult({ step }: { step: ReasoningStep }) {
-  return <pre className="qa-step-result">{step.result}</pre>;
-}
-
 /**
- * 求证轨迹：这一步的签名元素。
- * 横向一串节点，每个节点是「第几步 · 调了什么 · 命中多少 · 耗时」，点开看原始返回。
+ * 求证轨迹：这一页的签名元素。
+ * 横向一串节点，每个是「第几步 · 调了什么 · 命中多少 · 耗时」，点开看原始返回。
+ * 推理进行中也是活的：步骤一完成就出现在这里。
  */
-function ProofTrail({ steps, totalMs }: { steps: ReasoningStep[]; totalMs: number }) {
-  const [open, setOpen] = useState(false);
+function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: boolean; totalMs: number }) {
+  // 默认收起；推理中自动展开，让过程可见（用户手动收起来后就尊重用户的选择）。
+  const [manual, setManual] = useState<boolean | null>(null);
   const [openStep, setOpenStep] = useState<number | null>(null);
+  const open = manual ?? live;
   const summary = useMemo(() => {
-    if (!steps.length) return "没有调用工具";
+    if (!steps.length) return live ? "正在检索本体…" : "没有调用工具";
     const hits = steps.reduce((sum, step) => sum + step.evidence.length, 0);
-    return `已调用工具 ${steps.length} 次 · 命中 ${hits} 项 · ${(totalMs / 1000).toFixed(1)}s`;
-  }, [steps, totalMs]);
+    return `已调用工具 ${steps.length} 次 · 命中 ${hits} 项 · ${((totalMs || 0) / 1000).toFixed(1)}s`;
+  }, [steps, live, totalMs]);
 
   return (
     <div className={`qa-trail${open ? " open" : ""}`}>
-      <button type="button" className="qa-trail-summary" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+      <button type="button" className="qa-trail-summary" onClick={() => setManual(!open)} aria-expanded={open}>
         <span className="qa-trail-badge">求证轨迹</span>
         <span className="qa-trail-text">{summary}</span>
+        {live && <Loader2 size={13} className="qa-spin" />}
         <ChevronDown size={15} className={open ? "is-open" : ""} />
       </button>
       {open && (
         <ol className="qa-trail-steps">
           {steps.map((step) => (
-            <li key={step.index} className={`qa-trail-step${step.ok ? "" : " failed"}${openStep === step.index ? " expanded" : ""}`}>
+            <li key={step.index} className={`qa-trail-step${step.ok ? "" : " failed"}`}>
               <button type="button" onClick={() => setOpenStep(openStep === step.index ? null : step.index)} aria-expanded={openStep === step.index}>
                 <span className="qa-trail-node">{step.index}</span>
                 <b>{TOOL_LABELS[step.tool] ?? step.tool}</b>
@@ -143,14 +148,87 @@ function ProofTrail({ steps, totalMs }: { steps: ReasoningStep[]; totalMs: numbe
                   <i>{step.elapsedMs}ms</i>
                 </span>
               </button>
-              {openStep === step.index && <StepResult step={step} />}
+              {openStep === step.index && <pre className="qa-step-result">{step.result}</pre>}
             </li>
           ))}
-          {!steps.length && <li className="qa-trail-empty">模型直接给出了结论，没有查询图库。</li>}
+          {live && <li className="qa-trail-empty"><Loader2 size={12} className="qa-spin" /> 继续查证…</li>}
+          {!steps.length && !live && <li className="qa-trail-empty">模型直接给出了结论，没有查询图库。</li>}
         </ol>
       )}
     </div>
   );
+}
+
+/**
+ * 思考过程。默认跟随推理状态：跑的时候展开，跑完自动收起（用户手动开过就一直展开）。
+ */
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? live;
+  if (!text.trim() && !live) return null;
+  return (
+    <div className={`qa-thinking${open ? " open" : ""}`}>
+      <button type="button" className="qa-thinking-head" onClick={() => setManual(!open)} aria-expanded={open}>
+        <Brain size={13} />
+        <span>思考过程</span>
+        {live ? <em><Loader2 size={11} className="qa-spin" />进行中</em> : <em>{text.length} 字</em>}
+        <ChevronDown size={14} className={open ? "is-open" : ""} />
+      </button>
+      {open && <pre className="qa-thinking-body">{text || "…"}</pre>}
+    </div>
+  );
+}
+
+/** 消费 SSE：把后端的事件翻译成界面状态。 */
+async function streamRun(
+  targetId: string,
+  question: string,
+  thinking: boolean,
+  handlers: {
+    onThinking: (text: string) => void;
+    onAnswer: (text: string) => void;
+    onAnswerReset: () => void;
+    onStep: (step: ReasoningStep) => void;
+    onDone: (run: ReasoningRun) => void;
+  },
+) {
+  const response = await fetch("/api/reasoning/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetId, question, thinking }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error ?? `请求失败（HTTP ${response.status}）。`);
+  }
+  if (!response.body) throw new Error("服务端没有返回流式响应。");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.split("\n").find((item) => item.startsWith("data:"));
+      if (!line) continue;
+      let event: { type: string; [key: string]: unknown };
+      try {
+        event = JSON.parse(line.slice(5).trim()) as typeof event;
+      } catch {
+        continue;
+      }
+      if (event.type === "thinking") handlers.onThinking(String(event.text ?? ""));
+      else if (event.type === "answer") handlers.onAnswer(String(event.text ?? ""));
+      else if (event.type === "answerReset") handlers.onAnswerReset();
+      else if (event.type === "step") handlers.onStep(event.step as ReasoningStep);
+      else if (event.type === "done") handlers.onDone(event.run as ReasoningRun);
+      else if (event.type === "error") throw new Error(String(event.message ?? "推理失败。"));
+    }
+  }
 }
 
 export function QaStudio({ targetId, ontologyName, published, onOpenObject, notify, fail }: Props) {
@@ -159,21 +237,36 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // 用户往上翻了就不自动跟随，免得读一半被拽回底部。
+  const stickRef = useRef(true);
 
   const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
   const updateTurns = useCallback((updater: (current: Turn[]) => Turn[]) => {
     setSession((current) => ({ targetId, turns: updater(current.targetId === targetId ? current.turns : []) }));
   }, [targetId]);
+  const patchTurn = useCallback((id: string, patch: Partial<Turn>) => {
+    updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)));
+  }, [updateTurns]);
+
   useEffect(() => {
-    void api<{ configured: boolean; model: string | null }>("/api/reasoning/status").then(setStatus).catch(() => setStatus(null));
+    void fetch("/api/reasoning/status").then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
   }, []);
 
+  // 跟随到底部（整页滚动 + 底部吸底输入条，所以跟的是窗口）。
   useEffect(() => {
-    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
+    if (stickRef.current) window.scrollTo({ top: document.documentElement.scrollHeight });
   }, [turns]);
 
+  useEffect(() => {
+    const onScroll = () => {
+      stickRef.current = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const ask = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -182,20 +275,29 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     const id = `${Date.now()}`;
     setQuestion("");
     setBusy(true);
-    updateTurns((current) => [...current, { id, question: trimmed, run: null, error: null, busy: true }]);
+    stickRef.current = true;
+    updateTurns((current) => [...current, { id, question: trimmed, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
     try {
-      const run = await api<ReasoningRun>("/api/reasoning/run", { method: "POST", body: JSON.stringify({ targetId, question: trimmed }) });
-      updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, run, busy: false } : turn)));
-      notify(`推理完成：${run.steps.length} 步，引用 ${run.evidence.length} 项证据。`);
+      await streamRun(targetId, trimmed, thinkingEnabled, {
+        onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
+        onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
+        // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
+        // 挪进思考过程既保留了过程，又不会让结论区闪出半句话。
+        onAnswerReset: () => updateTurns((current) => current.map((turn) => (
+          turn.id === id ? { ...turn, thinking: turn.thinking ? `${turn.thinking}\n${turn.answer}` : turn.answer, answer: "" } : turn
+        ))),
+        onStep: (step) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, steps: [...turn.steps, step] } : turn))),
+        onDone: (run) => { patchTurn(id, { run, busy: false }); notify(`推理完成：${run.steps.length} 步，引用 ${run.evidence.length} 项证据。`); },
+      });
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "推理失败。";
-      updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, error: message, busy: false } : turn)));
+      patchTurn(id, { error: reason instanceof Error ? reason.message : "推理失败。", busy: false });
       fail(reason);
     } finally {
+      patchTurn(id, { busy: false });
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [busy, fail, notify, targetId, updateTurns]);
+  }, [busy, fail, notify, patchTurn, thinkingEnabled, targetId, updateTurns]);
 
   return (
     <section className="qa-root">
@@ -209,6 +311,17 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
           </span>
         </div>
         <div className="qa-head-actions">
+          <button
+            type="button"
+            className={`qa-toggle${thinkingEnabled ? " on" : ""}`}
+            disabled={busy}
+            onClick={() => setThinkingEnabled((current) => !current)}
+            title={thinkingEnabled ? "模型先思考再回答，更慢但更稳" : "跳过思考，直接回答，更快"}
+          >
+            <Brain size={13} />
+            思考
+            <em>{thinkingEnabled ? "开" : "关"}</em>
+          </button>
           {turns.length > 0 && <button className="action compact" disabled={busy} onClick={() => updateTurns(() => [])}><Eraser size={13} />清空</button>}
         </div>
       </header>
@@ -220,7 +333,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             <h3>问一个业务问题，看模型怎么在本体上查证</h3>
             <p>
               模型只能通过只读工具读取这个本体：先检索概念，再取对象与子图，最后给结论。
-              每一步都会留下轨迹，结论里引用的对象可以直接点开核对。
+              思考和每一步查询都会实时显示，结论里引用的对象可以直接点开核对。
             </p>
             {!published && <p className="qa-warn"><AlertCircle size={14} />当前本体还没有发布版本。问答只在已发布的本体与图库上跑，先去「本体草稿」发布一次。</p>}
             <div className="qa-examples">
@@ -236,12 +349,22 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             <div className="qa-ask"><span>我</span><p>{turn.question}</p></div>
             <div className="qa-answer">
               <div className="qa-answer-head"><span className="qa-answer-mark">本体</span><b>Agent</b></div>
-              {turn.busy && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />正在检索本体并逐步查证…</div>}
+
+              {(turn.thinkingOn || turn.thinking) && (turn.thinking || turn.busy) && <ThinkingBlock text={turn.thinking} live={turn.busy} />}
+              {(turn.steps.length > 0 || turn.busy) && <ProofTrail steps={turn.steps} live={turn.busy} totalMs={turn.run?.elapsedMs ?? 0} />}
+
               {turn.error && <div className="qa-error"><AlertCircle size={15} />{turn.error}</div>}
+
+              {turn.answer && (
+                <div className={`qa-stream${turn.busy ? " live" : ""}`}>
+                  <Markdown text={turn.answer} />
+                </div>
+              )}
+              {turn.busy && !turn.answer && !turn.thinking && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />正在检索本体…</div>}
+              {!turn.thinkingOn && turn.busy && turn.thinking === "" && <p className="qa-nothink">已关闭思考，直接检索。</p>}
+
               {turn.run && (
                 <>
-                  <ProofTrail steps={turn.run.steps} totalMs={turn.run.elapsedMs} />
-                  <Markdown text={turn.run.answer} />
                   <Evidence run={turn.run} onOpenObject={onOpenObject} />
                   <footer className="qa-meta">
                     <span>{turn.run.model}</span>
