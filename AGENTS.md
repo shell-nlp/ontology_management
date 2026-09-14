@@ -62,7 +62,8 @@ PostgreSQL（平台库）与业务数据源仍不进编排，按各自现有方�
   而 oracledb 是按平台拼文件名 require 预编译二进制的，Nft 追踪容易漏 → 会出现"装得上、连不上 Oracle"。
   宁可镜像大一点，也要保证原生驱动在。
 - 密钥一律运行时注入（`.dockerignore` 把 `.env*` 挡在构建上下文外）；版本快照挂命名卷
-  `ontology-versions` 到 `/data/ontology-versions`。
+  （默认改为绑定项目 `.data/ontology-versions`，与本机开发服务共用同一份；写卷名才用命名卷。
+  Linux 上绑定挂载要 `chown -R 1000:1000`，容器里的 node 用户是 uid 1000）。
 - **容器里的 `localhost` 是容器自己**：`DATABASE_URL` 要写 `host.docker.internal`
   （compose 已加 `host-gateway` 映射）。本体存储那条登记不用改 —— 见下面的主机别名一条。
 - **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据一致**：数据资源凭据是加密存的，换钥匙就解不开。
@@ -96,7 +97,10 @@ PostgreSQL（平台库）与业务数据源仍不进编排，按各自现有方�
   `applyEndpointHostAlias` 有单测）：**别绕过它直接拼端点**。
 - **Fuseki 也在编排里**（只是比 app 后加）：`stain/jena-fuseki:latest`，`FUSEKI_BASE`（`/fuseki`，
   含 `databases/` 与 `shiro.ini`）整个绑定到 `.data/fuseki`；数据集名必须与平台登记一致（`ds`）；
-  `FUSEKI_ADMIN_PASSWORD` 必填（不填 Fuseki 会以无鉴权方式跑）。镜像里的 fuseki 用户是 **uid 100**，
+  **管理密码在 compose 里写死一个非空默认值**（`ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin-studio}`）——
+  用户明确要求"要有默认值密码、设置在 compose 里"。别改成 `${VAR:?}`（`env_file` 的变量不参与变量替换，
+  不带 `--env-file` 的 `docker compose up` 会直接报错），也别留空（空值会让 Fuseki 自己随机生成一个，
+  密码就不在用户手上了）。镜像里的 fuseki 用户是 **uid 100**，
   Linux 上绑定的宿主目录要 `chown -R 100:101`。换机器把 `.data/fuseki` 带走，或从旧容器
   `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`；图库是派生数据，重新发布也能重建。**已验证**：
   从 app 容器调 `/api/targets/:id/test` 返回 `address=http://fuseki:3030/ds/query、hasTriples=true`。

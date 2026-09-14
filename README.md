@@ -157,6 +157,11 @@ pnpm docker:logs                      # 跟日志
 所以 `APP_PORT` / `VERSION_SNAPSHOT_DIR` / `NODE_IMAGE` 也写在里面（模板第 0 节）。手动敲命令时
 记得带上这个参数，否则这几个变量取不到值。
 
+不带 `--env-file` 直接 `docker compose up -d` 也能起（Docker Desktop 上点按钮、IDE 里的 compose up
+都走这条路），但那时用的是**默认值**：本体存储用官方镜像、Fuseki 数据仍在 `./.data/fuseki`、
+版本快照落命名卷（等于空目录，界面里会答"还没有发布版本"）、Fuseki 管理密码用 compose 里写死的默认值。
+固定配置请用 `pnpm docker:up`。
+
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm docker:up` | 构建并后台启动（`docker compose up -d --build`） |
@@ -180,7 +185,9 @@ pnpm docker:logs                      # 跟日志
 - 端口：宿主机 `3000` 被占用时用 `APP_PORT=3100 docker compose up -d` 换一个。
 - **Fuseki 的数据**在 `.data/fuseki`（容器内 `/fuseki` = `FUSEKI_BASE`，数据集在 `databases/` 下，
   密码与配置也在这一份里），换机器时整目录带走即可。它的数据集名要与平台登记的一致（默认 `ds`），
-  Fuseki 缺这个数据集会自己建；`FUSEKI_ADMIN_PASSWORD` 是必填的，不填 Fuseki 会以无鉴权方式跑。
+  Fuseki 缺这个数据集会自己建。**管理密码在 `docker-compose.yml` 里写死了一个非空默认值**
+  （`${FUSEKI_ADMIN_PASSWORD:-admin-studio}`）：既不依赖 `.env.docker`、也不会退回空密码或随机密码；
+  换密码就改那一行，或在 `.env.docker` 里设 `FUSEKI_ADMIN_PASSWORD` 并用 `pnpm docker:up` 启动。
   从别的 Fuseki 搬数据：先停掉那个容器，再 `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`。
   Linux 服务器上注意属主 —— 镜像里的 fuseki 用户是 `uid 100`，宿主目录要 `chown -R 100:101 .data/fuseki`。
 - **用机器 IP / 域名走 http 访问时，登录能站住**：会话 cookie 的 `Secure` 按**这次请求实际的协议**决定
@@ -189,7 +196,9 @@ pnpm docker:logs                      # 跟日志
   现象就是"登录成功了一下马上又被踢回登录页"（localhost 例外，浏览器把它当安全源，所以只在这台机器上
   用 localhost 测是查不出来的）。前端是 https 而代理没带头时，用 `AUTH_COOKIE_SECURE=true` 兜底。
 - **版本快照目录是状态，不是缓存**：库里只记"某本体发布了 v2"，定义本身在快照目录里
-  （容器内 `/data/ontology-versions`，默认用命名卷 `ontology-versions`，`docker compose down` 不会删它）。
+  （容器内 `/data/ontology-versions`，默认绑到项目 `.data/ontology-versions` —— 与本机开发服务同一份，
+  `docker compose down` 不会删它；也可以把 `VERSION_SNAPSHOT_DIR` 写成卷名改用命名卷，
+  Linux 服务器用绑定挂载时要 `chown -R 1000:1000`，容器里的 node 用户是 uid 1000）。
   把部署搬到新机器时，要么把旧机器的 `<项目>/.data/ontology-versions` 带过来并让
   `VERSION_SNAPSHOT_DIR` 指向它，要么部署完在界面「本体草稿」里重新发布一次 ——
   不带过去的话，模型工具会答"本体还没有发布版本"，图库也跟库里记的版本对不上。

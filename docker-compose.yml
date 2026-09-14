@@ -24,8 +24,12 @@ services:
       TZ: Asia/Shanghai
       # 数据集名要和平台里登记的 endpoint 路径一致（默认 ds）。Fuseki 缺这个数据集时会自己建。
       FUSEKI_DATASET_1: ${FUSEKI_DATASET:-ds}
-      # 不设密码 Fuseki 会以无鉴权方式跑，所以这里强制要求填（.env.docker 里给一个）。
-      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?请在 .env.docker 里设置 FUSEKI_ADMIN_PASSWORD}
+      # Fuseki 管理密码：**在 compose 里显式设死一个非空值**（不依赖 .env.docker，也不用随机生成）。
+      # 原因是 `env_file` 里的变量不参与 compose 的变量替换：写成 `${VAR:?}` 那种必填插值，
+      # 不带 --env-file 跑（Docker Desktop 上点按钮、IDE 里的 compose up）会直接报错；
+      # 而留空又会让 Fuseki 自己随机生成一个（密码就不在你手上了）。
+      # 想换密码：改这一行，或在 .env.docker 里设 FUSEKI_ADMIN_PASSWORD（用 pnpm docker:up 启动）。
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin-studio}
     ports:
       # 宿主机端口只为「本机开发服务 + 浏览器打开 Fuseki 管理界面」保留；
       # 平台容器走服务名 fuseki:3030，不依赖这个映射。
@@ -53,7 +57,8 @@ services:
         # 写在 .env.docker 里即可 —— `pnpm docker:up` 带了 --env-file .env.docker。
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
         # 依赖源：国内网络直连 registry.npmjs.org 会让构建里的 pnpm install 大面积超时。
-        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        # 默认给镜像源，保证"不带 --env-file 直接 up"也装得动；要直连官方源就写完整地址覆盖。
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     image: ontology-management:local
     container_name: ontology-platform
     restart: unless-stopped
@@ -86,12 +91,11 @@ services:
     volumes:
       # 版本快照目录（发布版本的本体文件）。它**是状态不是缓存**：库里记着"某本体的已发布版本"，
       # 而定义本身在这一份文件里 —— 换了机器不带过来，模型工具与发布都会说"还没有发布版本"。
-      # 默认用命名卷（全新部署就从这里开始，界面里重新发布一次即可）；
-      # 已有发布版本要带过来时，把 VERSION_SNAPSHOT_DIR 指向本机目录，例如 PowerShell：
-      #   VERSION_SNAPSHOT_DIR=D:\project\ontology_management\.data\ontology-versions
-      # 同一个平台库上还跑着本机开发服务时，也把它指到项目里的 .data/ontology-versions：
-      # 两边各写各的快照目录，会出现"一边发布、另一边读不到"。
-      - ${VERSION_SNAPSHOT_DIR:-ontology-versions}:/data/ontology-versions
+      # 默认落项目 .data/ontology-versions —— 与本机开发服务用的是同一份，两个入口都能读到已发布的版本。
+      # 想改用命名卷就把 VERSION_SNAPSHOT_DIR 写成卷名（例如 VERSION_SNAPSHOT_DIR=ontology-versions）。
+      # Linux 服务器上注意属主：容器里的 node 用户是 uid 1000，宿主目录要么 chown -R 1000:1000，
+      # 要么用命名卷（Docker 会按镜像里的属主建）。两套部署共用一个平台库时，快照目录必须是同一个。
+      - ${VERSION_SNAPSHOT_DIR:-./.data/ontology-versions}:/data/ontology-versions
       # Oracle 的 Instant Client 已经装在镜像里（见 docker/oracle/），一般不用挂。
       # 想换成自备的 Linux 版客户端时才打开这行，并在 .env.docker 里设
       # ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient（Windows 版的 dll 在容器里用不了）。
