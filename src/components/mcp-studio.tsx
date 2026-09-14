@@ -38,12 +38,16 @@ function typeLabel(property: SchemaProperty) {
   return property.type;
 }
 
-/** 「自动填参」：本体 id 用当前选中的，其余按类型给一个能跑通的示例值。 */
-function exampleArguments(tool: McpTool, ontologyId: string) {
+/**
+ * 「自动填参」：本体 id 用当前选中的，数据资源名用本机登记的第一个 ——
+ * 这两个是从名字猜不出来的，不填就等着看"xxx 不能为空"；其余按类型给示例值。
+ */
+function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource = "") {
   const properties = tool.inputSchema.properties ?? {};
   const result: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(properties)) {
     if (name === "ontology_id") { result[name] = ontologyId; continue; }
+    if (name === "data_source") { if (defaultDataSource) result[name] = defaultDataSource; continue; }
     if (name === "query") { result[name] = "用户 订单"; continue; }
     if (name === "type_name") { result[name] = "用户"; continue; }
     if (name === "type_names") { result[name] = ["用户", "订单"]; continue; }
@@ -181,7 +185,9 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
   const [busy, setBusy] = useState(false);
   const [showDoc, setShowDoc] = useState(false);
   const [connectTab, setConnectTab] = useState("claude");
+  const [dataSourceNames, setDataSourceNames] = useState<string[]>([]);
   const ontologyId = ontologies[0]?.id ?? "";
+  const defaultDataSource = dataSourceNames[0] ?? "";
   const absoluteUrl = info?.absoluteUrl ?? "";
   const tabs = useMemo(() => connectTabs(absoluteUrl), [absoluteUrl]);
   const activeTab = tabs.find((tab) => tab.key === connectTab) ?? tabs[0];
@@ -192,18 +198,25 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
       const first = data.tools.find((tool) => tool.name === "search_schema") ?? data.tools[0];
       if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId), null, 2)); }
     }).catch(fail);
-    // 只在挂载时取一次；本体 id 变了下面那个 effect 会重填示例参数。
+    // 只在挂载时取一次；换了工具 / 本体 / 数据资源时由 select 按最新依赖重填示例参数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 数据资源名要填进示例参数里（名字猜不出来），开机就先拿一份 —— 列表接口只回公开字段，没有密文。
+  useEffect(() => {
+    void api<{ name: string }[]>("/api/data-sources")
+      .then((sources) => setDataSourceNames(sources.map((item) => item.name)))
+      .catch(() => setDataSourceNames([]));
   }, []);
 
   const active = useMemo(() => info?.tools.find((tool) => tool.name === activeName) ?? null, [info, activeName]);
 
   const select = useCallback((tool: McpTool) => {
     setActiveName(tool.name);
-    setArgumentsText(JSON.stringify(exampleArguments(tool, ontologyId), null, 2));
+    setArgumentsText(JSON.stringify(exampleArguments(tool, ontologyId, defaultDataSource), null, 2));
     setResponse("");
     setShowDoc(false);
-  }, [ontologyId]);
+  }, [defaultDataSource, ontologyId]);
 
   const run = useCallback(async () => {
     if (!active) return;

@@ -30,7 +30,7 @@ export type McpToolGroup = { key: string; label: string; description: string; di
 export const MCP_TOOL_GROUPS: McpToolGroup[] = [
   { key: "discovery", label: "本体与 Schema", description: "本体列表与它落在哪个存储上" },
   { key: "model", label: "本体模型检索", description: "语义检索、对象类型、关系类型、动作定义" },
-  { key: "data", label: "数据来源（只读）", description: "对象类型绑定的表：建表语句与只读查询" },
+  { key: "data", label: "数据来源（只读）", description: "对象类型绑定的表：表结构与只读查询" },
   { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图", disabled: true },
 ];
 
@@ -50,7 +50,8 @@ const TOOL_TITLES: Record<string, string> = {
   search_schema: "语义检索",
   get_object_type: "对象类型详情",
   list_actions: "动作定义",
-  get_table_ddl: "建表语句",
+  // 不叫「建表语句」：视图走的是视图定义，还原那条也不是库里的原始 CREATE，叫表结构才名实相符。
+  get_table_ddl: "表结构",
   run_sql: "只读查询",
   query_object_instance: "对象实例查询",
   query_instance_subgraph: "关系子图查询",

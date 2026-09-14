@@ -397,3 +397,76 @@
   }
   .qa-root.with-history .qa-history { position: static; max-height: 320px; }
 }
+
+/* ---------- 问答配置（右侧抽屉） ---------- */
+
+/*
+ * 和「对话历史」那种常驻侧栏不同：配置是偶尔进来调一次的东西，用完就关，
+ * 所以做成浮层抽屉，不占正文的地方。默认值全是"不限制"，这里的输入框留空就是默认态。
+ */
+.qa-config-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; justify-content: flex-end;
+  background: rgba(15, 23, 42, .28);
+  animation: qa-fade-in .14s ease;
+}
+@keyframes qa-fade-in { from { opacity: 0; } }
+
+.qa-config {
+  display: flex; flex-direction: column; width: 344px; max-width: 100%;
+  background: var(--panel); border-left: 1px solid var(--qa-line);
+  box-shadow: -14px 0 34px rgba(15, 23, 42, .16);
+  animation: qa-slide-in .16s ease;
+}
+@keyframes qa-slide-in { from { transform: translateX(24px); } }
+@media (prefers-reduced-motion: reduce) {
+  .qa-config-backdrop, .qa-config { animation: none; }
+}
+@media (max-width: 560px) { .qa-config { width: 100%; } }
+
+.qa-config-head {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 13px 16px; border-bottom: 1px solid var(--qa-line);
+}
+.qa-config-head svg { color: #64748b; }
+.qa-config-head b { color: var(--qa-ink); font-size: 13px; }
+.qa-config-close {
+  margin-left: auto; width: 26px; height: 26px; display: grid; place-items: center;
+  border: 0; border-radius: 4px; background: transparent; color: #94a3b8; cursor: pointer;
+}
+.qa-config-close:hover { background: #f1f5f9; color: #475569; }
+
+.qa-config-body { overflow-y: auto; padding: 14px 16px 20px; }
+.qa-config-note { margin: 0 0 14px; color: var(--qa-muted); font-size: 11.5px; line-height: 1.75; }
+.qa-config-note b { color: var(--qa-ink); }
+
+.qa-config-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.qa-config-reset {
+  border: 0; background: transparent; color: #2563eb; font-size: 11px; cursor: pointer; padding: 2px 4px;
+}
+.qa-config-reset:hover { text-decoration: underline; }
+
+.qa-config-field { display: grid; gap: 5px; padding: 10px 0; }
+.qa-config-field + .qa-config-field { border-top: 1px solid #eef2f7; }
+.qa-config-field:hover { background: #fcfdff; }
+.qa-config-name { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.qa-config-name b { color: var(--qa-ink); font-size: 12px; }
+.qa-config-name i {
+  color: var(--qa-faint); font-style: normal; font-size: 10px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+.qa-config-input { display: flex; align-items: center; gap: 7px; }
+.qa-config-input input {
+  width: 100%; height: 32px; padding: 0 10px; border: 1px solid #d6e1f0; border-radius: 4px;
+  background: #fff; color: var(--qa-ink); font: inherit; font-size: 12px;
+  font-variant-numeric: tabular-nums; outline: none;
+}
+.qa-config-input input:focus { border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+.qa-config-input input::placeholder { color: #94a3b8; }
+.qa-config-input em { flex: none; color: var(--qa-faint); font-style: normal; font-size: 11px; }
+.qa-config-field small { color: var(--qa-faint); font-size: 10.5px; line-height: 1.6; }
+
+.qa-config-foot {
+  margin: 16px 0 0; padding-top: 12px; border-top: 1px solid #eef2f7;
+  color: var(--qa-faint); font-size: 10.5px; line-height: 1.7;
+}

@@ -11,7 +11,10 @@ import { getTarget } from "@/lib/targets";
 const inputSchema = z.object({
   targetId: z.string().uuid(),
   question: z.string().trim().min(1).max(500),
-  maxSteps: z.number().int().min(1).max(16).optional(),
+  maxSteps: z.number().int().min(1).max(100).optional(),
+  /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
+  toolResultLimit: z.number().int().min(500).max(200_000).optional(),
+  sqlRowLimit: z.number().int().min(1).max(5000).optional(),
 });
 
 /**
@@ -38,7 +41,11 @@ export async function POST(request: NextRequest) {
     const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
     // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
     const dataSources = await listDataSources().catch(() => []);
-    const run = await runReasoning({ question: input.question, context: { store, definition, runtimeTypes, dataSources }, maxSteps: input.maxSteps });
+    const run = await runReasoning({
+      question: input.question,
+      context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
+      maxSteps: input.maxSteps,
+    });
 
     await writeAuditEntry({
       actorId: user.id,

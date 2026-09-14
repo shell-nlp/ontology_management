@@ -442,7 +442,7 @@ async function nativeDdl(connection: DataSource, kind: DataSourceKind, hit: Cata
 }
 
 /**
- * 按列元数据还原一份建表语句。注释的写法按库分：MySQL 写在列后面，PG / Oracle 用 COMMENT ON。
+ * 按列元数据还原一份表结构（DDL）。注释的写法按库分：MySQL 写在列后面，PG / Oracle 用 COMMENT ON。
  * 视图还原不出 SELECT 定义（那不在列元数据里），就老实把列清单列成注释，别编一个假的 CREATE VIEW。
  */
 function ddlFromColumns(kind: DataSourceKind, schema: string, name: string, objectKind: CatalogObject["kind"], columns: DataViewField[]) {
@@ -614,7 +614,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       });
     },
 
-    /** 建表语句：能拿到库里的原始 DDL 就用原始的，拿不到就按列元数据还原，并说明差在哪。 */
+    /** 表结构（DDL）：能拿到库里的原始语句就用原始的，拿不到就按列元数据还原，并说明差在哪。 */
     async describeTableDdl(view: DataViewRef): Promise<TableDdl> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
         const hit = await locate(connection, view.name);

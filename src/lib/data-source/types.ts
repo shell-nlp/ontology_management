@@ -237,7 +237,7 @@ export type SqlQueryResult = {
   readOnlyTransaction: boolean;
 };
 
-/** 一张表 / 视图的建表语句。 */
+/** 一张表 / 视图的结构（DDL）。 */
 export type TableDdl = {
   schema: string;
   name: string;
@@ -277,6 +277,6 @@ export interface DataSourceConnector {
    * 没有这个方法就是没有，调用方如实拒绝，别假装支持。
    */
   runReadOnlyQuery?(sql: string, options?: { limit?: number }): Promise<SqlQueryResult>;
-  /** 建表语句 / 视图定义。同样只有关系库提供。 */
+  /** 表结构 / 视图定义（DDL）。同样只有关系库提供。 */
   describeTableDdl?(view: DataViewRef): Promise<TableDdl>;
 }

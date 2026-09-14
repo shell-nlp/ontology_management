@@ -1,9 +1,18 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, Link2, Loader2, Plus, Send, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
+import {
+  clearReasoningSettings,
+  loadReasoningSettings,
+  reasoningSettingsPayload,
+  REASONING_SETTING_FIELDS,
+  REASONING_SETTING_RANGES,
+  saveReasoningSettings,
+  type ReasoningSettings,
+} from "@/lib/reasoning/settings";
 import type { ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import "./qa-studio.css";
 
@@ -235,6 +244,7 @@ async function streamRun(
   question: string,
   thinking: boolean,
   conversationId: string | null,
+  settings: Record<string, number>,
   handlers: {
     onThinking: (text: string) => void;
     onAnswer: (text: string) => void;
@@ -247,7 +257,7 @@ async function streamRun(
   const response = await fetch("/api/reasoning/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId, question, thinking, ...(conversationId ? { conversationId } : {}) }),
+    body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}) }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string } | null;
@@ -386,6 +396,9 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const [busy, setBusy] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(loadHistoryOpen);
+  // 「问答配置」里的那几个数：默认是空的 = 不限制，存在本机。
+  const [settings, setSettings] = useState<ReasoningSettings>(loadReasoningSettings);
+  const [configOpen, setConfigOpen] = useState(false);
   // 列表跟着本体走：换了本体就当还没读过，不去 effect 里清空（和 turns 一个套路）。
   const [history, setHistory] = useState<{ targetId: string; items: ConversationSummary[] }>(() => ({ targetId, items: [] }));
   const [loadingConversation, setLoadingConversation] = useState<string | null>(null);
@@ -398,6 +411,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
   const conversationId = session.targetId === targetId ? session.conversationId : null;
   const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
+  /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
+  const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit);
   const updateTurns = useCallback((updater: (current: Turn[]) => Turn[]) => {
     setSession((current) => {
       const sameTarget = current.targetId === targetId;
@@ -419,6 +434,29 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
   useEffect(() => {
     void fetch("/api/reasoning/status").then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  // 参数随手改随手存：抽屉里没有"保存"按钮 —— 这几个数没有"改到一半"的中间态。
+  useEffect(() => { saveReasoningSettings(settings); }, [settings]);
+
+  // 配置抽屉开着时按 Esc 关掉，和平台里其它浮层一致。
+  useEffect(() => {
+    if (!configOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setConfigOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [configOpen]);
+
+  /** 改一个参数。空输入 = 不限制（不往请求里带这一项）。 */
+  const updateSetting = useCallback((key: keyof ReasoningSettings, raw: string) => {
+    const trimmed = raw.trim();
+    const numeric = trimmed === "" ? undefined : Math.floor(Number(trimmed));
+    setSettings((current) => ({ ...current, [key]: numeric !== undefined && Number.isFinite(numeric) ? numeric : undefined }));
+  }, []);
+
+  const resetSettings = useCallback(() => {
+    clearReasoningSettings();
+    setSettings({});
   }, []);
 
   /**
@@ -456,7 +494,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     stickRef.current = true;
     updateTurns((current) => [...current, { id, question: trimmed, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
     try {
-      await streamRun(targetId, trimmed, thinkingEnabled, conversationId, {
+      await streamRun(targetId, trimmed, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), {
         onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
         onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
         // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
@@ -483,7 +521,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [busy, conversationId, fail, notify, patchTurn, refreshConversations, thinkingEnabled, targetId, updateTurns]);
+  }, [busy, conversationId, fail, notify, patchTurn, refreshConversations, settings, thinkingEnabled, targetId, updateTurns]);
 
   const toggleHistory = useCallback(() => {
     setHistoryOpen((current) => {
@@ -568,6 +606,18 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             思考
             <em>{thinkingEnabled ? "开" : "关"}</em>
           </button>
+          <button
+            type="button"
+            className={`qa-toggle${configOpen ? " on" : ""}`}
+            onClick={() => setConfigOpen(true)}
+            title="问答的运行参数：默认都不限制，想卡才卡"
+            aria-expanded={configOpen}
+          >
+            <Settings2 size={13} />
+            问答配置
+            {/* 设过限制才挂这个角标：让人一眼看出"这次问答是被限制过的"。 */}
+            {hasLimits && <em>已设</em>}
+          </button>
           {turns.length > 0 && <button className="action compact" disabled={busy} onClick={startNewConversation} title="清空当前画面，历史记录仍然保留"><Plus size={13} />新对话</button>}
         </div>
       </header>
@@ -617,7 +667,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                     <span>{(turn.run.elapsedMs / 1000).toFixed(1)}s</span>
                     <span>{turn.run.usage.totalTokens} tokens</span>
                     {/* 步数 = 模型调用次数；工具调用可能一步并发多个，所以两个数字分开显示。 */}
-                    <span>{turn.run.stepCount}/{turn.run.maxSteps} 步 · 工具 {turn.run.steps.length} 次</span>
+                    {/* 平时只说用了几步：没设上限时那个分母（服务端兜底值）不该冒充"限制"。 */}
+                    <span>{turn.run.stepCount} 步 · 工具 {turn.run.steps.length} 次</span>
                     {turn.run.truncated && <em>步数用满（{turn.run.stepCount}/{turn.run.maxSteps}），模型是被拦停的，结论可能不完整</em>}
                   </footer>
                 </>
@@ -655,6 +706,53 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
           onCancelDelete={() => setConfirmingDelete(null)}
           onConfirmDelete={(id) => void removeConversation(id)}
         />
+      )}
+
+      {configOpen && (
+        <div className="qa-config-backdrop" role="presentation" onClick={() => setConfigOpen(false)}>
+          <aside className="qa-config" role="dialog" aria-modal="true" aria-label="问答配置" onClick={(event) => event.stopPropagation()}>
+            <header className="qa-config-head">
+              <Settings2 size={15} />
+              <b>问答配置</b>
+              <button type="button" className="qa-config-close" onClick={() => setConfigOpen(false)} aria-label="关闭"><X size={15} /></button>
+            </header>
+            <div className="qa-config-body">
+              <p className="qa-config-note">
+                这几个数只管「结论完不完整」。<b>留空就是不限制</b>，由模型自己把握；填了才按填的数卡。
+              </p>
+              <div className="qa-config-section">
+                <div className="qa-config-section-head">
+                  <span className="eyebrow">参数</span>
+                  <button type="button" className="qa-config-reset" onClick={resetSettings}>恢复默认</button>
+                </div>
+                {REASONING_SETTING_FIELDS.map((field) => (
+                  <label className="qa-config-field" key={field.key}>
+                    <span className="qa-config-name">
+                      <b>{field.label}</b>
+                      <i>{REASONING_SETTING_RANGES[field.key].min}–{REASONING_SETTING_RANGES[field.key].max}</i>
+                    </span>
+                    <span className="qa-config-input">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={REASONING_SETTING_RANGES[field.key].min}
+                        max={REASONING_SETTING_RANGES[field.key].max}
+                        placeholder={field.placeholder}
+                        value={settings[field.key] ?? ""}
+                        onChange={(event) => updateSetting(field.key, event.target.value)}
+                      />
+                      <em>{field.suffix}</em>
+                    </span>
+                    <small>{field.hint}</small>
+                  </label>
+                ))}
+              </div>
+              <p className="qa-config-foot">
+                真正护着数据库的那几条不在这里，也不能关：只读事务、语句超时、写操作拦截。
+              </p>
+            </div>
+          </aside>
+        </div>
       )}
     </section>
   );

@@ -27,6 +27,16 @@ export type ToolContext = {
    * 模型看 UUID 没有意义 —— 拿它把「绑了哪张表、在哪个资源上」翻成可读文本。
    */
   dataSources?: DataSourceRecord[];
+  /**
+   * 单个工具返回给模型的字符上限（「问答配置」里的「工具结果上限」）。
+   * 不填 = 不限制：原样交给模型，不截断。
+   */
+  toolResultLimit?: number;
+  /**
+   * 数据资源查询一次最多取多少行（「问答配置」里的「取数行数上限」）。
+   * 不填 = 用工具自己的兜底上限。
+   */
+  sqlRowLimit?: number;
 };
 
 type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY";
@@ -48,10 +58,8 @@ export type SchemaMatch = {
   detail: string;
 };
 
-const SCHEMA_RESULT_CAP = 14_000;
-const DATA_RESULT_CAP = 9_000;
-/** 返回"结构"而不是"数据"的工具：给更大的截断上限。 */
-const SCHEMA_TOOL_NAMES = new Set(["search_schema", "get_object_type", "list_actions"]);
+/** 「取数行数上限」留空时的兜底：一次最多取这么多行，防止一条语句把内存拉爆。 */
+const SQL_ROW_CEILING = 5000;
 
 export const REASONING_TOOLS: ToolSpec[] = [
   {
@@ -80,7 +88,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的建表语句：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
@@ -99,7 +107,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
       properties: {
         data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
         sql: { type: "string", description: "一条只读的 SQL 语句" },
-        limit: { type: "integer", description: "返回行数上限，默认 50，最大 500" },
+        limit: { type: "integer", description: "返回行数上限，默认 50" },
       },
       required: ["data_source", "sql"],
     },
@@ -349,10 +357,11 @@ export function reasoningToolSet(
     execute: async (input: unknown, { toolCallId }: { toolCallId: string }) => {
       const outcome = await runReasoningTool(spec.name, (input ?? {}) as Record<string, unknown>, context);
       onEvidence(toolCallId, outcome.evidence);
-      // 截断必须在这里做：execute 的返回值就是模型看到的东西。
+      // 不设上限时原样返回；设了才截断 —— 截断必须在这里做，因为 execute 的返回值就是模型看到的东西。
       // 超长时给一个明确说"被截断"的对象，而不是喂半截 JSON —— 后者会让模型当成完整数据。
+      const limit = context.toolResultLimit;
+      if (!limit) return outcome.payload;
       const text = JSON.stringify(outcome.payload);
-      const limit = SCHEMA_TOOL_NAMES.has(spec.name) ? SCHEMA_RESULT_CAP : DATA_RESULT_CAP;
       if (text.length <= limit) return outcome.payload;
       return {
         truncated: true,
@@ -456,7 +465,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!table) throw new Error("table 不能为空。");
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
-      if (!connector.describeTableDdl) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持查看建表语句。`);
+      if (!connector.describeTableDdl) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持查看表结构。`);
       const ddl = await connector.describeTableDdl({ name: table, schema: record.schema_name || undefined });
       return {
         payload: {
@@ -479,7 +488,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const record = resolveDataSource(context, String(args.data_source ?? ""));
       const sql = String(args.sql ?? "");
       if (!sql.trim()) throw new Error("sql 不能为空。");
-      const limit = clamp(args.limit, 50, 500);
+      // 模型自己给的行数；「问答配置」里设了取数上限就再夹一道，没设就用兜底上限。
+      const ceiling = context.sqlRowLimit ?? SQL_ROW_CEILING;
+      const limit = Math.min(clamp(args.limit, 50, SQL_ROW_CEILING), ceiling);
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
       if (!connector.runReadOnlyQuery) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持 SQL 查询。`);

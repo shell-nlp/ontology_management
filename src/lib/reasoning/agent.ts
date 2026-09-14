@@ -15,7 +15,12 @@ import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reaso
  *    上层 SSE 与前端界面因此完全不感知换过框架。
  */
 
-const DEFAULT_MAX_STEPS = 8;
+/**
+ * 步数兜底上限。**这不是产品意义上的"限制"**：界面上「工具步数上限」留空就等于不限制，
+ * 实际用的是这个数；只有防止模型卡在循环里把连接和服务跑穿这一层意思。
+ * 正常情况下模型不需要工具时自己就停了，这个数字平时根本碰不到。
+ */
+const MAX_STEPS_CEILING = 100;
 
 const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经建好一个业务本体，你可以读它的**定义**。
 
@@ -47,6 +52,7 @@ export type AgentEvent =
 export type RunReasoningOptions = {
   question: string;
   context: ToolContext;
+  /** 步数上限；不传就是"不限制"，服务端兜到 MAX_STEPS_CEILING。 */
   maxSteps?: number;
   /** 是否让模型先思考。默认交给服务端（实测默认开启）；false 会显式下发 thinking.type=disabled。 */
   thinking?: boolean;
@@ -84,7 +90,7 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
   if (!question) throw new Error("问题不能为空。");
 
   const emit = options.onEvent ?? (() => {});
-  const maxSteps = Math.min(16, Math.max(1, Math.floor(options.maxSteps ?? DEFAULT_MAX_STEPS)));
+  const maxSteps = Math.min(MAX_STEPS_CEILING, Math.max(1, Math.floor(options.maxSteps ?? MAX_STEPS_CEILING)));
   const startedAt = Date.now();
 
   // 工具执行时按 toolCallId 把证据记在旁边，读流时再取回来 —— 不放进给模型看的返回值里。

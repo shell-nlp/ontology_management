@@ -25,10 +25,14 @@ import { getTarget } from "@/lib/targets";
 const inputSchema = z.object({
   targetId: z.string().uuid(),
   question: z.string().trim().min(1).max(500),
-  maxSteps: z.number().int().min(1).max(16).optional(),
+  // 上限与服务端 agent.ts 的 MAX_STEPS_CEILING 对齐：那是防跑穿的兜底，不是给用户设的门槛。
+  maxSteps: z.number().int().min(1).max(100).optional(),
   thinking: z.boolean().optional(),
   /** 有就追加到这段对话后面，没有就新开一段。 */
   conversationId: z.string().uuid().optional(),
+  /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
+  toolResultLimit: z.number().int().min(500).max(200_000).optional(),
+  sqlRowLimit: z.number().int().min(1).max(5000).optional(),
 });
 
 /** 除了编排层的事件，这个接口自己还会补两条：error 与 saved。 */
@@ -80,7 +84,7 @@ export async function POST(request: NextRequest) {
       try {
         const run = await runReasoning({
           question: input.question,
-          context: { store, definition, runtimeTypes, dataSources },
+          context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
           thinking: input.thinking,
           onEvent: send,
@@ -89,7 +93,7 @@ export async function POST(request: NextRequest) {
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
         // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
         try {
