@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longestCommonSubstring, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts } from "@/lib/reasoning/tools";
+import { longestCommonSubstring, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -114,7 +114,7 @@ describe("工具范围", () => {
     const parked = REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name);
     // 这一版只在对象类型 / 关系类型这一层推理：实例工具不进模型、不进 MCP 的 tools/list，
     // 只在「MCP 调试」页灰着显示。要恢复实例推理，就把下面两个名字的 disabled 去掉。
-    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "get_table_ddl", "run_sql", "list_actions"]);
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "traverse_object_types", "get_table_ddl", "run_sql", "list_actions"]);
     expect(parked).toEqual(["query_object_instance", "query_instance_subgraph"]);
   });
 });
@@ -182,6 +182,29 @@ describe("概念分组进检索面", () => {
     const 订单 = await runReasoningTool("get_object_type", { type_name: "订单" }, { store: {} as never, definition: groupedDefinition(), runtimeTypes });
     // 没归组就是空串，不编一个分组名出来
     expect((订单.payload as { group: string }).group).toBe("");
+  });
+});
+
+describe("get_object_type 的一跳信息", () => {
+  const context = { store: {} as never, definition: chainDefinition(), runtimeTypes };
+  type Neighbor = { relation: string; name: string; group: string; description: string; bound_tables: string[] };
+  type OneHop = { outgoing: Neighbor[]; incoming: Neighbor[]; note: string };
+
+  it("出边、入边分开列，带上对方的分组与绑表", async () => {
+    const 用户 = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as { one_hop: OneHop };
+    expect(用户.one_hop.outgoing.map((item) => `${item.relation}→${item.name}@${item.group}`)).toEqual(["用户产生应收→应收@", "用户拥有订购关系→订购关系@"]);
+    expect(用户.one_hop.incoming.map((item) => `${item.relation}←${item.name}@${item.group}`)).toEqual(["客户拥有用户←客户@客户域"]);
+    expect(用户.one_hop.note).toContain("traverse_object_types");
+
+    const 应收 = (await runReasoningTool("get_object_type", { type_name: "应收" }, context)).payload as { one_hop: OneHop };
+    expect(应收.one_hop.outgoing).toEqual([]);
+    expect(应收.one_hop.incoming.map((item) => `${item.relation}←${item.name}`)).toEqual(["用户产生应收←用户", "订购关系产生应收←订购关系"]);
+  });
+
+  it("不再另外给一份没方向的 relations（一跳就这一处，别让模型读到两份）", async () => {
+    const payload = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as Record<string, unknown>;
+    expect("one_hop" in payload).toBe(true);
+    expect("relations" in payload).toBe(false);
   });
 });
 
@@ -273,5 +296,142 @@ describe("get_object_type 的数据来源", () => {
     const payload = outcome.payload as { sources: unknown[]; data_source_note: string };
     expect(payload.sources).toEqual([]);
     expect(payload.data_source_note).toContain("还没有绑定数据资源");
+  });
+});
+const 客户id = "aaaaaaa1-1111-4111-8111-111111111111";
+const 用户id = "aaaaaaa2-2222-4222-8222-222222222222";
+const 应收id = "aaaaaaa3-3333-4333-8333-333333333333";
+const 订购关系id = "aaaaaaa4-4444-4444-8444-444444444444";
+
+/**
+ * 多跳用的样本：客户 —拥有→ 用户 —产生→ 应收，用户还有一条 —拥有→ 订购关系，订购关系又 —产生→ 应收。
+ * 应收既在 2 跳上（经用户）、又在 3 跳上（经订购关系），用来验证 hop 取的是**最短**距离。
+ */
+function chainDefinition(): OntologyDefinition {
+  const type = (id: string, name: string, description: string, groupId = "") => ({ id, name, description, displayProperty: "", groupId, parents: [], properties: [], sources: [] });
+  return {
+    groups: [{ id: "aaaaaaa9-9999-4999-8999-999999999999", name: "客户域", color: "" }],
+    entityTypes: [
+      { ...type(客户id, "客户", "社会实体", "aaaaaaa9-9999-4999-8999-999999999999") },
+      { ...type(用户id, "用户", "客户订购的服务实例") },
+      { ...type(应收id, "应收", "应向客户收取的费用") },
+      { ...type(订购关系id, "订购关系", "用户与产品的订购关系") },
+    ],
+    relationshipTypes: [
+      { id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, properties: [] },
+      { id: "rrrrrrr2-2222-4222-8222-222222222222", name: "用户产生应收", sourceEntityTypeId: 用户id, targetEntityTypeId: 应收id, properties: [] },
+      { id: "rrrrrrr3-3333-4333-8333-333333333333", name: "用户拥有订购关系", sourceEntityTypeId: 用户id, targetEntityTypeId: 订购关系id, properties: [] },
+      { id: "rrrrrrr4-4444-4444-8444-444444444444", name: "订购关系产生应收", sourceEntityTypeId: 订购关系id, targetEntityTypeId: 应收id, properties: [] },
+    ],
+    actionTypes: [],
+    rules: [],
+  } as unknown as OntologyDefinition;
+}
+
+describe("traverseTypeGraph", () => {
+  it("默认 3 跳；hop 取最短距离，edges 是诱导子图（含跨层的那些关系）", () => {
+    const result = traverseTypeGraph(chainDefinition(), { start: "客户" });
+    expect(result.hops).toBe(3);
+    expect(result.nodes.map((node) => `${node.name}@${node.hop}`)).toEqual(["客户@0", "用户@1", "应收@2", "订购关系@2"]);
+    // 应收在 2 跳（经用户）就在 2 跳上定下来，不会因为 3 跳那条路变成 3
+    expect(result.edges.map((edge) => `${edge.relation}@${edge.hop}`)).toEqual(["客户拥有用户@1", "用户产生应收@2", "用户拥有订购关系@2", "订购关系产生应收@2"]);
+    expect(result.nodes[0].group).toBe("客户域");
+  });
+
+  it("不指定起点 = 从全部对象类型出发，等于整张类型图（都是 0 跳）", () => {
+    const result = traverseTypeGraph(chainDefinition());
+    expect(result.starts).toEqual(["客户", "用户", "应收", "订购关系"]);
+    expect(result.nodes.map((node) => node.hop)).toEqual([0, 0, 0, 0]);
+    expect(result.edges).toHaveLength(4);
+  });
+
+  it("跳数可设：1 跳只看一圈，超过上限按 5 跳算", () => {
+    const one = traverseTypeGraph(chainDefinition(), { start: "客户", hops: 1 });
+    expect(one.nodes.map((node) => node.name)).toEqual(["客户", "用户"]);
+    expect(one.edges.map((edge) => edge.relation)).toEqual(["客户拥有用户"]);
+    expect(traverseTypeGraph(chainDefinition(), { hops: 9 }).hops).toBe(5);
+    // 没给 / 给了非数字都回到默认 3
+    expect(traverseTypeGraph(chainDefinition(), { hops: Number.NaN }).hops).toBe(3);
+  });
+
+  it("从终点往回也走（关系类型是有方向的，但遍历不分方向）", () => {
+    const result = traverseTypeGraph(chainDefinition(), { start: "应收", hops: 1 });
+    // 节点按定义顺序返回
+    expect(result.nodes.map((node) => node.name)).toEqual(["用户", "应收", "订购关系"]);
+    // 这是节点集合的诱导子图：用户与订购关系都被走到（各 1 跳）时，它们之间那条关系也在结果里
+    expect(result.edges.map((edge) => `${edge.relation}@${edge.hop}`).sort()).toEqual(["用户产生应收@1", "用户拥有订购关系@1", "订购关系产生应收@1"].sort());
+  });
+
+  it("限定关系类型：只沿这几条走", () => {
+    const result = traverseTypeGraph(chainDefinition(), { start: "用户", relationshipTypes: ["用户产生应收"] });
+    expect(result.nodes.map((node) => `${node.name}@${node.hop}`)).toEqual(["用户@0", "应收@1"]);
+    expect(result.edges.map((edge) => edge.relation)).toEqual(["用户产生应收"]);
+    expect(result.filters.relationship_types).toEqual(["用户产生应收"]);
+    // 从客户出发、只留下游那条关系：一步都走不出去，只剩起点
+    const stuck = traverseTypeGraph(chainDefinition(), { start: "客户", relationshipTypes: ["用户产生应收"] });
+    expect(stuck.nodes.map((node) => node.name)).toEqual(["客户"]);
+    expect(stuck.edges).toEqual([]);
+  });
+
+  it("限定对象类型：范围外的类型整支都不展开", () => {
+    const result = traverseTypeGraph(chainDefinition(), { start: "客户", objectTypes: ["客户", "用户"] });
+    expect(result.nodes.map((node) => node.name)).toEqual(["客户", "用户"]);
+    expect(result.edges.map((edge) => edge.relation)).toEqual(["客户拥有用户"]);
+  });
+
+  it("起点写错、过滤名字写错都如实报出来，不猜", () => {
+    const bad = traverseTypeGraph(chainDefinition(), { start: "查无此类" });
+    expect(bad.unknown_start).toBe("查无此类");
+    expect(bad.nodes).toEqual([]);
+    const filtered = traverseTypeGraph(chainDefinition(), { start: "客户", objectTypes: ["客户", "不存在的类"], relationshipTypes: ["也不存在"] });
+    expect(filtered.unknown_names).toEqual(["不存在的类", "也不存在"]);
+  });
+
+  it("没有对象类型时不炸", () => {
+    expect(traverseTypeGraph({ groups: [], entityTypes: [], relationshipTypes: [], actionTypes: [], rules: [] } as unknown as OntologyDefinition).nodes).toEqual([]);
+  });
+});
+
+describe("traverse_object_types", () => {
+  const context = { store: {} as never, definition: chainDefinition(), runtimeTypes };
+
+  it("返回节点、关系与限定条件；证据里带上对象类型与关系类型", async () => {
+    const outcome = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 2 }, context);
+    const payload = outcome.payload as {
+      hops: number;
+      starts: string[];
+      node_count: number;
+      edge_count: number;
+      nodes: { name: string; hop: number; group: string }[];
+      edges: { relation: string; from: string; to: string; hop: number }[];
+      note: string;
+    };
+    expect(payload.hops).toBe(2);
+    expect(payload.starts).toEqual(["客户"]);
+    expect(payload.node_count).toBe(4);
+    expect(payload.nodes).toContainEqual(expect.objectContaining({ name: "应收", hop: 2 }));
+    expect(payload.edge_count).toBe(4);
+    expect(payload.note).toContain("get_object_type");
+    expect(outcome.evidence.some((item) => item.kind === "OBJECT_TYPE" && item.label === "应收")).toBe(true);
+    expect(outcome.evidence.some((item) => item.kind === "RELATION_TYPE" && item.label === "用户产生应收")).toBe(true);
+  });
+
+  it("参数照传：关系类型限定、跳数上限", async () => {
+    const limited = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 9, relationship_types: ["客户拥有用户"] }, context);
+    const payload = limited.payload as { hops: number; filters: { relationship_types: string[] }; edges: { relation: string }[] };
+    expect(payload.hops).toBe(5);
+    expect(payload.filters.relationship_types).toEqual(["客户拥有用户"]);
+    expect(payload.edges.map((edge) => edge.relation)).toEqual(["客户拥有用户"]);
+  });
+
+  it("起点名字不对时直接报错，让模型先确认名字", async () => {
+    await expect(runReasoningTool("traverse_object_types", { start_type: "查无此类" }, context)).rejects.toThrow("先用 search_schema");
+  });
+
+  it("过滤里出现本体没有的名字时如实返回", async () => {
+    const outcome = await runReasoningTool("traverse_object_types", { start_type: "客户", object_types: ["客户", "不存在的类"] }, context);
+    const payload = outcome.payload as { unknown_names?: string[]; unknown_note?: string };
+    expect(payload.unknown_names).toEqual(["不存在的类"]);
+    expect(payload.unknown_note).toContain("search_schema");
   });
 });

@@ -39,6 +39,7 @@ const TOOL_GROUP: Record<string, string> = {
   search_schema: "model",
   get_object_type: "model",
   list_concept_groups: "model",
+  traverse_object_types: "model",
   list_actions: "model",
   get_table_ddl: "data",
   run_sql: "data",
@@ -51,6 +52,7 @@ const TOOL_TITLES: Record<string, string> = {
   search_schema: "语义检索",
   get_object_type: "对象类型详情",
   list_concept_groups: "概念分组",
+  traverse_object_types: "对象类型多跳查询",
   list_actions: "动作定义",
   // 不叫「建表语句」：视图走的是视图定义，还原那条也不是库里的原始 CREATE，叫表结构才名实相符。
   get_table_ddl: "表结构",

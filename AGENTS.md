@@ -263,9 +263,10 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 已落地：
 
 - `src/lib/reasoning/tools.ts`：**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
-  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定、所属概念分组）、
-  `list_concept_groups`（有哪些概念分组、每组里有哪些对象类型）、`get_table_ddl`（表 / 视图的结构，返回 DDL）、
-  `run_sql`（对象类型绑定的表上的只读 SQL）、`list_actions`。
+  `get_object_type`（属性含继承与映射列、父类、**一跳**的出边/入边、动作、数据来源绑定、所属概念分组）、
+  `list_concept_groups`（有哪些概念分组、每组里有哪些对象类型）、
+  `traverse_object_types`（**多跳**：沿关系类型走 1~5 跳，默认 3，可按对象类型与关系类型限定）、
+  `get_table_ddl`（表 / 视图的结构，返回 DDL）、`run_sql`（对象类型绑定的表上的只读 SQL）、`list_actions`。
   另外两个实例工具留在目录里但标了 `disabled`（见下面「推理范围」）。排序是纯函数（`rankSchemaConcepts`），有单测。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
   事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
@@ -308,6 +309,24 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - `schemaBrief`（system 里的本体概览）顺带带上每个对象类型绑的表，省掉一次 `get_object_type` 往返。
 
 加新工具或改工具返回时守住这条：**给模型看的字段里不许出现裸 UUID**，要么翻成人话，要么别给。
+
+**概念分组与多跳查询（2026-09-14）**：这一版把"分组看得见"和"多跳走得通"补齐，三处要点：
+
+1. **概览里直接给分组成员**：`agent.ts` 的 `schemaBrief` 现在写
+   `概念分组：客户域（2 个：客户、用户）；账务域（5 个：…）；未归组：账单`（导出了这个函数，`agent.test.ts` 有单测）。
+   用户问"某业务域里有什么"是最常见的一类问题，写在概览里就不必再调工具，也不会出现"分组明明建了、模型说没有"。
+   对象类型清单里因此**不再重复**每个类型的分组名（分组清单已经把成员列全了）。
+2. **一跳在 `get_object_type`，多跳在 `traverse_object_types`**（`relations` 那个旧字段已换成 `one_hop`）：
+   - `get_object_type.one_hop`：`outgoing` / `incoming` 两组，每条带 `relation` + 对方的名字、分组、一句话说明、绑的表。
+   - `traverse_object_types`：纯函数 `traverseTypeGraph`（有单测）。起点 `start_type` 留空 = 从全部对象类型出发（等于整张类型图，
+     所有节点都是 0 跳）；`hops` 默认 3、上限 5；`object_types` / `relationship_types` 是**白名单**，
+     不给就是不限定，起点永远包含在结果里。`nodes[].hop` 是**最短距离**，`edges` 是这些节点之间**全部**关系的诱导子图
+     （每条边的 `hop` 取两端里更远的那个），这样"隔两跳能到谁"和"这两类之间还连着哪几条"一次都答得出来。
+     起点或白名单里写了本体没有的名字：起点直接抛错（让它先 `search_schema`），白名单里的名字原样进 `unknown_names` 并提醒，**不猜**。
+3. **没有合并工具的地址**（`list_concept_groups` 与概览、`get_object_type` 与多跳各留一份是有意的）：
+   概览是"一屏看完"，`list_concept_groups` 是**权威清单**（含空分组与未归组，适合"还有哪些没归组"）；
+   `get_object_type` 的一跳是读定义时的顺带信息，`traverse_object_types` 才是做路径/范围分析的入口。
+   真要把两者合并，就得给"看分组"再编一套参数语义，反而更难被模型用对；这条记录一下，别当成重复实现清理掉。
 
 **流式与思考开关已落地**（2026-09-14）：
 

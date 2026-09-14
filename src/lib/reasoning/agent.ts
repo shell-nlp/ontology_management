@@ -26,9 +26,11 @@ const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经�
 
 工作方式：
 1. 先理解问题涉及哪些业务概念，用 search_schema 确认本体里真实存在的对象类型与关系类型名字。
-2. 需要字段、父类、参与的关系类型、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions。
-3. 要具体数据时走"对象类型 → 它绑定的表"：先 get_table_ddl 看表结构，再 run_sql 只读查数。
-4. 复杂问题拆成多步：先定位涉及哪几个对象类型，再逐个读它们的定义与关系，最后再下结论。
+2. 需要字段、父类、一跳的关系类型、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions。
+3. 问"某对象类型一圈都和什么有关""隔两跳能到哪些类型""A 和 B 之间怎么连"时用 traverse_object_types（默认 3 跳、最多 5 跳，可用 object_types / relationship_types 限定范围，不填就是不限定）。一跳的细节就在 get_object_type 里，不必重复调。
+4. **概念分组（业务域）和每组包含的对象类型已经写在下面的概念清单里**，直接据此回答；要看"哪些类型还没归组"这类完整清单才需要 list_concept_groups。
+5. 要具体数据时走"对象类型 → 它绑定的表"：先 get_table_ddl 看表结构，再 run_sql 只读查数。
+6. 复杂问题拆成多步：先定位涉及哪几个对象类型，再逐个读它们的定义与关系，最后再下结论。
 
 硬性要求：
 - 只能依据工具返回的真实数据回答。不要编造对象类型、属性、关系类型、动作或数据来源。
@@ -62,25 +64,39 @@ export type RunReasoningOptions = {
 };
 
 /**
- * 给模型的"本体概览"：名字清单 + 绑定的表名，字段细节让它自己按需查，省 token。
- * 表名要带上：用户常问"某个对象类型绑了哪张表"，提前给到就省掉一次 get_object_type 往返。
+ * 给模型的"本体概览"：概念分组（含每组有哪些对象类型）+ 类型清单 + 绑定的表名。
+ *
+ * 概念分组**把成员直接写在这里**：用户问"某业务域里有什么"是最常见的一类问题，
+ * 提前给到就不必再调一次 list_concept_groups，也不至于出现"分组明明建了、模型说没有"。
+ * 表名同样要带上：用户常问"某个对象类型绑了哪张表"。
  * **不带对象数**：这一层不推理实例，给了数字模型就会拿它下实例层面的结论。
  */
-function schemaBrief(context: ToolContext) {
-  const groupNameById = new Map((context.definition.groups ?? []).map((item) => [item.id, item.name]));
+export function schemaBrief(context: ToolContext) {
+  const groups = context.definition.groups ?? [];
+  const groupIds = new Set(groups.map((item) => item.id));
+  const membersByGroup = new Map<string, string[]>();
+  const ungrouped: string[] = [];
+  for (const item of context.definition.entityTypes) {
+    const groupId = item.groupId ?? "";
+    if (!groupId || !groupIds.has(groupId)) { ungrouped.push(item.name); continue; }
+    const bucket = membersByGroup.get(groupId);
+    if (bucket) bucket.push(item.name);
+    else membersByGroup.set(groupId, [item.name]);
+  }
+  const groupsLine = groups.map((group) => {
+    const members = membersByGroup.get(group.id) ?? [];
+    return `${group.name}（${members.length} 个：${members.join("、") || "还没有对象类型"}）`;
+  }).join("；");
   const objects = context.definition.entityTypes.map((item) => {
     const tables = entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
-    // 分组跟在名字后面：模型一眼知道这个类型属于哪个域，问"某域有什么"时不必再查一趟。
-    const notes = [groupNameById.get(item.groupId ?? "") ?? "", tables.length ? `绑定 ${tables.join(" + ")}` : ""].filter(Boolean);
-    return notes.length ? `${item.name}(${notes.join("，")})` : item.name;
+    return tables.length ? `${item.name}(绑定 ${tables.join(" + ")})` : item.name;
   });
   const relations = context.definition.relationshipTypes.map((item) => item.name);
   const actions = context.definition.actionTypes.map((item) => item.name);
   // 数据资源名要带上：run_sql / get_table_ddl 的 data_source 就用这里的名字，模型猜不出来。
   const sources = (context.dataSources ?? []).map((item) => `${item.name}（${item.kind}${item.schema_name ? ` · ${item.schema_name}` : ""}）`);
-  const groups = (context.definition.groups ?? []).map((item) => item.name);
   return [
-    `概念分组：${groups.join("、") || "无"}（用 list_concept_groups 看每组里有哪些对象类型）`,
+    `概念分组：${groupsLine || "无"}${ungrouped.length ? `；未归组：${ungrouped.join("、")}` : ""}`,
     `对象类型：${objects.join("、") || "无"}`,
     `关系类型：${relations.join("、") || "无"}`,
     `动作：${actions.join("、") || "无"}`,

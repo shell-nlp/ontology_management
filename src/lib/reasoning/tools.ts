@@ -92,6 +92,20 @@ export const REASONING_TOOLS: ToolSpec[] = [
     parameters: { type: "object", properties: {} },
   },
   {
+    name: "traverse_object_types",
+    description:
+      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。",
+    parameters: {
+      type: "object",
+      properties: {
+        start_type: { type: "string", description: "起点对象类型名称；留空 = 从全部对象类型出发" },
+        hops: { type: "integer", description: "最多走几跳，默认 3，上限 5" },
+        object_types: { type: "array", items: { type: "string" }, description: "只走（并只落到）这些对象类型；不填 = 不限定" },
+        relationship_types: { type: "array", items: { type: "string" }, description: "只沿这些关系类型走；不填 = 不限定" },
+      },
+    },
+  },
+  {
     name: "get_table_ddl",
     description:
       "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
@@ -335,6 +349,125 @@ function clamp(value: unknown, fallback: number, max: number) {
   return Math.min(max, Math.floor(numeric));
 }
 
+/** 多跳查询的默认跳数与上限（用户口径：默认 3，最多 5）。 */
+export const DEFAULT_TRAVERSE_HOPS = 3;
+export const MAX_TRAVERSE_HOPS = 5;
+
+export type TypeGraphNode = {
+  name: string;
+  group: string;
+  /** 距离起点最近的跳数；起点自己是 0。 */
+  hop: number;
+  description: string;
+  /** 绑定的表（`SCHEMA.TABLE`），没绑就是空数组。 */
+  bound_tables: string[];
+  parents: string[];
+};
+
+export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number };
+
+export type TypeGraphTraversal = {
+  hops: number;
+  starts: string[];
+  nodes: TypeGraphNode[];
+  edges: TypeGraphEdge[];
+  /** 起点没写对时，这条名字会被原样报回去（不猜）。 */
+  unknown_start: string;
+  /** object_types / relationship_types 里本体没有的名字。 */
+  unknown_names: string[];
+  filters: { object_types: string[]; relationship_types: string[] };
+};
+
+function describeBriefly(text: string, limit = 80) {
+  const value = text.trim();
+  return value.length > limit ? `${value.slice(0, limit)}…` : value;
+}
+
+/**
+ * 对象类型这一层的多跳遍历（纯函数，有单测）。
+ *
+ * 沿关系类型走：起点是 `start`（留空 = 全部对象类型），最多 `hops` 跳（默认 3、上限 5）。
+ * `objectTypes` / `relationshipTypes` 是白名单：给了就只走这些关系类型、只落到这些对象类型上；
+ * 不给就是不限定。起点永远包含在结果里，哪怕它自己不在白名单内（否则"从这个类型出发"就说不通了）。
+ *
+ * `nodes[].hop` 是**最短距离**；`edges` 是这些节点之间**全部**关系的诱导子图，每条边带
+ * `hop = 两端里更远的那个的跳数`。这样"隔两跳能到谁"和"这两个类型之间还连着哪几条关系"
+ * 一次都能答，而不用模型自己拼路径。
+ */
+export function traverseTypeGraph(
+  definition: OntologyDefinition,
+  options: { start?: string; hops?: number; objectTypes?: readonly string[]; relationshipTypes?: readonly string[] } = {},
+): TypeGraphTraversal {
+  const hops = clamp(options.hops, DEFAULT_TRAVERSE_HOPS, MAX_TRAVERSE_HOPS);
+  const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
+  const typeByName = new Map(definition.entityTypes.map((item) => [item.name, item]));
+  const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
+  const relationNames = new Set(definition.relationshipTypes.map((item) => item.name));
+  const wantedTypes = [...new Set(options.objectTypes ?? [])].filter(Boolean);
+  const wantedRelations = [...new Set(options.relationshipTypes ?? [])].filter(Boolean);
+  const allowedTypes = new Set(wantedTypes);
+  const allowedRelations = new Set(wantedRelations);
+  const unknownNames = [...wantedTypes.filter((name) => !typeByName.has(name)), ...wantedRelations.filter((name) => !relationNames.has(name))];
+
+  const startName = (options.start ?? "").trim();
+  const unknownStart = startName && !typeByName.has(startName) ? startName : "";
+  const starts = unknownStart || !definition.entityTypes.length
+    ? []
+    : startName
+      ? [startName]
+      : definition.entityTypes.filter((item) => !allowedTypes.size || allowedTypes.has(item.name)).map((item) => item.name);
+
+  /** 每个节点第一次被走到的跳数；起点是 0。 */
+  const hopOf = new Map<string, number>(starts.map((name) => [name, 0]));
+  let frontier = [...starts];
+  for (let hop = 1; hop <= hops && frontier.length; hop += 1) {
+    const next: string[] = [];
+    for (const fromName of frontier) {
+      const from = typeByName.get(fromName);
+      if (!from) continue;
+      for (const relation of definition.relationshipTypes) {
+        if (allowedRelations.size && !allowedRelations.has(relation.name)) continue;
+        const outgoing = relation.sourceEntityTypeId === from.id;
+        const incoming = relation.targetEntityTypeId === from.id;
+        if (!outgoing && !incoming) continue;
+        const otherName = typeNameById.get(outgoing ? relation.targetEntityTypeId : relation.sourceEntityTypeId);
+        // 端点未定义的关系类型不进结果（发布前校验会拦，这里不猜）。
+        if (!otherName || hopOf.has(otherName)) continue;
+        // 白名单限定的是"能落到哪里"：范围外的类型整支都不展开。
+        if (allowedTypes.size && !allowedTypes.has(otherName)) continue;
+        hopOf.set(otherName, hop);
+        next.push(otherName);
+      }
+    }
+    frontier = next;
+  }
+
+  const nodes: TypeGraphNode[] = definition.entityTypes
+    .filter((item) => hopOf.has(item.name))
+    .map((item) => ({
+      name: item.name,
+      group: groupNameById.get(item.groupId ?? "") ?? "",
+      hop: hopOf.get(item.name) ?? 0,
+      description: describeBriefly(item.description ?? ""),
+      bound_tables: entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean),
+      parents: (item.parents ?? []).map((id) => typeNameById.get(id) ?? "").filter(Boolean),
+    }));
+  const edges: TypeGraphEdge[] = definition.relationshipTypes
+    .map((relation) => {
+      const from = typeNameById.get(relation.sourceEntityTypeId);
+      const to = typeNameById.get(relation.targetEntityTypeId);
+      if (!from || !to) return null;
+      const fromHop = hopOf.get(from);
+      const toHop = hopOf.get(to);
+      if (fromHop === undefined || toHop === undefined) return null;
+      if (allowedRelations.size && !allowedRelations.has(relation.name)) return null;
+      return { relation: relation.name, from, to, hop: Math.max(fromHop, toHop) };
+    })
+    .filter((edge): edge is TypeGraphEdge => edge !== null);
+
+  return { hops, starts, nodes, edges, unknown_start: unknownStart, unknown_names: unknownNames, filters: { object_types: wantedTypes, relationship_types: wantedRelations } };
+}
+
 /**
  * 按名字（或 id）找一条数据资源。
  *
@@ -434,13 +567,27 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         // 只有映射了列才有来源角色可谈；继承来又没映射列的属性不硬套一个。
         source_role: property.sourceField ? (property.sourceId ? sourceRoleById.get(property.sourceId) ?? "" : sources.length ? sourceRoleLabel(0) : "") : "",
       }));
-      const relations = definition.relationshipTypes
-        .filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id)
-        .map((item) => ({
-          name: item.name,
-          direction: item.sourceEntityTypeId === type.id ? "OUT" : "IN",
-          other: typeNameById.get(item.sourceEntityTypeId === type.id ? item.targetEntityTypeId : item.sourceEntityTypeId) ?? "",
-        }));
+      const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
+      /** 一跳邻居的简介：名字 + 分组 + 一句话 + 绑的表（模型常接着问"那它呢"）。 */
+      const neighbor = (id: string) => {
+        const other = definition.entityTypes.find((item) => item.id === id);
+        return {
+          name: other?.name ?? "",
+          group: groupNameById.get(other?.groupId ?? "") ?? "",
+          description: describeBriefly(other?.description ?? "", 60),
+          bound_tables: other ? entitySources(other).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean) : [],
+        };
+      };
+      const touching = definition.relationshipTypes.filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id);
+      /*
+       * 一跳关系：出边、入边分开列。模型问"A 一圈都连着谁"是最常见的追问，
+       * 提前给到就省掉一次遍历；要多跳再走 traverse_object_types（最多 5 跳）。
+       */
+      const oneHop = {
+        outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.targetEntityTypeId) })),
+        incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.sourceEntityTypeId) })),
+        note: "这里只列一跳。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型与关系类型）。",
+      };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
         .map((item) => ({ name: item.name, code: item.code, params: item.params.map((param) => `${param.name}:${param.dataType}`) }));
@@ -452,7 +599,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           group: group?.name ?? "",
           parents: (type.parents ?? []).map((id) => typeNameById.get(id)).filter(Boolean),
           properties,
-          relations,
+          one_hop: oneHop,
           actions,
           sources: sources.map((source, index) => ({
             role: sourceRoleLabel(index),
@@ -497,6 +644,40 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           note: "概念分组只是展示与检索用的归类，不影响对象类型的定义；要细节就用 get_object_type 看某一个类型。",
         },
         evidence: groups.map((group) => ({ kind: "GROUP" as const, id: group.id, label: group.name })),
+      };
+    }
+
+    case "traverse_object_types": {
+      const startName = (typeof args.start_type === "string" ? args.start_type : "").trim();
+      const traversal = traverseTypeGraph(definition, {
+        start: startName,
+        hops: typeof args.hops === "number" ? args.hops : Number(args.hops),
+        objectTypes: Array.isArray(args.object_types) ? args.object_types.map((item) => String(item)) : [],
+        relationshipTypes: Array.isArray(args.relationship_types) ? args.relationship_types.map((item) => String(item)) : [],
+      });
+      if (traversal.unknown_start) throw new Error(`本体里没有对象类型「${traversal.unknown_start}」。先用 search_schema 确认名字。`);
+      const relationNames = [...new Set(traversal.edges.map((edge) => edge.relation))];
+      return {
+        payload: {
+          hops: traversal.hops,
+          starts: traversal.starts,
+          filters: traversal.filters,
+          node_count: traversal.nodes.length,
+          edge_count: traversal.edges.length,
+          nodes: traversal.nodes,
+          edges: traversal.edges,
+          // 名字对不上就照实说，别让模型以为"限定生效了"。
+          ...(traversal.unknown_names.length
+            ? { unknown_names: traversal.unknown_names, unknown_note: "这些名字本体里没有，已忽略；先用 search_schema 确认真实名字。" }
+            : {}),
+          note: !startName
+            ? "没有指定起点，所以是整张类型图（每个对象类型都是 0 跳）：nodes 是全部对象类型，edges 是它们之间全部的关系。想从某个类型往外看，传 start_type。要看某个类型的属性、来源与动作，用 get_object_type。"
+            : "hop 是离起点的最短跳数（起点是 0）；edges 是这些对象类型之间全部的关系，hop 取两端里更远的那个。要看某个类型的属性、来源与动作，用 get_object_type。",
+        },
+        evidence: [
+          ...traversal.nodes.map((node) => ({ kind: "OBJECT_TYPE" as const, id: node.name, label: node.name })),
+          ...relationNames.map((name) => ({ kind: "RELATION_TYPE" as const, id: name, label: name })),
+        ],
       };
     }
 
