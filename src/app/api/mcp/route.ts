@@ -58,7 +58,7 @@ async function handleMessage(message: JsonRpcRequest) {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
-        instructions: "这是本体平台的 MCP 服务。先调 list_ontologies 拿到 ontology_id，再用 search_schema 确认概念名，然后 query_object_instance / query_instance_subgraph 取真实数据。所有工具只读。",
+        instructions: "这是本体平台的 MCP 服务。先调 list_ontologies 拿到 ontology_id，再用 search_schema 确认概念名，然后用 get_object_type / list_actions 读对象类型与动作的定义。本服务只覆盖本体定义这一层（对象类型、属性、关系类型、动作、数据来源绑定），不查实例数据；所有工具只读。",
       },
     };
   }

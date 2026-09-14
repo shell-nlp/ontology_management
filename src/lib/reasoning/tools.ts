@@ -2,6 +2,7 @@ import { jsonSchema, tool } from "ai";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
+import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ToolOutcome, ToolSpec } from "@/lib/reasoning/types";
@@ -69,7 +70,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_object_type",
     description:
-      "读取一个对象类型的完整定义：属性（含从父类继承来的，映射到哪一列也会带上）、父类、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）、当前对象数。问「某个对象类型绑了哪张表」时调它。",
+      "读取一个对象类型的完整定义：属性（含从父类继承来的，映射到哪一列也会带上）、父类、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。",
     parameters: {
       type: "object",
       properties: { type_name: { type: "string", description: "对象类型名称，必须来自 search_schema 的结果" } },
@@ -77,7 +78,41 @@ export const REASONING_TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "get_table_ddl",
+    description:
+      "看一张表 / 视图的建表语句：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
+    parameters: {
+      type: "object",
+      properties: {
+        data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
+        table: { type: "string", description: "表或视图名，大小写不敏感" },
+      },
+      required: ["data_source", "table"],
+    },
+  },
+  {
+    name: "run_sql",
+    description:
+      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；结果默认最多 50 行。写查询前先用 get_table_ddl 确认字段名。",
+    parameters: {
+      type: "object",
+      properties: {
+        data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
+        sql: { type: "string", description: "一条只读的 SQL 语句" },
+        limit: { type: "integer", description: "返回行数上限，默认 50，最大 500" },
+      },
+      required: ["data_source", "sql"],
+    },
+  },
+  /*
+   * 两个实例工具标记成 disabled：这一版只在对象类型 / 关系类型这一层推理，不查具体对象与数据行
+   * （2026-09-14 决定）。它们不会进模型的工具集、也不进 MCP 的 tools/list，
+   * 只留在目录里，让「MCP 调试」页把它们灰着显示出来 —— 看得见"有这么两个工具，暂时不用"。
+   * 要恢复：去掉 disabled。
+   */
+  {
     name: "query_object_instance",
+    disabled: true,
     description:
       "按对象类型查询真实实例。传父类型时子类型的实例也会一起返回（类型传播）。返回的 _instance_identity.object_id 是真实标识，后续只能用返回过的 id。",
     parameters: {
@@ -92,6 +127,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   },
   {
     name: "query_instance_subgraph",
+    disabled: true,
     description: "按对象类型与关系类型取一张子图，返回节点与关系。用于回答「A 和 B 之间怎么连」这类问题。",
     parameters: {
       type: "object",
@@ -149,10 +185,12 @@ export function longestCommonSubstring(a: string, b: string): number {
 
 export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null, dataSources: DataSourceRecord[] = []): SchemaConcept[] {
   const resourceNameById = new Map(dataSources.map((item) => [item.id, item.name]));
+  /*
+   * 对象数只用来给"完全没命中时的兜底排序"加一点权重，**不进给模型看的文案**：
+   * 这一层不推理实例，就不该让模型看到实例层面的数字（否则它会据此下实例结论）。
+   */
   const objectCount = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
   const relationshipCount = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
-  // 图库连不上时统计拿不到，这时宁可什么都不说，也不要报"对象数 0"——那是在撒谎。
-  const hasStats = runtimeTypes !== null;
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
   const concepts: SchemaConcept[] = [];
 
@@ -167,7 +205,6 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       name: entity.name,
       haystack: normalize([entity.name, entity.description, ...parents, ...tables, ...properties.map((property) => property.name)].join(" ")),
       detail: [
-        hasStats ? `对象数 ${objectCount.get(entity.name) ?? 0}` : "",
         parents.length ? `父类 ${parents.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
@@ -192,7 +229,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       kind: "RELATION_TYPE",
       name: relationship.name,
       haystack: normalize([relationship.name, source, target].join(" ")),
-      detail: `${source || "未指定"} → ${target || "未指定"}${hasStats ? `；关系数 ${relationshipCount.get(relationship.name) ?? 0}` : ""}`,
+      detail: `${source || "未指定"} → ${target || "未指定"}`,
       weight: relationshipCount.get(relationship.name) ?? 0,
     });
   }
@@ -237,7 +274,11 @@ export function rankSchemaConcepts(concepts: readonly SchemaConcept[], query: st
   });
 
   const matched = scored.filter((item) => item.score > 0);
-  const pool = matched.length ? matched : scored.filter((item) => item.concept.weight > 0);
+  /*
+   * 都没命中时兜底给一批概念，而不是空手而归 —— 注意这里**不再按"有实例的才有资格"筛**：
+   * 一个刚建好、图库还是空的本体，那样会一条都返回不了。weight 只影响排序，不影响有没有。
+   */
+  const pool = matched.length ? matched : scored;
   return pool
     .sort((a, b) => b.score - a.score || a.concept.name.localeCompare(b.concept.name, "zh-CN"))
     .slice(0, maxConcepts)
@@ -245,7 +286,7 @@ export function rankSchemaConcepts(concepts: readonly SchemaConcept[], query: st
       kind: item.concept.kind,
       name: item.concept.name,
       score: item.score,
-      reason: item.reason || "按实例数量兜底推荐",
+      reason: item.reason || "没命中关键词，按本体概念清单兜底推荐",
       detail: item.concept.detail,
     }));
 }
@@ -277,6 +318,22 @@ function clamp(value: unknown, fallback: number, max: number) {
 }
 
 /**
+ * 按名字（或 id）找一条数据资源。
+ *
+ * 报错时把当前登记的资源名列出来 —— 模型可以据此自己改对参数，而不是卡在这里猜。
+ */
+function resolveDataSource(context: ToolContext, name: string) {
+  const sources = context.dataSources ?? [];
+  const available = sources.map((item) => `「${item.name}」`).join("、") || "（一个都没登记）";
+  const key = name.trim().toLowerCase();
+  if (!key) throw new Error(`data_source 不能为空。当前登记的数据资源有：${available}。`);
+  const hit = sources.find((item) => item.name.toLowerCase() === key || item.id.toLowerCase() === key);
+  if (!hit) throw new Error(`没有叫「${name}」的数据资源。当前登记的数据资源有：${available}。`);
+  if (!hit.enabled) throw new Error(`数据资源「${hit.name}」已经停用，先到「数据资源」页启用它。`);
+  return hit;
+}
+
+/**
  * 把这批工具包成 AI SDK 的 ToolSet，交给 ToolLoopAgent。
  *
  * 证据（每一步引用了哪些真实对象）不在工具的返回值里 —— 那会把给模型看的内容撑大。
@@ -304,7 +361,8 @@ export function reasoningToolSet(
       };
     },
   });
-  return Object.fromEntries(REASONING_TOOLS.map((spec) => [spec.name, build(spec)]));
+  // 标记为 disabled 的工具不进模型能看到的那份工具集（MCP 调试页里仍然灰着列出来）。
+  return Object.fromEntries(REASONING_TOOLS.filter((spec) => !spec.disabled).map((spec) => [spec.name, build(spec)]));
 }
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
@@ -366,7 +424,6 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
         .map((item) => ({ name: item.name, code: item.code, params: item.params.map((param) => `${param.name}:${param.dataType}`) }));
-      const objectCount = runtimeTypes?.labels.find((item) => item.name === type.name)?.count ?? null;
       return {
         payload: {
           name: type.name,
@@ -385,15 +442,74 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           })),
           // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
           data_source_note: sources.length
-            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。图库里的对象数不取决于是否绑表。"
+            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据，就拿这里的表名去 get_table_ddl / run_sql。"
             : "这个对象类型还没有绑定数据资源，本体里只有定义。",
-          object_count: objectCount,
           display_property: type.displayProperty ?? "",
         },
         evidence: [{ kind: "OBJECT_TYPE", id: type.name, label: type.name }],
       };
     }
 
+    case "get_table_ddl": {
+      const record = resolveDataSource(context, String(args.data_source ?? ""));
+      const table = String(args.table ?? "").trim();
+      if (!table) throw new Error("table 不能为空。");
+      const { openDataSource } = await import("@/lib/data-sources");
+      const connector = await openDataSource(record);
+      if (!connector.describeTableDdl) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持查看建表语句。`);
+      const ddl = await connector.describeTableDdl({ name: table, schema: record.schema_name || undefined });
+      return {
+        payload: {
+          data_source: record.name,
+          data_source_kind: record.kind,
+          schema: ddl.schema,
+          table: ddl.name,
+          object_kind: ddl.kind,
+          ddl_source: ddl.source,
+          ddl: ddl.ddl,
+          notes: ddl.notes,
+          ...(ddl.truncatedAt ? { truncated_at: ddl.truncatedAt, truncated_note: `原始语句超过 ${ddl.truncatedAt} 字符，上面是截断后的。` } : {}),
+        },
+        // 表结构不是可寻址的本体实体，不做证据。
+        evidence: [],
+      };
+    }
+
+    case "run_sql": {
+      const record = resolveDataSource(context, String(args.data_source ?? ""));
+      const sql = String(args.sql ?? "");
+      if (!sql.trim()) throw new Error("sql 不能为空。");
+      const limit = clamp(args.limit, 50, 500);
+      const { openDataSource } = await import("@/lib/data-sources");
+      const connector = await openDataSource(record);
+      if (!connector.runReadOnlyQuery) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持 SQL 查询。`);
+      const result = await connector.runReadOnlyQuery(sql, { limit });
+      return {
+        payload: {
+          data_source: record.name,
+          data_source_kind: record.kind,
+          schema: record.schema_name || "",
+          statement: result.statement,
+          returned: result.rows.length,
+          row_limit: result.rowLimit,
+          columns: result.columns,
+          rows: result.rows,
+          truncated: result.truncated,
+          note: readOnlyPolicyNote(record.kind),
+          // 只读事务起没起得来要如实报：起不来时只剩语句检查在挡，不能让人以为库里有保险。
+          read_only_transaction: result.readOnlyTransaction,
+          ...(result.readOnlyTransaction ? {} : { warning: "这个驱动起不了只读事务，本次只有语句检查在挡，请只读使用。" }),
+        },
+        // 查询出来的行不是本体里的对象，不能当"证据"引用；要引用对象请走本体那边。
+        evidence: [],
+      };
+    }
+
+    /*
+     * 下面两个分支是**实例工具**的实现。它们在 REASONING_TOOLS 里被标成 disabled
+     * （这一版只在对象类型 / 关系类型这一层推理），所以现在走不到 —— 模型看不到、
+     * MCP 那边也会先被 findMcpTool 挡掉。留着是为了将来放回来时不用重写。
+     */
     case "query_object_instance": {
       const typeName = String(args.type_name ?? "");
       if (!typeName) throw new Error("type_name 不能为空。");

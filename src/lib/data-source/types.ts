@@ -220,6 +220,37 @@ export type DataViewPreview = {
   truncated: boolean;
 };
 
+/** 只读 SQL 查询的结果。 */
+export type SqlQueryResult = {
+  /** 实际执行的语句：入参去掉尾分号、套上行数上限之后的版本。 */
+  statement: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  /** 这次允许返回多少行。 */
+  rowLimit: number;
+  /** 命中上限被截断了。只可能是 SHOW / EXPLAIN 这类套不上行数上限的语句。 */
+  truncated: boolean;
+  /**
+   * 服务端是否真的进了只读事务。false = 这个驱动起不了只读事务，
+   * 只剩词法闸门在挡 —— 要如实报出去，别让人以为还有库那层保险。
+   */
+  readOnlyTransaction: boolean;
+};
+
+/** 一张表 / 视图的建表语句。 */
+export type TableDdl = {
+  schema: string;
+  name: string;
+  kind: DataViewKind;
+  ddl: string;
+  /** native = 库里自带的原始 DDL；metadata = 由列元数据还原出来的。 */
+  source: "native" | "metadata";
+  /** 超长被截到多少字符；没截断就没有这一项。 */
+  truncatedAt?: number;
+  /** 这份 DDL 少说了什么，如实写清楚。 */
+  notes: string[];
+};
+
 export type DataViewRef = { schema?: string; name: string };
 
 export type DataSourceHealth = {
@@ -241,4 +272,11 @@ export interface DataSourceConnector {
   listViews(options?: { schema?: string; search?: string; limit?: number; refresh?: boolean }): Promise<DataViewSummary[]>;
   describeView(view: DataViewRef): Promise<DataViewField[]>;
   previewView(view: DataViewRef, limit: number): Promise<DataViewPreview>;
+  /**
+   * 只读查询。**不是每种来源都提供**（将来接 Elasticsearch 就没有 SQL），所以是可选的：
+   * 没有这个方法就是没有，调用方如实拒绝，别假装支持。
+   */
+  runReadOnlyQuery?(sql: string, options?: { limit?: number }): Promise<SqlQueryResult>;
+  /** 建表语句 / 视图定义。同样只有关系库提供。 */
+  describeTableDdl?(view: DataViewRef): Promise<TableDdl>;
 }

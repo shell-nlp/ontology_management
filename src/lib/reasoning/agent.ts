@@ -17,21 +17,23 @@ import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reaso
 
 const DEFAULT_MAX_STEPS = 8;
 
-const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经建好一个业务本体，并在图数据库中发布了实例数据。
+const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经建好一个业务本体，你可以读它的**定义**。
 
 工作方式：
 1. 先理解问题涉及哪些业务概念，用 search_schema 确认本体里真实存在的对象类型与关系类型名字。
-2. 需要字段、父类、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions；需要对象时调 query_object_instance；需要看对象之间怎么连时调 query_instance_subgraph。
-3. 复杂问题拆成多步：先定位对象，再顺着关系类型展开，最后再下结论。
+2. 需要字段、父类、参与的关系类型、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions。
+3. 要具体数据时走"对象类型 → 它绑定的表"：先 get_table_ddl 看表结构，再 run_sql 只读查数。
+4. 复杂问题拆成多步：先定位涉及哪几个对象类型，再逐个读它们的定义与关系，最后再下结论。
 
 硬性要求：
-- 只能依据工具返回的真实数据回答。不要编造对象、属性、关系或统计数字。
-- 引用对象时必须使用工具返回过的 object_id，不要自己构造 id。
-- 对父类型查询时子类型的实例也会一起返回，注意看每个实例的 labels 判断它具体属于哪个类型。
-- 如果本体或图库里确实没有这部分数据，直接说明"当前本体没有这部分数据"，并指出缺的是哪个对象类型、属性或关系类型，不要用常识猜测。
+- 只能依据工具返回的真实数据回答。不要编造对象类型、属性、关系类型、动作或数据来源。
+- **本体这一层只到定义**：不查图库里的对象与关系（本体实例）。要真实数据就走源表 —— get_table_ddl 看结构、run_sql 只读查数，两者都用对象类型绑定的那张表。
+- 被问到"本体里有哪些对象""某个具体对象是什么"这类实例问题时，说明这一版不提供实例推理，并给出可行的替代：查它绑定的表，或到平台的「对象」「图谱」页看。**不要凭空编一个对象。**
+- 写操作一律不做：run_sql 只能读，动作只描述不执行。
+- 如果本体里确实没有这个概念，直接说明"当前本体没有这个对象类型 / 关系类型 / 动作"，并指出缺的是哪一项，不要用常识猜测。
 - 结果被截断（返回里出现 truncated 提示）时，不要当成完整数据；用更精确的条件再查一次。
 
-输出要求：用中文回答，先给结论，再列依据（引用了哪些对象类型/关系类型/对象）。结论要能追溯到上面的工具结果。`;
+输出要求：用中文回答，先给结论，再列依据（引用了哪些对象类型 / 关系类型 / 动作）。结论要能追溯到上面的工具结果。`;
 
 /** 流式事件：SSE 接口把它原样转成帧，前端按 type 分发。 */
 export type AgentEvent =
@@ -56,21 +58,22 @@ export type RunReasoningOptions = {
 /**
  * 给模型的"本体概览"：名字清单 + 绑定的表名，字段细节让它自己按需查，省 token。
  * 表名要带上：用户常问"某个对象类型绑了哪张表"，提前给到就省掉一次 get_object_type 往返。
+ * **不带对象数**：这一层不推理实例，给了数字模型就会拿它下实例层面的结论。
  */
 function schemaBrief(context: ToolContext) {
-  const count = (name: string) => context.runtimeTypes?.labels.find((item) => item.name === name)?.count;
   const objects = context.definition.entityTypes.map((item) => {
-    const amount = count(item.name);
     const tables = entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
-    const notes = [amount == null ? "" : String(amount), tables.length ? `绑定 ${tables.join(" + ")}` : ""].filter(Boolean).join("，");
-    return notes ? `${item.name}(${notes})` : item.name;
+    return tables.length ? `${item.name}(绑定 ${tables.join(" + ")})` : item.name;
   });
   const relations = context.definition.relationshipTypes.map((item) => item.name);
   const actions = context.definition.actionTypes.map((item) => item.name);
+  // 数据资源名要带上：run_sql / get_table_ddl 的 data_source 就用这里的名字，模型猜不出来。
+  const sources = (context.dataSources ?? []).map((item) => `${item.name}（${item.kind}${item.schema_name ? ` · ${item.schema_name}` : ""}）`);
   return [
     `对象类型：${objects.join("、") || "无"}`,
     `关系类型：${relations.join("、") || "无"}`,
     `动作：${actions.join("、") || "无"}`,
+    `数据资源：${sources.join("、") || "无"}（run_sql / get_table_ddl 的 data_source 用这里的名字）`,
   ].join("\n");
 }
 
@@ -102,7 +105,7 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
 
   const agent = new ToolLoopAgent({
     model: llmModel(settings),
-    instructions: `${SYSTEM_PROMPT}\n\n当前本体的概念清单（括号里是对象数）：\n${schemaBrief(options.context)}`,
+    instructions: `${SYSTEM_PROMPT}\n\n当前本体的概念清单（括号里是它绑定的表）：\n${schemaBrief(options.context)}`,
     tools: reasoningToolSet(options.context, (toolCallId, items) => {
       evidenceByCall.set(toolCallId, items.map((item) => ({ ...item, step: 0 })));
     }),

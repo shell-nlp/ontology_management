@@ -26,9 +26,9 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const EXAMPLES = [
-  "这个本体里有哪些对象类型？各自有多少个对象？",
+  "这个本体里有哪些对象类型？它们各自有哪些属性？",
   "有哪些对象类型之间有父子关系？",
-  "把所有对象和它们之间的关系列出来",
+  "把所有对象类型和它们之间的关系类型列出来",
   "本体里定义了哪些可以直接改数据的动作？",
 ];
 
@@ -140,7 +140,7 @@ function formatArgument(value: unknown): string {
 /**
  * 一行放得下的入参摘要，形如 `type_name="专线产品用户"  limit=20`。
  *
- * 同一轮里模型常连着调好几次同一个工具（截图里 query_object_instance 出现九次），
+ * 同一轮里模型常连着调好几次同一个工具（比如连着好几次 search_schema），
  * 只看工具名根本分不出哪一步查了什么 —— 所以入参要在行上就能看见，点开再看完整 JSON。
  */
 function argumentSummary(args: Record<string, unknown> | undefined): string {
@@ -578,8 +578,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             <div className="qa-empty-mark"><Sparkles size={20} /></div>
             <h3>问一个业务问题，看模型怎么在本体上查证</h3>
             <p>
-              模型只能通过只读工具读取这个本体：先检索概念，再取对象与子图，最后给结论。
-              思考和每一步查询都会实时显示，结论里引用的对象可以直接点开核对。
+              模型只能通过只读工具读这个本体的定义：先检索概念，再读对象类型与动作，最后给结论。
+              思考和每一步查询都会实时显示，每一步传了什么参数、拿到什么返回，都能展开核对。
             </p>
             {!published && <p className="qa-warn"><AlertCircle size={14} />当前本体还没有发布版本。问答只在已发布的本体与图库上跑，先去「本体草稿」发布一次。</p>}
             <div className="qa-examples">

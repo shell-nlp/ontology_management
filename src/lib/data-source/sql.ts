@@ -4,8 +4,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { DataSource, type DataSourceOptions } from "typeorm";
+import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 
+import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, statementTimeoutStatements } from "@/lib/data-source/sql-guard";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,
@@ -17,6 +18,8 @@ import {
   type DataViewPreview,
   type DataViewRef,
   type DataViewSummary,
+  type SqlQueryResult,
+  type TableDdl,
 } from "@/lib/data-source/types";
 
 /**
@@ -34,6 +37,12 @@ const CONNECT_TIMEOUT_MS = 8000;
 const PREVIEW_LIMIT_MAX = 200;
 const VIEW_LIMIT_MAX = 5000;
 const DEFAULT_PREVIEW_ROWS = 20;
+/** 只读查询：给模型看的默认行数与硬上限；超时就放弃，别让一条语句拖着整个服务。 */
+const DEFAULT_QUERY_ROWS = 50;
+const QUERY_LIMIT_MAX = 500;
+const QUERY_TIMEOUT_MS = 15_000;
+/** 原始 DDL 可能很长（Oracle 会带存储子句），截到这里为止。 */
+const DDL_LIMIT = 8000;
 
 /**
  * 结构清单一次读取不便宜：Oracle 要扫一遍数据字典，PG / MySQL 要走一次 ORM 的 getTables。
@@ -388,6 +397,82 @@ async function readColumnsFromOracle(connection: DataSource, container: string, 
   }));
 }
 
+/**
+ * 开只读事务。语句必须落在**同一根连接**上，所以走 QueryRunner —— 它拿到连接后会一直握着，
+ * 两次 query 不会跑到不同连接上去。起不来时返回 false：驱动可能是自动提交模式
+ * （Oracle Thin 那类），这时只剩词法闸门在挡，要如实报出去。
+ */
+async function beginReadOnlyTransaction(runner: QueryRunner, kind: DataSourceKind) {
+  try {
+    await runner.query(beginReadOnlyStatement(kind));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 库里自带的原始 DDL：MySQL 用 SHOW CREATE TABLE，Oracle 用 DBMS_METADATA.GET_DDL。
+ * PostgreSQL 没有等价的一条语句（完整答案在 pg_dump 里），不硬凑，直接走还原路径。
+ * 没权限 / 版本不支持时返回 null 并带上原因 —— 这不是错误，是"这条拿不到，换一条路"；
+ * 原因要留着，否则用户看到"还原的 DDL"会以为是实现偷懒。
+ */
+async function nativeDdl(connection: DataSource, kind: DataSourceKind, hit: CatalogObject, schema: string): Promise<{ ddl: string | null; error?: string }> {
+  try {
+    if (kind === "MYSQL") {
+      const rows = (await connection.query(`SHOW CREATE TABLE ${qualifiedName(kind, schema, hit.name)}`)) as Record<string, unknown>[];
+      const row = Array.isArray(rows) ? rows[0] : null;
+      // 表给 Create Table、视图给 Create View，认列名不如认"哪一列是 CREATE ..."。
+      const value = row ? Object.entries(row).find(([key]) => /^create\s+(table|view)$/i.test(key))?.[1] : null;
+      return { ddl: typeof value === "string" && value.trim() ? value.trim() : null };
+    }
+    if (kind === "ORACLE") {
+      const type = hit.kind === "view" ? "VIEW" : "TABLE";
+      const rows = (await connection.query(
+        `SELECT DBMS_METADATA.GET_DDL(${quoteLiteral(type)}, ${quoteLiteral(hit.name)}, ${quoteLiteral(schema)}) AS "ddl" FROM DUAL`,
+      )) as Record<string, unknown>[];
+      const value = Array.isArray(rows) ? rows[0]?.ddl ?? rows[0]?.DDL : null;
+      return { ddl: typeof value === "string" && value.trim() ? value.trim() : null };
+    }
+  } catch (error) {
+    // 权限不够 / 对象类型不支持：交给按列元数据还原的那条路。
+    return { ddl: null, error: error instanceof Error ? error.message.split("\n")[0] : String(error) };
+  }
+  return { ddl: null };
+}
+
+/**
+ * 按列元数据还原一份建表语句。注释的写法按库分：MySQL 写在列后面，PG / Oracle 用 COMMENT ON。
+ * 视图还原不出 SELECT 定义（那不在列元数据里），就老实把列清单列成注释，别编一个假的 CREATE VIEW。
+ */
+function ddlFromColumns(kind: DataSourceKind, schema: string, name: string, objectKind: CatalogObject["kind"], columns: DataViewField[]) {
+  const target = qualifiedName(kind, schema, name);
+  if (objectKind === "view") {
+    return [
+      `-- 视图 ${target}：下面是它对外暴露的列。`,
+      "-- 视图的 SELECT 定义不在列元数据里，用数据库自带的工具看（或这个数据源上改用能取到原始 DDL 的库）。",
+      ...columns.map((column) => `--   ${quoteIdentifier(kind, column.name)} ${column.dataType || "TEXT"}${column.nullable ? "" : " NOT NULL"}`),
+    ].join("\n");
+  }
+
+  const lines = columns.map((column) => {
+    const parts = [`  ${quoteIdentifier(kind, column.name)} ${column.dataType || "TEXT"}`];
+    if (!column.nullable) parts.push("NOT NULL");
+    if (column.comment && kind === "MYSQL") parts.push(`COMMENT ${quoteLiteral(column.comment)}`);
+    return parts.join(" ");
+  });
+  const primary = columns.filter((column) => column.primaryKey).map((column) => quoteIdentifier(kind, column.name));
+  if (primary.length) lines.push(`  PRIMARY KEY (${primary.join(", ")})`);
+
+  const statements = [`CREATE TABLE ${target} (\n${lines.join(",\n")}\n);`];
+  if (kind !== "MYSQL") {
+    for (const column of columns) {
+      if (column.comment) statements.push(`COMMENT ON COLUMN ${target}.${quoteIdentifier(kind, column.name)} IS ${quoteLiteral(column.comment)};`);
+    }
+  }
+  return statements.join("\n");
+}
+
 export async function createSqlConnector(kind: DataSourceKind, record: DataSourceRecord, credentials: DataSourceCredentials): Promise<DataSourceConnector> {
   const container = resolveContainer(kind, record);
   // Oracle 旧版本必须走 Thick 模式：在建连接之前先把 Instant Client 装上（幂等）。
@@ -491,6 +576,74 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           columns: list.length ? Object.keys(list[0]) : [],
           rows: list.map(normalizeRow),
           truncated: list.length >= rows,
+        };
+      });
+    },
+
+    /**
+     * 只读查询。两道闸：先用词法闸门看语句"长得像不像查询"，再把它包进只读事务里执行 ——
+     * 后一道是权威的，DML / DDL 会被库自己拒掉；有的驱动起不了只读事务时会如实报 false。
+     */
+    async runReadOnlyQuery(sql: string, options: { limit?: number } = {}): Promise<SqlQueryResult> {
+      const statement = assertReadOnlySql(sql);
+      const rows = clampLimit(options.limit ?? DEFAULT_QUERY_ROWS, QUERY_LIMIT_MAX, DEFAULT_QUERY_ROWS);
+      const timeout = statementTimeoutStatements(kind, QUERY_TIMEOUT_MS);
+      return withConnection(kind, record, credentials, async (_info, connection) => {
+        const runner = connection.createQueryRunner();
+        try {
+          // MySQL 的超时是会话级的，必须赶在事务之前设；PG 的是事务内的 SET LOCAL。
+          for (const setup of timeout.before) await runner.query(setup).catch(() => undefined);
+          const readOnlyTransaction = await beginReadOnlyTransaction(runner, kind);
+          for (const setup of timeout.inside) await runner.query(setup).catch(() => undefined);
+
+          const raw = await runner.query(boundedStatement(kind, statement, rows));
+          const list = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+          return {
+            statement,
+            columns: list.length ? Object.keys(list[0]) : [],
+            rows: list.slice(0, rows).map(normalizeRow),
+            rowLimit: rows,
+            truncated: list.length > rows,
+            readOnlyTransaction,
+          };
+        } finally {
+          // 只读事务没什么可提交的，一律回滚收尾（也顺手把没结束的事务关掉）。
+          await runner.query("ROLLBACK").catch(() => undefined);
+          await runner.release();
+        }
+      });
+    },
+
+    /** 建表语句：能拿到库里的原始 DDL 就用原始的，拿不到就按列元数据还原，并说明差在哪。 */
+    async describeTableDdl(view: DataViewRef): Promise<TableDdl> {
+      return withConnection(kind, record, credentials, async (_info, connection) => {
+        const hit = await locate(connection, view.name);
+        const schema = hit.schema || container;
+        const native = await nativeDdl(connection, kind, hit, schema);
+        if (native.ddl) {
+          return {
+            schema,
+            name: hit.name,
+            kind: hit.kind,
+            ddl: native.ddl.slice(0, DDL_LIMIT),
+            source: "native" as const,
+            ...(native.ddl.length > DDL_LIMIT ? { truncatedAt: DDL_LIMIT } : {}),
+            notes: ["这段是数据库自带的元数据接口给出的原始语句。"],
+          };
+        }
+        const columns = await readColumns(connection, hit.name);
+        const restored = ddlFromColumns(kind, schema, hit.name, hit.kind, columns);
+        return {
+          schema,
+          name: hit.name,
+          kind: hit.kind,
+          ddl: restored.slice(0, DDL_LIMIT),
+          source: "metadata" as const,
+          ...(restored.length > DDL_LIMIT ? { truncatedAt: DDL_LIMIT } : {}),
+          notes: [
+            "这份语句由列元数据还原，不是库里的原始 DDL：默认值、索引、分区、外键、字符集这些不在里面。",
+            ...(native.error ? [`取原始 DDL 没成功（${native.error}），所以走了还原这条路。`] : []),
+          ],
         };
       });
     },

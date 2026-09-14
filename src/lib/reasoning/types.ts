@@ -11,7 +11,17 @@
  * AI SDK 用 jsonSchema() 包一层当 inputSchema，MCP 服务端直接把同一份暴露给外部客户端，
  * 不会出现"两边各维护一份 schema、改了一边忘了另一边"。
  */
-export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
+export type ToolSpec = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  /**
+   * 暂时不使用的工具：留在这份目录里，MCP 调试页会把它灰着显示（说明它存在），
+   * 但**不暴露**给模型、也不给外部 MCP 客户端 —— 它们只能看到没被标记的那些。
+   * 要恢复就把这个标记去掉，实现本来就在 `runReasoningTool` 里。
+   */
+  disabled?: boolean;
+};
 
 export type ReasoningEvidence = {
   kind: "OBJECT" | "RELATIONSHIP" | "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION";

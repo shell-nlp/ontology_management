@@ -18,13 +18,20 @@ export const MCP_SERVER_NAME = "ontology-management";
 export const MCP_SERVER_VERSION = "0.1.0";
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
-export type McpToolGroup = { key: string; label: string; description: string };
+export type McpToolGroup = { key: string; label: string; description: string; disabled?: boolean };
 
-/** 分组照 bkn-studio 的说法：先找本体，再查模型，最后查实例。顺序就是使用顺序。 */
+/**
+ * 分组照 bkn-studio 的说法：先找本体，再查模型，最后查实例。顺序就是使用顺序。
+ *
+ * 「对象实例与关系子图查询」这一组标了 disabled：2026-09-14 起只在对象类型 / 关系类型这一层
+ * 推理，不查实例。它在 MCP 调试页上照样列出来，但是灰的、点不动，一眼能看出"有这两个工具、暂时不用"；
+ * 外部客户端的 tools/list 里没有它们（见下面 MCP_TOOLS 与 MCP_TOOL_CATALOG 的区别）。
+ */
 export const MCP_TOOL_GROUPS: McpToolGroup[] = [
   { key: "discovery", label: "本体与 Schema", description: "本体列表与它落在哪个存储上" },
   { key: "model", label: "本体模型检索", description: "语义检索、对象类型、关系类型、动作定义" },
-  { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图" },
+  { key: "data", label: "数据来源（只读）", description: "对象类型绑定的表：建表语句与只读查询" },
+  { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图", disabled: true },
 ];
 
 const TOOL_GROUP: Record<string, string> = {
@@ -32,6 +39,8 @@ const TOOL_GROUP: Record<string, string> = {
   search_schema: "model",
   get_object_type: "model",
   list_actions: "model",
+  get_table_ddl: "data",
+  run_sql: "data",
   query_object_instance: "query",
   query_instance_subgraph: "query",
 };
@@ -41,6 +50,8 @@ const TOOL_TITLES: Record<string, string> = {
   search_schema: "语义检索",
   get_object_type: "对象类型详情",
   list_actions: "动作定义",
+  get_table_ddl: "建表语句",
+  run_sql: "只读查询",
   query_object_instance: "对象实例查询",
   query_instance_subgraph: "关系子图查询",
 };
@@ -51,6 +62,8 @@ export type McpTool = {
   group: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** 暂时不使用的工具：只出现在调试页的目录里，不出现在 tools/list。 */
+  disabled?: boolean;
 };
 
 const ONTOLOGY_PROPERTY = {
@@ -66,6 +79,7 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
     title: TOOL_TITLES[tool.name] ?? tool.name,
     group: TOOL_GROUP[tool.name] ?? "model",
     description: tool.description,
+    disabled: tool.disabled,
     inputSchema: {
       type: "object",
       properties: { ontology_id: ONTOLOGY_PROPERTY, ...(parameters.properties ?? {}) },
@@ -74,7 +88,8 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
   };
 }
 
-export const MCP_TOOLS: McpTool[] = [
+/** 给「MCP 调试」页看的全量目录：**含**暂时不用的工具，界面把它们灰着显示。 */
+export const MCP_TOOL_CATALOG: McpTool[] = [
   {
     name: "list_ontologies",
     title: TOOL_TITLES.list_ontologies,
@@ -84,6 +99,9 @@ export const MCP_TOOLS: McpTool[] = [
   },
   ...REASONING_TOOLS.map(withOntology),
 ];
+
+/** 真正对外提供的工具：tools/list 与 tools/call 都走这一份，暂时不用的不在其中。 */
+export const MCP_TOOLS: McpTool[] = MCP_TOOL_CATALOG.filter((tool) => !tool.disabled);
 
 export function findMcpTool(name: string) {
   return MCP_TOOLS.find((tool) => tool.name === name) ?? null;

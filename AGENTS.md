@@ -259,9 +259,10 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 已落地：
 
-- `src/lib/reasoning/tools.ts`：五个**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
-  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定）、`query_object_instance`（走图库，带类型传播）、
-  `query_instance_subgraph`、`list_actions`。排序是纯函数（`rankSchemaConcepts`），有单测。
+- `src/lib/reasoning/tools.ts`：**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
+  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定）、`get_table_ddl`（表 / 视图的建表语句）、
+  `run_sql`（对象类型绑定的表上的只读 SQL）、`list_actions`。
+  另外两个实例工具留在目录里但标了 `disabled`（见下面「推理范围」）。排序是纯函数（`rankSchemaConcepts`），有单测。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
   事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
 - `src/lib/reasoning/provider.ts`：把"OpenAI 兼容端点 + 三个环境变量"翻译成 AI SDK 的模型对象，
@@ -278,7 +279,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
     （第几步 · 调了什么 · **传了什么入参** · 命中多少 · 耗时），展开能看到这一步的完整入参与原始返回；依据里的对象 chip
     **点一下直接跳到对象页并选中它**。颜色只在依据上用一处「核实绿」（#0f766e），其余沿用平台蓝。
 - **MCP 调试**（`src/components/mcp-studio.tsx`）：左列工具清单（按「本体与 Schema / 本体模型检索 /
-  对象实例与关系子图查询」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
+  对象实例与关系子图查询（暂时不用，灰着）」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
   页面调的是**真实 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用。
 - **接入配置一键复制**（2026-09-14）：连接面板里按客户端给三段可直接粘贴的配置 ——
   **Claude Code**（`claude mcp add --transport http <name> <url> --header "Authorization: Bearer …"` 与项目
@@ -350,6 +351,52 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 纯函数在 `conversation-view.ts`（标题截断、日期分组、时间文案），有单测。**别从
   `@/lib/reasoning/conversations` 里 import 界面要用的东西** —— 它会拉起 pg 连接池，
   那是服务端专用的（`ConversationSummary` / `ConversationMessage` 这类契约类型定义在纯模块里）。
+
+**推理范围：只在对象类型 / 关系类型这一层**（2026-09-14 决定，用户提出）：
+
+只回答"本体里有哪些对象类型、它们的属性 / 父类 / 关系类型 / 动作 / 绑了哪张表"，**不查本体实例**
+（图库里的对象与关系）。要真实数据有另一条通道：**对象类型绑定的源表**，用 `get_table_ddl` 看结构、
+`run_sql` 只读查数（见下一节）。两者不要混起来说 —— "本体里没有对象"不等于"表里没有数据"。
+做法上分三层，缺一层就不成立：
+
+1. **工具层**：`REASONING_TOOLS` 里的 `query_object_instance` / `query_instance_subgraph` 标 `disabled: true`。
+   `reasoningToolSet()` 与 `MCP_TOOLS`（tools/list、tools/call 用的那份）都按它过滤，所以模型与外部客户端
+   都拿不到；`MCP_TOOL_CATALOG` 是全量目录，只给「MCP 调试」页，界面把 `disabled` 的那组**灰着列出来**
+   （标题挂「暂不使用」、按钮点不动、顶部把可用数与暂不使用数分开写）—— 看得见"有这么两个工具，今天不用"。
+   实现还留在 `runReasoningTool` 的两个 case 里，要恢复就删掉 `disabled`。
+2. **提示词层**：system prompt 明确写"这一版只在本体定义这一层推理"，并要求被问到实例时直接说明范围、
+   指到「对象」「图谱」页，**不许拿数量编答案**。
+3. **数据层**：给模型看的文字里不出现实例层面的数字 —— 对象数 / 关系数已从 `schemaBrief`、`search_schema`
+   的 `detail`、`get_object_type` 的 payload 里去掉（`weight` 仍按对象数算，只用于"没命中时的兜底排序"，
+   不进文案）。同时那条兜底**不再按「有实例」筛**：图库还空着的本体以前一条都返回不了，现在不会。
+
+加新工具或新字段时守住这条：**模型回答不了的层，就别把那一层的数字给它**。
+
+**数据来源：只读 SQL 与建表语句**（2026-09-14，用户提出）：
+
+本体这一层只有定义，要具体数据就得走"对象类型 → 它绑定的表"。两个工具把这条路接上，
+闸门写在 `src/lib/data-source/sql-guard.ts`（纯函数，有单测），**两道闸是有意重复的**：
+
+- **词法闸门**判断语句"长得像不像查询"：必须以 SELECT / WITH / SHOW / DESC / DESCRIBE / EXPLAIN / VALUES /
+  TABLE 开头；多条语句（分号）、`INTO`、INSERT / MERGE / DROP / ALTER / CREATE / GRANT / CALL 等一律拦下。
+  判断前先剥掉注释与字符串字面量，所以 `SELECT '删库'` 放行、`/* x */ DROP TABLE t` 照样被拦。
+  取值取向是**宁可偶尔误杀**（模型换个写法重来），也不要放过一次写操作。
+- **数据库的只读事务**是权威的那道：PG `BEGIN READ ONLY`、MySQL `START TRANSACTION READ ONLY`、
+  Oracle `SET TRANSACTION READ ONLY`（都跑在同一个 QueryRunner 上，两次 query 不会跑到不同连接）。
+  驱动起不了只读事务时（自动提交模式那类）如实返回 `readOnlyTransaction: false`，工具把它报给模型，
+  不让人以为库里有保险。实测这台 Oracle 是 `true`。
+- **限量与超时**：SELECT / WITH 会被套一层行数上限（Oracle 用 ROWNUM 包一层，其它用派生表 + LIMIT），
+  默认 50、最大 500；PG 加 `SET LOCAL statement_timeout`，MySQL 试 `SET SESSION MAX_EXECUTION_TIME`
+  （MariaDB / 旧版不认就算了），Oracle 这一层没有等价开关。
+- **DDL**：能拿原始语句就用原始的（MySQL `SHOW CREATE TABLE`、Oracle `DBMS_METADATA.GET_DDL`），
+  拿不到就按列元数据还原，并在 `notes` 里写明"差在哪、为什么走了还原这条路"。
+  实测这台 Oracle 报 `ORA-31603`（连接用户读不到那个 schema 的元数据），于是输出还原版
+  `CREATE TABLE` + `COMMENT ON COLUMN`（注释取自 `all_col_comments`，是真值不是猜的）。
+- `data_source` 用**数据资源名**（不是 id、不是图存储连接）；资源清单随 `schemaBrief` 进 system prompt，
+  名字写错时错误信息会把当前登记的资源全列出来，模型可以自己改对。
+
+已知缺口：`run_sql` 还没单独写审计 —— 谁在什么时候跑了哪条 SQL 只能在对话历史里看到。
+要补得先把 actor 透进 `ToolContext`（工具层现在拿不到是谁在调）。
 
 两条刻意的边界，改动时别无意破坏：
 

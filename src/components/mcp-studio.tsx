@@ -15,14 +15,14 @@ import "./mcp-studio.css";
 
 type SchemaProperty = { type?: string; description?: string; items?: { type?: string } };
 type ToolSchema = { type?: string; properties?: Record<string, SchemaProperty>; required?: string[] };
-type McpTool = { name: string; title: string; group: string; description: string; inputSchema: ToolSchema };
+type McpTool = { name: string; title: string; group: string; description: string; inputSchema: ToolSchema; disabled?: boolean };
 type McpInfo = {
   endpoint: string;
   absoluteUrl: string;
   protocolVersion: string;
   transport: string;
   tokenConfigured: boolean;
-  groups: { key: string; label: string; description: string }[];
+  groups: { key: string; label: string; description: string; disabled?: boolean }[];
   tools: McpTool[];
 };
 
@@ -328,23 +328,29 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
         <aside className="mcp-tools panel functional-panel">
           <div className="mcp-tools-head">
             <span className="eyebrow">工具</span>
-            <b>{info.tools.length} 个</b>
+            <span className="mcp-tools-count">
+              <b>{info.tools.filter((tool) => !tool.disabled).length} 个</b>
+              {/* 灰着列出来的那些不算"可用"，单独说一句，别让人以为总数就是可用的。 */}
+              {info.tools.some((tool) => tool.disabled) && <em>{info.tools.filter((tool) => tool.disabled).length} 个暂不使用</em>}
+            </span>
           </div>
           {info.groups.map((group) => {
             const tools = info.tools.filter((tool) => tool.group === group.key);
             if (!tools.length) return null;
             return (
-              <div className="mcp-group" key={group.key}>
+              <div className={`mcp-group${group.disabled ? " parked" : ""}`} key={group.key}>
                 <div className="mcp-group-head">
-                  <b>{group.label}</b>
+                  <b>{group.label}{group.disabled && <em>暂不使用</em>}</b>
                   <small>{group.description}</small>
                 </div>
                 {tools.map((tool) => (
                   <button
                     key={tool.name}
                     type="button"
-                    className={`mcp-tool${tool.name === activeName ? " active" : ""}`}
+                    className={`mcp-tool${tool.name === activeName ? " active" : ""}${tool.disabled ? " parked" : ""}`}
                     onClick={() => select(tool)}
+                    disabled={tool.disabled}
+                    title={tool.disabled ? "暂时不使用：这一版只在对象类型 / 关系类型这一层推理，不查实例" : tool.title}
                   >
                     <b>{tool.title}</b>
                     <code>{tool.name}</code>

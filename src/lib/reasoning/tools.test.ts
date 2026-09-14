@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longestCommonSubstring, queryTokens, rankSchemaConcepts, runReasoningTool, schemaConcepts } from "@/lib/reasoning/tools";
+import { longestCommonSubstring, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts } from "@/lib/reasoning/tools";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -55,16 +55,19 @@ describe("longestCommonSubstring", () => {
 });
 
 describe("schemaConcepts", () => {
-  it("对象类型带上对象数，属性带上类型，关系带上端点", () => {
+  it("对象类型带上父类与属性，关系带上端点；实例层面的数字不进文案", () => {
     const concepts = schemaConcepts(definition(), runtimeTypes);
     const 用户 = concepts.find((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")!;
-    expect(用户.detail).toContain("对象数 1");
+    expect(用户.detail).toContain("属性 姓名");
+    // 只在定义这一层推理：给模型看的文案里不该出现对象数 / 关系数
+    expect(用户.detail).not.toContain("对象数");
     const 专线 = concepts.find((item) => item.kind === "OBJECT_TYPE" && item.name === "专业线产品用户")!;
     expect(专线.detail).toContain("父类 用户");
     // 继承来的属性也算这个类的属性
     expect(concepts.some((item) => item.kind === "PROPERTY" && item.name === "专业线产品用户.姓名")).toBe(true);
     const 下单 = concepts.find((item) => item.kind === "RELATION_TYPE")!;
     expect(下单.detail).toContain("用户 → 订单");
+    expect(下单.detail).not.toContain("关系数");
     const 停机 = concepts.find((item) => item.kind === "ACTION")!;
     expect(停机.detail).toContain("作用于 专业线产品用户");
   });
@@ -86,10 +89,16 @@ describe("rankSchemaConcepts", () => {
     expect(ranked.some((item) => item.kind === "ACTION" && item.name === "停机")).toBe(true);
   });
 
-  it("完全没命中时按对象数兜底，不至于返回空", () => {
+  it("完全没命中时兜底给一批概念，不至于返回空", () => {
     const ranked = rankSchemaConcepts(schemaConcepts(definition(), runtimeTypes), "zzz", 3);
     expect(ranked.length).toBeGreaterThan(0);
     expect(ranked[0].reason).toContain("兜底");
+  });
+
+  it("图库还是空的时候也兜得住（不按「有实例」筛）", () => {
+    const empty: RuntimeTypeSet = { ...runtimeTypes, labels: [], relationshipTypes: [], entityCount: 0, relationshipCount: 0 };
+    const ranked = rankSchemaConcepts(schemaConcepts(definition(), empty), "zzz", 3);
+    expect(ranked.length).toBeGreaterThan(0);
   });
 
   it("max_concepts 生效", () => {
@@ -98,6 +107,17 @@ describe("rankSchemaConcepts", () => {
 });
 
 const 数据资源 = "99999999-9999-4999-8999-999999999999";
+
+describe("工具范围", () => {
+  it("给模型的是定义层工具，实例工具留在目录里但标成 disabled", () => {
+    const active = REASONING_TOOLS.filter((tool) => !tool.disabled).map((tool) => tool.name);
+    const parked = REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name);
+    // 这一版只在对象类型 / 关系类型这一层推理：实例工具不进模型、不进 MCP 的 tools/list，
+    // 只在「MCP 调试」页灰着显示。要恢复实例推理，就把下面两个名字的 disabled 去掉。
+    expect(active).toEqual(["search_schema", "get_object_type", "get_table_ddl", "run_sql", "list_actions"]);
+    expect(parked).toEqual(["query_object_instance", "query_instance_subgraph"]);
+  });
+});
 
 /** 把「专业线产品用户」绑到一张表上，用来验证工具会把绑定翻译成可读文本。 */
 function boundDefinition(): OntologyDefinition {
