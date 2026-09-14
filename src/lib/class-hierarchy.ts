@@ -209,15 +209,15 @@ export function validateClassHierarchy(nodes: readonly HierarchyNode[]): Hierarc
   for (const node of nodes) {
     for (const parentId of parentIdsOf(node)) {
       if (parentId === node.id) {
-        violations.push({ rule: `${node.name}.parents`, message: `类「${node.name}」把自己设成了父类。`, count: 1 });
+        violations.push({ rule: `${node.name}.parents`, message: `对象类型「${node.name}」把自己设成了父类。`, count: 1 });
       } else if (!byId.has(parentId)) {
-        violations.push({ rule: `${node.name}.parents`, message: `类「${node.name}」的父类不存在，可能已经被删掉了。`, count: 1 });
+        violations.push({ rule: `${node.name}.parents`, message: `对象类型「${node.name}」的父类不存在，可能已经被删掉了。`, count: 1 });
       }
     }
   }
 
   for (const cycle of findInheritanceCycles(nodes)) {
-    violations.push({ rule: "class.inheritance.cycle", message: `类继承绕成了环：${cycle.join(" → ")}。`, count: 1 });
+    violations.push({ rule: "class.inheritance.cycle", message: `对象类型继承绕成了环：${cycle.join(" → ")}。`, count: 1 });
   }
 
   for (const node of nodes) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Boxes, Clock3, Database, Download, FileJson, Layers, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { api, describeApiError } from "@/lib/api-client";
 import { graphColor } from "@/lib/graph-palette";
@@ -225,7 +225,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
   // 导入模式专用：原文件内容 + 客户端解析出的预览（真正的校验在服务端）。
   const [fileText, setFileText] = useState("");
   const [fileName, setFileName] = useState("");
-  const [preview, setPreview] = useState<{ name: string; identifier: string; description: string; tags: string[]; counts: string } | null>(null);
+  const [preview, setPreview] = useState<{ name: string; identifier: string; description: string; tags: string[]; counts: string; sourceFormat: string } | null>(null);
   const [fileError, setFileError] = useState("");
   const [warnings, setWarnings] = useState<string[] | null>(null);
   /** 导入已经落库，等着走收尾（关弹窗 + 打开）。有提醒时中间会停一下。 */
@@ -244,27 +244,33 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
     if (!file) return;
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as { format?: unknown; formatVersion?: unknown; ontology?: { name?: unknown; identifier?: unknown; description?: unknown; tags?: unknown }; statistics?: Record<string, unknown> };
-      if (parsed?.format !== "ontology.bundle") throw new Error("这不是本体包（缺少 format: ontology.bundle）。");
-      const source = parsed.ontology ?? {};
-      if (typeof source.name !== "string" || !source.name.trim()) throw new Error("本体包里没有本体名称。");
-      const stats = parsed.statistics ?? {};
-      const counts = [
-        `对象类型 ${Number(stats.objectTypes ?? 0)}`,
-        `关系类型 ${Number(stats.relationTypes ?? 0)}`,
-        `动作 ${Number(stats.actionTypes ?? 0)}`,
-        `规则 ${Number(stats.rules ?? 0)}`,
-      ].join(" · ");
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const asText = (value: unknown) => (typeof value === "string" ? value : "");
+      const count = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+      // 平台自己的包，或 bkn-foundry 导出的知识网络 —— 后者由服务端转换，这里只做预览。
+      const isBundle = parsed?.format === "ontology.bundle";
+      const isBkn = !isBundle && (parsed?.module_type === "knowledge_network" || (Array.isArray(parsed?.object_types) && Array.isArray(parsed?.relation_types)));
+      if (!isBundle && !isBkn) throw new Error("这既不是本体包（format: ontology.bundle），也不是 bkn 的知识网络导出。");
+
+      const source = isBundle ? ((parsed.ontology ?? {}) as Record<string, unknown>) : parsed;
+      const sourceName = asText(source.name);
+      if (!sourceName.trim()) throw new Error("文件里没有本体名称。");
+      const stats = (isBundle ? (parsed.statistics ?? {}) : {}) as Record<string, unknown>;
+      const counts = isBundle
+        ? [`对象类型 ${Number(stats.objectTypes ?? 0)}`, `关系类型 ${Number(stats.relationTypes ?? 0)}`, `动作 ${Number(stats.actionTypes ?? 0)}`, `规则 ${Number(stats.rules ?? 0)}`].join(" · ")
+        : [`对象类型 ${count(parsed.object_types)}`, `关系类型 ${count(parsed.relation_types)}`, `概念域 ${count(parsed.concept_groups)}`, `指标 ${count(parsed.metrics)}`].join(" · ");
+
       setFileText(text);
       setFileName(file.name);
       setPreview({
-        name: source.name,
-        identifier: typeof source.identifier === "string" ? source.identifier : "",
-        description: typeof source.description === "string" ? source.description : "",
+        name: sourceName,
+        identifier: asText(isBundle ? source.identifier : parsed.id),
+        description: asText(isBundle ? source.description : parsed.comment),
         tags: Array.isArray(source.tags) ? source.tags.filter((tag): tag is string => typeof tag === "string") : [],
         counts,
+        sourceFormat: isBundle ? "本体包" : "bkn 知识网络（导入时自动转换）",
       });
-      if (!name.trim()) setName(source.name);
+      if (!name.trim()) setName(sourceName);
     } catch (reason) {
       setFileError(reason instanceof Error ? reason.message : "这个文件读不出来。");
     }
@@ -310,6 +316,18 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
     await onFinished(ontologyId, name, { imported: mode === "import" });
   };
 
+  // 和「新建本体存储」弹窗一个规矩：Escape 关闭。已经导入过、正停在提醒页时，等于点「完成」。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (pending) void finish(pending.id, pending.name);
+      else onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, onClose]);
+
   const importing = mode === "import";
   const ready = Boolean(storageTargetId) && (importing ? Boolean(fileText) : Boolean(name.trim()));
 
@@ -322,7 +340,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         <h2>{importing ? "导入本体包" : "新建本体"}</h2>
         <p>
           {importing
-            ? "选一个 .ontology.json 文件，它的结构会作为新本体的草稿导入。导入不会立刻改图库——确认无误后再发布。"
+            ? "选一个 .ontology.json 本体包，或 bkn-foundry 导出的知识网络 JSON。它的结构会作为新本体的草稿导入，不会立刻改图库——确认无误后再发布。"
             : "本体是一份互相隔离的图数据。落点由存储资源决定：Jena 会自动分配一份命名图，同一个 Fuseki 里可以放多个本体。"}
         </p>
 
@@ -343,7 +361,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
           <div className="os-import-preview">
             <b>{preview.name}</b>
             {preview.identifier && <code>{preview.identifier}</code>}
-            <small>{preview.counts}</small>
+            <small>{preview.sourceFormat} · {preview.counts}</small>
             {preview.description && <span>{preview.description}</span>}
             {preview.tags.length > 0 && <div className="os-tags">{preview.tags.map((tag) => <em key={tag}><Tag size={10} />{tag}</em>)}</div>}
           </div>

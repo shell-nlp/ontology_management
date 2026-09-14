@@ -81,6 +81,8 @@
 .property-editor { display: grid; gap: 8px; max-height: 250px; overflow: auto; padding-right: 2px; }
 .property-field { display: grid; gap: 4px; color: #54706b; font-size: 10px; font-weight: 700; }
 .property-field > span em { color: #c2573f; font-style: normal; margin-left: 3px; }
+/* 显示名与机器名不一致时，把机器名收成一个小标签，填值时仍能对上字段。 */
+.property-field .property-key { margin-left: 6px; padding: 1px 5px; border-radius: 3px; background: #eef3fb; color: #6b83a8; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9.5px; font-weight: 500; }
 .property-field input, .property-field select, .property-field textarea { border: 1px solid #d2ddd7; border-radius: 4px; outline: 0; min-height: 30px; padding: 5px 8px; color: #28403d; background: #fff; font: 11px/1.5 ui-monospace, "Cascadia Code", monospace; }
 .property-field input:focus, .property-field select:focus, .property-field textarea:focus { border-color: #5b9687; box-shadow: 0 0 0 3px rgba(91, 150, 135, .11); }
 .property-field textarea { resize: vertical; }

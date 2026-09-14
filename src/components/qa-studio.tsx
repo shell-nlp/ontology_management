@@ -370,7 +370,9 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                     <span>{turn.run.model}</span>
                     <span>{(turn.run.elapsedMs / 1000).toFixed(1)}s</span>
                     <span>{turn.run.usage.totalTokens} tokens</span>
-                    {turn.run.truncated && <em>达到步数上限，结论可能不完整</em>}
+                    {/* 步数 = 模型调用次数；工具调用可能一步并发多个，所以两个数字分开显示。 */}
+                    <span>{turn.run.stepCount}/{turn.run.maxSteps} 步 · 工具 {turn.run.steps.length} 次</span>
+                    {turn.run.truncated && <em>步数用满（{turn.run.stepCount}/{turn.run.maxSteps}），模型是被拦停的，结论可能不完整</em>}
                   </footer>
                 </>
               )}

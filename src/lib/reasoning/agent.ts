@@ -88,6 +88,11 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
   /** 当前这一轮已经流出去的文字；模型若在这一轮调工具，它就是过渡语。 */
   let stepText = "";
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  /**
+   * 推理步数：一次「模型调用」算一步（AI SDK 的 step），一步里模型可以并发调多个工具。
+   * 必须和 stopWhen 用同一个单位，否则"工具调用次数"会被当成"步数"提前报上限。
+   */
+  let stepCount = 0;
 
   const agent = new ToolLoopAgent({
     model: llmModel(settings),
@@ -120,6 +125,7 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
         break;
 
       case "start-step":
+        stepCount += 1;
         stepText = "";
         break;
 
@@ -187,7 +193,8 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     }
   }
 
-  const finalAnswer = answer.trim() || (steps.length >= maxSteps ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。" : "模型没有给出结论。");
+  const exhausted = stepCount >= maxSteps;
+  const finalAnswer = answer.trim() || (exhausted ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。" : "模型没有给出结论。");
   const deduped = [...new Map(evidence.map((item) => [`${item.kind}\u0000${item.id}`, item])).values()];
   const run: ReasoningRun = {
     question,
@@ -198,7 +205,9 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     usage,
     elapsedMs: Date.now() - startedAt,
     model: settings.modelId,
-    truncated: steps.length >= maxSteps,
+    stepCount,
+    maxSteps,
+    truncated: exhausted,
   };
   emit({ type: "done", run });
   return run;

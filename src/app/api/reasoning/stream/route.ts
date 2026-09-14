@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question: input.question, steps: run.steps.length, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
       } catch (error) {
         send({ type: "error", message: error instanceof Error ? error.message : "推理失败。" });

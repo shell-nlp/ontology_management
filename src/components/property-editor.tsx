@@ -67,19 +67,22 @@ export function PropertyEditor({
     mode === "managed"
       ? definitions.map((definition) => ({
           key: definition.name,
+          label: definition.displayName?.trim() || definition.name,
+          hint: definition.description?.trim() || "",
           required: definition.required,
           dataType: definition.dataType,
           value: draft[definition.name] ?? "",
         }))
-      : rawKeys.map((key) => ({ key, required: false, dataType: "TEXT" as DataType, value: draft[key] ?? "" }));
+      : rawKeys.map((key) => ({ key, label: key, hint: "", required: false, dataType: "TEXT" as DataType, value: draft[key] ?? "" }));
 
   return (
     <div className="property-editor">
       {fields.map((field) => (
-        <label key={field.key} className={field.dataType === "TEXT_ARRAY" || field.dataType === "JSON" ? "property-field property-field-wide" : "property-field"}>
+        <label key={field.key} title={field.hint || undefined} className={field.dataType === "TEXT_ARRAY" || field.dataType === "JSON" ? "property-field property-field-wide" : "property-field"}>
           <span>
-            {field.key}
+            {field.label}
             {field.required && <em>*</em>}
+            {field.label !== field.key && <b className="property-key">{field.key}</b>}
           </span>
           {field.dataType === "BOOLEAN" ? (
             <select value={String(field.value)} onChange={(event) => update(field.key, event.target.value)}>

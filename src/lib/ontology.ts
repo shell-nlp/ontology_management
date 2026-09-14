@@ -15,7 +15,15 @@ import { LEGACY_PRIMARY_SOURCE_ID } from "@/lib/ontology-sources";
 export const propertyDataTypeSchema = z.enum(["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"]);
 
 const propertySchema = z.object({
+  /** 机器名：写入图库、接口与数据列映射都用它，改它会牵动多处，所以单独放。 */
   name: z.string().trim().min(1).max(120),
+  /**
+   * 界面上给人看的名字（Palantir 的 property display name）。
+   * 数据列名往往是 STATIS_DATE 这种，显示名才是「统计日期」。留空就退回 name。
+   */
+  displayName: z.string().trim().max(120).default(""),
+  /** 这个属性是什么、口径怎么算。导入外部本体时会带上原文说明。 */
+  description: z.string().max(300).default(""),
   dataType: propertyDataTypeSchema,
   required: z.boolean().default(false),
   unique: z.boolean().default(false),
@@ -189,6 +197,8 @@ export const ontologyDefinitionSchema = z.object({
   relationshipTypes: z.array(z.object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(100),
+    /** 这条关系类型表达什么业务含义（和类的 description 对齐）。 */
+    description: z.string().max(500).default(""),
     sourceEntityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
     targetEntityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
     properties: z.array(propertySchema).default([]),

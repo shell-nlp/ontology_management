@@ -41,7 +41,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
 }
 
 export type EntityPayload = { name: string; description: string; displayProperty: string; parents?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
-export type RelationPayload = { name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
+export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
 type DialogState =
@@ -193,7 +193,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           <Link2 size={14} />{connectFrom ? "退出连线" : "新建关系类型"}
         </button>
         <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
-        <span className="ob-count">{definition.entityTypes.length} 类 · {definition.relationshipTypes.length} 关系类型</span>
+        <span className="ob-count">{definition.entityTypes.length} 个对象类型 · {definition.relationshipTypes.length} 关系类型</span>
       </div>
 
       {connectFrom && (
@@ -334,7 +334,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           entityTypes={definition.entityTypes}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: RelationPayload = { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties };
+            const body: RelationPayload = { name: payload.name, description: payload.description, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties };
             if (dialog.mode === "create") { await onCreateRelation(dialog.id, body); setSelected({ kind: "relation", id: dialog.id }); }
             else await onUpdateRelation(dialog.id, body);
           }}
@@ -369,7 +369,7 @@ function InvolvedActions({ definition, entityTypeId, relationTypeId, onOpen }: {
       <p className="ob-inspector-note">对象类型在数据里体现为节点上的这个标签。动作定义在对象类型上，作用在属于它的对象（实例）上。</p>
       {scoped.length > 0 && (
         <div className="ob-actions">
-          <b>{relationTypeId ? "会建出这条关系类型的动作" : "定义在这个类上的动作"}</b>
+          <b>{relationTypeId ? "会建出这条关系类型的动作" : "定义在这个对象类型上的动作"}</b>
           {scoped.map(({ action, roles }) => (
             <button key={action.id} onClick={onOpen} disabled={!onOpen} title="去「动作」页运行或编辑">
               <span>{action.name || action.code || "未命名动作"}</span>

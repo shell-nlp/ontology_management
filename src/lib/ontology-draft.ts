@@ -6,7 +6,8 @@ import type { LegacyEntitySource } from "@/lib/ontology-sources";
  * 但 `displayProperty` 允许缺省——新建类型时前端先不写这一项。
  */
 export type PropertyDataType = OntologyDefinition["entityTypes"][number]["properties"][number]["dataType"];
-export type Property = { name: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean; sourceField?: string; sourceId?: string };
+/** 属性的界面形态：`name` 是机器名，`displayName` / `description` 是给人看的（导入外部本体时会带上原文）。 */
+export type Property = { name: string; displayName?: string; description?: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean; sourceField?: string; sourceId?: string };
 
 /** 类的一份数据来源：一张表/视图，属性和列一一对应。 */
 export type EntitySource = EntitySourceDefinition;
@@ -33,7 +34,7 @@ export function emptyEntitySource(id = "primary"): EntitySource {
 
 /** 来源清单的读写与自检都在 @/lib/ontology-sources，这里转出去，界面只认这一个入口。 */
 export { LEGACY_PRIMARY_SOURCE_ID, entitySources, newEntitySourceId, sourceFieldsKey, sourceName, sourceRoleLabel, validateEntitySources, type SourceViolation } from "@/lib/ontology-sources";
-export type RelationType = { id: string; name: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
+export type RelationType = { id: string; name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 export type ActionParameter = OntologyDefinition["actionTypes"][number]["params"][number];
 export type ActionValueSource = OntologyDefinition["actionTypes"][number]["edits"][number]["assignments"][number]["value"];
 export type ActionEdit = OntologyDefinition["actionTypes"][number]["edits"][number];

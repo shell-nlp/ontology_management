@@ -205,7 +205,7 @@ function mapDataSources(bundle: OntologyBundle, localSources: LocalSourceRef[], 
       .filter((type) => type.sources.some((source) => source.dataSourceId === reference.id))
       .map((type) => type.name);
     warnings.push(
-      `数据资源「${sourceLabel(reference)}」在本机没有登记，${holders.length ? `类「${holders.join("、")}」的` : ""}来源绑定已留空，导入后请重新选表。`,
+      `数据资源「${sourceLabel(reference)}」在本机没有登记，${holders.length ? `对象类型「${holders.join("、")}」的` : ""}来源绑定已留空，导入后请重新选表。`,
     );
   }
   return map;

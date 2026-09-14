@@ -18,6 +18,10 @@
   例外是复合词——父类 / 子类 / 分类 / 类型 等，按汉语习惯保留。
 - 「关系」**不是**「关系类型」的短称——指类型时必须写全「关系类型」，因为「关系」已经是实例层的词。
 - 与 Palantir 文档对齐时写成「对象类型（Object Type）」，不要在同一处来回切换两种叫法。
+- **「界面」包括会显示给用户的消息**：校验结果、发布拦截原因、导入提醒、`notify()` / `throw new Error()` 里的文案。
+  这些和按钮、标题一样按界面算，一律写「对象类型」。代码注释、测试名、内部变量名不受此限。
+- 自查办法（提交前跑一遍，只应剩下"这类问题""这几类关系"这种普通汉语）：
+  `rg -n "类「|新增类|类清单|起始类|终止类|该类的|这个类的" src`（剩下的命中应该只在代码注释或测试名里）
 
 记录时间：2026-09-13。界面上的并列名词是 **对象类型 · 对象 · 关系类型 · 关系 · 动作**：
 
@@ -207,6 +211,9 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 - 接口：`GET /api/ontologies/:ontologyId/export`（取已发布版本的定义，没有就取草稿）、
   `POST /api/ontologies/import`（建本体 + 写草稿，**不发布**）。
 - 界面：本体卡片上的「导出」；页头「导入本体包」。
+- **导入接受两种文件**：平台自己的 `ontology.bundle`，以及 bkn-foundry 导出的知识网络
+  （`module_type: knowledge_network`）。后者由 `src/lib/bkn-import.ts` 先转成标准本体包，
+  **转换时丢掉的每一类东西都进 warnings**（概念域分组、指标、关系连接规则、平台不认的属性类型……），不静默丢。
 
 三条不变量，改动时别破：
 
@@ -220,6 +227,19 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 | E1 | 带实例导出 | 只导结构，`statistics.objects` 只是"导出端当时有多少" | 加可选 `instances` 字段（nodes / relationships），导入同样换 id、按类名认对象类型。因为是可选字段，格式版本不用动 |
 | E2 | 概念域分组与指标 | 本体模型里**没有**这两个概念（bkn 的 `concept_groups` / `metrics`） | 先在定义层加模型，再进本体包。别为了"和 bkn 对齐"往包里塞平台不认识的段 |
 | E3 | 包与已有本体合并 | 导入只有"新建"，不能"并进已有本体" | 要合并得按名字匹配类/关系类型并让人确认冲突，属于独立特性，别顺手做 |
+| E4 | bkn 的关系连接规则 | 导入 bkn 知识网络时 `mapping_rules`（两边哪些字段相等就连边）没有模型可落，逐条进了 warnings | 即「关系类型的数据来源」（D2）。先在定义层给关系类型加映射模型，再让 bkn 转换与本体包都带上 |
+### 属性与关系类型的说明文本
+
+记录时间：2026-09-14。为了让外部本体能带说明进来补的字段（对标 Palantir 的 property display name / description）：
+
+- 属性（`properties[]`）：`displayName`（给人看的名字，留空退回 `name`）、`description`（这是什么、口径怎么算）。
+  列名往往是 `STATIS_DATE` 这种，显示名才是「统计日期」。
+- 关系类型（`relationshipTypes[]`）：`description`，和类的 `description` 对齐。
+
+两处都只服务界面与语义，**不落图库**：Jena 侧照旧只写 `rdf:type` / `subClassOf` / `domain` / `range`。
+界面上：类型编辑弹窗里可编辑，属性列表显示名当主标题、机器名收成小标签、说明跟在后面；
+对象 / 关系的属性表单用显示名当字段名、说明挂 `title`。
+
 ### 能力验证（智能问答与 MCP）
 
 记录时间：2026-09-13。**对标 bkn-studio 的「能力验证」：用大模型编排本体工具，多步查询后给带证据的结论。**

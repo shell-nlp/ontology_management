@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       actorId: user.id,
       targetId: target.id,
       action: "REASONING_RUN",
-      details: { question: input.question, steps: run.steps.length, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs },
+      details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs },
     });
 
     return NextResponse.json(run);

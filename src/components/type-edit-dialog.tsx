@@ -54,7 +54,7 @@ type Props = {
  */
 export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, onClose, onSave }: Props) {
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
-  const [description, setDescription] = useState(entity?.description ?? "");
+  const [description, setDescription] = useState(kind === "entity" ? entity?.description ?? "" : relation?.description ?? "");
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
   const [parents, setParents] = useState<string[]>(kind === "entity" ? entity?.parents ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
@@ -247,7 +247,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     try {
       await onSave(kind === "entity"
         ? { name, description, displayProperty, parents, properties, sources: normalizedSources }
-        : { name, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
+        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
       onClose();
     } finally {
       setBusy(false);
@@ -311,7 +311,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         </label>
                       ))}
                     </div>
-                  ) : <p className="ted-props-empty">草稿里还没有别的类，先把父类建出来再回来勾。</p>}
+                  ) : <p className="ted-props-empty">草稿里还没有别的对象类型，先把父类建出来再回来勾。</p>}
                   {ancestorNames.length > 0 && (
                     <p className="ted-inherit"><CornerDownRight size={12} />也属于：{ancestorNames.join("、")}</p>
                   )}
@@ -336,6 +336,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     <small>连线由起点指向终点。</small>
                   </div>
                 </div>
+                <label className="ted-field">
+                  <span>说明</span>
+                  <input className="ted-input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这条关系类型表达什么业务含义" />
+                  <small>给人和模型看的一句话；画布上只显示名称，不会挤在连线上。</small>
+                </label>
                 <div className="ted-grid-2">
                   <label className="ted-field">
                     <span>起始对象类型</span>
@@ -364,23 +369,29 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <div className="ted-props">
                   {properties.map((prop, index) => editingProp === index && propDraft ? (
                     <div className="ted-prop editing" key={`${prop.name}-${index}`}>
-                      <input className="ted-input" value={propDraft.name} onChange={(event) => setPropDraft({ ...propDraft, name: event.target.value })} placeholder="属性名称" />
-                      <select className="ted-select" value={propDraft.dataType} onChange={(event) => setPropDraft({ ...propDraft, dataType: event.target.value as Property["dataType"] })}>
-                        {propertyTypeOptions.map((item) => <option key={item}>{item}</option>)}
-                      </select>
-                      <label className="ted-toggle"><input type="checkbox" checked={propDraft.required} onChange={(event) => setPropDraft({ ...propDraft, required: event.target.checked })} />必填</label>
-                      <div className="ted-prop-actions">
-                        <button type="button" className="ted-icon-button confirm" onClick={saveProperty} title="保存这条属性"><Check size={14} /></button>
-                        <button type="button" className="ted-icon-button" onClick={cancelEditProperty} title="放弃修改"><X size={14} /></button>
+                      <div className="ted-prop-row">
+                        <input className="ted-input" value={propDraft.name} onChange={(event) => setPropDraft({ ...propDraft, name: event.target.value })} placeholder="属性名称（机器名）" />
+                        <input className="ted-input" value={propDraft.displayName ?? ""} onChange={(event) => setPropDraft({ ...propDraft, displayName: event.target.value })} placeholder="显示名（给人看）" />
+                        <select className="ted-select" value={propDraft.dataType} onChange={(event) => setPropDraft({ ...propDraft, dataType: event.target.value as Property["dataType"] })}>
+                          {propertyTypeOptions.map((item) => <option key={item}>{item}</option>)}
+                        </select>
+                        <label className="ted-toggle"><input type="checkbox" checked={propDraft.required} onChange={(event) => setPropDraft({ ...propDraft, required: event.target.checked })} />必填</label>
+                        <div className="ted-prop-actions">
+                          <button type="button" className="ted-icon-button confirm" onClick={saveProperty} title="保存这条属性"><Check size={14} /></button>
+                          <button type="button" className="ted-icon-button" onClick={cancelEditProperty} title="放弃修改"><X size={14} /></button>
+                        </div>
                       </div>
+                      <input className="ted-input ted-prop-desc" value={propDraft.description ?? ""} onChange={(event) => setPropDraft({ ...propDraft, description: event.target.value })} placeholder="说明：这个属性是什么、口径怎么算（可留空）" />
                     </div>
                   ) : (
                     <div className="ted-prop" key={`${prop.name}-${index}`}>
                       <div className="ted-prop-main">
-                        <b>{prop.name}</b>
+                        <b>{prop.displayName || prop.name}</b>
+                        {prop.displayName && <code>{prop.name}</code>}
                         <code>{prop.dataType}</code>
                         {prop.required && <i className="ted-tag required">必填</i>}
                         {prop.unique && <i className="ted-tag unique">唯一</i>}
+                        {prop.description && <small className="ted-prop-desc-text" title={prop.description}>{prop.description}</small>}
                       </div>
                       <div className="ted-prop-actions">
                         <button type="button" className="ted-icon-button" onClick={() => startEditProperty(index)} title={`编辑 ${prop.name}`}><Pencil size={13} /></button>

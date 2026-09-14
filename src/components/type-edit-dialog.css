@@ -60,8 +60,10 @@
 
 .ted-props { display: grid; gap: 6px; }
 .ted-prop { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 9px; border: 1px solid var(--ted-line); border-radius: 4px; background: #fbfcfe; }
-.ted-prop.editing { grid-template-columns: minmax(0, 1fr) 112px auto auto; }
+.ted-prop.editing { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.ted-prop-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 112px auto auto; gap: 8px; align-items: center; }
 .ted-prop.editing .ted-input, .ted-prop.editing .ted-select, .ted-prop.editing .ted-toggle { height: 34px; }
+.ted-prop-desc-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b9bb4; font-size: 11px; font-style: normal; }
 .ted-prop-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .ted-prop-main b { color: #1f3557; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ted-prop-main code { flex: none; padding: 2px 6px; border-radius: 3px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
@@ -138,6 +140,7 @@
 @media (max-width: 640px) {
   .ted-grid-2, .ted-add { grid-template-columns: minmax(0, 1fr); }
   .ted-prop.editing { grid-template-columns: minmax(0, 1fr); }
+  .ted-prop-row { grid-template-columns: minmax(0, 1fr); }
   .ted-prop-actions { justify-content: flex-end; }
   .ted-foot { flex-direction: column; align-items: stretch; }
   .ted-foot-actions { margin-left: 0; }

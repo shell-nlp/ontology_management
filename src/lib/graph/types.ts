@@ -186,7 +186,16 @@ export type EntitySearchHit = EntityRecord & { matched: string[]; rank: number }
 export type GraphViolation = { rule: string; message: string; count: number };
 
 /** 属性定义的最小结构，正好是 OntologyDefinition 的子集，便于快照直接传入。 */
-export type GraphPropertyDefinition = { name: string; dataType: DataType; required: boolean; unique: boolean; indexed: boolean };
+export type GraphPropertyDefinition = {
+  name: string;
+  dataType: DataType;
+  required: boolean;
+  unique: boolean;
+  indexed: boolean;
+  /** 只用于界面展示，图库侧不落这两个字段。 */
+  displayName?: string;
+  description?: string;
+};
 export type GraphDefinitionLike = {
   /** parents 是父类 id：发布时据此写 rdfs:subClassOf，读路径据此做类型传播。 */
   entityTypes: { id?: string; name: string; parents?: string[]; properties: GraphPropertyDefinition[] }[];

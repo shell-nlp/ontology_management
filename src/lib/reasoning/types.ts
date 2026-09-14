@@ -49,7 +49,13 @@ export type ReasoningRun = {
   usage: ReasoningUsage;
   elapsedMs: number;
   model: string;
-  /** 达到步数上限时置位：结论可能不完整。 */
+  /**
+   * 实际用掉的推理步数（一次「模型调用」算一步，一步里模型可以并发调多个工具），
+   * 以及这一轮允许的上限。`steps.length` 是工具调用次数，两个数字不是一回事。
+   */
+  stepCount: number;
+  maxSteps: number;
+  /** 步数用满时置位：模型是被拦停的，结论可能不完整。 */
   truncated: boolean;
 };
 

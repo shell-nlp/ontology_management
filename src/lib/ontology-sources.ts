@@ -85,7 +85,7 @@ export function validateEntitySources(scope: SourceScope): SourceViolation[] {
   if (!sources.length) {
     return properties.filter((property) => property.sourceField).map((property) => ({
       rule: `${scope.name}.${property.name}`,
-      message: `属性「${property.name}」映射了数据列，但类「${scope.name}」还没有数据来源，这个映射落不了地。`,
+      message: `属性「${property.name}」映射了数据列，但对象类型「${scope.name}」还没有数据来源，这个映射落不了地。`,
       count: 1,
       severity: "WARN" as const,
     }));
@@ -94,26 +94,26 @@ export function validateEntitySources(scope: SourceScope): SourceViolation[] {
   const violations: SourceViolation[] = [];
   const primary = sources[0];
   if (isBlank(primary)) {
-    violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的主来源还没选表 / 视图。`, count: 1, severity: "WARN" });
+    violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没选表 / 视图。`, count: 1, severity: "WARN" });
   } else if (!primary.primaryKey.length) {
-    violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的主来源还没指定主键列，对象的身份还没定下来。`, count: 1, severity: "WARN" });
+    violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没指定主键列，对象的身份还没定下来。`, count: 1, severity: "WARN" });
   }
 
   sources.slice(1).forEach((source, offset) => {
     const label = sourceRoleLabel(offset + 1);
     if (isBlank(source)) {
-      violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的${label} 还没选表 / 视图。`, count: 1, severity: "WARN" });
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 还没选表 / 视图。`, count: 1, severity: "WARN" });
       return;
     }
     if (!source.dataSourceId || !source.view) {
-      violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的${label} 只填了一半：数据资源和表 / 视图都要选。`, count: 1 });
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 只填了一半：数据资源和表 / 视图都要选。`, count: 1 });
       return;
     }
     const keys = mappedKeys(source);
     if (!keys) {
-      violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的${label} 还没指定连接键：这张表里哪几列对应对象主键。`, count: 1 });
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 还没指定连接键：这张表里哪几列对应对象主键。`, count: 1 });
     } else if (primary.primaryKey.length && keys !== primary.primaryKey.length) {
-      violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」的${label} 填了 ${keys} 个连接键，主键有 ${primary.primaryKey.length} 列，两边要对齐。`, count: 1 });
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 填了 ${keys} 个连接键，主键有 ${primary.primaryKey.length} 列，两边要对齐。`, count: 1 });
     }
   });
 
@@ -123,13 +123,13 @@ export function validateEntitySources(scope: SourceScope): SourceViolation[] {
     const key = `${source.dataSourceId}|${source.schema}|${source.view}`;
     const first = seen.get(key);
     if (first === undefined) { seen.set(key, index); return; }
-    violations.push({ rule: `${scope.name}.sources`, message: `类「${scope.name}」把同一张表 ${source.view} 挂了两次（${sourceRoleLabel(first)}、${sourceRoleLabel(index)}）。`, count: 1, severity: "WARN" });
+    violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」把同一张表 ${source.view} 挂了两次（${sourceRoleLabel(first)}、${sourceRoleLabel(index)}）。`, count: 1, severity: "WARN" });
   });
 
   const known = new Set(sources.map((source) => source.id));
   for (const property of properties) {
     if (property.sourceId && !known.has(property.sourceId)) {
-      violations.push({ rule: `${scope.name}.${property.name}`, message: `属性「${property.name}」映射的来源已不在类「${scope.name}」上，请重新指定。`, count: 1 });
+      violations.push({ rule: `${scope.name}.${property.name}`, message: `属性「${property.name}」映射的来源已不在对象类型「${scope.name}」上，请重新指定。`, count: 1 });
     }
   }
   return violations;

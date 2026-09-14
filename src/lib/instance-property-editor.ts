@@ -4,6 +4,9 @@ export type PropertyDefinition = {
   name: string;
   dataType: DataType;
   required: boolean;
+  /** 界面上给人看的名字；缺省就用 name。图库侧不关心这两项。 */
+  displayName?: string;
+  description?: string;
 };
 
 function coerceTyped(dataType: DataType, value: unknown): unknown {

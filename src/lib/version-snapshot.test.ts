@@ -12,11 +12,11 @@ function validSnapshot(): VersionSnapshot {
   return {
     definition: {
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", parents: [], properties: [{ name: "名称", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", parents: [], properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", parents: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", parents: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
-        { id: relationshipTypeId, name: "下单", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
+        { id: relationshipTypeId, name: "下单", description: "", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
       ],
       actionTypes: [],
       rules: [],
@@ -75,7 +75,7 @@ describe("类型传播：按父类筛子类的对象", () => {
     return {
       definition: {
         entityTypes: [
-          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", parents: [], properties: [{ name: "姓名", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", parents: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
           { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", parents: [用户类], properties: [], sources: [] },
         ],
         relationshipTypes: [],
