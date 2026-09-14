@@ -316,6 +316,27 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 加新工具或改工具返回时守住这条：**给模型看的字段里不许出现裸 UUID**，要么翻成人话，要么别给。
 
+**表名一律写全「模式.表」，拆分只做一次（2026-09-14 修）**：
+
+界面上、`schemaBrief` 里、`get_object_type.sources` 里，表名都是「模式.视图」的写法
+（`GISTOOLS.TB_DIC_AREA_CODE`），模型就照着这个写法去调 `get_table_ddl` / `run_sql`。
+`get_table_ddl` 在这里踩过一个坑：传进来的名字被原样当成**裸表名**去数据字典里精确比对，
+于是"明明有这张表"却报 `数据源里没有表或视图「GISTOOLS.TB_DIC_AREA_CODE」`（2026-09-14 用户报的）。现在的规则：
+
+- 名字的引用与拆分统一在 `src/lib/data-source/object-name.ts`（纯函数、有单测）：
+  `splitObjectName` 认 `模式.表` / `"模式"."表"` / 反引号 / 方括号；`quoteIdentifier`、`qualifiedName`
+  也搬到了这个文件，`sql.ts` 只做重导出，别再各写一份。
+- 数据资源层在**查字典之前**拆名字，候选模式按优先级：名字里写的 → 调用方给的 → 数据资源登记的
+  （`candidateOwners`）。几个候选一起查、再按这个顺序挑（`resolveOracleObject` / `pickNamedObject`），
+  所以写 `GISTOOLS.TB_X`、只写 `TB_X`、甚至写错模式都还能落到真实的那张表上。
+- Oracle 侧**两边的比较都要 `UPPER()`**（`UPPER(owner) IN (UPPER('gistools'))`）。少一层 `UPPER()`
+  会让小写写法查不到 —— 这个坑本轮当场踩到，靠真机验证才发现。
+- 查不到时的消息要说清试过哪些模式，并在 Oracle 上补一句"同名对象在别的模式下存在"（`oracleOwnerHint`），
+  不要再出现"明明有表却说没有"的排查黑洞。
+- 顺带一条已知的**正常现象**：连接用户不是表的所有者时（本机 `sk_ws` 看 `GISTOOLS` 的表），
+  `DBMS_METADATA.GET_DDL` 会报 `ORA-31603`，这时按列元数据还原 DDL 是预期路径，
+  `get_table_ddl` 的 `ddl_source` 会是 `metadata`，`notes` 里会如实写出原因。
+
 **概念分组与多跳查询（2026-09-14）**：这一版把"分组看得见"和"多跳走得通"补齐，三处要点：
 
 1. **概览里直接给分组成员**：`agent.ts` 的 `schemaBrief` 现在写

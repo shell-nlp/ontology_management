@@ -115,12 +115,12 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
         data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
-        table: { type: "string", description: "表或视图名，大小写不敏感" },
+        table: { type: "string", description: "表或视图名，写全「模式.表」（如 GISTOOLS.TB_DIC_AREA_CODE）；大小写不敏感" },
       },
       required: ["data_source", "table"],
     },
@@ -128,7 +128,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_sql",
     description:
-      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。写查询前先用 get_table_ddl 确认字段名。",
+      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。SQL 里的表名同样写全「模式.表」（如 SELECT * FROM GISTOOLS.TB_DIC_AREA_CODE），别依赖连接用户的默认模式。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。写查询前先用 get_table_ddl 确认字段名。",
     parameters: {
       type: "object",
       properties: {
@@ -618,7 +618,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           })),
           // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
           data_source_note: sources.length
-            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据，就拿这里的表名去 get_table_ddl / run_sql。"
+            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据就调 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。"
             : "这个对象类型还没有绑定数据资源，本体里只有定义。",
           display_property: type.displayProperty ?? "",
         },

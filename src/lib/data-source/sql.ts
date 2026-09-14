@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 
 import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/data-source/sql-guard";
+import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, splitObjectName } from "@/lib/data-source/object-name";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,
@@ -142,21 +143,12 @@ export function buildConnectionOptions(kind: DataSourceKind, record: DataSourceR
   } as DataSourceOptions;
 }
 
-/** 标识符引用：PostgreSQL / Oracle 用双引号，MySQL 用反引号；内部同类引号翻倍转义。 */
-export function quoteIdentifier(kind: DataSourceKind, name: string) {
-  if (kind === "MYSQL") return `\`${name.replace(/`/g, "``")}\``;
-  return `"${name.replace(/"/g, '""')}"`;
-}
+// 名字的引用与拆分统一在 object-name.ts（纯函数、有单测），这里重导出，既有引用点不用动。
+export { qualifiedName, quoteIdentifier };
 
 /** 字符串字面量；只用于把已经来自登记信息或库元数据的名字拼进系统表查询。 */
 function quoteLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
-}
-
-/** 表/视图的完整限定名；schema 为空时只写对象名。 */
-export function qualifiedName(kind: DataSourceKind, schema: string | undefined, name: string) {
-  const target = quoteIdentifier(kind, name);
-  return schema ? `${quoteIdentifier(kind, schema)}.${target}` : target;
 }
 
 /**
@@ -343,29 +335,54 @@ async function readCatalogFromOracle(connection: DataSource, container: string):
  * 按名字精确定位一个表/视图：只查字典里这一个名字，不扫整库。
  * 点开一张表时的字段和预览都靠它，省掉一整轮 all_tables 扫描。
  */
-async function resolveOracleObject(connection: DataSource, container: string, objectName: string): Promise<CatalogObject | null> {
-  const owner = quoteLiteral(container);
+async function resolveOracleObject(connection: DataSource, owners: string[], objectName: string): Promise<CatalogObject | null> {
+  if (!owners.length) return null;
   const name = quoteLiteral(objectName);
+  // 两边的比对都要 UPPER()：Oracle 的字典值是大写，但调用方写进来的模式可能大小写混着来。
+  const ownerList = owners.map((owner) => `UPPER(${quoteLiteral(owner)})`).join(", ");
   const rows = (await connection.query(`
-    SELECT 'table' AS "object_kind", t.table_name AS "object_name", tc.comments AS "remarks"
+    SELECT 'table' AS "object_kind", t.owner AS "owner_name", t.table_name AS "object_name", tc.comments AS "remarks"
       FROM all_tables t
       LEFT JOIN all_tab_comments tc ON tc.owner = t.owner AND tc.table_name = t.table_name
-     WHERE UPPER(t.owner) = UPPER(${owner}) AND UPPER(t.table_name) = UPPER(${name})
+     WHERE UPPER(t.owner) IN (${ownerList}) AND UPPER(t.table_name) = UPPER(${name})
     UNION ALL
-    SELECT 'view' AS "object_kind", v.view_name AS "object_name", NULL AS "remarks"
+    SELECT 'view' AS "object_kind", v.owner AS "owner_name", v.view_name AS "object_name", NULL AS "remarks"
       FROM all_views v
-     WHERE UPPER(v.owner) = UPPER(${owner}) AND UPPER(v.view_name) = UPPER(${name})`)) as Record<string, unknown>[];
-  const row = (Array.isArray(rows) ? rows : [])[0];
-  if (!row) return null;
-  // 库里怎么存的名字就用哪个：标识符拼进预览语句时必须用元数据里的原样名字。
-  const kind = String(row.object_kind ?? row.OBJECT_KIND ?? "table").toLowerCase() === "view" ? "view" as const : "table" as const;
-  return {
-    schema: container,
+     WHERE UPPER(v.owner) IN (${ownerList}) AND UPPER(v.view_name) = UPPER(${name})`)) as Record<string, unknown>[];
+  // 库里怎么存的名字与模式就用哪个：标识符拼进预览语句时必须用元数据里的原样名字。
+  const candidates = (Array.isArray(rows) ? rows : []).map((row) => ({
+    schema: String(row.owner_name ?? row.OWNER_NAME ?? ""),
     name: String(row.object_name ?? row.OBJECT_NAME ?? ""),
-    kind,
+    kind: String(row.object_kind ?? row.OBJECT_KIND ?? "table").toLowerCase() === "view" ? "view" as const : "table" as const,
     comment: String(row.remarks ?? row.REMARKS ?? ""),
     columnCount: 0,
-  };
+  }));
+  // 同名对象可能同时落在多个候选模式里（例如两套模式各有一张同名表）：按候选顺序挑，名字里写的模式优先。
+  for (const owner of owners) {
+    const hit = candidates.find((item) => item.schema.toUpperCase() === owner.toUpperCase());
+    if (hit) return hit;
+  }
+  return candidates[0] ?? null;
+}
+
+/**
+ * 查不到时的线索：报"没有这张表"之前，先看看同名对象是不是落在别的模式里。
+ * 只在上报错的那条路上跑一次，且查不到就当没有这半句 —— 它不该把本来清楚的错误信息弄脏。
+ */
+async function oracleOwnerHint(connection: DataSource, objectName: string, owners: string[]) {
+  try {
+    const rows = (await connection.query(`
+      SELECT owner AS "owner_name", object_type AS "object_kind"
+        FROM all_objects
+       WHERE UPPER(object_name) = UPPER(${quoteLiteral(objectName)}) AND object_type IN ('TABLE', 'VIEW', 'SYNONYM') AND ROWNUM <= 5`)) as Record<string, unknown>[];
+    const others = (Array.isArray(rows) ? rows : [])
+      .map((row) => ({ owner: String(row.owner_name ?? row.OWNER_NAME ?? ""), kind: String(row.object_kind ?? row.OBJECT_KIND ?? "") }))
+      .filter((item) => item.owner && !owners.some((owner) => owner.toUpperCase() === item.owner.toUpperCase()));
+    if (!others.length) return "";
+    return `；同名对象在 ${others.map((item) => `${item.owner}（${item.kind}）`).join("、")}下存在，核对一下它属于哪个模式`;
+  } catch {
+    return "";
+  }
 }
 
 /** Oracle 的列信息：类型、可空、主键、注释、顺序，一次问全。 */
@@ -494,27 +511,55 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
   };
 
   /**
+   * 调用方写来的名字拆成两段，并给出候选模式，优先级从高到低：
+   * 名字里带上的模式 → 调用方给的模式 → 这个数据资源登记的模式。
+   *
+   * 这一步必须在查字典**之前**做：界面上和本体概览里的表名一律写成「模式.表」
+   * （`GISTOOLS.TB_DIC_AREA_CODE`），不拆的话它会被当成一个叫这个名字的表做精确比对，然后报"没有这张表"。
+   */
+  const resolveRef = (ref: DataViewRef) => {
+    const parsed = splitObjectName(String(ref.name ?? ""));
+    return { owners: candidateOwners(parsed.schema, ref.schema, container), name: parsed.name };
+  };
+
+  /**
    * 定位一个表/视图，拿到库里真实的名字再往下走。
    * Oracle 按名字精确查字典（毫秒级）；其它库走一次目录（有缓存）。
+   * 名字里写了模式就按它找，没写就用登记的模式；候选都对不上时退回同名对象（登记的模式与实际不符时不至于查不到）。
    */
-  const locate = async (connection: DataSource, objectName: string): Promise<CatalogObject> => {
+  const locate = async (connection: DataSource, ref: DataViewRef): Promise<CatalogObject> => {
+    const raw = String(ref.name ?? "").trim();
+    const wanted = resolveRef(ref);
+    const where = wanted.owners.length ? `（在模式 ${wanted.owners.join("、")} 下都没查到）` : "";
+    if (!wanted.name) throw new Error("表或视图名不能为空。");
     if (kind === "ORACLE") {
-      const hit = await resolveOracleObject(connection, container, objectName);
-      if (!hit) throw new Error(`数据源里没有表或视图「${objectName}」。`);
+      const hit = await resolveOracleObject(connection, wanted.owners, wanted.name);
+      if (!hit) throw new Error(`数据源里没有表或视图「${raw}」${where}${await oracleOwnerHint(connection, wanted.name, wanted.owners)}。`);
       return hit;
     }
     const catalog = await catalogWithCache(connection);
-    const hit = catalog.find((item) => item.name.toLowerCase() === objectName.toLowerCase());
-    if (!hit) throw new Error(`数据源里没有表或视图「${objectName}」。`);
+    const hit = pickNamedObject(catalog, wanted);
+    if (!hit) throw new Error(`数据源里没有表或视图「${raw}」${where}。`);
     return hit;
   };
 
-  const readColumns = async (connection: DataSource, objectName: string): Promise<DataViewField[]> => {
-    if (kind === "ORACLE") return readColumnsFromOracle(connection, container, objectName);
+  const readColumns = async (connection: DataSource, hit: CatalogObject): Promise<DataViewField[]> => {
+    if (kind === "ORACLE") return readColumnsFromOracle(connection, hit.schema || container, hit.name);
     const runner = connection.createQueryRunner();
     try {
-      const table = (await runner.getTables()).find((item) => item.name.split(".").pop()?.toLowerCase() === objectName.toLowerCase());
-      if (!table) throw new Error(`数据源里没有表或视图「${objectName}」。`);
+      // ORM 给的名字可能带模式前缀（PG 会把非当前 schema 的对象写成 "schema.table"），比对时统一剥成裸名。
+      const wanted = { name: hit.name.toLowerCase(), schema: (hit.schema || container).toLowerCase() };
+      const tables = (await runner.getTables()).map((table) => {
+        const parts = table.name.split(".").map((part) => part.trim().replace(/^[`"]|[`"]$/g, ""));
+        return {
+          table,
+          name: (parts[parts.length - 1] ?? "").toLowerCase(),
+          schema: (parts.length > 1 ? parts[parts.length - 2] : table.schema ?? "").toLowerCase(),
+        };
+      });
+      const table = tables.find((item) => item.name === wanted.name && item.schema === wanted.schema)?.table
+        ?? tables.find((item) => item.name === wanted.name)?.table;
+      if (!table) throw new Error(`数据源里没有表或视图「${qualifiedName(kind, hit.schema || undefined, hit.name)}」。`);
       return table.columns.map((column, index) => ({
         name: column.name,
         dataType: column.type ?? "",
@@ -559,8 +604,8 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
 
     async describeView(view: DataViewRef): Promise<DataViewField[]> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
-        const hit = await locate(connection, view.name);
-        return readColumns(connection, hit.name);
+        const hit = await locate(connection, view);
+        return readColumns(connection, hit);
       });
     },
 
@@ -569,7 +614,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       return withConnection(kind, record, credentials, async (_info, connection) => {
         // 先确认对象确实存在，再拿库自己的名字去拼语句：
         // 预览语句里的标识符只可能来自库的元数据，不接受调用方传来的任意字符串。
-        const hit = await locate(connection, view.name);
+        const hit = await locate(connection, view);
         const statement = previewStatement(kind, hit.schema || undefined, hit.name, rows);
         const raw = await connection.query(statement);
         const list = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
@@ -620,7 +665,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
     /** 表结构（DDL）：能拿到库里的原始语句就用原始的，拿不到就按列元数据还原，并说明差在哪。 */
     async describeTableDdl(view: DataViewRef): Promise<TableDdl> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
-        const hit = await locate(connection, view.name);
+        const hit = await locate(connection, view);
         const schema = hit.schema || container;
         const native = await nativeDdl(connection, kind, hit, schema);
         if (native.ddl) {
@@ -634,7 +679,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
             notes: ["这段是数据库自带的元数据接口给出的原始语句。"],
           };
         }
-        const columns = await readColumns(connection, hit.name);
+        const columns = await readColumns(connection, hit);
         const restored = ddlFromColumns(kind, schema, hit.name, hit.kind, columns);
         return {
           schema,
