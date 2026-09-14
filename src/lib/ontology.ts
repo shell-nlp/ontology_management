@@ -62,6 +62,19 @@ export const entitySourceSchema = z.object({
 const legacyEntitySourceSchema = entitySourceSchema.omit({ id: true });
 
 /**
+ * 逻辑分组（业务域）：把对象类型按域归堆，图谱里按组画框。
+ *
+ * 存成一条记录而不是类上的一个字符串，是为了颜色能定下来、以后要改名也只有一处要改。
+ * 分组**不参与推理**，纯展示层的归类。
+ */
+export const conceptGroupSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(40),
+  /** 分组框的强调色；留空就按它在清单里的位置取一个调色板色。 */
+  color: z.string().trim().max(32).default(""),
+});
+
+/**
  * 一个类的数据来源清单，也就是 Palantir 的多来源对象类型（column-wise MDO）。
  *
  * `sources[0]` 是主来源：对象的身份（主键）和标题由它决定；
@@ -175,11 +188,15 @@ export const ontologyRuleSchema = z.object({
 });
 
 export const ontologyDefinitionSchema = z.object({
+  /** 逻辑分组清单；对象类型用 `groupId` 指回来。空数组 = 还没分组。 */
+  groups: z.array(conceptGroupSchema).default([]),
   entityTypes: z.array(z.object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(100),
     description: z.string().max(500).default(""),
     displayProperty: z.string().max(120).optional().default(""),
+    /** 所属逻辑分组；空字符串表示还没归组。 */
+    groupId: z.union([z.string().uuid(), z.literal("")]).default(""),
     /**
      * 父类：这个类继承谁。可填多个（多继承），用来表达「专线产品用户也是一种用户」。
      * 空数组表示这个类还没有层级（加字段之前的老快照读出来也是空数组）。
@@ -210,3 +227,4 @@ export const ontologyDefinitionSchema = z.object({
 export type OntologyDefinition = z.infer<typeof ontologyDefinitionSchema>;
 
 export type EntitySource = z.infer<typeof entitySourceSchema>;
+export type ConceptGroup = z.infer<typeof conceptGroupSchema>;

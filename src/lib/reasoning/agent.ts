@@ -67,15 +67,20 @@ export type RunReasoningOptions = {
  * **不带对象数**：这一层不推理实例，给了数字模型就会拿它下实例层面的结论。
  */
 function schemaBrief(context: ToolContext) {
+  const groupNameById = new Map((context.definition.groups ?? []).map((item) => [item.id, item.name]));
   const objects = context.definition.entityTypes.map((item) => {
     const tables = entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
-    return tables.length ? `${item.name}(绑定 ${tables.join(" + ")})` : item.name;
+    // 分组跟在名字后面：模型一眼知道这个类型属于哪个域，问"某域有什么"时不必再查一趟。
+    const notes = [groupNameById.get(item.groupId ?? "") ?? "", tables.length ? `绑定 ${tables.join(" + ")}` : ""].filter(Boolean);
+    return notes.length ? `${item.name}(${notes.join("，")})` : item.name;
   });
   const relations = context.definition.relationshipTypes.map((item) => item.name);
   const actions = context.definition.actionTypes.map((item) => item.name);
   // 数据资源名要带上：run_sql / get_table_ddl 的 data_source 就用这里的名字，模型猜不出来。
   const sources = (context.dataSources ?? []).map((item) => `${item.name}（${item.kind}${item.schema_name ? ` · ${item.schema_name}` : ""}）`);
+  const groups = (context.definition.groups ?? []).map((item) => item.name);
   return [
+    `概念分组：${groups.join("、") || "无"}（用 list_concept_groups 看每组里有哪些对象类型）`,
     `对象类型：${objects.join("、") || "无"}`,
     `关系类型：${relations.join("、") || "无"}`,
     `动作：${actions.join("、") || "无"}`,

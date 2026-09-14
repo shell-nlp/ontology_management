@@ -86,6 +86,12 @@ export const REASONING_TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "list_concept_groups",
+    description:
+      "列出本体里的**概念分组**（业务域），以及每个分组下有哪些对象类型。问「有哪些概念分组」「某个分组里有什么对象类型」时调它；还没归组的对象类型会单独列出来。",
+    parameters: { type: "object", properties: {} },
+  },
+  {
     name: "get_table_ddl",
     description:
       "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源），table 是表或视图名。要跑数之前先用它确认字段。",
@@ -200,19 +206,23 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   const objectCount = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
   const relationshipCount = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
+  const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
   const concepts: SchemaConcept[] = [];
 
   for (const entity of definition.entityTypes) {
     const parents = (entity.parents ?? []).map((id) => typeNameById.get(id)).filter((name): name is string => Boolean(name));
     const properties = mergeInheritedProperties(entity, definition.entityTypes);
+    const group = groupNameById.get(entity.groupId ?? "") ?? "";
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
     const tables = entitySources(entity).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
     const resources = [...new Set(entitySources(entity).map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
     concepts.push({
       kind: "OBJECT_TYPE",
       name: entity.name,
-      haystack: normalize([entity.name, entity.description, ...parents, ...tables, ...properties.map((property) => property.name)].join(" ")),
+      // 概念分组也进检索面：问「客户域里有什么」时，该组的成员会被搜出来。
+      haystack: normalize([entity.name, entity.description, group, ...parents, ...tables, ...properties.map((property) => property.name)].join(" ")),
       detail: [
+        group ? `分组 ${group}` : "",
         parents.length ? `父类 ${parents.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
@@ -408,6 +418,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
        * “这个对象类型没有绑定数据源”，这正是它明明绑了表却答不出来的原因。
        */
       const sources = entitySources(type);
+      const group = (definition.groups ?? []).find((item) => item.id === (type.groupId ?? "")) ?? null;
       const resourceNameById = new Map((context.dataSources ?? []).map((item) => [item.id, item.name]));
       const sourceRoleById = new Map(sources.map((source, index) => [source.id, sourceRoleLabel(index)]));
       const properties = mergeInheritedProperties(type, definition.entityTypes).map((property) => ({
@@ -437,6 +448,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         payload: {
           name: type.name,
           description: type.description,
+          // 概念分组：模型答"它属于哪个域"靠这一项。
+          group: group?.name ?? "",
           parents: (type.parents ?? []).map((id) => typeNameById.get(id)).filter(Boolean),
           properties,
           relations,
@@ -456,6 +469,34 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           display_property: type.displayProperty ?? "",
         },
         evidence: [{ kind: "OBJECT_TYPE", id: type.name, label: type.name }],
+      };
+    }
+
+    case "list_concept_groups": {
+      const groups = definition.groups ?? [];
+      const known = new Set(groups.map((group) => group.id));
+      const members = new Map<string, string[]>();
+      const ungrouped: string[] = [];
+      for (const entity of definition.entityTypes) {
+        const groupId = entity.groupId ?? "";
+        if (!groupId || !known.has(groupId)) { ungrouped.push(entity.name); continue; }
+        const bucket = members.get(groupId);
+        if (bucket) bucket.push(entity.name);
+        else members.set(groupId, [entity.name]);
+      }
+      return {
+        payload: {
+          group_count: groups.length,
+          groups: groups.map((group) => ({
+            name: group.name,
+            object_types: members.get(group.id) ?? [],
+            object_type_count: (members.get(group.id) ?? []).length,
+          })),
+          // 空分组也照样列出来（object_types 是空数组）——"建了组还没归类型"本身是要说清楚的状态。
+          ...(ungrouped.length ? { ungrouped_object_types: ungrouped } : {}),
+          note: "概念分组只是展示与检索用的归类，不影响对象类型的定义；要细节就用 get_object_type 看某一个类型。",
+        },
+        evidence: groups.map((group) => ({ kind: "GROUP" as const, id: group.id, label: group.name })),
       };
     }
 

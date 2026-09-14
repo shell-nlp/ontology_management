@@ -1,0 +1,12 @@
+/* 布局切换器：一个白底小胶囊 + 下拉菜单，和工具栏其它按钮同一支视觉语言。 */
+.layout-switcher { position: relative; display: inline-flex; }
+.layout-switcher-trigger { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 9px; color: #58769c; background: #ffffff; border: 1px solid #c8d9ed; border-radius: 5px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.layout-switcher-trigger:hover { color: #1d4ed8; background: #edf4ff; }
+.layout-switcher-trigger .is-open { transform: rotate(180deg); }
+.layout-switcher-menu { position: absolute; z-index: 8; top: calc(100% + 4px); left: 0; display: grid; gap: 2px; min-width: 214px; padding: 4px; background: #ffffff; border: 1px solid #d7e2f0; border-radius: 6px; box-shadow: 0 6px 20px rgba(30, 58, 138, .13); }
+.layout-switcher-menu button { display: grid; gap: 2px; justify-items: start; padding: 7px 9px; color: #33456b; background: transparent; border: 0; border-radius: 4px; text-align: left; }
+.layout-switcher-menu button:hover { background: #f2f7ff; }
+.layout-switcher-menu button.active { background: #eaf1fd; }
+.layout-switcher-menu b { color: #102a56; font-size: 11px; font-weight: 700; }
+.layout-switcher-menu em { color: #7085a4; font-size: 10px; font-style: normal; line-height: 1.4; }
+.layout-switcher-menu button.active b { color: #1d4ed8; }

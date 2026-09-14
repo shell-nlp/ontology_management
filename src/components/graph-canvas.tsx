@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
 import { PropertyEditor } from "@/components/property-editor";
+import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
+import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
 import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/graph/types";
@@ -18,8 +20,10 @@ type User = { role: "ADMIN" | "VIEWER" } | null;
 type OntologyPropertyDefinition = PropertyDefinition & { unique?: boolean; indexed?: boolean };
 
 type ManagedDefinition = {
-  entityTypes: { id?: string; name: string; description?: string; displayProperty?: string; properties: OntologyPropertyDefinition[] }[];
+  entityTypes: { id?: string; name: string; description?: string; displayProperty?: string; groupId?: string; properties: OntologyPropertyDefinition[] }[];
   relationshipTypes: { id?: string; name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string; properties: OntologyPropertyDefinition[] }[];
+  /** 概念分组：只影响「查看本体」这一页怎么摆、怎么画框。 */
+  groups?: { id: string; name: string; color?: string }[];
 };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -317,6 +321,10 @@ export function GraphCanvas({
   // 有草稿可写时摆放位置进快照；只读浏览发布数据、看本体骨架时只记在本机浏览器。
   const persistsPositions = admin && Boolean(targetId) && Boolean(versionId) && viewMode !== "ontology";
   const localLayoutKey = targetId && !persistsPositions ? `${viewMode === "ontology" ? "ontology" : "instance"}-layout:${targetId}` : null;
+  // 「查看本体」才有布局可选：分组是对象类型这一层的东西，实例图谱不看它。
+  const [layout, setLayout] = useLayoutMode(viewMode === "ontology" && targetId ? `ontology-layout-mode:${targetId}` : null);
+  const frameGroups = useMemo(() => (definition?.groups ?? []).map((group) => ({ id: group.id, name: group.name, color: group.color ?? "" })), [definition]);
+  const frameTypes = useMemo(() => (definition?.entityTypes ?? []).map((item) => ({ id: item.id ?? item.name, name: item.name, groupId: item.groupId ?? "" })), [definition]);
   const [showAllForGraph, setShowAllForGraph] = useState<GraphData | null>(null);
   const showAllGraph = showAllForGraph === graph;
   const representative = useMemo(
@@ -406,8 +414,22 @@ export function GraphCanvas({
         }
       });
     }
-    return { nodes, edges };
-  }, [displayGraph.nodes, displayGraph.relationships, displayProps, layoutSeed, localLayoutKey, localPositionKey, viewMode, visibleNodeIds, visibleRelationships]);
+    // 圆形布局与按逻辑分组都由分组/布局算出来：这两种布局下本机存的摆放位置让位（不然框和点位对不上）。
+    if (viewMode === "ontology" && (layout === "circle" || layout === "grouped")) {
+      const frames = layout === "grouped"
+        ? buildGroupFrames(frameGroups, frameTypes, displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => ({ id: node.id, name: graphLabel(node, displayProps) })))
+        : [];
+      const described = layout === "grouped"
+        ? groupedLayoutPositions(frames, nodes.filter((node) => !frames.some((frame) => frame.nodeIds.includes(node.id))).map((node) => node.id), edges, layoutSeed)
+        : circleLayout(nodes.map((node) => node.id), layoutSeed);
+      nodes.forEach((node) => {
+        const point = described.get(node.id);
+        if (point) { node.x = point.x; node.y = point.y; }
+      });
+      return { nodes, edges, frames };
+    }
+    return { nodes, edges, frames: [] };
+  }, [displayGraph.nodes, displayGraph.relationships, displayProps, frameGroups, frameTypes, layout, layoutSeed, localLayoutKey, localPositionKey, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -510,6 +532,8 @@ export function GraphCanvas({
 
   const organize = () => {
     if (!graph.nodes.length) return;
+    // 圆形 / 按逻辑分组是算出来的布局：只有"整体转一圈"这一个自由度，不落本机位置。
+    if (layout !== "default") { setLayoutSeed((seed) => seed + 1); return; }
     if (localLayoutKey) writeStoredPositions(localLayoutKey, {});
     if (graphData.nodes.length <= 60) {
       const arranged = Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1));
@@ -539,10 +563,11 @@ export function GraphCanvas({
       <SigmaGraph
         nodes={graphData.nodes}
         edges={graphData.edges}
+        frames={graphData.frames}
         selectedNodeId={editTarget?.kind === "node" ? editTarget.id : null}
         selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
         connectionSourceId={connectionSourceId}
-        draggable
+        draggable={layout === "default"}
         layoutRequest={graphData.nodes.length <= 60 ? 0 : layoutRequest}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
@@ -558,6 +583,7 @@ export function GraphCanvas({
       <div className="graph-explorer-toolbar">
         <label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、标签或属性" /></label>
         <span>{visibleNodeIds.size}/{totalNodeCount} 个节点 · {visibleRelationships.length}/{totalRelationshipCount} 条关系{representative.hiddenNodes > 0 ? ` · 已隐藏 ${representative.hiddenNodes} 节点 / ${representative.hiddenRelationships} 关系（边界 ${representative.hiddenBoundaryRelationships}）` : ""}</span>
+        {viewMode === "ontology" && <LayoutSwitcher value={layout} onChange={setLayout} />}
         {representative.hiddenNodes > 0 && <button className="graph-tool-action" onClick={showAll} title="显示全部节点与关系"><Eye size={14} />显示全部</button>}
         {showAllGraph && graph.nodes.length > REPRESENTATIVE_NODE_LIMIT && <button className="graph-tool-action" onClick={showRepresentative} title="恢复有代表性的精简视图"><EyeOff size={14} />恢复精简</button>}
         {graph.nodes.length > 1 && <button className="graph-tool-action" onClick={() => void organize()} title="以关联最多的节点为中心重新排列，其余节点分层环绕"><Wand2 size={14} />自动整理</button>}

@@ -114,8 +114,74 @@ describe("工具范围", () => {
     const parked = REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name);
     // 这一版只在对象类型 / 关系类型这一层推理：实例工具不进模型、不进 MCP 的 tools/list，
     // 只在「MCP 调试」页灰着显示。要恢复实例推理，就把下面两个名字的 disabled 去掉。
-    expect(active).toEqual(["search_schema", "get_object_type", "get_table_ddl", "run_sql", "list_actions"]);
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "get_table_ddl", "run_sql", "list_actions"]);
     expect(parked).toEqual(["query_object_instance", "query_instance_subgraph"]);
+  });
+});
+
+const 客户域id = "66666666-6666-4666-8666-666666666666";
+const 账务域id = "77777777-7777-4777-8777-777777777777";
+
+/** 三个对象类型两个分组：客户域有成员、账务域是空的、订单指向一个已删除的分组。 */
+function groupedDefinition(): OntologyDefinition {
+  const base = definition();
+  return {
+    ...base,
+    groups: [
+      { id: 客户域id, name: "客户域", color: "" },
+      { id: 账务域id, name: "账务域", color: "" },
+    ],
+    entityTypes: base.entityTypes.map((item) =>
+      item.id === 订单类 ? { ...item, groupId: "88888888-8888-4888-8888-888888888888" } : { ...item, groupId: 客户域id },
+    ),
+  } as unknown as OntologyDefinition;
+}
+
+describe("list_concept_groups", () => {
+  it("列出概念分组和每组里的对象类型，空分组也列，未归组的单独说", async () => {
+    const outcome = await runReasoningTool("list_concept_groups", {}, { store: {} as never, definition: groupedDefinition(), runtimeTypes });
+    const payload = outcome.payload as {
+      group_count: number;
+      groups: { name: string; object_types: string[]; object_type_count: number }[];
+      ungrouped_object_types?: string[];
+      note: string;
+    };
+    expect(payload.group_count).toBe(2);
+    expect(payload.groups).toEqual([
+      { name: "客户域", object_types: ["用户", "专业线产品用户"], object_type_count: 2 },
+      // 建了组还没归类型，照样列出来
+      { name: "账务域", object_types: [], object_type_count: 0 },
+    ]);
+    // groupId 指向已删除的分组（或压根没填）的，都算未归组
+    expect(payload.ungrouped_object_types).toEqual(["订单"]);
+    expect(payload.note).toContain("不影响对象类型的定义");
+    expect(outcome.evidence.map((item) => [item.kind, item.label])).toEqual([["GROUP", "客户域"], ["GROUP", "账务域"]]);
+  });
+
+  it("一个分组都没有时，全部类型都算未归组", async () => {
+    const outcome = await runReasoningTool("list_concept_groups", {}, { store: {} as never, definition: definition(), runtimeTypes });
+    const payload = outcome.payload as { group_count: number; groups: unknown[]; ungrouped_object_types?: string[] };
+    expect(payload.group_count).toBe(0);
+    expect(payload.groups).toEqual([]);
+    expect(payload.ungrouped_object_types).toEqual(["用户", "专业线产品用户", "订单"]);
+  });
+});
+
+describe("概念分组进检索面", () => {
+  it("搜分组名能命中组里的对象类型", () => {
+    const concepts = schemaConcepts(groupedDefinition(), runtimeTypes);
+    const 用户 = concepts.find((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")!;
+    expect(用户.detail).toContain("分组 客户域");
+    const ranked = rankSchemaConcepts(concepts, "客户域", 5);
+    expect(ranked.some((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")).toBe(true);
+  });
+
+  it("get_object_type 报出它属于哪个分组", async () => {
+    const outcome = await runReasoningTool("get_object_type", { type_name: "用户" }, { store: {} as never, definition: groupedDefinition(), runtimeTypes });
+    expect((outcome.payload as { group: string }).group).toBe("客户域");
+    const 订单 = await runReasoningTool("get_object_type", { type_name: "订单" }, { store: {} as never, definition: groupedDefinition(), runtimeTypes });
+    // 没归组就是空串，不编一个分组名出来
+    expect((订单.payload as { group: string }).group).toBe("");
   });
 });
 

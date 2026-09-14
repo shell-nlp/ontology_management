@@ -19,9 +19,14 @@ export type SigmaNode = {
 
 export type SigmaEdge = { id: string; type: string; source: string; target: string };
 
+/** 概念分组的框：一组一个，框里是这一组的节点。 */
+export type SigmaGroupFrame = { id: string; name: string; color: string; nodeIds: string[] };
+
 type Props = {
   nodes: SigmaNode[];
   edges: SigmaEdge[];
+  /** 「按逻辑分组」布局下的分组框；不传或空数组就不画框。 */
+  frames?: SigmaGroupFrame[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
   connectionSourceId: string | null;
@@ -193,6 +198,76 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
     }
   });
   return graph;
+}
+
+/**
+ * 概念分组框：按成员的屏幕包围盒画一个虚线圆角框，左上角写组名。
+ *
+ * 用和边线层同一套画法（sigma 的 graphToViewport 换算，afterRender 时重画），
+ * 所以拖动节点、缩放镜头时框会跟着一起变。z-index 比边线层低，框永远在线和点下面。
+ */
+function GroupFrameLayer({ frames }: { frames: SigmaGroupFrame[] }) {
+  const sigma = useSigma<NodeAttributes, EdgeAttributes>();
+
+  useEffect(() => {
+    const namespace = "http://www.w3.org/2000/svg";
+    const layer = document.createElementNS(namespace, "svg");
+    layer.classList.add("sigma-group-frames");
+    layer.setAttribute("aria-hidden", "true");
+    sigma.getContainer().appendChild(layer);
+
+    const append = (tag: string, attributes: Record<string, string>) => {
+      const element = document.createElementNS(namespace, tag);
+      Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+      layer.appendChild(element);
+      return element;
+    };
+
+    const update = () => {
+      const graph = sigma.getGraph();
+      const dimensions = sigma.getDimensions();
+      if (!layer.isConnected) sigma.getContainer().appendChild(layer);
+      layer.setAttribute("width", String(dimensions.width));
+      layer.setAttribute("height", String(dimensions.height));
+      layer.replaceChildren();
+      frames.forEach((frame) => {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const id of frame.nodeIds) {
+          if (!graph.hasNode(id)) continue;
+          const point = sigma.graphToViewport(graph.getNodeAttributes(id));
+          const radius = Math.max(12, sigma.scaleSize(sigma.getNodeDisplayData(id)?.size ?? 18)) + 14;
+          minX = Math.min(minX, point.x - radius);
+          minY = Math.min(minY, point.y - radius);
+          maxX = Math.max(maxX, point.x + radius);
+          maxY = Math.max(maxY, point.y + radius);
+        }
+        if (!Number.isFinite(minX)) return;
+        const width = Math.max(48, maxX - minX);
+        const height = Math.max(48, maxY - minY);
+        // 上面留出一行写组名，组名下面才是节点。
+        append("rect", {
+          x: String(minX), y: String(minY - 22), width: String(width), height: String(height + 22),
+          rx: "14", fill: `${frame.color}0f`, stroke: frame.color, "stroke-width": "1.2", "stroke-dasharray": "6 5",
+        });
+        const label = append("text", { x: String(minX + 12), y: String(minY - 7), fill: frame.color, "font-size": "12", "font-weight": "700" });
+        label.textContent = frame.name;
+      });
+    };
+    update();
+    sigma.on("afterRender", update);
+    sigma.on("resize", update);
+    sigma.getCamera().on("updated", update);
+    return () => {
+      sigma.off("afterRender", update);
+      sigma.off("resize", update);
+      sigma.getCamera().off("updated", update);
+      layer.remove();
+    };
+  }, [frames, sigma]);
+  return null;
 }
 
 function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeId: string | null; selectedNodeId: string | null }) {
@@ -565,6 +640,7 @@ export function SigmaGraph(props: Props) {
     >
       <SigmaGraphLoader graph={loadedGraph} />
       <SigmaScene {...props} />
+      {props.frames && props.frames.length > 0 && <GroupFrameLayer frames={props.frames} />}
       <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} selectedNodeId={props.selectedNodeId} />
     </SigmaContainer>
   );

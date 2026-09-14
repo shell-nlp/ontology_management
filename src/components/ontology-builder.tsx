@@ -2,12 +2,14 @@
 
 import { useCallback, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, CircleDot, CornerDownRight, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import { actionInvolvement } from "@/lib/action-engine";
 import { ancestorsOf, inheritedPropertiesOf, indexNodes } from "@/lib/class-hierarchy";
+import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import type { ActionType, Definition, EntityType, RelationType } from "@/lib/ontology-draft";
+import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 // 画布上的浮层沿用「图谱」页的样式（graph-canvas.css 已随 GraphCanvas 进入同一份页面样式）。
@@ -40,7 +42,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
   return positions;
 }
 
-export type EntityPayload = { name: string; description: string; displayProperty: string; parents?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
+export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; parents?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
@@ -61,9 +63,13 @@ type Props = {
   onCreateRelation: (id: string, payload: RelationPayload) => Promise<void>;
   onUpdateRelation: (id: string, payload: RelationPayload) => Promise<void>;
   onDeleteRelation: (id: string) => Promise<void>;
+  /** 整份草稿的保存入口：概念分组这一类"不属于某个对象类型"的改动走它。 */
+  onSaveDefinition: (next: Definition) => Promise<void>;
   onExtract: () => void;
   /** 跳去「动作」页：对象类型与动作的关联在这里点开。 */
   onOpenActions?: () => void;
+  /** 跳去「概念分组」页：画布这边只看效果，配置在那边做。 */
+  onOpenGroups?: () => void;
   onFail: (reason: unknown) => void;
 };
 
@@ -73,12 +79,14 @@ type Props = {
  * 画布上做的每一次改动都会立刻写回草稿（和表单模式同一套保存路径），
  * 摆放位置只记在本机浏览器，不属于草稿定义。
  */
-export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onExtract, onOpenActions, onFail }: Props) {
+export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onSaveDefinition, onExtract, onOpenActions, onOpenGroups, onFail }: Props) {
   const [selected, setSelected] = useState<Selection>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [layoutSeed, setLayoutSeed] = useState(0);
   const storageKey = targetId ? `ontology-builder:${targetId}` : null;
+  // 布局只记在本机（"我怎么看这张图"），不进草稿定义。
+  const [layout, setLayout] = useLayoutMode(storageKey ? `${storageKey}:layout` : null);
 
   const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
   const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
@@ -99,7 +107,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
     return node ? inheritedPropertiesOf(node, hierarchyNodes) : [];
   }, [selected, hierarchyNodes]);
 
-  const { nodes, edges, orphanEntities, unresolvedRelations } = useMemo(() => {
+  const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(() => {
     const positions = storageKey ? readStoredPositions(storageKey) : {};
     const connected = new Set<string>();
     const degree = new Map<string, number>();
@@ -120,21 +128,28 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       if (value > hubDegree) { hubDegree = value; hubId = entity.id; }
     }
     const fallback = radialLayout(definition.entityTypes, drawnEdges, layoutSeed);
+    // 概念分组的框与坐标只在「按逻辑分组」下算：另外两种布局不看分组，也不画框。
+    const frames = buildGroupFrames(definition.groups, definition.entityTypes, definition.entityTypes.map((entity) => ({ id: entity.id, name: entity.name })));
+    const described = layout === "grouped"
+      ? groupedLayoutPositions(frames, definition.entityTypes.filter((entity) => !frames.some((frame) => frame.nodeIds.includes(entity.id))).map((entity) => entity.id), drawnEdges, layoutSeed)
+      : layout === "circle" ? circleLayout(definition.entityTypes.map((entity) => entity.id), layoutSeed) : null;
+    const arranged = (id: string) => described?.get(id);
     const drawnNodes: SigmaNode[] = definition.entityTypes.map((entity) => ({
       id: entity.id,
       label: compactGraphLabel(entity.name),
       color: graphColor(entity.name),
       isHub: entity.id === hubId,
-      x: positions[entity.id]?.x ?? fallback.get(entity.id)?.x,
-      y: positions[entity.id]?.y ?? fallback.get(entity.id)?.y,
+      x: arranged(entity.id)?.x ?? positions[entity.id]?.x ?? fallback.get(entity.id)?.x,
+      y: arranged(entity.id)?.y ?? positions[entity.id]?.y ?? fallback.get(entity.id)?.y,
     }));
     return {
       nodes: drawnNodes,
       edges: drawnEdges,
+      frames: layout === "grouped" ? frames : [],
       orphanEntities: definition.entityTypes.filter((entity) => !connected.has(entity.id)),
       unresolvedRelations: unresolved,
     };
-  }, [definition.entityTypes, definition.relationshipTypes, entityById, layoutSeed, storageKey]);
+  }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, storageKey]);
 
   const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
@@ -143,6 +158,11 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
     if (storageKey) writeStoredPositions(storageKey, {});
     setLayoutSeed((seed) => seed + 1);
   }, [storageKey]);
+
+  /** 改一个对象类型的归属（空串 = 移出分组）：分组不属于任何类型，所以整份存草稿。 */
+  const assignGroup = (entityId: string, groupId: string) => {
+    void onSaveDefinition({ ...definition, entityTypes: definition.entityTypes.map((item) => (item.id === entityId ? { ...item, groupId } : item)) }).catch(onFail);
+  };
 
   const openCreateRelation = (source: string, target: string) => {
     setDialog({ kind: "relation", mode: "create", id: crypto.randomUUID(), source, target });
@@ -168,10 +188,11 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       <SigmaGraph
         nodes={nodes}
         edges={edges}
+        frames={frames}
         selectedNodeId={selected?.kind === "entity" ? selected.id : null}
         selectedEdgeId={selected?.kind === "relation" ? selected.id : null}
         connectionSourceId={connectFrom}
-        draggable
+        draggable={layout === "default"}
         layoutRequest={0}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => setSelected({ kind: "relation", id: edgeId })}
@@ -193,8 +214,13 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           <Link2 size={14} />{connectFrom ? "退出连线" : "新建关系类型"}
         </button>
         <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
+        <LayoutSwitcher value={layout} onChange={setLayout} />
+        <button className="ob-tool-action" disabled={!onOpenGroups} onClick={() => onOpenGroups?.()} title="概念分组（业务域）：在配置页里建分组、勾成员">
+          <Boxes size={14} />概念分组 <b>{definition.groups.length}</b>
+        </button>
         <span className="ob-count">{definition.entityTypes.length} 个对象类型 · {definition.relationshipTypes.length} 关系类型</span>
       </div>
+
 
       {connectFrom && (
         <div className="ob-connect-hint" role="status">
@@ -244,6 +270,14 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                 <span>必填 <b>{selectedEntity.properties.filter((item) => item.required).length}</b></span>
                 <span>标题 <b>{selectedEntity.displayProperty || "默认"}</b></span>
               </div>
+              <label className="ob-group-pick">
+                <span><Boxes size={12} />概念分组</span>
+                <select value={selectedEntity.groupId ?? ""} disabled={!canEdit} onChange={(event) => assignGroup(selectedEntity.id, event.target.value)}>
+                  <option value="">未归组</option>
+                  {definition.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
+                <small>{definition.groups.length ? "选一个业务域，图谱「按逻辑分组」时它会和同组的类型画在一个框里。" : "还没有分组，点工具栏的「概念分组」新建一个。"}</small>
+              </label>
               {selectedLineage.direct.length > 0 && (
                 <p className="ob-lineage"><CornerDownRight size={12} />继承自 <b>{selectedLineage.direct.join("、")}</b></p>
               )}
@@ -318,9 +352,10 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           mode={dialog.mode}
           entity={dialog.mode === "edit" ? entityById.get(dialog.id) ?? null : null}
           entityTypes={definition.entityTypes}
+          groups={definition.groups}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", parents: payload.parents, properties: payload.properties, sources: payload.sources };
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, parents: payload.parents, properties: payload.properties, sources: payload.sources };
             if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
             else await onUpdateEntity(dialog.id, body);
           }}

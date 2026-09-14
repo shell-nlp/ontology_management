@@ -9,6 +9,9 @@
 .graph-sigma-canvas canvas { display: block; outline: none; }
 .graph-sigma-canvas .sigma-self-loops { position: absolute; inset: 0; z-index: 2; overflow: visible; pointer-events: none; }
 .graph-sigma-canvas .sigma-self-loops text { font: 600 10px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: #f8fafb; stroke-width: 3px; stroke-linejoin: round; }
+/* 概念分组的框画在线和点下面（z-index 比 .sigma-self-loops 低一层），框里只留虚线边和组名。 */
+.graph-sigma-canvas .sigma-group-frames { position: absolute; inset: 0; z-index: 1; overflow: visible; pointer-events: none; }
+.graph-sigma-canvas .sigma-group-frames text { font: 700 12px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: #f8fafb; stroke-width: 3px; stroke-linejoin: round; }
 .graph-sigma-canvas .sigma-mouse { cursor: grab; }
 .graph-sigma-canvas .sigma-mouse:active { cursor: grabbing; }
 .graph-sigma-canvas .react-sigma-controls { overflow:hidden; border:1px solid #cbd9ed; border-radius:2px; box-shadow:none; }

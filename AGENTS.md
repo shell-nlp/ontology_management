@@ -260,7 +260,8 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 已落地：
 
 - `src/lib/reasoning/tools.ts`：**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
-  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定）、`get_table_ddl`（表 / 视图的结构，返回 DDL）、
+  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定、所属概念分组）、
+  `list_concept_groups`（有哪些概念分组、每组里有哪些对象类型）、`get_table_ddl`（表 / 视图的结构，返回 DDL）、
   `run_sql`（对象类型绑定的表上的只读 SQL）、`list_actions`。
   另外两个实例工具留在目录里但标了 `disabled`（见下面「推理范围」）。排序是纯函数（`rankSchemaConcepts`），有单测。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
@@ -436,7 +437,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 - 传输：Streamable HTTP，JSON 响应；实现 `initialize` / `ping` / `tools/list` / `tools/call`，
   通知回 202，GET 回 405（不做服务端推送）。协议版本 `2025-06-18`。
-- 工具：`list_ontologies` + 上面那五个，**每个都多一个 `ontology_id`**（面向外部客户端时，隔离单位是本体而不是存储）。
+- 工具：`list_ontologies` + 上面那几个，**每个都多一个 `ontology_id`**（面向外部客户端时，隔离单位是本体而不是存储）。
 - 鉴权：平台会话 Cookie（站内调试）或 `Authorization: Bearer <MCP_API_TOKEN>`（外部客户端）。
   令牌在 `.env.local`，没有它外部就连不上，不会静默放行。
 - 复用 `reasoning/tools.ts` 的实现，一层都不重写 —— 避免"界面上查得到、MCP 里查不到"的漂移。
@@ -447,6 +448,60 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | V2 | MCP 鉴权粒度 | 单一静态令牌：谁拿到都能查所有本体，也不能按用户吊销 | 改成平台 API Key（每人一个、可吊销），并把令牌绑定到本体范围；令牌轮换后写审计 |
 | V3 | MCP 的 resources / prompts | 只实现了 tools 能力 | 若要给客户端直接挂"本体说明书"，可以加 `resources/list` 暴露本体概览；先等真实客户端需求 |
 | V4 | MCP 侧的长任务通知 | 平台内的问答已经走 SSE 边跑边显示；MCP 工具仍是同步返回，大子图查询会让客户端干等 | 评估 MCP 的 progress 通知（`notifications/progress`），先看真实客户端是否需要 |
+
+### 概念分组（业务域）
+
+记录时间：2026-09-14。**用户方向：像 bkn-studio 的知识网络详情页那样，把对象类型按业务域（客户域 / 账务域 / 字典域…）
+归堆，图谱上按组画框图。** 这一层是"人怎么看这个本体"，不是本体语义。
+
+数据落在定义里（`src/lib/ontology.ts`）：
+
+- `ontologyDefinitionSchema.groups: ConceptGroup[]`，一条是 `{ id, name, color }`；`color` 留空就按它在清单里的位置取
+  `GROUP_PALETTE`（6 色，`concept-groups.ts`）。
+- `entityTypes[].groupId`：空串 = 未归组。**分组的 id 与对象类型的 id 共用一套 id 空间**：导入时
+  `ontology-bundle.ts` 的 `collectDefinitionIds` / `relinkDefinitionIds` 会把两者一起换成新 id，`groupId` 才跟着指对。
+
+三条不变量（改这块时别破）：
+
+1. **分组只影响展示与检索提示**：不写进图库（Jena / Neo4j 侧没有对应三元组）、不参与发布校验、不进推理结论。
+   它唯一"进入推理"的地方是检索面与提示词：`schemaConcepts` 把分组名并进 haystack（问「客户域里有什么」能命中成员），
+   `get_object_type` 返回 `group`，`schemaBrief` 在每个对象类型后面跟分组名。
+2. **分组是对象类型这一层的东西**，不是对象（实例）的属性。实例图谱不画分组框，也不提供布局切换。
+3. **归组只有一条路径**：`resolveGroup(groups, name)` —— 去掉前后空格、忽略大小写，重名复用，没有就新建（走这条路径的
+   `groupName` 一律来自下拉选项，所以实际都是"复用"）。分组的增删改只在配置页做，别处只能"选"。
+
+界面（配置只有一处，看效果有两处）：
+
+- **概念分组配置页**（左侧导航「语义模型 → 概念分组」，`concept-group-manager.tsx`）：**唯一的分组配置入口**。
+  左边分组清单（色点 + 名字 + 成员），右边改名 / 换色（调色板 6 色 + "按位置自动"）/ 勾选成员 / 删除。
+  勾选即归组，**一个对象类型最多属于一个分组** —— 勾一个已经在别组的类型会把它移过来，取消勾选就是移出分组。
+  改动先落在右侧草稿里，点「保存分组」才写进草稿定义（一次性覆盖，避免两次写互相盖掉）。
+- **对象类型侧只做"选"**：`type-edit-dialog.tsx` 的「概念分组」是**下拉**（选项来自上面那份分组清单，带"不分组"），
+  不再让人随手填一个新名字；可视化的右栏也有同一个下拉，方便边看边调。
+- **看效果的两处**：本体草稿可视化画布（`ontology-builder.tsx`，工具栏「概念分组 N」直接跳配置页）
+  与「图谱 → 查看本体」（`graph-canvas.tsx` 的 `viewMode === "ontology"`）都有 `layout-switcher.tsx` 的布局切换器。
+- 布局三种：**默认布局**（按关系铺开 + 记住手工摆放）、**圆形布局**、**按逻辑分组**（`groupedLayoutPositions`：
+  组内小圈 + 组心大圈 + 未归组最外圈，`orderFramesByEdges` 让连边多的组排相邻）。后两种是算出来的：
+  **不写本机位置、也不允许拖节点**（拖了也会被下一次重算覆盖），「自动整理」在后两种布局下只是换个 seed 转一圈。
+- 分组框由 `sigma-graph.tsx` 的 `GroupFrameLayer` 画：按成员的屏幕包围盒算虚线圆角框 + 左上角组名，
+  `afterRender` / 相机变化时重画；z-index 比边线层低，框永远在点和线下面。
+- 布局选择记在 localStorage（`ontology-layout-mode:<本体 id>` / `ontology-builder:<存储 id>:layout`）：它属于"我怎么看这张图"，不进草稿。
+
+工具与 MCP：
+
+- `list_concept_groups`（无参数）：返回 `group_count` / `groups[{ name, object_types[], object_type_count }]`
+  （**空分组也列**）/ `ungrouped_object_types`（`groupId` 指向已删除分组的类型也算未归组）/ `note`；
+  evidence 是 `{ kind: "GROUP", id, label }`。
+- **工具读的是已发布定义**（和别的推理工具同一条口径）：刚在草稿里分好组、还没发布时，
+  `list_concept_groups` 会说"没有分组"。要让它看到，先发布一次。
+- MCP 侧标题「概念分组」，归在 `model` 组（`mcp.ts` 的 `TOOL_TITLES` / `TOOL_GROUP`，漏了会退化成原始工具名 + 默认分组）。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| U5 | 分组只在草稿侧可编辑 | 「查看本体」页只读，没有归组入口；分组顺序也固定按创建顺序 | 改定义本来就走草稿，保持只读；若要把分组当"域目录"浏览，就在「查看本体」右侧加只读的分组列表 |
+| U6 | 分组没进筛选层 | 布局、检索提示、`list_concept_groups` 都用到了分组，但对象页与图谱筛选仍只能按类型 | 等 R1（对象页接检索层）落地后加"按分组筛"：把分组成员展开成类型清单再筛 |
+| U7 | 左侧导航不显示计数 | bkn-studio 的导航每个条目都带数量（概念分组 6 / 对象类 18…），平台这边一个都没有 | 要补就一起补（本体、对象类型、关系类型、动作、分组），只补一个会显得突兀；计数从当前草稿的 `definition` 直接数 |
+
 ### 工程清洁
 
 | 编号 | 事项 | 说明 |

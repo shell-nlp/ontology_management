@@ -1,0 +1,21 @@
+/* 概念分组配置页：只补这一页特有的东西（色点 / 色板 / 成员勾选），
+   主体布局沿用 globals.css 的 .manager-grid / .result-list / .detail-panel。 */
+.cg-toolbar { display: grid; gap: 8px; margin: 4px 0 10px; }
+.cg-toolbar p { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
+.cg-dot { display: block; flex: none; align-self: center; width: 11px; height: 11px; margin-top: 1px; border: 1px solid rgba(15, 23, 42, .12); border-radius: 50%; background: #cbd5e1; }
+.cg-ungrouped { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #e3ebf5; color: #7c93b1; font-size: 11px; line-height: 1.6; }
+.cg-field { display: grid; gap: 5px; margin-bottom: 12px; }
+.cg-field > span { color: #57739b; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+.cg-field input { min-height: 30px; padding: 0 9px; border: 1px solid #d3ddd9; border-radius: 4px; color: #285154; font-size: 12px; }
+.cg-hint { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
+.cg-colors { display: flex; align-items: center; gap: 6px; }
+.cg-colors .auto { min-height: 26px; padding: 0 9px; color: #58769c; background: #fff; border: 1px solid #d7e2f0; border-radius: 4px; font-size: 10px; font-weight: 700; }
+.cg-colors .auto.active { color: #1d4ed8; border-color: #a9c5ef; background: #eef4ff; }
+.cg-colors .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #ffffff; border-radius: 50%; box-shadow: 0 0 0 1px #d7e2f0; }
+.cg-colors .swatch.active { box-shadow: 0 0 0 2px #1d4ed8; }
+.cg-members { display: grid; gap: 2px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #e3ebf5; border-radius: 4px; background: #fbfcfe; }
+.cg-members label { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 3px; color: #3f5b7d; font-size: 11px; }
+.cg-members label:hover { background: #f2f7ff; }
+.cg-members label.checked { color: #1d4ed8; font-weight: 600; background: #eef4ff; }
+.cg-members label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-members label em { flex: none; color: #9aa8bb; font-size: 9.5px; font-style: normal; font-weight: 400; }

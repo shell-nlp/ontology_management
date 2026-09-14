@@ -22,7 +22,7 @@ async function useTempRoot() {
 }
 
 const targetId = "99999999-9999-4999-8999-999999999999";
-const emptyDefinition: OntologyDefinition = { entityTypes: [], relationshipTypes: [], actionTypes: [], rules: [] };
+const emptyDefinition: OntologyDefinition = { groups: [], entityTypes: [], relationshipTypes: [], actionTypes: [], rules: [] };
 
 describe("file-based version store", () => {
   it("creates, lists, reads and updates version records", async () => {

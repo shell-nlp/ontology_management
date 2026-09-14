@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, Check, CircleDot, CornerDownRight, Database, KeyRound, Layers, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Layers, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { ancestorsOf, inheritedPropertiesOf, indexNodes, selectableParentsOf, type HierarchyNode } from "@/lib/class-hierarchy";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
@@ -15,6 +15,7 @@ import {
   sourceName,
   sourceRoleLabel,
   validateEntitySources,
+  type ConceptGroup,
   type EntitySource,
   type EntityType,
   type Property,
@@ -26,6 +27,8 @@ export type TypeEditPayload = {
   name: string;
   description?: string;
   displayProperty?: string;
+  /** 概念分组名（业务域）：空串表示不归组、没见过的名字由调用方新建一条分组。 */
+  groupName?: string;
   /** 父类 id 列表；只有类带这一项。 */
   parents?: string[];
   sourceEntityTypeId?: string;
@@ -41,6 +44,8 @@ type Props = {
   entity?: EntityType | null;
   relation?: RelationType | null;
   entityTypes: EntityType[];
+  /** 已有的概念分组清单，用来给「概念分组」输入框做候选。 */
+  groups?: ConceptGroup[];
   onClose: () => void;
   onSave: (payload: TypeEditPayload) => Promise<void>;
 };
@@ -52,10 +57,11 @@ type Props = {
  *
  * 表单模式和可视化模式共用这一个面板，两种入口写出来的草稿结构完全一致。
  */
-export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, onClose, onSave }: Props) {
+export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, groups = [], onClose, onSave }: Props) {
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
   const [description, setDescription] = useState(kind === "entity" ? entity?.description ?? "" : relation?.description ?? "");
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
+  const [groupName, setGroupName] = useState(kind === "entity" ? groups.find((item) => item.id === entity?.groupId)?.name ?? "" : "");
   const [parents, setParents] = useState<string[]>(kind === "entity" ? entity?.parents ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
   const [target, setTarget] = useState(relation?.targetEntityTypeId ?? "");
@@ -246,7 +252,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     setBusy(true);
     try {
       await onSave(kind === "entity"
-        ? { name, description, displayProperty, parents, properties, sources: normalizedSources }
+        ? { name, description, displayProperty, groupName, parents, properties, sources: normalizedSources }
         : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
       onClose();
     } finally {
@@ -299,6 +305,16 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     {properties.map((prop) => <option key={prop.name} value={prop.name}>{prop.name}</option>)}
                   </select>
                   <small>节点上显示哪条属性。图谱与对象页都用它当标题；留空则按 name / 名称 / title / id 依次自动选。</small>
+                </label>
+                <label className="ted-field">
+                  <span><Boxes size={12} />概念分组</span>
+                  <select className="ted-select" value={groupName} onChange={(event) => setGroupName(event.target.value)}>
+                    <option value="">不分组</option>
+                    {groups.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                  </select>
+                  <small>{groups.length
+                    ? "从「概念分组」页维护的分组里挑一个；留空就是这个对象类型不属于任何分组。"
+                    : "还没有概念分组。去左侧「概念分组」页按业务域建几个，再回来挑。"}</small>
                 </label>
                 <div className="ted-field">
                   <span><Layers size={12} />父类（继承）</span>
