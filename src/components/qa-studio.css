@@ -140,7 +140,7 @@
 .qa-trail-step { position: relative; }
 .qa-trail-step + .qa-trail-step { margin-top: 5px; }
 .qa-trail-step > button {
-  display: grid; grid-template-columns: 22px minmax(90px, auto) minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: 22px max-content minmax(0, 150px) minmax(0, 1fr) auto;
   align-items: center; gap: 9px; width: 100%; padding: 7px 9px 7px 0;
   border: 0; background: transparent; text-align: left; cursor: pointer; border-radius: 4px;
 }
@@ -156,14 +156,31 @@
   color: var(--qa-faint); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/*
+ * 行上的入参摘要：同一轮里模型常连调好几次同一个工具，光看工具名分不出哪步查了什么。
+ * 单行省略，完整内容点开看 —— 它是这一行的"副标题"，不该把行撑高。
+ */
+.qa-trail-args {
+  color: #64748b; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .qa-trail-facts {
   display: inline-flex; align-items: baseline; gap: 8px; color: var(--qa-verified);
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
 .qa-trail-facts i { color: var(--qa-faint); font-style: normal; font-family: ui-monospace, monospace; font-size: 10.5px; }
 .qa-trail-step.failed .qa-trail-facts { color: #a33f38; }
+.qa-step-detail { display: grid; gap: 8px; margin: 2px 0 8px 31px; }
+.qa-step-part { display: grid; gap: 4px; }
+.qa-step-part-label { color: var(--qa-faint); font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+/* 入参用浅底、返回用深底：一浅一深交代了方向，不用再读标签。 */
+.qa-step-args {
+  margin: 0; padding: 10px 12px; border: 1px solid var(--qa-line); border-radius: 4px;
+  background: #f1f5f9; color: #334155; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10.5px; line-height: 1.65; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
 .qa-step-result {
-  margin: 2px 0 6px 31px; padding: 10px 12px; border: 1px solid var(--qa-line); border-radius: 4px;
+  margin: 0; padding: 10px 12px; border: 1px solid var(--qa-line); border-radius: 4px;
   background: #0f172a; color: #cbd5e1; font-family: ui-monospace, "Cascadia Code", monospace;
   font-size: 10.5px; line-height: 1.65; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
 }
@@ -275,7 +292,8 @@
 @media (max-width: 900px) {
   .qa-answer { padding-left: 0; }
   .qa-ask p { max-width: 84%; }
-  .qa-trail-step > button { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  /* 窄屏先让机器名（code）让位，入参留着 —— 它就是这一步的说明。 */
+  .qa-trail-step > button { grid-template-columns: 22px max-content minmax(0, 1fr) auto; }
   .qa-trail-step code { display: none; }
 }
 /* 关掉思考时的一句说明：让「没有思考过程」看起来是设置，而不是坏了。 */

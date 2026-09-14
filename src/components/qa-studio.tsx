@@ -128,10 +128,31 @@ function Markdown({ text }: { text: string }) {
   return <div className="qa-markdown">{blocks}</div>;
 }
 
+/** 入参里单个值的写法：字符串带引号（区分「郑州」和郑州这段文本本身），数组展开成 []。 */
+function formatArgument(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => formatArgument(item)).join(", ")}]`;
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * 一行放得下的入参摘要，形如 `type_name="专线产品用户"  limit=20`。
+ *
+ * 同一轮里模型常连着调好几次同一个工具（截图里 query_object_instance 出现九次），
+ * 只看工具名根本分不出哪一步查了什么 —— 所以入参要在行上就能看见，点开再看完整 JSON。
+ */
+function argumentSummary(args: Record<string, unknown> | undefined): string {
+  const entries = Object.entries(args ?? {});
+  if (!entries.length) return "无入参";
+  return entries.map(([key, value]) => `${key}=${formatArgument(value)}`).join("  ");
+}
+
 /**
  * 求证轨迹：这一页的签名元素。
- * 横向一串节点，每个是「第几步 · 调了什么 · 命中多少 · 耗时」，点开看原始返回。
- * 推理进行中也是活的：步骤一完成就出现在这里。
+ * 横向一串节点，每个是「第几步 · 调了什么 · 传了什么参数 · 命中多少 · 耗时」，
+ * 点开看这一步的完整入参与原始返回。推理进行中也是活的：步骤一完成就出现在这里。
  */
 function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: boolean; totalMs: number }) {
   // 默认收起；推理中自动展开，让过程可见（用户手动收起来后就尊重用户的选择）。
@@ -160,12 +181,24 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
                 <span className="qa-trail-node">{step.index}</span>
                 <b>{TOOL_LABELS[step.tool] ?? step.tool}</b>
                 <code>{step.tool}</code>
+                <span className="qa-trail-args">{argumentSummary(step.arguments)}</span>
                 <span className="qa-trail-facts">
                   {step.ok ? (step.evidence.length ? `命中 ${step.evidence.length}` : "无命中") : "出错"}
                   <i>{step.elapsedMs}ms</i>
                 </span>
               </button>
-              {openStep === step.index && <pre className="qa-step-result">{step.result}</pre>}
+              {openStep === step.index && (
+                <div className="qa-step-detail">
+                  <div className="qa-step-part">
+                    <span className="qa-step-part-label">入参</span>
+                    <pre className="qa-step-args">{JSON.stringify(step.arguments ?? {}, null, 2)}</pre>
+                  </div>
+                  <div className="qa-step-part">
+                    <span className="qa-step-part-label">返回</span>
+                    <pre className="qa-step-result">{step.result}</pre>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
           {live && <li className="qa-trail-empty"><Loader2 size={12} className="qa-spin" /> 继续查证…</li>}
