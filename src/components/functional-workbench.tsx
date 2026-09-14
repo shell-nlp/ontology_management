@@ -226,7 +226,8 @@ type NavItem = readonly [View, string, LucideIcon];
 
 const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
   { label: "", items: [["ontologies", "本体", Boxes], ["overview", "总览", Activity]] },
-  { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
+  { label: "语义模型", items: [["ontology", "本体草稿", BookOpen]] },
+  { label: "本体实例", items: [["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
   { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
   { label: "能力验证", items: [["qa", "智能问答", MessagesSquare], ["mcp", "MCP 调试", Terminal]] },
   { label: "平台", items: [["data", "数据资源", Table2], ["targets", "存储资源", Database], ["settings", "设置", Settings2]] },
