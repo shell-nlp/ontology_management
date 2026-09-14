@@ -87,6 +87,11 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const storageKey = targetId ? `ontology-builder:${targetId}` : null;
   // 布局只记在本机（"我怎么看这张图"），不进草稿定义。
   const [layout, setLayout] = useLayoutMode(storageKey ? `${storageKey}:layout` : null);
+  /*
+   * 手工摆放的位置**按布局分别记**：默认布局沿用老键（老数据不丢），圆形 / 按逻辑分组各用自己的键。
+   * 分开记才不会出现"拖着默认布局摆好的位置，一切到按逻辑分组就全乱"。
+   */
+  const positionKey = storageKey ? (layout === "default" ? storageKey : `${storageKey}:${layout}`) : null;
 
   const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
   const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
@@ -108,7 +113,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   }, [selected, hierarchyNodes]);
 
   const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(() => {
-    const positions = storageKey ? readStoredPositions(storageKey) : {};
+    // 拖过的节点记在这里：它是**覆盖**，压在算出来的坐标上面，所以拖完不会弹回去，分组框也跟着它变。
+    const positions = positionKey ? readStoredPositions(positionKey) : {};
     const connected = new Set<string>();
     const degree = new Map<string, number>();
     const drawnEdges: SigmaEdge[] = [];
@@ -139,8 +145,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       label: compactGraphLabel(entity.name),
       color: graphColor(entity.name),
       isHub: entity.id === hubId,
-      x: arranged(entity.id)?.x ?? positions[entity.id]?.x ?? fallback.get(entity.id)?.x,
-      y: arranged(entity.id)?.y ?? positions[entity.id]?.y ?? fallback.get(entity.id)?.y,
+      x: positions[entity.id]?.x ?? arranged(entity.id)?.x ?? fallback.get(entity.id)?.x,
+      y: positions[entity.id]?.y ?? arranged(entity.id)?.y ?? fallback.get(entity.id)?.y,
     }));
     return {
       nodes: drawnNodes,
@@ -149,15 +155,16 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       orphanEntities: definition.entityTypes.filter((entity) => !connected.has(entity.id)),
       unresolvedRelations: unresolved,
     };
-  }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, storageKey]);
+  }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, positionKey]);
 
   const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
 
   const organize = useCallback(() => {
-    if (storageKey) writeStoredPositions(storageKey, {});
+    // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
+    if (positionKey) writeStoredPositions(positionKey, {});
     setLayoutSeed((seed) => seed + 1);
-  }, [storageKey]);
+  }, [positionKey]);
 
   /** 改一个对象类型的归属（空串 = 移出分组）：分组不属于任何类型，所以整份存草稿。 */
   const assignGroup = (entityId: string, groupId: string) => {
@@ -192,12 +199,12 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         selectedNodeId={selected?.kind === "entity" ? selected.id : null}
         selectedEdgeId={selected?.kind === "relation" ? selected.id : null}
         connectionSourceId={connectFrom}
-        draggable={layout === "default"}
+        draggable
         layoutRequest={0}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => setSelected({ kind: "relation", id: edgeId })}
         onStageClick={() => { setSelected(null); setConnectFrom(null); }}
-        onDragEnd={(nodeId, point) => { if (storageKey && canEdit) writeStoredPositions(storageKey, { ...readStoredPositions(storageKey), [nodeId]: point }); }}
+        onDragEnd={(nodeId, point) => { if (positionKey && canEdit) writeStoredPositions(positionKey, { ...readStoredPositions(positionKey), [nodeId]: point }); }}
         onLayoutEnd={() => undefined}
       />
 

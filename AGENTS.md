@@ -504,9 +504,17 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   与「图谱 → 查看本体」（`graph-canvas.tsx` 的 `viewMode === "ontology"`）都有 `layout-switcher.tsx` 的布局切换器。
 - **导入自带分组**：bkn 知识网络里的 `concept_groups` 由 `bkn-import.ts` 转成 `groups` + `entityTypes[].groupId`
   （成员写在分组那一侧，转换时反过来铺；一个类型挂多个分组时保留文件里的第一个并报 warning）。
-- 布局三种：**默认布局**（按关系铺开 + 记住手工摆放）、**圆形布局**、**按逻辑分组**（`groupedLayoutPositions`：
-  组内小圈 + 组心大圈 + 未归组最外圈，`orderFramesByEdges` 让连边多的组排相邻）。后两种是算出来的：
-  **不写本机位置、也不允许拖节点**（拖了也会被下一次重算覆盖），「自动整理」在后两种布局下只是换个 seed 转一圈。
+- 布局三种：**默认布局**（按关系铺开）、**圆形布局**、**按逻辑分组**（`groupedLayoutPositions`：
+  组内小圈 + 组心大圈 + 未归组最外圈，`orderFramesByEdges` 让连边多的组排相邻）。
+- **三种布局都能拖节点**（2026-09-14 修：一开始把后两种的拖动关掉了，用户反馈"节点不能拖了"）。
+  后两种的底图是算出来的，但点位取 **「手工覆盖 > 算出来的」**，而手工覆盖**按布局分别记**在本机：
+  默认布局沿用老键 `ontology-builder:<存储 id>`，圆形 / 按逻辑分组各用 `…:circle` / `…:grouped`
+  （本体骨架页同理，`ontology-layout:<存储 id>` 加后缀）。分开记才不会出现"默认布局摆好的位置一切到按逻辑分组就全乱"。
+  拖完不会弹回去 —— 换布局、改定义、重开页面都还在。`GraphCanvas` 的骨架页写位置时是**合并**进现有映射（`{ ...read, ...next }`），
+  不然一次拖动会把同一布局里其它拖过的节点覆盖掉。
+- 分组框画在节点下面，按成员的**实时屏幕包围盒**算（`GroupFrameLayer` 挂在 `afterRender` 上），
+  所以拖动时框会跟着节点的位置**收缩 / 扩大**，不用等松手。
+- 「自动整理」= 清掉**当前布局**的手工覆盖 + 换一个 seed 重新算（后两种布局下就是整圈转一下）。
 - 分组框由 `sigma-graph.tsx` 的 `GroupFrameLayer` 画：按成员的屏幕包围盒算虚线圆角框 + 左上角组名，
   `afterRender` / 相机变化时重画；z-index 比边线层低，框永远在点和线下面。
 - 布局选择记在 localStorage（`ontology-layout-mode:<本体 id>` / `ontology-builder:<存储 id>:layout`）：它属于"我怎么看这张图"，不进草稿。

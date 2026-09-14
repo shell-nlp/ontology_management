@@ -323,6 +323,11 @@ export function GraphCanvas({
   const localLayoutKey = targetId && !persistsPositions ? `${viewMode === "ontology" ? "ontology" : "instance"}-layout:${targetId}` : null;
   // 「查看本体」才有布局可选：分组是对象类型这一层的东西，实例图谱不看它。
   const [layout, setLayout] = useLayoutMode(viewMode === "ontology" && targetId ? `ontology-layout-mode:${targetId}` : null);
+  /*
+   * 本机记的摆放位置**按布局分开**：默认布局沿用老键，圆形 / 按逻辑分组各用各的。
+   * 拖过的节点是"覆盖"，压在算出来的坐标上面 —— 分组框按节点实时位置画，所以框会跟着一起收放。
+   */
+  const layoutOverrideKey = localLayoutKey && layout !== "default" ? `${localLayoutKey}:${layout}` : localLayoutKey;
   const frameGroups = useMemo(() => (definition?.groups ?? []).map((group) => ({ id: group.id, name: group.name, color: group.color ?? "" })), [definition]);
   const frameTypes = useMemo(() => (definition?.entityTypes ?? []).map((item) => ({ id: item.id ?? item.name, name: item.name, groupId: item.groupId ?? "" })), [definition]);
   const [showAllForGraph, setShowAllForGraph] = useState<GraphData | null>(null);
@@ -393,7 +398,7 @@ export function GraphCanvas({
     const positionedNodeCount = displayGraph.nodes.filter((node) => storedPosition(node)).length;
     // A partially persisted legacy layout mixes unrelated coordinate systems and creates sparse, uneven graphs.
     const useStoredPositions = displayGraph.nodes.length > 0 && positionedNodeCount / displayGraph.nodes.length >= 0.8 && storedLayoutIsUsable(displayGraph.nodes);
-    const localPositions = localLayoutKey ? readStoredPositions(localLayoutKey) : {};
+    const localPositions = layoutOverrideKey ? readStoredPositions(layoutOverrideKey) : {};
     const manuallyPlaced = new Set<string>();
     const nodes: SigmaNode[] = displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => {
       const position = useStoredPositions ? storedPosition(node) : null;
@@ -414,7 +419,10 @@ export function GraphCanvas({
         }
       });
     }
-    // 圆形布局与按逻辑分组都由分组/布局算出来：这两种布局下本机存的摆放位置让位（不然框和点位对不上）。
+    /*
+     * 圆形布局与按逻辑分组由分组/布局算出来，但**手工拖过的节点优先**：
+     * 点位的来源是"覆盖 > 算出来的"，所以拖动不会被下一次重算冲掉，分组框也会跟着节点实时收放。
+     */
     if (viewMode === "ontology" && (layout === "circle" || layout === "grouped")) {
       const frames = layout === "grouped"
         ? buildGroupFrames(frameGroups, frameTypes, displayGraph.nodes.filter((node) => visibleNodeIds.has(node.id)).map((node) => ({ id: node.id, name: graphLabel(node, displayProps) })))
@@ -423,13 +431,14 @@ export function GraphCanvas({
         ? groupedLayoutPositions(frames, nodes.filter((node) => !frames.some((frame) => frame.nodeIds.includes(node.id))).map((node) => node.id), edges, layoutSeed)
         : circleLayout(nodes.map((node) => node.id), layoutSeed);
       nodes.forEach((node) => {
+        if (manuallyPlaced.has(node.id)) return;
         const point = described.get(node.id);
         if (point) { node.x = point.x; node.y = point.y; }
       });
       return { nodes, edges, frames };
     }
     return { nodes, edges, frames: [] };
-  }, [displayGraph.nodes, displayGraph.relationships, displayProps, frameGroups, frameTypes, layout, layoutSeed, localLayoutKey, localPositionKey, viewMode, visibleNodeIds, visibleRelationships]);
+  }, [displayGraph.nodes, displayGraph.relationships, displayProps, frameGroups, frameTypes, layout, layoutOverrideKey, layoutSeed, localPositionKey, viewMode, visibleNodeIds, visibleRelationships]);
 
   const toggleLabel = (label: string) => {
     const labels = activeLabels.includes(label) ? activeLabels.filter((item) => item !== label) : [...activeLabels, label];
@@ -507,12 +516,13 @@ export function GraphCanvas({
   };
 
   // 有草稿写快照，否则（只读浏览、本体骨架）只记在本机浏览器，不碰图数据库。
+  // 骨架页按布局分开记（layoutOverrideKey），所以"默认布局拖过的"和"按逻辑分组拖过的"互不影响。
   const saveNodePositions = (positions: Record<string, { x: number; y: number }>) => {
     if (persistsPositions) {
       savePositions(positions);
       return;
     }
-    if (localLayoutKey) writeStoredPositions(localLayoutKey, localPositionEntries(positions));
+    if (layoutOverrideKey) writeStoredPositions(layoutOverrideKey, { ...readStoredPositions(layoutOverrideKey), ...localPositionEntries(positions) });
   };
 
   const handleNodeClick = (nodeId: string) => {
@@ -532,9 +542,9 @@ export function GraphCanvas({
 
   const organize = () => {
     if (!graph.nodes.length) return;
-    // 圆形 / 按逻辑分组是算出来的布局：只有"整体转一圈"这一个自由度，不落本机位置。
+    // 「自动整理」= 忘掉手工拖过的位置，回到算出来的（分组布局下就是换个 seed 重新铺）。
+    if (layoutOverrideKey) writeStoredPositions(layoutOverrideKey, {});
     if (layout !== "default") { setLayoutSeed((seed) => seed + 1); return; }
-    if (localLayoutKey) writeStoredPositions(localLayoutKey, {});
     if (graphData.nodes.length <= 60) {
       const arranged = Object.fromEntries(computeStableNodePositions(graphData.nodes, graphData.edges, layoutSeed + 1));
       saveNodePositions(arranged);
@@ -567,7 +577,7 @@ export function GraphCanvas({
         selectedNodeId={editTarget?.kind === "node" ? editTarget.id : null}
         selectedEdgeId={editTarget?.kind === "edge" ? editTarget.id : null}
         connectionSourceId={connectionSourceId}
-        draggable={layout === "default"}
+        draggable
         layoutRequest={graphData.nodes.length <= 60 ? 0 : layoutRequest}
         onNodeClick={handleNodeClick}
         onEdgeClick={(edgeId) => { setEditTarget({ kind: "edge", id: edgeId }); setEditing(false); }}
