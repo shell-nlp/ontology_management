@@ -7,6 +7,7 @@ import { actionInvolvement } from "@/lib/action-engine";
 import { ancestorsOf, inheritedPropertiesOf, indexNodes } from "@/lib/class-hierarchy";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
+import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import type { ActionType, Definition, EntityType, RelationType } from "@/lib/ontology-draft";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
@@ -172,7 +173,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   };
 
   const openCreateRelation = (source: string, target: string) => {
-    setDialog({ kind: "relation", mode: "create", id: crypto.randomUUID(), source, target });
+    setDialog({ kind: "relation", mode: "create", id: newId(), source, target });
     setConnectFrom(null);
   };
 
@@ -209,7 +210,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       />
 
       <div className="ob-toolbar">
-        <button className="graph-tool-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}>
+        <button className="graph-tool-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: newId() })}>
           <Plus size={14} />对象类型
         </button>
         <button
@@ -255,7 +256,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           <b>画布上还没有对象类型</b>
           <span>先落一个对象类型，从它拉出关系类型，再补端点和属性。每次改动都会立刻存进草稿。</span>
           <div>
-            <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: crypto.randomUUID() })}><Plus size={15} />新建对象类型</button>
+            <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: newId() })}><Plus size={15} />新建对象类型</button>
             {hasSnapshot && <button className="graph-action" disabled={!canEdit} onClick={onExtract}><Database size={15} />从快照提取类型</button>}
           </div>
         </div>

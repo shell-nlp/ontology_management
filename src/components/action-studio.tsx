@@ -6,6 +6,7 @@ import { api } from "@/lib/api-client";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { actionInvolvement, validateActionDefinition } from "@/lib/action-engine";
 import { graphColor } from "@/lib/graph-palette";
+import { newId } from "@/lib/ids";
 import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology-draft";
 import type { OntologyDefinition } from "@/lib/ontology";
 import "./action-studio.css";
@@ -62,8 +63,8 @@ type Props = {
   fail: (reason: unknown) => void;
 };
 
-const newAction = (scopeEntityTypeId = ""): ActionType => ({ id: crypto.randomUUID(), name: "", code: "", description: "", scopeEntityTypeId, params: [], edits: [] });
-const newRule = (actionId = ""): OntologyRule => ({ id: crypto.randomUUID(), name: "", effect: "BLOCK", priority: 1, enabled: true, actionId, conditions: [], message: "" });
+const newAction = (scopeEntityTypeId = ""): ActionType => ({ id: newId(), name: "", code: "", description: "", scopeEntityTypeId, params: [], edits: [] });
+const newRule = (actionId = ""): OntologyRule => ({ id: newId(), name: "", effect: "BLOCK", priority: 1, enabled: true, actionId, conditions: [], message: "" });
 const newParam = (): ActionParameter => ({ code: "", name: "", kind: "ENTITY_REF", entityTypeId: "", dataType: "TEXT", required: true });
 const newEdit = (): ActionEdit => ({ op: "CREATE_ENTITY", alias: "", entityTypeId: "", relationshipTypeId: "", entityRef: { kind: "PARAM", code: "" }, sourceRef: { kind: "PARAM", code: "" }, targetRef: { kind: "PARAM", code: "" }, assignments: [] });
 const newCondition = (): RuleCondition => ({ subject: { kind: "PARAM", code: "", relationshipTypeId: "", direction: "OUT" }, property: "", operator: "EQUALS", compareValue: "" });

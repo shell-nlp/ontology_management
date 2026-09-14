@@ -8,6 +8,7 @@ import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
+import { newId } from "@/lib/ids";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
 import { resolveGroup } from "@/lib/concept-groups";
 import { OntologyStudio, type OntologySummary } from "@/components/ontology-studio";
@@ -803,8 +804,8 @@ function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refr
   const createRelation = async (id: string, payload: RelationPayload) => { try { const trimmed = payload.name.trim(); if (!trimmed) throw new Error("请填写关系类型名称。"); if (!payload.sourceEntityTypeId || !payload.targetEntityTypeId) throw new Error("请选择关系的起始对象类型与终止对象类型。"); if (definition.relationshipTypes.some((item) => item.name === trimmed)) throw new Error("关系类型名称已存在。"); await save({ ...definition, relationshipTypes: [...definition.relationshipTypes, { id, name: trimmed, description: (payload.description ?? "").trim(), sourceEntityTypeId: payload.sourceEntityTypeId, targetEntityTypeId: payload.targetEntityTypeId, properties: payload.properties }] }); notify("关系类型已加入草稿。"); } catch (reason) { fail(reason); } };
   const [importPlan, setImportPlan] = useState<{ newEntities: EntityType[]; newRelations: RelationType[]; mergedEntities: EntityType[]; mergedRelations: RelationType[]; changedEntities: number; changedRelations: number; unresolved: number; inferredProperties: number } | null>(null);
   const switchTab = (next: "entity" | "relation") => { setTab(next); };
-  const addEntity = async (event: FormEvent) => { event.preventDefault(); try { if (!name.trim()) return; if (definition.entityTypes.some((item) => item.name === name.trim())) throw new Error("对象类型的名称已存在。"); await save({ ...definition, entityTypes: [...definition.entityTypes, { id: crypto.randomUUID(), name: name.trim(), description: description.trim(), properties: [] }] }); setName(""); setDescription(""); } catch (reason) { fail(reason); } };
-  const addRelation = async (event: FormEvent) => { event.preventDefault(); try { if (!rel.name || !rel.source || !rel.target) throw new Error("请填写关系类型和两个端点。"); await save({ ...definition, relationshipTypes: [...definition.relationshipTypes, { id: crypto.randomUUID(), name: rel.name, sourceEntityTypeId: rel.source, targetEntityTypeId: rel.target, properties: [] }] }); setRel({ name: "", source: "", target: "" }); } catch (reason) { fail(reason); } };
+  const addEntity = async (event: FormEvent) => { event.preventDefault(); try { if (!name.trim()) return; if (definition.entityTypes.some((item) => item.name === name.trim())) throw new Error("对象类型的名称已存在。"); await save({ ...definition, entityTypes: [...definition.entityTypes, { id: newId(), name: name.trim(), description: description.trim(), properties: [] }] }); setName(""); setDescription(""); } catch (reason) { fail(reason); } };
+  const addRelation = async (event: FormEvent) => { event.preventDefault(); try { if (!rel.name || !rel.source || !rel.target) throw new Error("请填写关系类型和两个端点。"); await save({ ...definition, relationshipTypes: [...definition.relationshipTypes, { id: newId(), name: rel.name, sourceEntityTypeId: rel.source, targetEntityTypeId: rel.target, properties: [] }] }); setRel({ name: "", source: "", target: "" }); } catch (reason) { fail(reason); } };
   const updateEntity = async (id: string, patch: { name: string; description: string; displayProperty?: string; groupName?: string; parents?: string[]; properties: Property[]; sources?: EntityType["sources"] }) => { try { const next = structuredClone(definition); const idx = next.entityTypes.findIndex((item) => item.id === id); if (idx < 0) return; if (next.entityTypes.some((item, i) => i !== idx && item.name === patch.name.trim())) throw new Error("对象类型的名称已存在。"); // groupName 没传就是"这次不改分组"；传了空串才是"移出分组"。
     const named = patch.groupName === undefined ? null : resolveGroup(next.groups ?? [], patch.groupName); if (named) next.groups = named.groups; next.entityTypes[idx] = { ...next.entityTypes[idx], name: patch.name.trim(), description: patch.description.trim(), displayProperty: (patch.displayProperty ?? "").trim(), groupId: named ? named.groupId : next.entityTypes[idx].groupId, parents: patch.parents ?? next.entityTypes[idx].parents ?? [], properties: patch.properties, sources: patch.sources }; await save(next); notify("对象类型及其属性已更新。"); } catch (reason) { fail(reason); } };
   const updateRelation = async (id: string, patch: { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] }) => { try { const next = structuredClone(definition); const idx = next.relationshipTypes.findIndex((item) => item.id === id); if (idx < 0) return; if (next.relationshipTypes.some((item, i) => i !== idx && item.name === patch.name.trim())) throw new Error("关系类型名称已存在。"); next.relationshipTypes[idx] = { ...next.relationshipTypes[idx], name: patch.name.trim(), description: (patch.description ?? "").trim(), sourceEntityTypeId: patch.sourceEntityTypeId, targetEntityTypeId: patch.targetEntityTypeId, properties: patch.properties }; await save(next); notify("关系类型及其属性已更新。"); } catch (reason) { fail(reason); } };
@@ -813,13 +814,13 @@ function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refr
   const extractTypesFromSnapshot = () => {
     if (!runtimeTypes) return;
     const entityNames = new Set(definition.entityTypes.map((item) => item.name));
-    const newEntities: EntityType[] = runtimeTypes.labels.filter((item) => !entityNames.has(item.name)).map((item) => ({ id: crypto.randomUUID(), name: item.name, description: "", displayProperty: "", properties: item.properties ?? [] }));
+    const newEntities: EntityType[] = runtimeTypes.labels.filter((item) => !entityNames.has(item.name)).map((item) => ({ id: newId(), name: item.name, description: "", displayProperty: "", properties: item.properties ?? [] }));
     const entityIdByName = new Map<string, string>([...definition.entityTypes, ...newEntities].map((item) => [item.name, item.id]));
     const endpoints = runtimeTypes.relationshipEndpoints ?? {};
     const resolve = (label: string | undefined) => (label ? entityIdByName.get(label) ?? "" : "");
     const newRelations: RelationType[] = runtimeTypes.relationshipTypes.filter((item) => !definition.relationshipTypes.some((existing) => existing.name === item.name)).map((item) => {
       const endpoint = endpoints[item.name];
-      return { id: crypto.randomUUID(), name: item.name, sourceEntityTypeId: resolve(endpoint?.source), targetEntityTypeId: resolve(endpoint?.target), properties: item.properties ?? [] };
+      return { id: newId(), name: item.name, sourceEntityTypeId: resolve(endpoint?.source), targetEntityTypeId: resolve(endpoint?.target), properties: item.properties ?? [] };
     });
     const mergedEntities = definition.entityTypes.map((item) => {
       if (item.properties.length) return item;
@@ -856,13 +857,13 @@ function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refr
   const overwriteImport = async () => {
     if (!runtimeTypes) return;
     setImportPlan(null);
-    const entityIdByName = new Map<string, string>(runtimeTypes.labels.map((item) => [item.name, crypto.randomUUID()]));
+    const entityIdByName = new Map<string, string>(runtimeTypes.labels.map((item) => [item.name, newId()]));
     const endpoints = runtimeTypes.relationshipEndpoints ?? {};
     const resolve = (label: string | undefined) => (label ? entityIdByName.get(label) ?? "" : "");
     const entityTypes: EntityType[] = runtimeTypes.labels.map((item) => ({ id: entityIdByName.get(item.name) ?? "", name: item.name, description: "", displayProperty: "", properties: item.properties ?? [] }));
     const relationshipTypes: RelationType[] = runtimeTypes.relationshipTypes.map((item) => {
       const endpoint = endpoints[item.name];
-      return { id: crypto.randomUUID(), name: item.name, sourceEntityTypeId: resolve(endpoint?.source), targetEntityTypeId: resolve(endpoint?.target), properties: item.properties ?? [] };
+      return { id: newId(), name: item.name, sourceEntityTypeId: resolve(endpoint?.source), targetEntityTypeId: resolve(endpoint?.target), properties: item.properties ?? [] };
     });
     try { await save({ ...definition, entityTypes, relationshipTypes }); notify("已用快照中的类型覆盖草稿。"); } catch (reason) { fail(reason); }
   };

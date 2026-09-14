@@ -1,4 +1,6 @@
 import type { ConceptGroup } from "@/lib/ontology";
+// 别名导入：下面 resolveGroup 的参数也叫 newId（调用方可以注入自己的生成器），不能撞名。
+import { newId as createId } from "@/lib/ids";
 
 /**
  * 概念分组（业务域）的展示逻辑：取色、算成员、按组排布。
@@ -26,7 +28,7 @@ export function groupColor(groups: readonly ConceptGroup[], groupId: string) {
 export function resolveGroup(
   groups: readonly ConceptGroup[],
   name: string,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string = () => createId(),
 ): { groups: ConceptGroup[]; groupId: string } {
   const trimmed = name.trim();
   if (!trimmed) return { groups: [...groups], groupId: "" };

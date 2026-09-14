@@ -6,6 +6,7 @@ import Graph from "graphology";
 import FA2LayoutSupervisor from "graphology-layout-forceatlas2/worker";
 import NoverlapLayoutSupervisor from "graphology-layout-noverlap/worker";
 import { createNodeCompoundProgram, EdgeArrowProgram, NodeCircleProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
+import { newId } from "@/lib/ids";
 import "@react-sigma/core/lib/style.css";
 
 export type SigmaNode = {
@@ -276,7 +277,7 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
   useEffect(() => {
     const namespace = "http://www.w3.org/2000/svg";
     const layer = document.createElementNS(namespace, "svg");
-    const markerPrefix = `sigma-edge-arrow-${crypto.randomUUID()}`;
+    const markerPrefix = `sigma-edge-arrow-${newId()}`;
     layer.classList.add("sigma-self-loops");
     layer.setAttribute("aria-hidden", "true");
     sigma.getContainer().appendChild(layer);

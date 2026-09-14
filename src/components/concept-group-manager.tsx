@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { LayoutGrid, Pencil, Plus, Trash2 } from "lucide-react";
 import { GROUP_PALETTE, paletteColor, summarizeGroups } from "@/lib/concept-groups";
+import { newId } from "@/lib/ids";
 import type { ConceptGroup, Definition } from "@/lib/ontology-draft";
 import "./concept-group-manager.css";
 
@@ -65,7 +66,7 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
     let name = "新分组";
     let index = 2;
     while (groups.some((group) => group.name.trim().toLowerCase() === name.trim().toLowerCase())) { name = `新分组 ${index}`; index += 1; }
-    const group: ConceptGroup = { id: crypto.randomUUID(), name, color: paletteColor(groups.length) };
+    const group: ConceptGroup = { id: newId(), name, color: paletteColor(groups.length) };
     setSelectedId(group.id);
     void commit({ ...definition, groups: [...groups, group] }, "已新建概念分组，改个名字并勾选它包含的对象类型。");
   };

@@ -49,6 +49,20 @@
 **和容器构建的关系**：上面这条约束的是"日常验证"，不是镜像构建。`docker compose up -d --build`
 里的 `pnpm build` 是镜像构建的一部分（Dockerfile 的 builder 阶段），该跑就跑。
 
+## 客户端代码约定
+
+**不许直接用"只在安全上下文里存在"的浏览器 API。** 2026-09-14 用户报：用机器 IP 走 http 访问，
+一点「本体草稿」整页变成 `This page couldn't load`（控制台是 `crypto.randomUUID is not a function`）——
+`crypto.randomUUID` 只在 https 或 localhost 下存在，IP 访问时是 `undefined`，异常被 Next 的错误边界接住。
+
+- `crypto.randomUUID` → 用 `@/lib/ids` 的 `newId()`（优先原生，其次 `getRandomValues` 自己拼 v4，
+  最差退回时间戳 + 随机数）。`resolveGroup` / `planBundleImport` 这类可注入生成器的函数，默认值也用它。
+- `navigator.clipboard` → 用 `mcp-studio.tsx` 里那种"先 Clipboard API、失败退隐藏 textarea + execCommand"的写法。
+- 同类还有 `crypto.subtle`、`navigator.geolocation`、`Notification`、Service Worker：都需要安全上下文。
+
+**这些 API 在 https 与 localhost 下都在，所以只在本机用 `localhost` 测是查不出来的** ——
+界面改动要在两个入口各过一遍：`http://localhost:<port>` 与 `http://<机器 IP>:<port>`。
+
 ## 部署（Docker Compose）
 
 记录时间：2026-09-14。用户要求提供容器化部署：先明确"只部署平台本体"，
