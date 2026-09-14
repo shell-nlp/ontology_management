@@ -2,6 +2,7 @@ import { ToolLoopAgent, stepCountIs, type ModelMessage } from "ai";
 import { llmModel, llmSettings, thinkingProviderOptions } from "@/lib/reasoning/provider";
 import { buildInstructions } from "@/lib/reasoning/prompt";
 import { reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
+import { toolResultSummary } from "@/lib/reasoning/tool-summary";
 import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 
 /**
@@ -133,6 +134,8 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
           ok: true,
           elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
           evidence: recorded,
+          // 行上的摘要取"这一步拿到了什么"，与证据数是两回事（查数据类的工具没有证据）。
+          summary: toolResultSummary(part.toolName, part.output),
         };
         steps.push(step);
         evidence.push(...recorded);

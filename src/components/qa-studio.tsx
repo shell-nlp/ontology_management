@@ -163,8 +163,12 @@ function argumentSummary(args: Record<string, unknown> | undefined): string {
 
 /**
  * 求证轨迹：这一页的签名元素。
- * 横向一串节点，每个是「第几步 · 调了什么 · 传了什么参数 · 命中多少 · 耗时」，
+ * 横向一串节点，每个是「第几步 · 调了什么 · 传了什么参数 · 拿到了什么 · 耗时」，
  * 点开看这一步的完整入参与原始返回。推理进行中也是活的：步骤一完成就出现在这里。
+ *
+ * 行上的「拿到了什么」用 `step.summary`（服务端按工具如实生成），**不用证据条数**：
+ * get_table_ddl / run_sql 按设计不产出证据，用证据数会显示成"无命中"，
+ * 明明返回了 6 行却像什么都没查到（2026-09-14 用户报的）。
  */
 function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: boolean; totalMs: number }) {
   // 默认收起；推理中自动展开，让过程可见（用户手动收起来后就尊重用户的选择）。
@@ -174,7 +178,8 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
   const summary = useMemo(() => {
     if (!steps.length) return live ? "正在检索本体…" : "没有调用工具";
     const hits = steps.reduce((sum, step) => sum + step.evidence.length, 0);
-    return `已调用工具 ${steps.length} 次 · 命中 ${hits} 项 · ${((totalMs || 0) / 1000).toFixed(1)}s`;
+    // 证据数为 0 时不写"证据 0 项"：这一轮本来就可能是纯查数据（不产生证据）。
+    return [`已调用工具 ${steps.length} 次`, hits ? `证据 ${hits} 项` : "", `${((totalMs || 0) / 1000).toFixed(1)}s`].filter(Boolean).join(" · ");
   }, [steps, live, totalMs]);
 
   return (
@@ -195,7 +200,7 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
                 <code>{step.tool}</code>
                 <span className="qa-trail-args">{argumentSummary(step.arguments)}</span>
                 <span className="qa-trail-facts">
-                  {step.ok ? (step.evidence.length ? `命中 ${step.evidence.length}` : "无命中") : "出错"}
+                  {step.ok ? step.summary ?? "已返回" : "出错"}
                   <i>{step.elapsedMs}ms</i>
                 </span>
               </button>

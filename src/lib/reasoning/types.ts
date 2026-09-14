@@ -41,6 +41,13 @@ export type ReasoningStep = {
   ok: boolean;
   elapsedMs: number;
   evidence: ReasoningEvidence[];
+  /**
+   * 行上的「这一步拿到了什么」（`6 行` / `表结构 · 原始 DDL` / `命中 2 个概念`），
+   * 由 tool-summary.ts 按工具如实生成。**不要拿 evidence 的条数替代它**：查数据与看结构的
+   * 工具按设计不产出证据，用证据数会显示成"无命中"，看着像工具什么都没查到。
+   * 旧对话历史里存的运行记录没有这个字段，界面要能兜底。
+   */
+  summary?: string;
 };
 
 export type ReasoningUsage = {

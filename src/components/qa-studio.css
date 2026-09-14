@@ -166,7 +166,7 @@
 }
 .qa-trail-facts {
   display: inline-flex; align-items: baseline; gap: 8px; color: var(--qa-verified);
-  font-size: 11px; font-variant-numeric: tabular-nums;
+  font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .qa-trail-facts i { color: var(--qa-faint); font-style: normal; font-family: ui-monospace, monospace; font-size: 10.5px; }
 .qa-trail-step.failed .qa-trail-facts { color: #a33f38; }
