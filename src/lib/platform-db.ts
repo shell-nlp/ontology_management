@@ -19,7 +19,17 @@ function getPool() {
     throw new Error("DATABASE_URL is not configured.");
   }
 
-  pool ??= new Pool({ connectionString: process.env.DATABASE_URL });
+  if (!pool) {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    /*
+     * 空闲连接被对端或中间的网络设备掐断时（远端平台库很常见），pg 会在**池对象**上发 error 事件。
+     * 没有监听者就是一个未捕获的 error 事件 —— 进程可能直接退出，部署里表现为"用着用着服务没了"，
+     * 而且日志会把整个连接对象打出来（几 KB 的噪音）。这里兜住并只记一行：断了池会自己重建。
+     */
+    pool.on("error", (error) => {
+      console.error(`[platform-db] 平台库连接断了（连接池会自动重连）：${error.message}`);
+    });
+  }
   return pool;
 }
 

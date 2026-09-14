@@ -1,0 +1,107 @@
+# 本体管理平台的部署编排 —— **只跑平台本体**，中间件都按你现有的方式跑，不在这里。
+#
+#   cp .env.docker.example .env.docker   # 填连接信息与密钥（这个文件不要提交）
+#   docker compose up -d --build         # 或 pnpm docker:up
+#
+# 平台之外的两个依赖，这里刻意不管：
+#   - PostgreSQL：平台库（ontology_platform schema、对象检索索引）—— 不进编排
+# Apache Jena Fuseki 在本编排里（见下面的 fuseki 服务）：它是本体存储，容器之间用服务名
+# `fuseki:3030` 访问，不经过宿主机端口。
+# 业务数据源（Oracle / PostgreSQL / MySQL）同样是被读取的外部系统，在「数据资源」里登记。
+#
+# 容器里访问宿主机上的服务要走 host.docker.internal（下面已经加了 host-gateway 映射）：
+#   DATABASE_URL = postgresql://用户:密码@host.docker.internal:5432/库名
+# 「本体存储」的 endpoint 存在平台库里的，可能是给宿主机写的 `http://localhost:3030/ds`：
+# 容器里 localhost 是容器自己，所以用 GRAPH_ENDPOINT_HOST_ALIAS 把它改写成服务名
+# （见下面 app 服务的 environment），平台库里那条登记一个字都不用改。
+
+services:
+  fuseki:
+    image: ${FUSEKI_IMAGE:-stain/jena-fuseki:latest}
+    container_name: ontology-fuseki
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 数据集名要和平台里登记的 endpoint 路径一致（默认 ds）。Fuseki 缺这个数据集时会自己建。
+      FUSEKI_DATASET_1: ${FUSEKI_DATASET:-ds}
+      # 不设密码 Fuseki 会以无鉴权方式跑，所以这里强制要求填（.env.docker 里给一个）。
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?请在 .env.docker 里设置 FUSEKI_ADMIN_PASSWORD}
+    ports:
+      # 宿主机端口只为「本机开发服务 + 浏览器打开 Fuseki 管理界面」保留；
+      # 平台容器走服务名 fuseki:3030，不依赖这个映射。
+      - "${FUSEKI_PORT:-3030}:3030"
+    volumes:
+      # FUSEKI_BASE 整个挂出来：数据集在 databases/ 下，config.ttl / shiro.ini 也在这里。
+      # 默认落在项目 .data/fuseki（好备份，也方便从旧容器把数据搬过来）；也可以写成命名卷名字。
+      # Linux 服务器上注意属主：镜像里的 fuseki 用户是 uid 100，绑定的宿主目录要 chown 100:101。
+      - ${FUSEKI_DATA_DIR:-./.data/fuseki}:/fuseki
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3030/$/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 拉不动 Docker Hub 就换成镜像站，例如：
+        #   NODE_IMAGE=docker.1ms.run/node:24-bookworm-slim
+        # APP_PORT / VERSION_SNAPSHOT_DIR / NODE_IMAGE 都是给 compose 做变量替换的，
+        # 写在 .env.docker 里即可 —— `pnpm docker:up` 带了 --env-file .env.docker。
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        # 依赖源：国内网络直连 registry.npmjs.org 会让构建里的 pnpm install 大面积超时。
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: ontology-management:local
+    container_name: ontology-platform
+    restart: unless-stopped
+    depends_on:
+      # 只保证启动顺序：Fuseki 起不来时平台仍能起（图库相关的操作会如实报连不上）。
+      fuseki:
+        condition: service_started
+    env_file:
+      # 平台自己的变量都在这里：DATABASE_URL / AUTH_SECRET / TARGET_ENCRYPTION_KEY / LLM_* …
+      - .env.docker
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "3000"
+      # 版本快照落在卷里，容器重建不丢。
+      ONTOLOGY_VERSION_DIR: /data/ontology-versions
+      # 图库端点主机名改写：平台库里登记的是给宿主机写的 `http://localhost:3030/ds`，
+      # 容器里 localhost 是容器自己 —— 换成同一个 compose 里的服务名即可。
+      # 用的不是本编排里的 Fuseki（比如外面另有一台）时，把它设成那台的地址。
+      GRAPH_ENDPOINT_HOST_ALIAS: ${GRAPH_ENDPOINT_HOST_ALIAS:-localhost=fuseki}
+    ports:
+      # 左边是宿主机端口：本机 3000 被占用时在 .env.docker 里设 APP_PORT=3100。
+      - "${APP_PORT:-3000}:3000"
+    extra_hosts:
+      # Linux 上也能用 host.docker.internal 访问宿主机（Docker Desktop 本来就有这个别名）。
+      - "host.docker.internal:host-gateway"
+    # Linux 宿主机上还可以整段改用宿主网络：这时容器里的 localhost 就是宿主机，库里那些
+    # localhost:3030 的 endpoint 一个字都不用改（此时 ports / extra_hosts 会被忽略）。
+    # Windows / macOS 的 Docker Desktop 不支持 host 网络，只能用上面的 host.docker.internal。
+    # network_mode: host
+    volumes:
+      # 版本快照目录（发布版本的本体文件）。它**是状态不是缓存**：库里记着"某本体的已发布版本"，
+      # 而定义本身在这一份文件里 —— 换了机器不带过来，模型工具与发布都会说"还没有发布版本"。
+      # 默认用命名卷（全新部署就从这里开始，界面里重新发布一次即可）；
+      # 已有发布版本要带过来时，把 VERSION_SNAPSHOT_DIR 指向本机目录，例如 PowerShell：
+      #   VERSION_SNAPSHOT_DIR=D:\project\ontology_management\.data\ontology-versions
+      # 同一个平台库上还跑着本机开发服务时，也把它指到项目里的 .data/ontology-versions：
+      # 两边各写各的快照目录，会出现"一边发布、另一边读不到"。
+      - ${VERSION_SNAPSHOT_DIR:-ontology-versions}:/data/ontology-versions
+      # Oracle 的 Instant Client 已经装在镜像里（见 docker/oracle/），一般不用挂。
+      # 想换成自备的 Linux 版客户端时才打开这行，并在 .env.docker 里设
+      # ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient（Windows 版的 dll 在容器里用不了）。
+      # - ./.data/oracle-client:/opt/oracle/instantclient:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ontology-versions:

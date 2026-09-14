@@ -1,0 +1,27 @@
+# 构建上下文里不需要的东西。
+
+# 依赖与构建产物（镜像里会重新装、重新构建）
+node_modules
+.next
+*.tsbuildinfo
+
+# 本地运行数据：版本快照、Oracle Instant Client 等
+.data
+
+# 仓库自身的东西
+.git
+.gitignore
+.superpowers
+docs
+e2e
+test-results
+playwright-report
+AGENTS.md
+README.md
+
+# 密钥：绝不允许进镜像。运行时由 compose 的 env_file 注入。
+.env
+.env.local
+.env.*.local
+.env.docker
+*.log

@@ -46,6 +46,61 @@
 - 日常验证统一使用 `pnpm dev` 启动开发服务，在开发服务上进行页面与交互测试。
 - 不运行 `pnpm build`；只有明确要求时才执行生产构建验证。
 
+**和容器构建的关系**：上面这条约束的是"日常验证"，不是镜像构建。`docker compose up -d --build`
+里的 `pnpm build` 是镜像构建的一部分（Dockerfile 的 builder 阶段），该跑就跑。
+
+## 部署（Docker Compose）
+
+记录时间：2026-09-14。用户要求提供容器化部署：先明确"只部署平台本体"，
+随后又把 `stain/jena-fuseki:latest` 也加进编排（**容器之间走服务名 `fuseki:3030`**）。
+PostgreSQL（平台库）与业务数据源仍不进编排，按各自现有方式跑。
+
+- 文件：`Dockerfile`（builder 做 `pnpm build`，runner 只装生产依赖用 `next start` 起）、
+  `docker-compose.yml`（`app` + `fuseki` 两个服务）、`.env.docker.example`（连接信息与密钥模板，
+  真文件 `.env.docker` 已在 `.gitignore` 里）、`.dockerignore`。
+- **不用 `output: "standalone"`**：`next.config.ts` 把 oracledb / typeorm / pg / mysql2 交给运行时加载，
+  而 oracledb 是按平台拼文件名 require 预编译二进制的，Nft 追踪容易漏 → 会出现"装得上、连不上 Oracle"。
+  宁可镜像大一点，也要保证原生驱动在。
+- 密钥一律运行时注入（`.dockerignore` 把 `.env*` 挡在构建上下文外）；版本快照挂命名卷
+  `ontology-versions` 到 `/data/ontology-versions`。
+- **容器里的 `localhost` 是容器自己**：`DATABASE_URL` 要写 `host.docker.internal`
+  （compose 已加 `host-gateway` 映射）。本体存储那条登记不用改 —— 见下面的主机别名一条。
+- **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据一致**：数据资源凭据是加密存的，换钥匙就解不开。
+- **版本快照目录是状态，不是缓存**（2026-09-14 实测）：平台库只记"某本体发布了 vN"，
+  定义本身在 `ONTOLOGY_VERSION_DIR`（容器内 `/data/ontology-versions`）。空卷 + 有版本的库
+  会表现成"模型工具答**本体还没有发布版本**、图库与版本对不上"。要么把旧目录带过来
+  （compose 的 `VERSION_SNAPSHOT_DIR` 指向它），要么部署完重新发布一次。
+  **同一个平台库上并行跑本机开发服务与容器时，两边的快照目录必须是同一个**（把
+  `VERSION_SNAPSHOT_DIR` 指到项目里的 `.data/ontology-versions`），否则一边发布的版本另一边读不到。
+- **Oracle 只能走 Thick 模式**（2026-09-14 实测）：要连的服务端会直接拒掉驱动 Thin 模式
+  （NJS-138），所以镜像里内置 Linux 版 Instant Client（`docker/oracle/install-instantclient.sh`，
+  构建时优先用 `docker/oracle/*.zip`，没有才去 Oracle 官网下载），并同时设
+  `ORACLE_CLIENT_LIB_DIR` 与 **`LD_LIBRARY_PATH=/opt/oracle/instantclient`** ——
+  只设前者在 Linux 上会报 `DPI-1047 ... libnnz.so`（libclntsh.so 不带 `$ORIGIN`）。
+  这与 `D:\project\shangke-insight` 的做法一致，改这块先去看那边的 Dockerfile。
+- `APP_PORT` / `VERSION_SNAPSHOT_DIR` / `NODE_IMAGE` 是给 compose 做**变量替换**的。
+  `env_file:` 里的变量不参与替换，所以四个 `docker:*` 脚本统一带 `--env-file .env.docker`
+  （同一个文件既注入容器、又做替换）；手动敲 `docker compose` 时必须自己带上这个参数。
+- **会话 cookie 的 Secure 不能只看 `NODE_ENV`**（2026-09-14 用户报"登录一下就退出"）：
+  容器里 `NODE_ENV=production` 恒成立，直接 http（非 localhost）访问时发 Secure cookie 会被浏览器丢掉，
+  于是登录成功但会话立刻失效。现在由 `src/lib/session-cookie.ts` 的 `sessionCookieSecure()` 决定：
+  先看 `x-forwarded-proto`（代理后面）与请求协议，`https` 才发 Secure，另有 `AUTH_COOKIE_SECURE`
+  可显式覆盖；本机是 https 时不允许被客户端伪造的头部降级。**这条只有用非 localhost 的地址才复现**，
+  验证时两种入口都要试。
+- `platform-db.ts` 的连接池挂了 `error` 监听：远端平台库的空闲连接被网络设备掐断时，
+  没有监听者就是未捕获的 error 事件（进程可能直接退出，日志还会打出整个连接对象）。
+- **图库端点的主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**（2026-09-14）：平台库里登记的端点是
+  给宿主机写的（`http://localhost:3030/ds`），容器里 `localhost` 是容器自己。与其让人再登记一条
+  或去改库，不如在部署侧声明"A 换成 B" —— compose 里 app 默认 `localhost=fuseki`，
+  于是宿主机与容器共用同一份登记。实现在 `jena.ts` 的 `resolveSparqlEndpoints`（唯一出口，
+  `applyEndpointHostAlias` 有单测）：**别绕过它直接拼端点**。
+- **Fuseki 也在编排里**（只是比 app 后加）：`stain/jena-fuseki:latest`，`FUSEKI_BASE`（`/fuseki`，
+  含 `databases/` 与 `shiro.ini`）整个绑定到 `.data/fuseki`；数据集名必须与平台登记一致（`ds`）；
+  `FUSEKI_ADMIN_PASSWORD` 必填（不填 Fuseki 会以无鉴权方式跑）。镜像里的 fuseki 用户是 **uid 100**，
+  Linux 上绑定的宿主目录要 `chown -R 100:101`。换机器把 `.data/fuseki` 带走，或从旧容器
+  `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`；图库是派生数据，重新发布也能重建。**已验证**：
+  从 app 容器调 `/api/targets/:id/test` 返回 `address=http://fuseki:3030/ds/query、hasTriples=true`。
+
 ## 待办计划（Backlog）
 
 **执行约定：本清单默认只是记录，不主动实施。** 只有用户在对话中明确点名某一项（或明确说“按待办计划做”）时才动手；动手前先确认该项范围与验收方式。完成后从本清单移除，并在提交信息里写清对应编号。

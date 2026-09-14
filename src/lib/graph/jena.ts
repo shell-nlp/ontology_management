@@ -115,10 +115,53 @@ function optionText(target: GraphTarget, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+/**
+ * 解析 `GRAPH_ENDPOINT_HOST_ALIAS`：形如 `localhost=fuseki` 或 `a:3030=b:3030`，
+ * 多条用逗号分隔。左边是库里登记的主机名（大小写不敏感），右边是要换成的目标。
+ */
+export function parseHostAliases(value: string | undefined) {
+  const aliases = new Map<string, string>();
+  for (const entry of (value ?? "").split(",")) {
+    const [from, to] = entry.split("=");
+    const key = from?.trim().toLowerCase() ?? "";
+    const target = to?.trim() ?? "";
+    if (key && target) aliases.set(key, target);
+  }
+  return aliases;
+}
+
+/**
+ * 端点主机名改写：`GRAPH_ENDPOINT_HOST_ALIAS`。
+ *
+ * 库里登记的端点是**按某一种运行环境写的**：本机开发服务写 `http://localhost:3030`
+ * （宿主机上的 Fuseki）。而同一份数据在容器里看，`localhost` 是容器自己 —— 于是同一个平台库
+ * 在宿主机和容器里要两条不同的地址，来回切很别扭。
+ *
+ * 与其让用户为容器再登记一条，不如在部署侧声明"A 换成 B"：容器里设
+ * `GRAPH_ENDPOINT_HOST_ALIAS=localhost=fuseki`（同一个 compose 里的服务名），
+ * 别人为部署容器那条登记一个字都不用改。只改主机与端口，协议与路径不动。
+ */
+export function applyEndpointHostAlias(uri: string, alias: string | undefined = process.env.GRAPH_ENDPOINT_HOST_ALIAS) {
+  const aliases = parseHostAliases(alias);
+  if (!aliases.size) return uri;
+  try {
+    const url = new URL(uri);
+    const replacement = aliases.get(url.hostname.toLowerCase());
+    if (!replacement) return uri;
+    // 允许写成 `主机:端口`；只写主机时保留原来的端口。
+    if (replacement.includes(":")) url.host = replacement;
+    else url.hostname = replacement;
+    return url.toString();
+  } catch {
+    // 不是合法 URL 就原样返回：让原有的报错路径去说"连不上这个端点"，别在这里换一种说法。
+    return uri;
+  }
+}
+
 /** Fuseki 端点命名规则：/ds/query、/ds/update，或统一端点 /ds/sparql。 */
 export function resolveSparqlEndpoints(target: GraphTarget): SparqlEndpoints {
   const dataset = target.database_name?.trim() || "ds";
-  const trimmed = target.uri.trim().replace(/\/+$/, "");
+  const trimmed = applyEndpointHostAlias(target.uri).trim().replace(/\/+$/, "");
   const endpointLike = /\/(sparql|query|update)$/i.test(trimmed);
   const base = endpointLike || trimmed.endsWith(`/${dataset}`) ? trimmed : `${trimmed}/${dataset}`;
   const derive = (kind: "query" | "update") => {
@@ -126,9 +169,11 @@ export function resolveSparqlEndpoints(target: GraphTarget): SparqlEndpoints {
     if (/\/(query|update)$/i.test(base)) return base.replace(/\/(query|update)$/i, `/${kind}`);
     return `${base}/${kind}`;
   };
+  const queryOption = optionText(target, "queryEndpoint");
+  const updateOption = optionText(target, "updateEndpoint");
   return {
-    query: optionText(target, "queryEndpoint") ?? derive("query"),
-    update: optionText(target, "updateEndpoint") ?? derive("update"),
+    query: queryOption ? applyEndpointHostAlias(queryOption) : derive("query"),
+    update: updateOption ? applyEndpointHostAlias(updateOption) : derive("update"),
     dataset,
     namedGraph: optionText(target, "namedGraph"),
   };

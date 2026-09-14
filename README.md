@@ -48,6 +48,7 @@
 - [能力概览](#能力概览)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
+- [Docker Compose 部署](#docker-compose-部署)
 - [统一版本快照](#统一版本快照)
 - [本体包（导出与导入）](#本体包导出与导入)
 - [角色与安全](#角色与安全)
@@ -103,6 +104,9 @@ cp .env.example .env.local
 | `DATABASE_URL` | ✅ | PostgreSQL 连接串（自动使用 `ontology_platform`） |
 | `TARGET_ENCRYPTION_KEY` | ✅ | 32 字节 Base64 密钥：`openssl rand -base64 32` |
 | `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话 Cookie |
+| `AUTH_COOKIE_SECURE` | 可选 | 会话 Cookie 的 Secure 开关；留空按请求实际协议判断（推荐） |
+| `FUSEKI_IMAGE` / `FUSEKI_DATASET` / `FUSEKI_ADMIN_PASSWORD` / `FUSEKI_PORT` / `FUSEKI_DATA_DIR` | 容器 | Fuseki 服务：镜像、数据集名、管理密码、宿主机端口、数据目录 |
+| `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | 图库端点主机名改写（如 `localhost=fuseki`）；用外面的 Fuseki 时指向它 |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
 | `ONTOLOGY_VERSION_DIR` | 可选 | 快照目录，默认 `<项目>/.data/ontology-versions` |
@@ -133,6 +137,73 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `pnpm test` | 单元测试（Vitest） |
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | TypeScript 检查 |
+| `pnpm docker:up` / `docker:down` / `docker:logs` | 容器部署（见下一节） |
+
+## Docker Compose 部署
+
+编排里两个服务：**`app`**（本体平台镜像）与 **`fuseki`**（Apache Jena Fuseki，本体存储）。
+PostgreSQL（平台库）与业务数据源（Oracle / PostgreSQL / MySQL）按你现有的方式跑，不进这个编排。
+
+容器之间用**服务名**互相访问：平台连 Fuseki 走 `fuseki:3030`；`3030` 映射到宿主机只是留给
+本机开发服务和浏览器里的 Fuseki 管理界面。
+
+```bash
+cp .env.docker.example .env.docker    # 填 DATABASE_URL 与密钥（模板里有逐项说明）
+pnpm docker:up                        # = docker compose --env-file .env.docker up -d --build
+pnpm docker:logs                      # 跟日志
+```
+
+`pnpm docker:*` 都带 `--env-file .env.docker`：这个文件既给容器注入变量，也给 compose 做变量替换，
+所以 `APP_PORT` / `VERSION_SNAPSHOT_DIR` / `NODE_IMAGE` 也写在里面（模板第 0 节）。手动敲命令时
+记得带上这个参数，否则这几个变量取不到值。
+
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm docker:up` | 构建并后台启动（`docker compose up -d --build`） |
+| `pnpm docker:down` | 停止并删除容器（版本快照在命名卷里，不会丢） |
+| `pnpm docker:logs` | 跟踪平台日志 |
+| `pnpm docker:config` | 打印合并后的编排，排查变量问题 |
+
+三处容易踩的地方：
+
+1. **容器里的 `localhost` 是容器自己。** 连宿主机上的平台库要用 `host.docker.internal`：
+   `DATABASE_URL=postgresql://用户:密码@host.docker.internal:5432/库名`（compose 已加
+   `host.docker.internal:host-gateway`，Linux 上也能这么写）。本体存储不用你操心：库里登记的
+   endpoint 如果写的是 `http://localhost:3030/ds`（给宿主机写的），容器里会由
+   `GRAPH_ENDPOINT_HOST_ALIAS=localhost=fuseki` 换成服务名，**登记一个字都不用改**。
+2. **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据所用的那一把一致**：数据资源的凭据是加密后存进平台库的，
+   换一把钥匙就解不开已登记的连接。`AUTH_SECRET` 换掉只会让已登录会话失效，可以重新生成。
+3. **首次初始化要再调一次**：`curl -X POST http://localhost:3000/api/bootstrap`（平台库非空时返回 409）。
+
+其他细节：
+
+- 端口：宿主机 `3000` 被占用时用 `APP_PORT=3100 docker compose up -d` 换一个。
+- **Fuseki 的数据**在 `.data/fuseki`（容器内 `/fuseki` = `FUSEKI_BASE`，数据集在 `databases/` 下，
+  密码与配置也在这一份里），换机器时整目录带走即可。它的数据集名要与平台登记的一致（默认 `ds`），
+  Fuseki 缺这个数据集会自己建；`FUSEKI_ADMIN_PASSWORD` 是必填的，不填 Fuseki 会以无鉴权方式跑。
+  从别的 Fuseki 搬数据：先停掉那个容器，再 `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`。
+  Linux 服务器上注意属主 —— 镜像里的 fuseki 用户是 `uid 100`，宿主目录要 `chown -R 100:101 .data/fuseki`。
+- **用机器 IP / 域名走 http 访问时，登录能站住**：会话 cookie 的 `Secure` 按**这次请求实际的协议**决定
+  （反向代理后面看 `x-forwarded-proto`），不再只看 `NODE_ENV`。早先只看 `NODE_ENV`，容器里
+  `NODE_ENV=production` 恒成立，于是 http 访问发出去的是 Secure cookie，浏览器直接丢掉 ——
+  现象就是"登录成功了一下马上又被踢回登录页"（localhost 例外，浏览器把它当安全源，所以只在这台机器上
+  用 localhost 测是查不出来的）。前端是 https 而代理没带头时，用 `AUTH_COOKIE_SECURE=true` 兜底。
+- **版本快照目录是状态，不是缓存**：库里只记"某本体发布了 v2"，定义本身在快照目录里
+  （容器内 `/data/ontology-versions`，默认用命名卷 `ontology-versions`，`docker compose down` 不会删它）。
+  把部署搬到新机器时，要么把旧机器的 `<项目>/.data/ontology-versions` 带过来并让
+  `VERSION_SNAPSHOT_DIR` 指向它，要么部署完在界面「本体草稿」里重新发布一次 ——
+  不带过去的话，模型工具会答"本体还没有发布版本"，图库也跟库里记的版本对不上。
+  同一个平台库上同时跑着本机开发服务时，更要把它指到项目里的同一个目录：两边各写各的快照，
+  会出现"一边发布、另一边读不到"。
+- 拉不动 Docker Hub 时用镜像站：`NODE_IMAGE=docker.1ms.run/node:24-bookworm-slim docker compose up -d --build`
+  （Windows PowerShell 先 `$env:NODE_IMAGE="docker.1ms.run/node:24-bookworm-slim"`）。
+- **Oracle 开箱可用**：镜像里装好了 Linux 版 Instant Client，`ORACLE_CLIENT_LIB_DIR` 指向
+  `/opt/oracle/instantclient` —— 因为要连的服务端只支持 Thick 模式（Thin 模式会被服务端以 NJS-138 拒掉）。
+  构建时优先用 `docker/oracle/` 下的 `instantclient-basiclite-linux.x64-*.zip`，没有才去 Oracle 官网下载，
+  公司网络受限时把 zip 放进 `docker/oracle/` 即可离线构建。想换成自备客户端就挂载到 `/opt/oracle/instantclient`
+  并设 `ORACLE_CLIENT_LIB_DIR`（Windows 的 dll 在容器里用不了）。
+- 平台库需要 `pg_trgm` 与 `pgvector` 扩展（对象检索层会 `CREATE EXTENSION IF NOT EXISTS`）；
+  没有权限时检索自动降级成 `ILIKE`，不影响其他功能。
 
 ## 统一版本快照
 

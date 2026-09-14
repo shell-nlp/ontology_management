@@ -7,11 +7,16 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# 容器部署用的变量文件（含平台库连接串与密钥），模板是 .env.docker.example
+.env.docker
 
 # Local tooling
 .DS_Store
 *.log
 .superpowers/
+
+# 自备的 Oracle Instant Client zip（可选，见 docker/oracle/install-instantclient.sh）
+docker/oracle/*.zip
 
 # Version snapshot runtime data
 .data/

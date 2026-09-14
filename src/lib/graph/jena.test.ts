@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, scopedQueryUrl, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
+import { DEFAULT_SINGLE_REPLACE_LIMIT, applyEndpointHostAlias, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseHostAliases, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, scopedQueryUrl, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
 import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
 import type { GraphDefinitionLike, GraphTarget } from "@/lib/graph/types";
 
@@ -33,6 +33,45 @@ describe("resolveSparqlEndpoints", () => {
   it("允许用 options 显式覆盖端点与命名图", () => {
     const endpoints = resolveSparqlEndpoints(target({ options: { queryEndpoint: "http://host/q", updateEndpoint: "http://host/u", namedGraph: "urn:ontology" } }));
     expect(endpoints).toMatchObject({ query: "http://host/q", update: "http://host/u", namedGraph: "urn:ontology" });
+  });
+});
+
+describe("图库端点的主机别名（GRAPH_ENDPOINT_HOST_ALIAS）", () => {
+  it("把库里登记的主机换成部署侧能到的那个", () => {
+    // 容器里 localhost 是容器自己；同一个 compose 里的 Fuseki 用服务名就能到。
+    expect(applyEndpointHostAlias("http://localhost:3030/ds", "localhost=fuseki")).toBe("http://fuseki:3030/ds");
+    expect(applyEndpointHostAlias("http://localhost:3030/ds/query", "localhost=fuseki")).toBe("http://fuseki:3030/ds/query");
+  });
+
+  it("右边可以写主机:端口；只写主机时保留原端口", () => {
+    expect(applyEndpointHostAlias("http://localhost:3030/ds", "localhost=host.docker.internal:3031")).toBe("http://host.docker.internal:3031/ds");
+    expect(applyEndpointHostAlias("http://localhost:3030/ds", "localhost=other")).toBe("http://other:3030/ds");
+  });
+
+  it("多条规则用逗号分隔，空白与大小写不影响；没命中就原样返回", () => {
+    expect(parseHostAliases(" localhost = fuseki , a=b ")).toEqual(new Map([["localhost", "fuseki"], ["a", "b"]]));
+    expect(applyEndpointHostAlias("http://LOCALHOST:3030/ds", "localhost=fuseki")).toBe("http://fuseki:3030/ds");
+    expect(applyEndpointHostAlias("http://example.com:3030/ds", "localhost=fuseki")).toBe("http://example.com:3030/ds");
+    expect(applyEndpointHostAlias("http://localhost:3030/ds", undefined)).toBe("http://localhost:3030/ds");
+    expect(applyEndpointHostAlias("http://localhost:3030/ds", "")).toBe("http://localhost:3030/ds");
+  });
+
+  it("不合法或残缺的地址原样返回，不吞掉后续本来的报错", () => {
+    expect(applyEndpointHostAlias("not a url", "localhost=fuseki")).toBe("not a url");
+    // 只有一半的规则（没有右边）不算规则。
+    expect(parseHostAliases("localhost=").size).toBe(0);
+  });
+
+  it("resolveSparqlEndpoints 会带上别名（读的是环境变量）", () => {
+    const previous = process.env.GRAPH_ENDPOINT_HOST_ALIAS;
+    process.env.GRAPH_ENDPOINT_HOST_ALIAS = "localhost=fuseki";
+    try {
+      expect(resolveSparqlEndpoints(target()).query).toBe("http://fuseki:3030/ds/query");
+      expect(resolveSparqlEndpoints(target({ options: { queryEndpoint: "http://localhost:3030/ds/query" } })).query).toBe("http://fuseki:3030/ds/query");
+    } finally {
+      if (previous === undefined) delete process.env.GRAPH_ENDPOINT_HOST_ALIAS;
+      else process.env.GRAPH_ENDPOINT_HOST_ALIAS = previous;
+    }
   });
 });
 

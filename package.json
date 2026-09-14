@@ -9,7 +9,11 @@
     "test": "vitest run",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docker:up": "docker compose --env-file .env.docker up -d --build",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "docker:logs": "docker compose --env-file .env.docker logs -f app",
+    "docker:config": "docker compose --env-file .env.docker config"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.48",
