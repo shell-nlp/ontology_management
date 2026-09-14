@@ -3,9 +3,11 @@ import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
+import { getOntologyByTargetId } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { runReasoning, type AgentEvent } from "@/lib/reasoning/agent";
+import { saveTurn } from "@/lib/reasoning/conversations";
 import { getTarget } from "@/lib/targets";
 
 /**
@@ -14,6 +16,7 @@ import { getTarget } from "@/lib/targets";
  * - thinking / answer：文字增量，边收边渲染
  * - answerReset：这一轮其实是去调工具的过渡语，界面要把已显示的文字清掉
  * - step：某一步工具执行完成
+ * - saved：这一轮已经记进对话历史（`conversationId` 为 null 表示没记上）
  * - done / error：收尾
  *
  * 校验与权限必须在**开流之前**做完：一旦开始返回 SSE，就没法再改 HTTP 状态码了。
@@ -24,9 +27,17 @@ const inputSchema = z.object({
   question: z.string().trim().min(1).max(500),
   maxSteps: z.number().int().min(1).max(16).optional(),
   thinking: z.boolean().optional(),
+  /** 有就追加到这段对话后面，没有就新开一段。 */
+  conversationId: z.string().uuid().optional(),
 });
 
-function frame(event: AgentEvent | { type: "error"; message: string }) {
+/** 除了编排层的事件，这个接口自己还会补两条：error 与 saved。 */
+type RouteEvent =
+  | AgentEvent
+  | { type: "error"; message: string }
+  | { type: "saved"; conversationId: string | null; warning?: string };
+
+function frame(event: RouteEvent) {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -56,11 +67,14 @@ export async function POST(request: NextRequest) {
   const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
   // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
   const dataSources = await listDataSources().catch(() => []);
+  // 历史归属在开流之前定下来：这两件事出错时还能回一个正常的 HTTP 错误码。
+  const ontology = await getOntologyByTargetId(target.id);
+  const scope = { ontologyId: ontology?.id ?? null, targetId: target.id };
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: AgentEvent | { type: "error"; message: string }) => {
+      const send = (event: RouteEvent) => {
         controller.enqueue(encoder.encode(frame(event)));
       };
       try {
@@ -77,6 +91,24 @@ export async function POST(request: NextRequest) {
           action: "REASONING_RUN",
           details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
+        // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
+        try {
+          const conversationId = await saveTurn({
+            scope,
+            userId: actorId,
+            conversationId: input.conversationId ?? null,
+            question: input.question,
+            answer: run.answer,
+            thinking: run.reasoning,
+            thinkingOn: input.thinking !== false,
+            run,
+            error: null,
+          });
+          send({ type: "saved", conversationId });
+        } catch {
+          // 落库失败不该吞掉已经跑出来的结论：界面照常显示，只是这条不进历史。
+          send({ type: "saved", conversationId: null, warning: "结论已生成，但这次没能记进对话历史。" });
+        }
       } catch (error) {
         send({ type: "error", message: error instanceof Error ? error.message : "推理失败。" });
       } finally {

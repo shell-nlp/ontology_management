@@ -37,6 +37,73 @@
   font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
 }
 
+/* ---------- 接入配置（一键复制） ---------- */
+
+/*
+ * 这一段的任务是"把配置交出去"：左边三步说明，右边是可复制的配置块。
+ * 复制按钮挂在每个块的右上角，点完自己变成「已复制」—— 不用回头去找提示条。
+ * 和响应区那块深色代码不同，这里用浅底：它是要被你抄走的东西，不是运行结果。
+ */
+.mcp-connect-body {
+  display: grid; grid-template-columns: minmax(190px, 232px) minmax(0, 1fr); gap: 18px;
+  margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+@media (max-width: 900px) { .mcp-connect-body { grid-template-columns: 1fr; gap: 12px; } }
+
+.mcp-steps { counter-reset: mcp-step; display: grid; gap: 10px; align-content: start; margin: 0; padding: 0; list-style: none; }
+.mcp-steps li { position: relative; padding-left: 24px; color: var(--muted); font-size: 11.5px; line-height: 1.75; }
+.mcp-steps li::before {
+  counter-increment: mcp-step; content: counter(mcp-step);
+  position: absolute; left: 0; top: 2px; width: 16px; height: 16px; display: grid; place-items: center;
+  border-radius: 3px; background: #eef2f7; color: #64748b;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9.5px; font-weight: 700;
+}
+.mcp-steps code {
+  padding: 1px 5px; border-radius: 3px; background: #eef2f7; color: #334155;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
+}
+
+.mcp-connect-conf { display: grid; gap: 10px; align-content: start; }
+.mcp-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+.mcp-tabs > div { display: flex; gap: 2px; }
+.mcp-tab {
+  padding: 6px 11px; border: 0; background: transparent; color: #64748b;
+  font-size: 12px; cursor: pointer; box-shadow: inset 0 -2px 0 transparent;
+}
+.mcp-tab:hover { color: #2563eb; }
+/* 选中态只加一条下划线：和左边工具栏的 inset 阴影是同一套语言。 */
+.mcp-tab.active { color: #2563eb; font-weight: 650; box-shadow: inset 0 -2px 0 #2563eb; }
+
+.mcp-connect-warn {
+  display: flex; align-items: center; gap: 7px; margin: 0; padding: 8px 11px;
+  border: 1px solid #f3e0c0; border-radius: 4px; background: #fffbeb; color: #b45309; font-size: 11.5px;
+}
+.mcp-connect-warn svg { flex: none; }
+.mcp-connect-warn code {
+  padding: 1px 5px; border-radius: 3px; background: #fef3c7; color: #92400e;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
+}
+.mcp-connect-hint { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+
+.mcp-block { border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #f8fafc; }
+.mcp-block-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 5px 8px 5px 11px; border-bottom: 1px solid var(--line); background: #fff;
+}
+.mcp-block-head > span { color: #475569; font-size: 11px; font-weight: 650; }
+.mcp-block pre {
+  margin: 0; padding: 11px 13px; overflow-x: auto;
+  color: #1e293b; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11.5px; line-height: 1.7; white-space: pre; tab-size: 2;
+}
+.mcp-block-note { margin: 0; padding: 8px 12px 9px; border-top: 1px dashed var(--line); color: #94a3b8; font-size: 11px; line-height: 1.65; }
+
+.mcp-copy.small { height: 26px; padding: 0 9px; font-size: 11px; }
+.mcp-copy.done { border-color: #ccece2; background: #ecfdf5; color: #0f766e; }
+.mcp-copy.done:hover { border-color: #ccece2; color: #0f766e; }
+
+.mcp-section-tools { display: inline-flex; align-items: center; gap: 8px; }
+
 /* ---------- 两栏 ---------- */
 
 .mcp-body { display: grid; grid-template-columns: minmax(240px, 290px) minmax(0, 1fr); gap: 14px; align-items: start; }

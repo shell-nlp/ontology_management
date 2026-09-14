@@ -277,9 +277,15 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
     结构固定为 **求证轨迹 → 结论 → 依据 → 用量**。求证轨迹是这一区的签名元素：一条可展开的步骤带
     （第几步 · 调了什么 · 命中多少 · 耗时），展开能看到工具的原始返回；依据里的对象 chip
     **点一下直接跳到对象页并选中它**。颜色只在依据上用一处「核实绿」（#0f766e），其余沿用平台蓝。
-  - **MCP 调试**（`src/components/mcp-studio.tsx`）：左列工具清单（按「本体与 Schema / 本体模型检索 /
-    对象实例与关系子图查询」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
-    页面调的是**真实 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用。
+- **MCP 调试**（`src/components/mcp-studio.tsx`）：左列工具清单（按「本体与 Schema / 本体模型检索 /
+  对象实例与关系子图查询」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
+  页面调的是**真实 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用。
+- **接入配置一键复制**（2026-09-14）：连接面板里按客户端给三段可直接粘贴的配置 ——
+  **Claude Code**（`claude mcp add --transport http <name> <url> --header "Authorization: Bearer …"` 与项目
+  `.mcp.json`，`type` 用 `http`）、**Cursor**（`.cursor/mcp.json`，用 `${env:MCP_API_TOKEN}` 取值）、
+  **通用 mcp.json**（`mcpServers` 片段）。写法照两家官方文档来，改之前先回去核对文档，别凭印象改。
+  令牌**只以 `<MCP_API_TOKEN>` 占位符出现**，真实值留在服务端 `.env.local`；未配置时面板上直接给一条警示。
+  复制走 `copyText()`（Clipboard API 不可用时退回 execCommand），复制按钮点完自己变成「已复制」。
 
 **数据来源绑定必须暴露给模型**（2026-09-14 修）：
 
@@ -316,6 +322,30 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 实测事件流（迁移到 SDK 后复测）：思考 1→53→191→345 字、步骤 0→4、正文 0→95→251→349 字，都是边跑边长出来的；
   收尾后「思考过程 / 求证轨迹」会按设计自动收起（`open = manual ?? live`），展开仍能看到完整内容。
 
+**智能问答的对话历史**（2026-09-14，对应原先的待办 L2）：
+
+- 两张表（`platform-db.ts`）：`reasoning_conversations`（id / ontology_id / target_id / title / created_by）
+  与 `reasoning_messages`（一轮问答：question / answer / thinking / thinking_on / `run` JSONB / error）。
+  整份 `run` 都存下来，是为了"看以前的对话"能看到和当时一样的过程（轨迹 / 结论 / 依据），
+  而不是只剩一段结论；消息靠外键 `ON DELETE CASCADE` 跟着对话一起走。
+- **归属 = 提问的人 + 当前本体**：换个人登进来看到的是他自己的记录。正常按 `ontology_id` 归，
+  只有直接选中一条未纳管的存储资源（没有本体）时才退化成按 `target_id` 归 ——
+  所以本体换了落点之后，历史仍然跟着这个本体。
+- 落库时机是**一轮问答真正跑完之后**（`/api/reasoning/stream` 里 `runReasoning` 返回、审计写完之后）。
+  失败的一轮不进历史，不会出现"点进去只有半句话"的记录；落库失败只多发一条带 warning 的
+  `saved` 事件，不影响已经生成的结论。
+- 接口：`GET /api/reasoning/conversations?targetId=`（列表，只回摘要）、
+  `GET|DELETE /api/reasoning/conversations/:id?targetId=`（完整内容 / 删除）。
+  三个都先按「落点 → 本体 + 当前用户」把范围定死，别人的记录一律当不存在（404），
+  不靠界面客气地不显示链接来兜底。
+- 界面（`qa-studio.tsx`）：头部「对话历史」开关（开合状态记在 localStorage）+ 右侧 292px 侧栏，
+  按 今天 / 昨天 / 更早 分组，点一条就把那次的完整过程铺回主区，删除走就地二次确认。
+  侧栏用 `grid-template-areas` 挂在 `.qa-root` 上，**关掉时布局和以前一模一样**；
+  原来头部的「清空」换成了「新对话」（同一个动作，但语义清楚了：清空的是画面，不是历史）。
+- 纯函数在 `conversation-view.ts`（标题截断、日期分组、时间文案），有单测。**别从
+  `@/lib/reasoning/conversations` 里 import 界面要用的东西** —— 它会拉起 pg 连接池，
+  那是服务端专用的（`ConversationSummary` / `ConversationMessage` 这类契约类型定义在纯模块里）。
+
 两条刻意的边界，改动时别无意破坏：
 
 1. **只在已发布版本上推理**。草稿的定义与图库里的数据不是同一份，混着推会得出"定义说有、图里没有"的矛盾结论。
@@ -323,10 +353,11 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| L2 | 历史推理记录 | 只写进 `audit_entries`，界面上看不到（同 U2） | 推理页加「历史记录」侧栏：问题、步数、结论、证据；与审计界面一起做 |
 | L3 | 语义检索用向量 | `search_schema` 是关键词 + 中文 2 元组匹配，没有语义召回 | 等 R2 接上 embedding 后，给概念建向量索引，与关键词分数融合 |
 | L4 | 让模型执行动作 | 工具全只读，动作只能看不能跑 | 若要开放，走"模型提议 + 人确认"：用 AI SDK 的 `toolApproval`（`new ToolLoopAgent({ tools, toolApproval: { name: 'user-approval' } })`）让工具返回审批请求而不是直接执行，流里会给到 `tool-approval-request`，由界面二次确认后再落到动作引擎。不要直接给写权限 |
-| L5 | 多轮追问 | 一次运行一问一答，没有上下文（智能问答页只是把多轮**并列**展示） | 会话表 + 把上一轮结论压缩进 system；注意结论里的 id 仍是真实的才能复用 |
+| L5 | 多轮追问 | 一次运行一问一答，没有上下文（智能问答页只是把多轮**并列**展示）。会话表已随对话历史落地（`reasoning_conversations` / `reasoning_messages`），但**没有把上一轮喂给模型** | 把同一段对话里上一轮的结论压缩进 system；注意结论里的 id 仍是真实的才能复用 |
+
+**L2（历史推理记录）已于 2026-09-14 完成**，见上面「智能问答的对话历史」一节。
 
 **MCP 服务端已落地**（`src/lib/reasoning/mcp.ts` + `src/app/api/mcp/route.ts`）：
 

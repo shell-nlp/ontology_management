@@ -127,6 +127,48 @@ async function ensurePlatformSchemaOnce() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      /*
+       * 智能问答的对话历史（能力验证 → 智能问答）。
+       *
+       * conversation 挂在**一个本体**下、属于**提问的那个人**；message 是一轮问答，
+       * 存问题、结论、思考过程，以及那次运行的完整结果 `run`（步骤 / 证据 / 用量）。
+       * 存 run 是为了"看以前的对话"能看到和当时一模一样的过程，而不是只剩一段结论。
+       *
+       * ontology_id 可为空、target_id 不设外键：只有直接选中一条未纳管的存储资源时
+       * 才没有本体可挂，这时退化成按落点归类；本体换落点之后历史仍然属于这个本体。
+       */
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.reasoning_conversations (
+          id TEXT PRIMARY KEY,
+          ontology_id TEXT REFERENCES ontology_platform.ontologies(id) ON DELETE CASCADE,
+          target_id TEXT,
+          title TEXT NOT NULL DEFAULT '',
+          created_by TEXT REFERENCES ontology_platform.users(id),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.reasoning_messages (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES ontology_platform.reasoning_conversations(id) ON DELETE CASCADE,
+          question TEXT NOT NULL,
+          answer TEXT NOT NULL DEFAULT '',
+          thinking TEXT NOT NULL DEFAULT '',
+          thinking_on BOOLEAN NOT NULL DEFAULT TRUE,
+          run JSONB,
+          error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS reasoning_conversations_scope_idx
+          ON ontology_platform.reasoning_conversations (created_by, ontology_id, updated_at DESC)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS reasoning_messages_conversation_idx
+          ON ontology_platform.reasoning_messages (conversation_id, created_at)
+      `);
     } finally {
       client.release();
     }

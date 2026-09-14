@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { OntologySummary } from "@/components/ontology-studio";
@@ -54,16 +54,122 @@ function exampleArguments(tool: McpTool, ontologyId: string) {
   return result;
 }
 
-function CopyButton({ value, label, notify }: { value: string; label: string; notify: (text: string) => void }) {
+/** 令牌只以占位符出现在配置里：真实值在服务端 `.env.local`，密文不出服务端。 */
+const TOKEN_PLACEHOLDER = "<MCP_API_TOKEN>";
+const SERVER_NAME = "ontology-management";
+
+/**
+ * 复制到剪贴板。先走 Clipboard API（https 与 localhost 下可用），
+ * 不可用时退回隐藏 textarea + execCommand —— 复制是这一页的主要动作，不该挑环境。
+ */
+async function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // 落到下面的兜底
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(area);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 复制按钮：点完自己变成「已复制」再变回来，不用盯着提示条确认。 */
+function CopyButton({ value, label, notify, small }: { value: string; label: string; notify: (text: string) => void; small?: boolean }) {
+  const [done, setDone] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
   return (
     <button
       type="button"
-      className="mcp-copy"
-      onClick={() => { void navigator.clipboard.writeText(value).then(() => notify(`${label}已复制。`)).catch(() => notify("复制失败，请手动选中。")); }}
+      className={`mcp-copy${small ? " small" : ""}${done ? " done" : ""}`}
+      onClick={() => {
+        void copyText(value).then((ok) => {
+          if (!ok) { notify("复制失败，请手动选中这一段。"); return; }
+          setDone(true);
+          notify(`${label}已复制。`);
+          if (timer.current !== null) window.clearTimeout(timer.current);
+          timer.current = window.setTimeout(() => setDone(false), 1600);
+        });
+      }}
     >
-      <Copy size={12} />复制
+      {done ? <Check size={12} /> : <Copy size={12} />}{done ? "已复制" : "复制"}
     </button>
   );
+}
+
+type ConnectBlock = { label: string; note?: string; code: string };
+type ConnectTab = { key: string; label: string; hint: string; blocks: ConnectBlock[] };
+
+/**
+ * 一键复制走的接入配置。写法按各家官方文档来（Claude Code 的 `claude mcp add --transport http`
+ * 与 `.mcp.json` 的 `type: "http"`、Cursor 的 `.cursor/mcp.json` 与 `${env:NAME}` 插值）。
+ * 地址用你当前访问平台的地址，令牌永远是占位符。
+ */
+function connectTabs(url: string): ConnectTab[] {
+  const config = (entry: Record<string, unknown>) => JSON.stringify({ mcpServers: { [SERVER_NAME]: entry } }, null, 2);
+  const withToken = { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } };
+  return [
+    {
+      key: "claude",
+      label: "Claude Code",
+      hint: "两种加法：一行命令，或者项目里的 .mcp.json（后者可以进版本库，团队共用）。",
+      blocks: [
+        {
+          label: "CLI 一行接入",
+          note: "--scope user 是「所有项目都能用」，去掉就只对当前项目生效。",
+          code: [
+            `claude mcp add --transport http ${SERVER_NAME} ${url} \\`,
+            `  --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}" \\`,
+            "  --scope user",
+          ].join("\n"),
+        },
+        {
+          label: "项目 .mcp.json",
+          note: "放在项目根目录并提交；Claude Code 首次使用时会问一次是否信任。",
+          code: config(withToken),
+        },
+      ],
+    },
+    {
+      key: "cursor",
+      label: "Cursor",
+      hint: "项目级放在 .cursor/mcp.json，想全局可用就放到 ~/.cursor/mcp.json。",
+      blocks: [
+        {
+          label: "项目 .cursor/mcp.json",
+          note: "Cursor 支持 ${env:NAME}，令牌放本机环境变量里，配置可以放心分享。",
+          code: config({ url, headers: { Authorization: "Bearer ${env:MCP_API_TOKEN}" } }),
+        },
+      ],
+    },
+    {
+      key: "generic",
+      label: "通用 mcp.json",
+      hint: "Claude Desktop、VS Code 这类客户端读的都是这一段，差别只在文件名与存放位置。",
+      blocks: [
+        {
+          label: "mcpServers 片段",
+          note: "有的客户端把 type 写成 streamable-http，含义完全一样。",
+          code: config(withToken),
+        },
+      ],
+    },
+  ];
 }
 
 export function McpStudio({ ontologies, notify, fail }: Props) {
@@ -74,7 +180,11 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
   const [ok, setOk] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showDoc, setShowDoc] = useState(false);
+  const [connectTab, setConnectTab] = useState("claude");
   const ontologyId = ontologies[0]?.id ?? "";
+  const absoluteUrl = info?.absoluteUrl ?? "";
+  const tabs = useMemo(() => connectTabs(absoluteUrl), [absoluteUrl]);
+  const activeTab = tabs.find((tab) => tab.key === connectTab) ?? tabs[0];
 
   useEffect(() => {
     void api<McpInfo>("/api/mcp/info").then((data) => {
@@ -166,6 +276,52 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
           外部客户端用 <code>Authorization: Bearer &lt;MCP_API_TOKEN&gt;</code> 连接（令牌在 <code>.env.local</code> 里）；
           平台内这个页面用登录会话直接调，走的是同一个端点、同一套工具。
         </p>
+
+        <div className="mcp-connect-body">
+          <ol className="mcp-steps">
+            <li>在服务端的 <code>.env.local</code> 里给 <code>MCP_API_TOKEN</code> 填一个值，重启开发服务。</li>
+            <li>选一个客户端，把下面的整段配置复制过去（令牌先用占位符，粘完再换成真值）。</li>
+            <li>回到智能体的对话里直接提问，它通过 MCP 工具读这个本体 —— 只读，且每个结论都带证据。</li>
+          </ol>
+
+          <div className="mcp-connect-conf">
+            <div className="mcp-tabs">
+              <span className="eyebrow">接入配置</span>
+              <div>
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={`mcp-tab${tab.key === activeTab.key ? " active" : ""}`}
+                    onClick={() => setConnectTab(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {!info.tokenConfigured && (
+              <p className="mcp-connect-warn">
+                <AlertCircle size={13} />
+                服务端还没有 <code>MCP_API_TOKEN</code>，外面的客户端带着 Bearer 也进不来 —— 先在 <code>.env.local</code> 里补上。
+              </p>
+            )}
+
+            <p className="mcp-connect-hint">{activeTab.hint}</p>
+
+            {activeTab.blocks.map((block) => (
+              <div className="mcp-block" key={block.label}>
+                <div className="mcp-block-head">
+                  <span>{block.label}</span>
+                  <CopyButton value={block.code} label={block.label} notify={notify} small />
+                </div>
+                <pre>{block.code}</pre>
+                {block.note && <p className="mcp-block-note">{block.note}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="mcp-body">
@@ -244,7 +400,10 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
               <div className="mcp-section">
                 <div className="mcp-section-head">
                   <span className="eyebrow">请求体 · arguments</span>
-                  <small>application/json</small>
+                  <span className="mcp-section-tools">
+                    <small>application/json</small>
+                    <CopyButton value={argumentsText} label="请求体" notify={notify} small />
+                  </span>
                 </div>
                 <textarea
                   className="mcp-body-input"
@@ -258,11 +417,14 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
               <div className="mcp-section">
                 <div className="mcp-section-head">
                   <span className="eyebrow">响应</span>
-                  {response && (
-                    <span className={`mcp-status${ok ? " ok" : " bad"}`}>
-                      {ok ? <Check size={12} /> : <AlertCircle size={12} />}{ok ? "成功" : "出错"}
-                    </span>
-                  )}
+                  <span className="mcp-section-tools">
+                    {response && (
+                      <span className={`mcp-status${ok ? " ok" : " bad"}`}>
+                        {ok ? <Check size={12} /> : <AlertCircle size={12} />}{ok ? "成功" : "出错"}
+                      </span>
+                    )}
+                    {response && <CopyButton value={response} label="响应" notify={notify} small />}
+                  </span>
                 </div>
                 {response
                   ? <pre className={`mcp-response${ok ? "" : " bad"}`}>{response}</pre>

@@ -1,7 +1,9 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, Eraser, Link2, Loader2, Send, Sparkles } from "lucide-react";
+import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, Link2, Loader2, Plus, Send, Sparkles, Trash2 } from "lucide-react";
+import { api } from "@/lib/api-client";
+import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import type { ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import "./qa-studio.css";
 
@@ -42,6 +44,21 @@ type Turn = {
   /** 这一轮有没有开思考。关掉时不显示「思考过程」，否则会挂一个永远空着的块。 */
   thinkingOn: boolean;
 };
+
+/** 历史里的记录 → 界面上的这一轮。步骤直接从那次运行的 run 里取，和当时看到的一样。 */
+function messageToTurn(message: ConversationMessage): Turn {
+  return {
+    id: message.id,
+    question: message.question,
+    thinking: message.thinking,
+    answer: message.answer,
+    steps: message.run?.steps ?? [],
+    run: message.run,
+    error: message.error,
+    busy: false,
+    thinkingOn: message.thinkingOn,
+  };
+}
 
 type Props = {
   targetId: string;
@@ -184,18 +201,20 @@ async function streamRun(
   targetId: string,
   question: string,
   thinking: boolean,
+  conversationId: string | null,
   handlers: {
     onThinking: (text: string) => void;
     onAnswer: (text: string) => void;
     onAnswerReset: () => void;
     onStep: (step: ReasoningStep) => void;
     onDone: (run: ReasoningRun) => void;
+    onSaved: (conversationId: string | null, warning: string | undefined) => void;
   },
 ) {
   const response = await fetch("/api/reasoning/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId, question, thinking }),
+    body: JSON.stringify({ targetId, question, thinking, ...(conversationId ? { conversationId } : {}) }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string } | null;
@@ -226,34 +245,160 @@ async function streamRun(
       else if (event.type === "answerReset") handlers.onAnswerReset();
       else if (event.type === "step") handlers.onStep(event.step as ReasoningStep);
       else if (event.type === "done") handlers.onDone(event.run as ReasoningRun);
+      else if (event.type === "saved") handlers.onSaved((event.conversationId as string | null) ?? null, typeof event.warning === "string" ? event.warning : undefined);
       else if (event.type === "error") throw new Error(String(event.message ?? "推理失败。"));
     }
   }
 }
 
+/** 历史侧栏开没开记在本地：习惯开着的人，下次进来还是开着的。 */
+const HISTORY_OPEN_KEY = "ontology.qa.history";
+
+function loadHistoryOpen() {
+  if (typeof window === "undefined") return false;
+  try { return window.localStorage.getItem(HISTORY_OPEN_KEY) === "1"; } catch { return false; }
+}
+
+/** 读一个本体的历史列表。列表接口只回摘要，点开某一条才会取完整内容。 */
+function fetchConversations(targetId: string) {
+  return api<{ conversations: ConversationSummary[] }>(`/api/reasoning/conversations?targetId=${encodeURIComponent(targetId)}`)
+    .then((data) => data.conversations);
+}
+
+/**
+ * 对话历史侧栏。
+ *
+ * 它和主区的关系是"记录"与"当前这一页"：点一条就把那次的完整过程（求证轨迹 / 结论 / 依据）
+ * 铺回主区，和当时看到的一模一样。删除走就地二次确认 —— 历史是随手可删的东西，
+ * 但也不该点一下就没了。
+ */
+function HistoryRail({ conversations, activeId, loadingId, confirmingId, busy, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
+  conversations: ConversationSummary[];
+  /** 当前画面正对着哪段对话；新开的一轮在服务端定下 id 之前是 null。 */
+  activeId: string | null;
+  loadingId: string | null;
+  confirmingId: string | null;
+  busy: boolean;
+  onOpen: (id: string) => void;
+  onAskDelete: (id: string) => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: (id: string) => void;
+}) {
+  const groups = useMemo(() => groupConversationsByDay(conversations), [conversations]);
+  return (
+    <aside className="qa-history" aria-label="对话历史">
+      <header className="qa-history-head">
+        <History size={14} />
+        <span>对话历史</span>
+        {conversations.length > 0 && <em>{conversations.length}</em>}
+      </header>
+
+      {!conversations.length ? (
+        <p className="qa-history-empty">
+          还没有历史对话。跑完一轮问答它就会留在这里 —— 只有跑出结论的才记，失败的不会占位置。
+        </p>
+      ) : (
+        <div className="qa-history-body">
+          {groups.map((group) => (
+            <section className="qa-history-group" key={group.day}>
+              <p className="qa-history-day">{group.day}</p>
+              <ul>
+                {group.items.map((item) => (
+                  <li key={item.id} className={`qa-history-item${item.id === activeId ? " active" : ""}`}>
+                    {confirmingId === item.id ? (
+                      <div className="qa-history-confirm">
+                        <span>删除这段对话？</span>
+                        <div>
+                          <button type="button" className="danger" onClick={() => onConfirmDelete(item.id)}>删除</button>
+                          <button type="button" onClick={onCancelDelete}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <button type="button" className="qa-history-open" onClick={() => onOpen(item.id)} disabled={busy} title={item.title}>
+                          <b>{item.title || "未命名对话"}</b>
+                          <span className="qa-history-meta">
+                            {loadingId === item.id && <Loader2 size={11} className="qa-spin" />}
+                            {item.turns} 轮 · {conversationTimeLabel(item.updatedAt)}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="qa-history-remove"
+                          onClick={() => onAskDelete(item.id)}
+                          title="删除这段对话"
+                          aria-label={`删除对话：${item.title || "未命名对话"}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
+
 export function QaStudio({ targetId, ontologyName, published, onOpenObject, notify, fail }: Props) {
   // 会话和它所属的本体绑在一起：换了本体就当新会话，直接派生，不用 effect 去清空。
-  const [session, setSession] = useState<{ targetId: string; turns: Turn[] }>(() => ({ targetId, turns: [] }));
+  // conversationId 也放这里，因为"现在在跟哪段历史对话"同样是随本体走的。
+  const [session, setSession] = useState<{ targetId: string; conversationId: string | null; turns: Turn[] }>(() => ({ targetId, conversationId: null, turns: [] }));
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(loadHistoryOpen);
+  // 列表跟着本体走：换了本体就当还没读过，不去 effect 里清空（和 turns 一个套路）。
+  const [history, setHistory] = useState<{ targetId: string; items: ConversationSummary[] }>(() => ({ targetId, items: [] }));
+  const [loadingConversation, setLoadingConversation] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // 用户往上翻了就不自动跟随，免得读一半被拽回底部。
   const stickRef = useRef(true);
 
   const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
+  const conversationId = session.targetId === targetId ? session.conversationId : null;
+  const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
   const updateTurns = useCallback((updater: (current: Turn[]) => Turn[]) => {
-    setSession((current) => ({ targetId, turns: updater(current.targetId === targetId ? current.turns : []) }));
+    setSession((current) => {
+      const sameTarget = current.targetId === targetId;
+      return { targetId, conversationId: sameTarget ? current.conversationId : null, turns: updater(sameTarget ? current.turns : []) };
+    });
   }, [targetId]);
   const patchTurn = useCallback((id: string, patch: Partial<Turn>) => {
     updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)));
   }, [updateTurns]);
 
+  /** 用户动作触发的刷新（跑完一轮 / 删掉一条）：这时候读不到就该说出来。 */
+  const refreshConversations = useCallback(async () => {
+    try {
+      setHistory({ targetId, items: await fetchConversations(targetId) });
+    } catch (reason) {
+      fail(reason);
+    }
+  }, [fail, targetId]);
+
   useEffect(() => {
     void fetch("/api/reasoning/status").then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  /**
+   * 页面加载、换本体、展开侧栏时读一次列表。
+   * 失败是静默的：侧栏是辅助区域，读不到就先空着，不该在页头弹一个错误。
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void fetchConversations(targetId)
+      .then((items) => { if (!cancelled) setHistory({ targetId, items }); })
+      .catch(() => { /* 静默：展开侧栏时还会再读一次 */ });
+    return () => { cancelled = true; };
+  }, [historyOpen, targetId]);
 
   // 跟随到底部（整页滚动 + 底部吸底输入条，所以跟的是窗口）。
   useEffect(() => {
@@ -278,7 +423,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     stickRef.current = true;
     updateTurns((current) => [...current, { id, question: trimmed, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
     try {
-      await streamRun(targetId, trimmed, thinkingEnabled, {
+      await streamRun(targetId, trimmed, thinkingEnabled, conversationId, {
         onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
         onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
         // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
@@ -288,6 +433,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         ))),
         onStep: (step) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, steps: [...turn.steps, step] } : turn))),
         onDone: (run) => { patchTurn(id, { run, busy: false }); notify(`推理完成：${run.steps.length} 步，引用 ${run.evidence.length} 项证据。`); },
+        // 历史 id 由服务端定：新对话的第一轮跑完才有 id，这里把"当前在跟哪段对话"接上去。
+        onSaved: (savedId, warning) => {
+          if (savedId) {
+            setSession((current) => (current.targetId === targetId ? { ...current, conversationId: savedId } : current));
+            void refreshConversations();
+          }
+          if (warning) notify(warning);
+        },
       });
     } catch (reason) {
       patchTurn(id, { error: reason instanceof Error ? reason.message : "推理失败。", busy: false });
@@ -297,10 +450,59 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [busy, fail, notify, patchTurn, thinkingEnabled, targetId, updateTurns]);
+  }, [busy, conversationId, fail, notify, patchTurn, refreshConversations, thinkingEnabled, targetId, updateTurns]);
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((current) => {
+      const next = !current;
+      window.localStorage.setItem(HISTORY_OPEN_KEY, next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  /** 开一段新对话：只清界面这一侧，原来的记录仍然留在历史里。 */
+  const startNewConversation = useCallback(() => {
+    if (busy) return;
+    setSession({ targetId, conversationId: null, turns: [] });
+    setQuestion("");
+    setConfirmingDelete(null);
+    stickRef.current = true;
+    inputRef.current?.focus();
+  }, [busy, targetId]);
+
+  const openConversation = useCallback(async (id: string) => {
+    if (busy || loadingConversation) return;
+    setLoadingConversation(id);
+    setConfirmingDelete(null);
+    try {
+      const conversation = await api<ConversationDetail>(`/api/reasoning/conversations/${id}?targetId=${encodeURIComponent(targetId)}`);
+      setSession({ targetId, conversationId: conversation.id, turns: conversation.messages.map(messageToTurn) });
+      stickRef.current = true;
+    } catch (reason) {
+      fail(reason);
+      // 读不到就是它已经不在了（另一个标签页删过，或换了本体）：顺手把列表刷新干净。
+      void refreshConversations();
+    } finally {
+      setLoadingConversation(null);
+    }
+  }, [busy, fail, loadingConversation, refreshConversations, targetId]);
+
+  const removeConversation = useCallback(async (id: string) => {
+    setConfirmingDelete(null);
+    try {
+      await api(`/api/reasoning/conversations/${id}?targetId=${encodeURIComponent(targetId)}`, { method: "DELETE" });
+      setHistory((current) => ({ targetId, items: current.items.filter((item) => item.id !== id) }));
+      // 删掉的正是眼前这段：画面也得跟着空掉，否则会以为没删掉。
+      if (conversationId === id) setSession({ targetId, conversationId: null, turns: [] });
+      notify("这段对话已从历史里删除。");
+    } catch (reason) {
+      fail(reason);
+      void refreshConversations();
+    }
+  }, [conversationId, fail, notify, refreshConversations, targetId]);
 
   return (
-    <section className="qa-root">
+    <section className={`qa-root${historyOpen ? " with-history" : ""}`}>
       <header className="qa-head">
         <div className="qa-head-main">
           <span className="qa-head-eyebrow">智能问答</span>
@@ -313,6 +515,17 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         <div className="qa-head-actions">
           <button
             type="button"
+            className={`qa-toggle${historyOpen ? " on" : ""}`}
+            onClick={toggleHistory}
+            title={historyOpen ? "收起对话历史" : "展开对话历史"}
+            aria-expanded={historyOpen}
+          >
+            <History size={13} />
+            对话历史
+            <em>{conversations.length}</em>
+          </button>
+          <button
+            type="button"
             className={`qa-toggle${thinkingEnabled ? " on" : ""}`}
             disabled={busy}
             onClick={() => setThinkingEnabled((current) => !current)}
@@ -322,7 +535,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             思考
             <em>{thinkingEnabled ? "开" : "关"}</em>
           </button>
-          {turns.length > 0 && <button className="action compact" disabled={busy} onClick={() => updateTurns(() => [])}><Eraser size={13} />清空</button>}
+          {turns.length > 0 && <button className="action compact" disabled={busy} onClick={startNewConversation} title="清空当前画面，历史记录仍然保留"><Plus size={13} />新对话</button>}
         </div>
       </header>
 
@@ -396,6 +609,20 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
           发送
         </button>
       </div>
+
+      {historyOpen && (
+        <HistoryRail
+          conversations={conversations}
+          activeId={conversationId}
+          loadingId={loadingConversation}
+          confirmingId={confirmingDelete}
+          busy={busy}
+          onOpen={(id) => void openConversation(id)}
+          onAskDelete={setConfirmingDelete}
+          onCancelDelete={() => setConfirmingDelete(null)}
+          onConfirmDelete={(id) => void removeConversation(id)}
+        />
+      )}
     </section>
   );
 }
