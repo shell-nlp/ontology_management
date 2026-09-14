@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
+import { DEFAULT_SINGLE_REPLACE_LIMIT, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, scopedQueryUrl, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
 import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
 import type { GraphDefinitionLike, GraphTarget } from "@/lib/graph/types";
 
@@ -33,6 +33,23 @@ describe("resolveSparqlEndpoints", () => {
   it("允许用 options 显式覆盖端点与命名图", () => {
     const endpoints = resolveSparqlEndpoints(target({ options: { queryEndpoint: "http://host/q", updateEndpoint: "http://host/u", namedGraph: "urn:ontology" } }));
     expect(endpoints).toMatchObject({ query: "http://host/q", update: "http://host/u", namedGraph: "urn:ontology" });
+  });
+});
+
+describe("工作台查询的数据集限定", () => {
+  it("配了命名图时，把它设成这次查询的默认图，并登记成命名图", () => {
+    const endpoints = resolveSparqlEndpoints(target({ options: { namedGraph: "urn:ontology:abc" } }));
+    const url = scopedQueryUrl(endpoints);
+    expect(url).toBe("http://localhost:3030/ds/query?default-graph-uri=urn%3Aontology%3Aabc&named-graph-uri=urn%3Aontology%3Aabc");
+  });
+
+  it("端点本身带查询串时用 & 接，不吞掉原有参数", () => {
+    const endpoints = resolveSparqlEndpoints(target({ options: { queryEndpoint: "http://host/q?timeout=30", namedGraph: "urn:g" } }));
+    expect(scopedQueryUrl(endpoints)).toBe("http://host/q?timeout=30&default-graph-uri=urn%3Ag&named-graph-uri=urn%3Ag");
+  });
+
+  it("没配命名图时原样返回：那个本体就住在默认图里，不该乱限定", () => {
+    expect(scopedQueryUrl(resolveSparqlEndpoints(target()))).toBe("http://localhost:3030/ds/query");
   });
 });
 

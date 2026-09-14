@@ -1,6 +1,7 @@
 import { ToolLoopAgent, stepCountIs, type ModelMessage } from "ai";
 import { llmModel, llmSettings, thinkingProviderOptions } from "@/lib/reasoning/provider";
 import { reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
+import { entitySources } from "@/lib/ontology-sources";
 import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 
 /**
@@ -20,7 +21,7 @@ const SYSTEM_PROMPT = `你是本体（ontology）推理助手。平台里已经�
 
 工作方式：
 1. 先理解问题涉及哪些业务概念，用 search_schema 确认本体里真实存在的对象类型与关系类型名字。
-2. 需要字段、父类、可用动作时调 get_object_type 或 list_actions；需要对象时调 query_object_instance；需要看对象之间怎么连时调 query_instance_subgraph。
+2. 需要字段、父类、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions；需要对象时调 query_object_instance；需要看对象之间怎么连时调 query_instance_subgraph。
 3. 复杂问题拆成多步：先定位对象，再顺着关系类型展开，最后再下结论。
 
 硬性要求：
@@ -52,12 +53,17 @@ export type RunReasoningOptions = {
   onEvent?: (event: AgentEvent) => void;
 };
 
-/** 给模型的"本体概览"：只要名字清单，字段细节让它自己按需查，省 token。 */
+/**
+ * 给模型的"本体概览"：名字清单 + 绑定的表名，字段细节让它自己按需查，省 token。
+ * 表名要带上：用户常问"某个对象类型绑了哪张表"，提前给到就省掉一次 get_object_type 往返。
+ */
 function schemaBrief(context: ToolContext) {
   const count = (name: string) => context.runtimeTypes?.labels.find((item) => item.name === name)?.count;
   const objects = context.definition.entityTypes.map((item) => {
     const amount = count(item.name);
-    return amount == null ? item.name : `${item.name}(${amount})`;
+    const tables = entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
+    const notes = [amount == null ? "" : String(amount), tables.length ? `绑定 ${tables.join(" + ")}` : ""].filter(Boolean).join("，");
+    return notes ? `${item.name}(${notes})` : item.name;
   });
   const relations = context.definition.relationshipTypes.map((item) => item.name);
   const actions = context.definition.actionTypes.map((item) => item.name);

@@ -139,6 +139,16 @@ SSPL / ELv2 / AGPLv3 三选一对闭源产品分发都有风险（详见 `docs/a
 - 要按环境 / 租户再分一层时用**多 dataset**（一个 Fuseki 下配多个 dataset，登记时选不同数据集）；
   需要资源或权限硬隔离时才单起一套 Fuseki/TDB2。
 
+**不变量：用户查询必须按命名图限定数据集。** 2026-09-14 修过一个串数据的 bug：
+适配器自己的读路径都套了内联 `GRAPH <命名图>`，唯独 `/api/query`（图谱页的 SPARQL 工作台）
+是原样执行用户语句 —— 于是裸 `?s ?p ?o` 打到 Fuseki 的**默认图**，而默认图里放的是
+「没配命名图」的那个本体的数据，看起来就是"别的本体的数据跑进来了"。
+现在的规则：`execute()` 走 `scopedQueryUrl(endpoints)`，用 SPARQL 协议参数
+`default-graph-uri` + `named-graph-uri` 把命名图设成这次查询的默认图（也登记成命名图，
+所以 `GRAPH <自己的图>` / `GRAPH ?g` 仍可用，但数据集里只有这一个图）。
+没配命名图的存储原样执行 —— 那类存储就住在默认图里，而且它是「看整个数据集」的排查入口。
+`jena.test.ts` 有 `scopedQueryUrl` 的单测，改这块别把限定去掉。
+
 历史（已作废）：2026-09-12 曾按 Neo4j Community「一个库一个本体」的限制选了"N 个实例各自登记"的方案
 （`scripts/neo4j-instance.ps1`，已在 2026-09-14 随 Neo4j 一并删除）。下表的 N1/N3/N4 都是 Neo4j 专属路径，
 保留只为说明当时的取舍。
@@ -250,7 +260,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 已落地：
 
 - `src/lib/reasoning/tools.ts`：五个**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
-  `get_object_type`（属性含继承、父类、端点关系、动作）、`query_object_instance`（走图库，带类型传播）、
+  `get_object_type`（属性含继承与映射列、父类、端点关系、动作、数据来源绑定）、`query_object_instance`（走图库，带类型传播）、
   `query_instance_subgraph`、`list_actions`。排序是纯函数（`rankSchemaConcepts`），有单测。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
   事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
@@ -270,6 +280,23 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   - **MCP 调试**（`src/components/mcp-studio.tsx`）：左列工具清单（按「本体与 Schema / 本体模型检索 /
     对象实例与关系子图查询」分组），右侧是接口台 —— 说明 + 参数表 + 请求体 + 响应，带「接口文档 / 自动填参 / 运行」。
     页面调的是**真实 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用。
+
+**数据来源绑定必须暴露给模型**（2026-09-14 修）：
+
+对象类型绑了哪张表存在 `entityTypes[].sources` 里，但里面只有**数据资源的 id 与来源 id（都是 UUID）**，
+模型看不懂；而 `get_object_type` 当时**根本没返回 `sources`**，于是「专线产品用户 绑定了哪个表」只能被答成
+"没有数据来源 / 图库里没有数据"。现在的做法：
+
+- `ToolContext.dataSources`（本机已登记的数据资源）由三个入口一起传：`/api/reasoning/run`、`/api/reasoning/stream`、
+  `src/lib/reasoning/mcp.ts` 的 `contextFor`（忘记传就会退化成只有 UUID，答不出表名）。
+- `get_object_type` 的 payload 增加 `sources`（角色 / 资源名 / schema / 表 / 主键 / 标题列），每个属性增加
+  `source_field`（映射到源表哪一列）与 `source_role`（属于哪一份来源），并附一句 `data_source_note` 说明
+  "对象是这张表里的一行、图库对象数与是否绑表无关"。
+- `search_schema` 的 `haystack` 把**表名**也算进去：问「TB_MK_GRP_LINE_LIST_DAY 是哪张表」能直接命中对象类型，
+  候选的 `detail` 里写「绑定 GISTOOLS.TB_xxx（资源名）」。
+- `schemaBrief`（system 里的本体概览）顺带带上每个对象类型绑的表，省掉一次 `get_object_type` 往返。
+
+加新工具或改工具返回时守住这条：**给模型看的字段里不许出现裸 UUID**，要么翻成人话，要么别给。
 
 **流式与思考开关已落地**（2026-09-14）：
 

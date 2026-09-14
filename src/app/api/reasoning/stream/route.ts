@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
@@ -53,6 +54,8 @@ export async function POST(request: NextRequest) {
 
   const store = getGraphStore(target);
   const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
+  // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
+  const dataSources = await listDataSources().catch(() => []);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -63,7 +66,7 @@ export async function POST(request: NextRequest) {
       try {
         const run = await runReasoning({
           question: input.question,
-          context: { store, definition, runtimeTypes },
+          context: { store, definition, runtimeTypes, dataSources },
           maxSteps: input.maxSteps,
           thinking: input.thinking,
           onEvent: send,

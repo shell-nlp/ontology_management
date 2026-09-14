@@ -134,6 +134,26 @@ export function resolveSparqlEndpoints(target: GraphTarget): SparqlEndpoints {
   };
 }
 
+/**
+ * 工作台查询用的端点：把这个本体的命名图设成**这次查询的默认图**（SPARQL 协议参数）。
+ *
+ * 为什么必须有这一层：用户在「图谱」页写的往往是裸 `?s ?p ?o`，里面没有 GRAPH。
+ * 不限定数据集的话，这类查询读的是 Fuseki 的默认图 —— 而默认图里放的是**没有配命名图
+ * 的那个本体**的数据，表现出来就是"别的本体的数据跑进来了"。
+ *
+ * 同时把命名图登记成 named-graph-uri，这样 `GRAPH <自己的图>` 与 `GRAPH ?g` 仍然可用，
+ * 但数据集里只有这一个图，读不到别人的。
+ *
+ * 注意这一层只加在**用户查询**上：适配器自己的读路径（readGraph / hydrateNodes 等）
+ * 用的是内联 `GRAPH <图>` 写法，已经是隔离的，不需要也不应该重复限定。
+ */
+export function scopedQueryUrl(endpoints: SparqlEndpoints) {
+  if (!endpoints.namedGraph) return endpoints.query;
+  const separator = endpoints.query.includes("?") ? "&" : "?";
+  const params = `default-graph-uri=${encodeURIComponent(endpoints.namedGraph)}&named-graph-uri=${encodeURIComponent(endpoints.namedGraph)}`;
+  return `${endpoints.query}${separator}${params}`;
+}
+
 function authorizationHeader(target: GraphTarget) {
   if (!target.username) return undefined;
   const password = target.credential_secret ? decryptSecret(target.credential_secret) : "";
@@ -398,8 +418,10 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     return text;
   }
 
-  async function select(query: string, parameters: Record<string, unknown> = {}) {
-    const text = await post(endpoints.query, bindSparqlParameters(query, parameters), "application/sparql-query; charset=utf-8", "application/sparql-results+json");
+  /** datasetScoped 只给用户查询用：把命名图当默认图，挡住别的本体的数据。 */
+  async function select(query: string, parameters: Record<string, unknown> = {}, options: { datasetScoped?: boolean } = {}) {
+    const endpoint = options.datasetScoped ? scopedQueryUrl(endpoints) : endpoints.query;
+    const text = await post(endpoint, bindSparqlParameters(query, parameters), "application/sparql-query; charset=utf-8", "application/sparql-results+json");
     let parsed: { head?: { vars?: string[] }; results?: { bindings?: Record<string, SparqlTerm>[] } };
     try {
       parsed = JSON.parse(text) as typeof parsed;
@@ -578,7 +600,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       if (options.readOnly && containsWriteSparql(bound)) throw new Error("只读模式下不允许执行 SPARQL 更新语句。");
       const form = sparqlQueryForm(bound);
       if (form === "CONSTRUCT" || form === "DESCRIBE") {
-        const text = await post(endpoints.query, bound, "application/sparql-query; charset=utf-8", "application/n-triples");
+        const text = await post(scopedQueryUrl(endpoints), bound, "application/sparql-query; charset=utf-8", "application/n-triples");
         const triples = parseNTriples(text).map((triple) => ({
           subject: triple.subject.value,
           predicate: triple.predicate.value,
@@ -599,7 +621,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       if (form !== "SELECT" && form !== "ASK") {
         throw new Error("SPARQL 工作台只支持 SELECT / ASK / CONSTRUCT / DESCRIBE 查询；写入请通过本体发布流程。");
       }
-      const rows = await select(bound);
+      const rows = await select(bound, {}, { datasetScoped: true });
       const records = rows.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, term]) => [key, termValue(term)])) as Record<string, unknown>);
       const triples = extractTripleRows(rows.vars, rows.rows);
       if (!triples.length) return { keys: rows.vars, records, graph: { nodes: [], relationships: [] }, summary: bound };

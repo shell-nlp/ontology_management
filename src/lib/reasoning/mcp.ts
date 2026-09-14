@@ -1,3 +1,4 @@
+import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
 import { getOntology, listOntologies } from "@/lib/ontologies";
 import { getPublishedOntology } from "@/lib/published-ontology";
@@ -126,7 +127,9 @@ async function contextFor(ontologyId: string): Promise<ToolContext> {
   }
   const store = getGraphStore(target);
   const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
-  return { store, definition, runtimeTypes };
+  // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
+  const dataSources = await listDataSources().catch(() => []);
+  return { store, definition, runtimeTypes, dataSources };
 }
 
 export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {

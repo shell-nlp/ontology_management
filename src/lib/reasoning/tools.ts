@@ -1,5 +1,7 @@
 import { jsonSchema, tool } from "ai";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
+import type { DataSourceRecord } from "@/lib/data-source/types";
+import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ToolOutcome, ToolSpec } from "@/lib/reasoning/types";
@@ -17,6 +19,13 @@ export type ToolContext = {
   definition: OntologyDefinition;
   /** 运行时类型统计，给模型一个"这个类有多少对象"的量级直觉。 */
   runtimeTypes: RuntimeTypeSet | null;
+  /**
+   * 本机已登记的数据资源。
+   *
+   * 对象类型可以绑到表上（`entityTypes[].sources`），但绑定里存的是**数据资源的 id**，
+   * 模型看 UUID 没有意义 —— 拿它把「绑了哪张表、在哪个资源上」翻成可读文本。
+   */
+  dataSources?: DataSourceRecord[];
 };
 
 type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY";
@@ -60,7 +69,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_object_type",
     description:
-      "读取一个对象类型的完整定义：属性（含从父类继承来的）、父类、参与的关系类型、可执行的动作、当前对象数。",
+      "读取一个对象类型的完整定义：属性（含从父类继承来的，映射到哪一列也会带上）、父类、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）、当前对象数。问「某个对象类型绑了哪张表」时调它。",
     parameters: {
       type: "object",
       properties: { type_name: { type: "string", description: "对象类型名称，必须来自 search_schema 的结果" } },
@@ -138,7 +147,8 @@ export function longestCommonSubstring(a: string, b: string): number {
   return best;
 }
 
-export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null): SchemaConcept[] {
+export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null, dataSources: DataSourceRecord[] = []): SchemaConcept[] {
+  const resourceNameById = new Map(dataSources.map((item) => [item.id, item.name]));
   const objectCount = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
   const relationshipCount = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
   // 图库连不上时统计拿不到，这时宁可什么都不说，也不要报"对象数 0"——那是在撒谎。
@@ -149,13 +159,17 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   for (const entity of definition.entityTypes) {
     const parents = (entity.parents ?? []).map((id) => typeNameById.get(id)).filter((name): name is string => Boolean(name));
     const properties = mergeInheritedProperties(entity, definition.entityTypes);
+    // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
+    const tables = entitySources(entity).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
+    const resources = [...new Set(entitySources(entity).map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
     concepts.push({
       kind: "OBJECT_TYPE",
       name: entity.name,
-      haystack: normalize([entity.name, entity.description, ...parents, ...properties.map((property) => property.name)].join(" ")),
+      haystack: normalize([entity.name, entity.description, ...parents, ...tables, ...properties.map((property) => property.name)].join(" ")),
       detail: [
         hasStats ? `对象数 ${objectCount.get(entity.name) ?? 0}` : "",
         parents.length ? `父类 ${parents.join("、")}` : "",
+        tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
       weight: objectCount.get(entity.name) ?? 0,
@@ -299,7 +313,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
     case "search_schema": {
       const query = typeof args.query === "string" ? args.query : "";
       const maxConcepts = clamp(args.max_concepts, 8, 30);
-      const matches = rankSchemaConcepts(schemaConcepts(definition, runtimeTypes), query, maxConcepts);
+      const matches = rankSchemaConcepts(schemaConcepts(definition, runtimeTypes, context.dataSources ?? []), query, maxConcepts);
       return {
         payload: {
           query,
@@ -321,12 +335,26 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!type) throw new Error(`本体里没有对象类型「${typeName}」。先用 search_schema 确认名字。`);
       const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
       const own = new Set(type.properties.map((property) => property.name));
+      /*
+       * 数据来源绑定里存的是数据资源的 id 与来源 id（都是 UUID），模型看不懂。
+       * 这里把两份 id 翻成「哪个资源、哪张表、第几份来源」——否则模型只能凭空说
+       * “这个对象类型没有绑定数据源”，这正是它明明绑了表却答不出来的原因。
+       */
+      const sources = entitySources(type);
+      const resourceNameById = new Map((context.dataSources ?? []).map((item) => [item.id, item.name]));
+      const sourceRoleById = new Map(sources.map((source, index) => [source.id, sourceRoleLabel(index)]));
       const properties = mergeInheritedProperties(type, definition.entityTypes).map((property) => ({
         name: property.name,
+        display_name: property.displayName ?? "",
+        description: property.description ?? "",
         data_type: property.dataType,
         required: property.required,
         unique: property.unique,
         inherited: !own.has(property.name),
+        // 属性取自源表的哪一列、哪一份来源；没映射就是空串。
+        source_field: property.sourceField ?? "",
+        // 只有映射了列才有来源角色可谈；继承来又没映射列的属性不硬套一个。
+        source_role: property.sourceField ? (property.sourceId ? sourceRoleById.get(property.sourceId) ?? "" : sources.length ? sourceRoleLabel(0) : "") : "",
       }));
       const relations = definition.relationshipTypes
         .filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id)
@@ -347,6 +375,18 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           properties,
           relations,
           actions,
+          sources: sources.map((source, index) => ({
+            role: sourceRoleLabel(index),
+            data_source: resourceNameById.get(source.dataSourceId) ?? "",
+            schema: source.schema,
+            view: source.view,
+            primary_key: source.primaryKey,
+            title_field: source.titleField,
+          })),
+          // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
+          data_source_note: sources.length
+            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。图库里的对象数不取决于是否绑表。"
+            : "这个对象类型还没有绑定数据资源，本体里只有定义。",
           object_count: objectCount,
           display_property: type.displayProperty ?? "",
         },
