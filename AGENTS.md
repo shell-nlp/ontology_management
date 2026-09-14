@@ -158,7 +158,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
 | M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`jena.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
-| M2 | 接口（interfaces） | 完全没有 | Palantir 用接口表达共享能力与多继承：接口是抽象的、不能被直接实例化，object type 实现接口后按接口被消费，链接与动作也能定义在接口上。工作量在定义层语义（接口定义、类实现、属性/链接/动作的继承与覆盖）加图库落地方式，建议先出 ADR 再实现。参考 https://palantir.com/docs/foundry/interfaces/interface-overview/ |
+| M2 | ~~接口（interfaces）~~ | **2026-09-15 已完成第一版**（见「接口类型（Palantir Interface）」一节）：定义层、实现映射（按同名属性）、关系约束、多继承、Jena 落库、校验、界面、`list_interfaces` 工具都到位。**未做**：动作约束（action type constraints）、shared properties / struct、status / searchable 元数据、画布上画接口节点 |
 
 **M3（类层级与类型传播，第一档推理）已于 2026-09-13 完成（Jena 侧）**，记录如下：
 
@@ -169,6 +169,50 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 - 本体视图（`readSchemaGraph`）改为**始终**画出声明的类与 `subClassOf` 边，不再只在图库为空时才回退到 RDF Schema。
 - 类层级与类型传播只在 Jena 侧落地；Neo4j 已于 2026-09-14 整体移除，不再需要考虑它的等价实现。
 
+### 接口类型（Palantir Interface）
+
+记录时间：2026-09-15。用户要求按 Palantir 的接口（interfaces）实现：**接口是抽象契约** ——
+它不绑数据、不能被实例化，只描述「实现我的对象类型必须长什么样」。应用按接口统一消费，
+于是新加一个实现了该接口的对象类型不用改应用。用户当时的疑问是"接口是不是和父类很像、父类好像没什么用" ——
+两者都落 `rdfs:subClassOf`，但语义不同：
+
+- **父类（`parents`）**：具体类型之间的继承。子类自动拥有父类属性，按父类筛能看到子类对象（M3 的类型传播）。
+- **接口（`interfaces` + `entityTypes[].implements`）**：能力与形状的契约。一个对象类型可以有多个父类，
+  也可以实现多个接口；实现接口要满足接口的属性与关系约束，否则发布前校验会拦下。
+
+数据落在定义里（`src/lib/ontology.ts`）：
+
+- `ontologyDefinitionSchema.interfaces: InterfaceType[]`：`{ id, name, description, properties[], extends[], linkConstraints[] }`
+  - `properties[]`：接口属性。`required` 的属性，实现方必须有**同名**属性
+    （Palantir 是"把现有属性映射到接口属性上"，平台这一版按同名映射 —— 够表达，也不必再维护第二张映射表）。
+  - `extends[]`：接口继承接口（可多继承）；属性与关系约束一起继承，同名以更近的接口为准。
+  - `linkConstraints[]`：`{ name, targetKind: OBJECT_TYPE | INTERFACE, targetId, cardinality: ONE | MANY, required }`，
+    要求实现方有一条「从我出去、终点是目标对象类型（或其子类）/ 实现了目标接口的类型」的具体关系类型。
+- `entityTypes[].implements: string[]`：这个对象类型实现了哪些接口。
+
+三条不变量（改这块时别破）：
+
+1. **接口不是对象类型**：不绑数据源、不能实例化、不进实例查询。发布时声明成 `owl:Class` + `urn:bkn:Interface`；
+   `jena.ts` 的 `META_TYPES` 必须留着 `BKN_INTERFACE_META`，否则接口会被当成对象混进对象数、标签清单与整图导出。
+2. **实现 = 同名属性 + 必填关系约束**：判断口径只有一处 —— `src/lib/interfaces.ts` 的 `checkImplementations`
+   （纯函数、有单测）。发布前校验（`validateVersionSnapshot` → `validateInterfaces` / `validateInterfaceImplementations`）
+   与界面提示都走它；校验返回的 message 是**给用户看的界面文案**，按术语约定写「对象类型」。
+3. **实现了子接口 = 实现了父接口**：`implementersOf` 把"实现了子接口的对象类型"也算成父接口的实现者；
+   图库侧靠 `rdfs:subClassOf` 的类型传播天然成立（按接口筛对象能筛到实现者）。实现同时写 `urn:bkn:implements`，
+   读骨架时才能把「实现」与「父类」分成两种边（`readSchemaGraph` 的 `implementPairs`）。
+
+界面（配置一处、使用两处）：
+
+- **「本体草稿 → 接口」标签**（`interface-manager.tsx`）：左栏接口清单、右栏接口定义（名称 / 说明 / 继承 / 接口属性 / 关系约束 / 实现情况）。
+  接口图标画成**虚线框**（Palantir 用虚线轮廓区分接口与对象类型）；两栏之间是可拖的分隔条（本机键 `interface-split`）。
+- **对象类型侧**：`type-edit-dialog.tsx` 的「实现接口」多选会显示「必填属性对上几条、还缺哪些」并给「按接口补齐属性」；
+  可视化画布的右栏也显示「实现接口 X」。`TypeEditDialog` 的 `interfaces` 属性在**可视化与表单两个入口都要传**
+  （漏传就会变成"草稿里还没有接口"）。
+- 工具侧：`list_interfaces`（接口清单 + 属性 + 关系约束 + 实现者），`get_object_type` 带 `interfaces`（接口属性映射状态），
+  `search_schema` 与概念清单都能命中接口；MCP 里 `list_interfaces` 归在 `model` 组、标题「接口」。
+
+已知未做（有意留白，别以为漏了）：接口的**动作约束**（Palantir 的 action type constraints、参数映射，本身还在 beta）、
+shared properties / struct、接口的 status 与 searchable 元数据、把接口画在可视化画布上（只画在「接口」标签与骨架图里）。
 ### 数据资源
 
 | 编号 | 事项 | 现状 | 建议做法 |

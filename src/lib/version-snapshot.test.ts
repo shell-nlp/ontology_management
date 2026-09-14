@@ -12,9 +12,10 @@ function validSnapshot(): VersionSnapshot {
   return {
     definition: {
       groups: [],
+      interfaces: [],
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", parents: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", parents: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", parents: [], implements: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", parents: [], implements: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", description: "", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
@@ -76,9 +77,10 @@ describe("类型传播：按父类筛子类的对象", () => {
     return {
       definition: {
         groups: [],
+        interfaces: [],
         entityTypes: [
-          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", parents: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
-          { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", groupId: "", parents: [用户类], properties: [], sources: [] },
+          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", parents: [], implements: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+          { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", groupId: "", parents: [用户类], implements: [], properties: [], sources: [] },
         ],
         relationshipTypes: [],
         actionTypes: [],

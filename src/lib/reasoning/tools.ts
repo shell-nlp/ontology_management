@@ -1,5 +1,13 @@
 import { jsonSchema, tool } from "ai";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
+import {
+  checkImplementations,
+  effectiveInterfaceLinkConstraints,
+  effectiveInterfaceProperties,
+  implementsIdsOf,
+  implementersOf,
+  interfaceAncestorsOf,
+} from "@/lib/interfaces";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
@@ -39,7 +47,7 @@ export type ToolContext = {
   sqlRowLimit?: number;
 };
 
-type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY";
+type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY" | "INTERFACE";
 
 export type SchemaConcept = {
   kind: ConceptKind;
@@ -96,6 +104,12 @@ export const REASONING_TOOLS: ToolSpec[] = [
     name: "list_concept_groups",
     description:
       "列出本体里的**概念分组**（业务域），以及每个分组下有哪些对象类型。问「有哪些概念分组」「某个分组里有什么对象类型」时调它；还没归组的对象类型会单独列出来。",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "list_interfaces",
+    description:
+      "列出本体里的**接口**（抽象契约）以及每个接口的实现情况：接口属性、继承的接口、关系约束、哪些对象类型实现了它。问「有哪些接口」「这个接口谁实现了」时调它；「这个对象类型实现了哪些接口」在 get_object_type 里也能看到。",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -228,6 +242,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   const relationshipCount = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
   const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
+  const interfaceNameById = new Map((definition.interfaces ?? []).map((item) => [item.id, item.name]));
   const concepts: SchemaConcept[] = [];
 
   for (const entity of definition.entityTypes) {
@@ -237,14 +252,17 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
     const tables = entitySources(entity).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
     const resources = [...new Set(entitySources(entity).map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
+    // 实现了哪些接口也进检索面：问「谁实现了设施接口」能直接命中这些对象类型。
+    const implemented = (entity.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
     concepts.push({
       kind: "OBJECT_TYPE",
       name: entity.name,
       // 概念分组也进检索面：问「客户域里有什么」时，该组的成员会被搜出来。
-      haystack: normalize([entity.name, entity.description, group, ...parents, ...tables, ...properties.map((property) => property.name)].join(" ")),
+      haystack: normalize([entity.name, entity.description, group, ...parents, ...tables, ...properties.map((property) => property.name), ...implemented].join(" ")),
       detail: [
         group ? `分组 ${group}` : "",
         parents.length ? `父类 ${parents.join("、")}` : "",
+        implemented.length ? `实现接口 ${implemented.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
@@ -261,7 +279,24 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     }
   }
 
-  for (const relationship of definition.relationshipTypes) {
+  // 接口本身也是可检索的概念（问「有哪些接口」「这个接口谁实现了」都要命中）。
+  for (const item of definition.interfaces ?? []) {
+    const inherited = interfaceAncestorsOf(definition.interfaces ?? [], item.id).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
+    const implementers = definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(item.id)).map((entity) => entity.name);
+    const properties = effectiveInterfaceProperties(definition.interfaces ?? [], item.id);
+    concepts.push({
+      kind: "INTERFACE",
+      name: item.name,
+      haystack: normalize([item.name, item.description, ...properties.map((property) => property.name), ...implementers, ...inherited].join(" ")),
+      detail: [
+        "接口（抽象契约，不绑数据、不能直接实例化）",
+        inherited.length ? `继承 ${inherited.join("、")}` : "",
+        properties.length ? `接口属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
+        implementers.length ? `${implementers.length} 个实现：${implementers.join("、")}` : "还没有对象类型实现它",
+      ].filter(Boolean).join("；"),
+      weight: 0,
+    });
+  }  for (const relationship of definition.relationshipTypes) {
     const source = typeNameById.get(relationship.sourceEntityTypeId) ?? "";
     const target = typeNameById.get(relationship.targetEntityTypeId) ?? "";
     concepts.push({
@@ -542,7 +577,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         // 属性不是可寻址的实体，不做证据；类型与动作才是。
         evidence: matches
           .filter((match) => match.kind !== "PROPERTY")
-          .map((match) => ({ kind: match.kind as "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION", id: match.name, label: match.name })),
+          .map((match) => ({ kind: match.kind as "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "INTERFACE", id: match.name, label: match.name })),
       };
     }
 
@@ -620,6 +655,33 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           data_source_note: sources.length
             ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据就调 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。"
             : "这个对象类型还没有绑定数据资源，本体里只有定义。",
+          // 实现的接口：Palantir 里对象类型靠接口被通用地消费，模型要能顺着接口理解它。
+          interfaces: implementsIdsOf(type).map((interfaceId) => {
+            const node = (definition.interfaces ?? []).find((item) => item.id === interfaceId) ?? null;
+            const check = checkImplementations(type, definition.interfaces ?? [], definition.relationshipTypes, definition.entityTypes)
+              .find((item) => item.interfaceId === interfaceId) ?? null;
+            return {
+              name: node?.name ?? "",
+              description: describeBriefly(node?.description ?? "", 80),
+              extends: interfaceAncestorsOf(definition.interfaces ?? [], interfaceId)
+                .map((id) => (definition.interfaces ?? []).find((item) => item.id === id)?.name ?? "")
+                .filter(Boolean),
+              properties: node
+                ? effectiveInterfaceProperties(definition.interfaces ?? [], interfaceId).map((property) => ({
+                  name: property.name,
+                  display_name: property.displayName ?? "",
+                  data_type: property.dataType,
+                  required: property.required !== false,
+                  mapped: !(check?.missingProperties ?? []).includes(property.name),
+                }))
+                : [],
+              missing_properties: check?.missingProperties ?? [],
+              missing_links: (check?.missingLinks ?? []).map((item) => item.name),
+            };
+          }),
+          interface_note: implementsIdsOf(type).length
+            ? "interfaces 是这个对象类型实现的接口（抽象契约）：接口属性按同名映射到对象类型自己的属性上，mapped=false 表示还没对上，缺失会挡住发布。"
+            : "这个对象类型没有实现任何接口。接口是抽象契约，用来让不同的对象类型被同一套应用按同一个形状消费。",
           display_property: type.displayProperty ?? "",
         },
         evidence: [{ kind: "OBJECT_TYPE", id: type.name, label: type.name }],
@@ -654,7 +716,47 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       };
     }
 
-    case "traverse_object_types": {
+    case "list_interfaces": {
+      const interfaces = definition.interfaces ?? [];
+      const entityNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
+      const interfaceNameById = new Map(interfaces.map((item) => [item.id, item.name]));
+      const nameOf = (constraint: { targetKind: string; targetId: string }) => constraint.targetKind === "INTERFACE"
+        ? interfaceNameById.get(constraint.targetId) ?? ""
+        : entityNameById.get(constraint.targetId) ?? "";
+      return {
+        payload: {
+          interface_count: interfaces.length,
+          interfaces: interfaces.map((item) => {
+            const implementers = implementersOf(interfaces, definition.entityTypes, item.id);
+            return {
+              name: item.name,
+              description: describeBriefly(item.description ?? "", 100),
+              // 继承的接口：接口属性与关系约束是从这些接口继承来的。
+              parent_interfaces: interfaceAncestorsOf(interfaces, item.id).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean),
+              properties: effectiveInterfaceProperties(interfaces, item.id).map((property) => ({
+                name: property.name,
+                data_type: property.dataType,
+                required: property.required !== false,
+              })),
+              link_constraints: effectiveInterfaceLinkConstraints(interfaces, item.id).map((constraint) => ({
+                name: constraint.name,
+                target_kind: constraint.targetKind === "INTERFACE" ? "接口" : "对象类型",
+                target: nameOf(constraint),
+                cardinality: constraint.cardinality === "ONE" ? "一对一" : "一对多",
+                required: constraint.required !== false,
+              })),
+              implementers: implementers.map((entry) => entry.name),
+              // 通过子接口间接实现的：应用按这个接口消费时同样能看到它们。
+              inherited_implementers: implementers.filter((entry) => !entry.direct).map((entry) => entry.name),
+            };
+          }),
+          note: interfaces.length
+            ? "接口是抽象契约：不能被实例化，也不绑数据；它只描述「实现它的对象类型必须有哪些属性与关系」。要看某个对象类型的完整定义与它实现的接口，用 get_object_type。"
+            : "这个本体还没有定义接口。",
+        },
+        evidence: interfaces.map((item) => ({ kind: "INTERFACE" as const, id: item.id, label: item.name })),
+      };
+    }    case "traverse_object_types": {
       const startName = (typeof args.start_type === "string" ? args.start_type : "").trim();
       const traversal = traverseTypeGraph(definition, {
         start: startName,

@@ -67,6 +67,46 @@ const legacyEntitySourceSchema = entitySourceSchema.omit({ id: true });
  * 存成一条记录而不是类上的一个字符串，是为了颜色能定下来、以后要改名也只有一处要改。
  * 分组**不参与推理**，纯展示层的归类。
  */
+/**
+ * 接口的关系约束（Palantir 的 interface link type constraint）。
+ *
+ * 接口只说"实现我的对象类型必须有一条第（起点=自己）这样的关系"，
+ * 具体挂哪一条关系类型由实现方决定（关系类型本身写在 entityTypes / relationshipTypes 上）。
+ */
+export const interfaceLinkConstraintSchema = z.object({
+  id: z.string().uuid(),
+  /** 约束名：接口视角下这条关系叫什么（Palantir 的 API name）。 */
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(300).default(""),
+  /** 另一端是具体对象类型还是另一个接口。 */
+  targetKind: z.enum(["OBJECT_TYPE", "INTERFACE"]).default("OBJECT_TYPE"),
+  targetId: z.union([z.string().uuid(), z.literal("")]).default(""),
+  /** ONE = 每个实现对象应当只连一个；MANY = 可以连任意个。图库不做基数约束，只用于建模与提示。 */
+  cardinality: z.enum(["ONE", "MANY"]).default("MANY"),
+  /** 必填的约束：实现方没有满足它的关系类型时，发布前校验会拦下来。 */
+  required: z.boolean().default(false),
+});
+
+/**
+ * 接口（Palantir 的 Interface）：描述一类对象类型"长什么样、能干什么"的抽象契约。
+ *
+ * 与对象类型的区别（Palantir 的说法）：对象类型是具体的 —— 有属性、绑了数据、能被实例化；
+ * 接口是抽象的 —— 只有属性与约束，不绑数据、不能直接实例化，只能由某个对象类型实现它。
+ * 一个接口可以被多个对象类型实现，也可以继承多个别的接口（多继承）。
+ *
+ * 属性沿用 `propertySchema`：接口属性只关心 name / displayName / description / dataType / required，
+ * `unique` / `indexed` / `sourceField` 对接口没有意义（接口不绑数据），界面也不展示。
+ */
+export const interfaceTypeSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(500).default(""),
+  /** 本接口自己声明的属性（不含继承来的）。required = 实现方必须提供同名属性。 */
+  properties: z.array(propertySchema).default([]),
+  /** 继承的接口：本接口继承谁；空数组表示没有父接口。可以写多个。 */
+  extends: z.array(z.string().uuid()).default([]),
+  linkConstraints: z.array(interfaceLinkConstraintSchema).default([]),
+});
 export const conceptGroupSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1).max(40),
@@ -190,6 +230,11 @@ export const ontologyRuleSchema = z.object({
 export const ontologyDefinitionSchema = z.object({
   /** 逻辑分组清单；对象类型用 `groupId` 指回来。空数组 = 还没分组。 */
   groups: z.array(conceptGroupSchema).default([]),
+  /**
+   * 接口清单（抽象契约）。对象类型用 `implements` 指回来表示"我实现了它"。
+   * 加这一项之前的老快照读出来是空数组。
+   */
+  interfaces: z.array(interfaceTypeSchema).default([]),
   entityTypes: z.array(z.object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(100),
@@ -202,6 +247,11 @@ export const ontologyDefinitionSchema = z.object({
      * 空数组表示这个类还没有层级（加字段之前的老快照读出来也是空数组）。
      */
     parents: z.array(z.string().uuid()).default([]),
+    /**
+     * 实现的接口（`interfaces[].id`）。可以写多个：Palantir 里一个对象类型能实现多个接口，
+     * 分别服务不同的应用场景。声明实现之后必须满足接口的属性与关系约束（发布前校验会查）。
+     */
+    implements: z.array(z.string().uuid()).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
@@ -228,3 +278,5 @@ export type OntologyDefinition = z.infer<typeof ontologyDefinitionSchema>;
 
 export type EntitySource = z.infer<typeof entitySourceSchema>;
 export type ConceptGroup = z.infer<typeof conceptGroupSchema>;
+export type InterfaceType = z.infer<typeof interfaceTypeSchema>;
+export type InterfaceLinkConstraint = z.infer<typeof interfaceLinkConstraintSchema>;

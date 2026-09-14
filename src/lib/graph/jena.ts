@@ -64,6 +64,8 @@ const RDF_PROPERTY = `${RDF}Property`;
 const OWL_SAME_AS = `${OWL}sameAs`;
 
 const BKN = "urn:bkn:";
+/** 平台自己的谓词：区分「接口实现」与「父类继承」（两者都写 rdfs:subClassOf）。 */
+const BKN_IMPLEMENTS = `${BKN}implements`;
 const BKN_RELATIONSHIP = `${BKN}Relationship`;
 const BKN_REL_TYPE = `${BKN}relType`;
 const BKN_SOURCE = `${BKN}source`;
@@ -80,6 +82,7 @@ const STRUCTURAL_PREDICATES = [
   RDF_FIRST,
   RDF_REST,
   RDFS_SUBCLASS,
+  BKN_IMPLEMENTS,
   RDFS_DOMAIN,
   RDFS_RANGE,
   OWL_SAME_AS,
@@ -99,8 +102,10 @@ const STRUCTURAL_LOCAL_NAMES = STRUCTURAL_PREDICATES.map((predicate) => localNam
  * `owl:Class` 给外部工具看，`urn:bkn:Class` 给平台自己过滤用。
  */
 const BKN_CLASS_META = `${BKN}Class`;
+/** 接口：抽象契约，不是可实例化的对象类型；实例查询必须把它一起排除掉。 */
+const BKN_INTERFACE_META = `${BKN}Interface`;
 const BKN_PROPERTY_META = `${BKN}Property`;
-const META_TYPES = [BKN_RELATIONSHIP, OWL_CLASS, RDFS_CLASS, OWL_OBJECT_PROPERTY, RDF_PROPERTY, BKN_CLASS_META, BKN_PROPERTY_META];
+const META_TYPES = [BKN_RELATIONSHIP, OWL_CLASS, RDFS_CLASS, OWL_OBJECT_PROPERTY, RDF_PROPERTY, BKN_CLASS_META, BKN_PROPERTY_META, BKN_INTERFACE_META];
 const META_TYPE_IRIS = META_TYPES.map((type) => `<${type}>`).join(", ");
 /** 「?s 不是元模型资源」：加在所有以 ?s 为主语的实例级查询上。 */
 const NOT_META_SUBJECT = `FILTER NOT EXISTS { ?s <${RDF_TYPE}> ?metaType FILTER(?metaType IN (${META_TYPE_IRIS})) }`;
@@ -421,10 +426,31 @@ export function sparqlQueryForm(query: string) {
 export function schemaStatements(definition: GraphDefinitionLike): string[] {
   const statements: string[] = [];
   const nameById = new Map(definition.entityTypes.filter((entity) => entity.id).map((entity) => [entity.id as string, entity.name]));
+  const interfaceNameById = new Map((definition.interfaces ?? []).filter((item) => item.id).map((item) => [item.id as string, item.name]));
+  // 接口是抽象类：也要声明出来（外部 SPARQL 工具能看见），接口之间的继承照写 subClassOf。
+  for (const item of definition.interfaces ?? []) {
+    const iri = `<${BKN_CLASS_PREFIX}${iriSegment(item.name)}>`;
+    statements.push(`${iri} <${RDF_TYPE}> <${OWL_CLASS}> .`);
+    statements.push(`${iri} <${RDF_TYPE}> <${BKN_INTERFACE_META}> .`);
+    for (const parentId of item.extends ?? []) {
+      const parentName = interfaceNameById.get(parentId);
+      if (!parentName) continue;
+      statements.push(`${iri} <${RDFS_SUBCLASS}> <${BKN_CLASS_PREFIX}${iriSegment(parentName)}> .`);
+    }
+  }
   for (const entity of definition.entityTypes) {
     const classIri = `<${BKN_CLASS_PREFIX}${iriSegment(entity.name)}>`;
     statements.push(`${classIri} <${RDF_TYPE}> <${OWL_CLASS}> .`);
     statements.push(`${classIri} <${RDF_TYPE}> <${BKN_CLASS_META}> .`);
+    for (const interfaceId of entity.implements ?? []) {
+      const interfaceName = interfaceNameById.get(interfaceId);
+      if (!interfaceName) continue;
+      const interfaceIri = `<${BKN_CLASS_PREFIX}${iriSegment(interfaceName)}>`;
+      // 接口在 RDF 侧也是类：写 subClassOf，读路径的类型传播（?t rdfs:subClassOf* <接口>）
+      // 于是「按接口筛对象」天然可用；再写一条自家谓词，读骨架时才能把「实现」与「父类」分开画。
+      statements.push(`${classIri} <${RDFS_SUBCLASS}> ${interfaceIri} .`);
+      statements.push(`${classIri} <${BKN_IMPLEMENTS}> ${interfaceIri} .`);
+    }
     for (const parentId of entity.parents ?? []) {
       const parent = nameById.get(parentId);
       if (!parent) continue;
@@ -690,7 +716,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     }),
 
     async readSchemaGraph(): Promise<QueryResult> {
-      const [instanceRows, classRows, subclassRows] = await Promise.all([
+      const [instanceRows, classRows, subclassRows, interfaceRows, implementsRows] = await Promise.all([
         select(`SELECT ?sourceType ?predicate ?targetType (COUNT(*) AS ?count) WHERE {
             ${scope(`?source <${RDF_TYPE}> ?sourceType . ?source ?predicate ?target . ?target <${RDF_TYPE}> ?targetType
               FILTER(isIRI(?target) || isBlank(?target))
@@ -701,9 +727,16 @@ export function createJenaStore(target: GraphTarget): GraphStore {
             OPTIONAL { ${scope(`?class <${RDFS_LABEL}> ?label`)} }
           }`),
         select(`SELECT DISTINCT ?child ?parent WHERE { ${scope(`?child <${RDFS_SUBCLASS}> ?parent`)} }`),
+        select(`SELECT DISTINCT ?class WHERE { ${scope(`?class <${RDF_TYPE}> <${BKN_INTERFACE_META}>`)} }`),
+        select(`SELECT DISTINCT ?child ?parent WHERE { ${scope(`?child <${BKN_IMPLEMENTS}> ?parent`)} }`),
       ]);
       const nodes = new Map<string, GraphNode>();
       const relationships: GraphRelationship[] = [];
+      const interfaceNames = new Set(interfaceRows.rows.map((row) => (row.class?.value ? localName(row.class.value) : "")).filter(Boolean));
+      // 「谁实现了哪个接口」：同一条 subClassOf 三元组要画成实现边，而不是父类边。
+      const implementPairs = new Set(implementsRows.rows
+        .filter((row) => row.child?.value && row.parent?.value)
+        .map((row) => `${localName(row.child!.value)}|${localName(row.parent!.value)}`));
       const ensure = (name: string) => {
         if (!nodes.has(name)) nodes.set(name, { id: name, labels: [name], properties: {} });
         return nodes.get(name)!;
@@ -713,6 +746,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
         const iri = row.class?.value;
         if (!iri) continue;
         const node = ensure(localName(iri));
+        if (interfaceNames.has(localName(iri))) node.properties.isInterface = true;
         if (row.label) node.properties.label = String(termValue(row.label));
       }
       // 类层级来自定义（发布时写入的 rdfs:subClassOf），不是从实例反推的。
@@ -724,9 +758,10 @@ export function createJenaStore(target: GraphTarget): GraphStore {
         const parentName = localName(parent);
         ensure(childName);
         ensure(parentName);
-        const id = `${childName}|subClassOf|${parentName}`;
+        const kind = implementPairs.has(`${childName}|${parentName}`) ? "implements" : "subClassOf";
+        const id = `${childName}|${kind}|${parentName}`;
         if (!relationships.some((relationship) => relationship.id === id)) {
-          relationships.push({ id, type: "subClassOf", source: childName, target: parentName, properties: {} });
+          relationships.push({ id, type: kind, source: childName, target: parentName, properties: {} });
         }
       }
       // 实例层面的类型推导：哪些类之间有关系、各多少条。

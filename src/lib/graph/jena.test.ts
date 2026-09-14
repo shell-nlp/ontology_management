@@ -260,7 +260,26 @@ describe("schemaStatements", () => {
     expect(statements).toContain(`<urn:bkn:reltype:下单> <${RANGE}> <urn:bkn:class:专线产品用户> .`);
   });
 
-  it("端点没指定就不写 domain / range", () => {
+  it("接口声明成抽象类，接口之间的继承与对象类型的实现都写进元模型", () => {
+    const statements = schemaStatements({
+      interfaces: [
+        { id: "i-asset", name: "资产" },
+        { id: "i-facility", name: "设施", extends: ["i-asset"] },
+      ],
+      entityTypes: [
+        { id: "t-airport", name: "机场", implements: ["i-facility"], properties: [] },
+        { id: "t-plant", name: "工厂", implements: ["i-missing"], properties: [] },
+      ],
+      relationshipTypes: [],
+    });
+    expect(statements).toContain(`<urn:bkn:class:设施> <${RDF_TYPE}> <urn:bkn:Interface> .`);
+    expect(statements).toContain(`<urn:bkn:class:设施> <${SUBCLASS}> <urn:bkn:class:资产> .`);
+    // 实现也写 subClassOf：读路径的类型传播才能"按接口筛对象"。
+    expect(statements).toContain(`<urn:bkn:class:机场> <${SUBCLASS}> <urn:bkn:class:设施> .`);
+    expect(statements).toContain("<urn:bkn:class:机场> <urn:bkn:implements> <urn:bkn:class:设施> .");
+    // 找不到的接口 id 跳过，不写指向空节点的三元组。
+    expect(statements.some((statement) => statement.includes("t-missing") || statement.includes("i-missing"))).toBe(false);
+  });  it("端点没指定就不写 domain / range", () => {
     const statements = schemaStatements({
       entityTypes: [{ id: "t-user", name: "用户", properties: [] }],
       relationshipTypes: [{ name: "泛关系", properties: [] }],

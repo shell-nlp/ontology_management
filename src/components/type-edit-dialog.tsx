@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Layers, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { ancestorsOf, inheritedPropertiesOf, indexNodes, selectableParentsOf, type HierarchyNode } from "@/lib/class-hierarchy";
+import { effectiveInterfaceProperties } from "@/lib/interfaces";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import {
@@ -18,6 +19,7 @@ import {
   type ConceptGroup,
   type EntitySource,
   type EntityType,
+  type InterfaceType,
   type Property,
   type RelationType,
 } from "@/lib/ontology-draft";
@@ -31,6 +33,8 @@ export type TypeEditPayload = {
   groupName?: string;
   /** 父类 id 列表；只有类带这一项。 */
   parents?: string[];
+  /** 实现的接口 id 列表；只有类带这一项。 */
+  implements?: string[];
   sourceEntityTypeId?: string;
   targetEntityTypeId?: string;
   properties: Property[];
@@ -46,6 +50,8 @@ type Props = {
   entityTypes: EntityType[];
   /** 已有的概念分组清单，用来给「概念分组」输入框做候选。 */
   groups?: ConceptGroup[];
+  /** 接口清单：给「实现接口」多选与「按接口补齐属性」用。 */
+  interfaces?: InterfaceType[];
   onClose: () => void;
   onSave: (payload: TypeEditPayload) => Promise<void>;
 };
@@ -57,12 +63,13 @@ type Props = {
  *
  * 表单模式和可视化模式共用这一个面板，两种入口写出来的草稿结构完全一致。
  */
-export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, groups = [], onClose, onSave }: Props) {
+export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, groups = [], interfaces = [], onClose, onSave }: Props) {
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
   const [description, setDescription] = useState(kind === "entity" ? entity?.description ?? "" : relation?.description ?? "");
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
   const [groupName, setGroupName] = useState(kind === "entity" ? groups.find((item) => item.id === entity?.groupId)?.name ?? "" : "");
   const [parents, setParents] = useState<string[]>(kind === "entity" ? entity?.parents ?? [] : []);
+  const [implementsList, setImplementsList] = useState<string[]>(kind === "entity" ? entity?.implements ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
   const [target, setTarget] = useState(relation?.targetEntityTypeId ?? "");
   const [properties, setProperties] = useState<Property[]>(kind === "entity" ? entity?.properties ?? [] : relation?.properties ?? []);
@@ -133,6 +140,29 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const inheritedProperties = inheritedPropertiesOf(selfNode, hierarchyById);
   const parentCandidates = kind === "entity" ? selectableParentsOf(selfNode, hierarchyNodes) : [];
   const toggleParent = (id: string) => setParents((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  const toggleImplement = (id: string) => setImplementsList((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  /**
+   * 按接口补齐属性：接口要求但这里还没有的同名属性一次性补进来。
+   *
+   * 映射按同名走（Palantir 也是"把现有属性映射到接口属性上"，这里把映射简化为同名）；
+   * 补进来的属性带上接口声明的类型与说明，省得再手填一遍，之后还能照常改列映射。
+   */
+  const addInterfaceProperties = (wanted: { name: string; dataType?: string; displayName?: string; description?: string }[]) => {
+    setProperties((current) => [
+      ...current,
+      ...wanted
+        .filter((property) => !current.some((mine) => mine.name === property.name))
+        .map((property) => ({
+          name: property.name,
+          displayName: property.displayName ?? "",
+          description: property.description ?? "接口要求的属性",
+          dataType: (property.dataType ?? "TEXT") as Property["dataType"],
+          required: true,
+          unique: false,
+          indexed: false,
+        })),
+    ]);
+  };
 
   // 已登记的数据资源：只取一次，用来填下拉。
   useEffect(() => {
@@ -252,7 +282,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     setBusy(true);
     try {
       await onSave(kind === "entity"
-        ? { name, description, displayProperty, groupName, parents, properties, sources: normalizedSources }
+        ? { name, description, displayProperty, groupName, parents, implements: implementsList, properties, sources: normalizedSources }
         : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
       onClose();
     } finally {
@@ -317,6 +347,44 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     : "还没有概念分组。去左侧「概念分组」页按业务域建几个，再回来挑。"}</small>
                 </label>
                 <div className="ted-field">
+                  <span><Boxes size={12} />实现接口</span>
+                  {interfaces.length > 0 ? (
+                    <div className="ted-source-picker">
+                      {interfaces.map((item) => (
+                        <label key={item.id} className={implementsList.includes(item.id) ? "ted-chip iface active" : "ted-chip iface"}>
+                          <input type="checkbox" checked={implementsList.includes(item.id)} onChange={() => toggleImplement(item.id)} />
+                          {item.name}
+                        </label>
+                      ))}
+                    </div>
+                  ) : <p className="ted-props-empty">草稿里还没有接口。去「本体草稿 → 接口」建一个，再回来勾。</p>}
+                  {implementsList.length > 0 && (
+                    <div className="ted-iface-status">
+                      {implementsList.map((id) => {
+                        const item = interfaces.find((candidate) => candidate.id === id);
+                        if (!item) return <p key={id} className="ted-inherit"><AlertTriangle size={12} />这个接口已经不在草稿里了，保存前请取消勾选。</p>;
+                        const required = effectiveInterfaceProperties(interfaces, id).filter((property) => property.required !== false);
+                        const missing = required.filter((property) => !properties.some((mine) => mine.name === property.name));
+                        const absentTypes = required
+                          .filter((property) => !properties.some((mine) => mine.name === property.name))
+                          .map((property) => property);
+                        return (
+                          <p key={id} className={missing.length ? "ted-inherit warn" : "ted-inherit"}>
+                            <CornerDownRight size={12} />
+                            {item.name}：{required.length - missing.length}/{required.length} 条必填属性已对上
+                            {missing.length > 0 && (
+                              <>
+                                {`，还缺 ${missing.map((property) => property.name).join("、")}`}
+                                <button type="button" className="action compact" onClick={() => addInterfaceProperties(absentTypes)}>按接口补齐属性</button>
+                              </>
+                            )}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <small>接口是抽象契约：勾上之后，这个对象类型必须有接口里所有必填的同名属性，以及必填的关系约束；发布前校验会拦住没满足的实现。</small>
+                </div>                <div className="ted-field">
                   <span><Layers size={12} />父类（继承）</span>
                   {parentCandidates.length > 0 ? (
                     <div className="ted-source-picker">

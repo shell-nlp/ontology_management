@@ -25,6 +25,10 @@ export function toolResultSummary(tool: string, output: unknown): string {
       const count = asNumber(payload?.group_count) ?? sizeOf(payload?.groups);
       return count === null ? "已返回" : `${count} 个概念分组`;
     }
+    case "list_interfaces": {
+      const count = asNumber(payload?.interface_count) ?? sizeOf(payload?.interfaces);
+      return count === null ? "已返回" : ` 个接口`;
+    }
     case "traverse_object_types": {
       const nodes = asNumber(payload?.node_count) ?? sizeOf(payload?.nodes);
       const edges = asNumber(payload?.edge_count) ?? sizeOf(payload?.edges);

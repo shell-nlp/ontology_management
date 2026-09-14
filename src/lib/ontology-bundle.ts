@@ -216,12 +216,18 @@ function mapDataSources(bundle: OntologyBundle, localSources: LocalSourceRef[], 
 /** 收集定义里出现过的全部 id（含父类、端点、动作作用域与规则引用）。 */
 function collectDefinitionIds(definition: OntologyDefinition) {
   const ids = new Set<string>();
-  // 概念分组的 id 与对象类型共用一套 id 空间：导入时要一起换新，`groupId` 才能跟着指对。
+  // 概念分组与接口的 id 和对象类型共用一套 id 空间：导入时要一起换新，`groupId` / `implements` 才能跟着指对。
+  for (const item of definition.interfaces) {
+    if (item.id) ids.add(item.id);
+    for (const parent of item.extends) if (parent) ids.add(parent);
+    for (const constraint of item.linkConstraints) if (constraint.targetId) ids.add(constraint.targetId);
+  }
   for (const group of definition.groups) if (group.id) ids.add(group.id);
   for (const type of definition.entityTypes) {
     if (type.id) ids.add(type.id);
     if (type.groupId) ids.add(type.groupId);
     for (const parent of type.parents) if (parent) ids.add(parent);
+    for (const interfaceId of type.implements) if (interfaceId) ids.add(interfaceId);
   }
   for (const relation of definition.relationshipTypes) {
     if (relation.id) ids.add(relation.id);
@@ -255,11 +261,18 @@ export function relinkDefinitionIds(
   const source = (value: string) => (value ? sourceMap.get(value) ?? "" : value);
   return {
     groups: definition.groups.map((group) => ({ ...group, id: id(group.id) })),
+    interfaces: definition.interfaces.map((item) => ({
+      ...item,
+      id: id(item.id),
+      extends: item.extends.map(id),
+      linkConstraints: item.linkConstraints.map((constraint) => ({ ...constraint, targetId: id(constraint.targetId) })),
+    })),
     entityTypes: definition.entityTypes.map((type) => ({
       ...type,
       id: id(type.id),
       groupId: id(type.groupId),
       parents: type.parents.map(id),
+      implements: type.implements.map(id),
       sources: type.sources.map((item) => ({ ...item, dataSourceId: source(item.dataSourceId) })),
     })),
     relationshipTypes: definition.relationshipTypes.map((relation) => ({

@@ -24,7 +24,7 @@ export type ToolSpec = {
 };
 
 export type ReasoningEvidence = {
-  kind: "OBJECT" | "RELATIONSHIP" | "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "GROUP";
+  kind: "OBJECT" | "RELATIONSHIP" | "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "GROUP" | "INTERFACE";
   /** 图库里的真实标识：对象是快照 id，类型是类名，动作是定义里的 id。 */
   id: string;
   label: string;

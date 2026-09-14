@@ -43,7 +43,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
   return positions;
 }
 
-export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; parents?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
+export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; parents?: string[]; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
@@ -159,6 +159,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, positionKey]);
 
   const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
+  const selectedInterfaces = (selectedEntity?.implements ?? []).map((id) => definition.interfaces.find((item) => item.id === id)?.name ?? "").filter(Boolean);
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
 
   const organize = useCallback(() => {
@@ -289,7 +290,9 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               {selectedLineage.direct.length > 0 && (
                 <p className="ob-lineage"><CornerDownRight size={12} />继承自 <b>{selectedLineage.direct.join("、")}</b></p>
               )}
-              {selectedLineage.extra.length > 0 && (
+              {selectedInterfaces.length > 0 && (
+                <p className="ob-lineage"><Boxes size={12} />实现接口 <b>{selectedInterfaces.join("、")}</b></p>
+              )}              {selectedLineage.extra.length > 0 && (
                 <p className="ob-lineage"><CornerDownRight size={12} />也属于 <b>{selectedLineage.extra.join("、")}</b></p>
               )}
               {selectedEntity.properties.length > 0 || selectedInherited.length > 0 ? (
@@ -361,9 +364,10 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           entity={dialog.mode === "edit" ? entityById.get(dialog.id) ?? null : null}
           entityTypes={definition.entityTypes}
           groups={definition.groups}
+          interfaces={definition.interfaces}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, parents: payload.parents, properties: payload.properties, sources: payload.sources };
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, parents: payload.parents, implements: payload.implements, properties: payload.properties, sources: payload.sources };
             if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
             else await onUpdateEntity(dialog.id, body);
           }}

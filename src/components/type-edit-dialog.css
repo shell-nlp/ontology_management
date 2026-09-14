@@ -204,3 +204,10 @@
 .ted-preview-sources b { color: #1f3557; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ted-preview-sources i { grid-column: 2; color: var(--ted-soft); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) { .ted-map-source { grid-template-columns: minmax(0, 1fr); } }
+/* 「实现接口」多选：接口在 Palantir 里用虚线轮廓区分于对象类型，这里沿用同一个记号。 */
+.ted-chip.iface::before { content: ""; width: 9px; height: 9px; border: 1px dashed #2563eb; border-radius: 2px; background: #eff4ff; }
+.ted-chip.iface.active { color: #1e3a8a; background: #eff5ff; border-color: #bcd2f5; }
+.ted-iface-status { display: grid; gap: 5px; }
+.ted-inherit.warn { color: #a2620f; background: #fff8ec; border-color: #f0d3a8; }
+.ted-inherit.warn svg { color: #c98a2e; }
+.ted-inherit .action.compact { margin-left: auto; }

@@ -1,4 +1,4 @@
-import type { ConceptGroup as ConceptGroupDefinition, EntitySource as EntitySourceDefinition, OntologyDefinition } from "@/lib/ontology";
+import type { ConceptGroup as ConceptGroupDefinition, EntitySource as EntitySourceDefinition, InterfaceType as InterfaceTypeDefinition, OntologyDefinition } from "@/lib/ontology";
 import type { LegacyEntitySource } from "@/lib/ontology-sources";
 
 /**
@@ -20,6 +20,8 @@ export type EntityType = {
   displayProperty?: string;
   /** 所属逻辑分组（`Definition.groups` 里的 id）；缺省或空串表示还没归组。 */
   groupId?: string;
+  /** 实现的接口（`Definition.interfaces` 里的 id）；一个对象类型可以实现多个接口。 */
+  implements?: string[];
   /** 父类：这个类继承谁；多继承就填多个。缺省表示还没有层级。 */
   parents?: string[];
   properties: Property[];
@@ -47,7 +49,10 @@ export type RuleOperator = RuleCondition["operator"];
 export type OntologyRule = OntologyDefinition["rules"][number];
 /** 概念分组（业务域）：对象类型按它归堆，图谱里按组画框。 */
 export type ConceptGroup = ConceptGroupDefinition;
-export type Definition = { groups: ConceptGroup[]; entityTypes: EntityType[]; relationshipTypes: RelationType[]; actionTypes: ActionType[]; rules: OntologyRule[] };
+/** 接口：抽象契约，只描述属性与关系约束，不绑数据、不能被实例化。 */
+export type InterfaceType = InterfaceTypeDefinition;
+export type InterfaceLinkConstraint = InterfaceTypeDefinition["linkConstraints"][number];
+export type Definition = { groups: ConceptGroup[]; interfaces: InterfaceType[]; entityTypes: EntityType[]; relationshipTypes: RelationType[]; actionTypes: ActionType[]; rules: OntologyRule[] };
 
 export const propertyTypeOptions: PropertyDataType[] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
 

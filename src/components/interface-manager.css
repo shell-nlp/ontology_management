@@ -1,0 +1,74 @@
+/* 「本体草稿 → 接口」标签：左栏接口清单，右栏接口定义。
+   接口在 Palantir 里用虚线轮廓区分于对象类型，这一页也沿用这个约定：
+   接口图标 = 虚线圆角框 + 一个实心点（抽象类型），选中/未选中的差别只在描边强度。
+   两栏之间的分隔条与对象页、概念分组共用 split-pane.ts。 */
+
+.manager-grid.interface-grid { grid-template-columns: var(--manager-split-left, 300px) 12px minmax(0, 1fr); gap: 0; align-items: stretch; height: clamp(540px, calc(100vh - 400px), 820px); }
+.interface-grid > .iface-rail, .interface-grid > .iface-sheet { min-width: 0; }
+.interface-grid > .iface-rail { display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding: 18px 16px; }
+.interface-grid > .iface-sheet { display: flex; flex-direction: column; gap: 16px; overflow: auto; padding: 20px 22px; }
+
+.iface-mark { position: relative; flex: none; display: block; width: 17px; height: 17px; border: 1.5px dashed #2563eb; border-radius: 4px; background: #eff4ff; }
+.iface-mark::after { content: ""; position: absolute; inset: 0; width: 6px; height: 6px; margin: auto; border-radius: 50%; background: #2563eb; }
+.iface-mark.large { width: 36px; height: 36px; border-width: 2px; border-radius: 10px; }
+.iface-mark.large::after { width: 13px; height: 13px; }
+
+.iface-rail h2 { margin: 2px 0 4px; }
+.iface-rail-note { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
+.iface-rail-actions { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid #e6edf7; }
+.iface-rows { display: grid; flex: 1; align-content: start; gap: 3px; min-height: 0; overflow: auto; }
+
+.iface-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; text-align: left; }
+.iface-row:hover { background: #f6f9ff; }
+.iface-row.selected { border-color: #bcd2f5; background: #eff5ff; }
+.iface-row.selected .iface-mark { border-color: #1e3a8a; }
+.iface-row span { min-width: 0; flex: 1; }
+.iface-row b { display: block; color: #22384f; font-size: 12.5px; }
+.iface-row small { display: block; margin-top: 3px; overflow: hidden; color: #7085a4; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.iface-issues { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid #e6edf7; }
+.iface-issues b { display: inline-flex; align-items: center; gap: 5px; color: #a2620f; font-size: 10.5px; }
+.iface-issues p { margin: 0; color: #8296b0; font-size: 10.5px; line-height: 1.6; }
+
+.iface-sheet-head { display: grid; gap: 8px; }
+.iface-title-row { display: flex; align-items: center; gap: 10px; }
+.iface-title-row input { flex: 1; min-width: 0; min-height: 37px; padding: 0 11px; border: 1px solid #d7e2f0; border-radius: 4px; color: #1b2f45; font-size: 15px; font-weight: 650; }
+.iface-title-row input:focus, .iface-desc:focus, .iface-table input:focus, .iface-table select:focus { border-color: #7ea7e8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); outline: 0; }
+.iface-title-row em { flex: none; padding: 3px 9px; border: 1px solid #f0d3a8; border-radius: 99px; background: #fff8ec; color: #a2620f; font-size: 10px; font-style: normal; font-weight: 700; }
+.iface-desc { min-height: 34px; padding: 0 11px; border: 1px solid #d7e2f0; border-radius: 4px; color: #33506f; font-size: 12px; }
+
+.iface-block { display: grid; gap: 8px; }
+.iface-block-label { color: #57739b; font-size: 10.5px; font-weight: 700; letter-spacing: .3px; }
+.iface-hint { margin: 0; color: #7c93b1; font-size: 10.5px; line-height: 1.6; }
+.iface-empty { margin: 0; padding: 10px 11px; border: 1px dashed #d7e2f0; border-radius: 4px; color: #7c93b1; font-size: 11px; line-height: 1.7; }
+
+.iface-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.iface-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 27px; max-width: 100%; padding: 0 10px; border: 1px solid #dbe5f2; border-radius: 99px; background: #fff; color: #3f5b7d; font-size: 11px; }
+.iface-chip:hover:not(:disabled) { border-color: #a9c5ef; background: #f4f8ff; }
+.iface-chip i { flex: none; width: 8px; height: 8px; border: 1px dashed #2563eb; border-radius: 2px; background: #eff4ff; }
+.iface-chip.borrowed { border-color: #bcd2f5; background: #eff5ff; color: #1e3a8a; font-weight: 600; }
+.iface-chip.missing { border-color: #f0d3a8; background: #fff8ec; color: #a2620f; }
+.iface-chip:disabled { cursor: not-allowed; }
+.iface-chip:disabled:hover { border-color: #dbe5f2; background: #fff; }
+
+.iface-table { display: grid; gap: 5px; padding: 9px; border: 1px solid #e4ecf7; border-radius: 4px; background: #fbfdff; }
+.iface-table-head, .iface-table-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) 104px 44px 34px; gap: 6px; align-items: center; }
+.iface-table-link .iface-table-head, .iface-table-link .iface-table-row { grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr) 84px 40px 34px; }
+.iface-table-head span { color: #7c93b1; font-size: 10px; font-weight: 700; }
+.iface-table input, .iface-table select { min-width: 0; min-height: 30px; padding: 0 8px; border: 1px solid #d7e2f0; border-radius: 4px; background: #fff; color: #26405f; font-size: 11.5px; }
+.iface-check { display: grid; place-items: center; }
+.iface-check input { min-height: 0; width: 14px; height: 14px; }
+.iface-table .action.compact { min-width: 30px; padding: 0 7px; }
+.iface-block > .action.compact { justify-self: start; }
+
+.iface-sheet-foot { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 13px; border-top: 1px solid #e6edf7; }
+.iface-sheet-foot .action.danger { margin-right: auto; }
+
+.iface-blank { display: grid; flex: 1; place-items: center; align-content: center; gap: 8px; color: #7c93b1; text-align: center; }
+.iface-blank b { color: #47617f; font-size: 13px; }
+.iface-blank span:not(.iface-mark) { max-width: 340px; font-size: 11px; line-height: 1.7; }
+
+@media (max-width: 1000px) {
+  .manager-grid.interface-grid { grid-template-columns: 1fr; height: auto; }
+  .interface-grid > .iface-rail { overflow: visible; }
+  .interface-grid > .manager-split-handle { display: none; }
+}

@@ -9,6 +9,7 @@ import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology-sources";
 import { expandLabelFilter, mergeInheritedProperties, validateClassHierarchy } from "@/lib/class-hierarchy";
+import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
