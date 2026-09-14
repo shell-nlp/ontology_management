@@ -1,21 +1,81 @@
-/* 概念分组配置页：只补这一页特有的东西（色点 / 色板 / 成员勾选），
-   主体布局沿用 globals.css 的 .manager-grid / .result-list / .detail-panel。 */
-.cg-toolbar { display: grid; gap: 8px; margin: 4px 0 10px; }
-.cg-toolbar p { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
-.cg-dot { display: block; flex: none; align-self: center; width: 11px; height: 11px; margin-top: 1px; border: 1px solid rgba(15, 23, 42, .12); border-radius: 50%; background: #cbd5e1; }
-.cg-ungrouped { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #e3ebf5; color: #7c93b1; font-size: 11px; line-height: 1.6; }
-.cg-field { display: grid; gap: 5px; margin-bottom: 12px; }
-.cg-field > span { color: #57739b; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
-.cg-field input { min-height: 30px; padding: 0 9px; border: 1px solid #d3ddd9; border-radius: 4px; color: #285154; font-size: 12px; }
-.cg-hint { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
-.cg-colors { display: flex; align-items: center; gap: 6px; }
-.cg-colors .auto { min-height: 26px; padding: 0 9px; color: #58769c; background: #fff; border: 1px solid #d7e2f0; border-radius: 4px; font-size: 10px; font-weight: 700; }
-.cg-colors .auto.active { color: #1d4ed8; border-color: #a9c5ef; background: #eef4ff; }
-.cg-colors .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #ffffff; border-radius: 50%; box-shadow: 0 0 0 1px #d7e2f0; }
-.cg-colors .swatch.active { box-shadow: 0 0 0 2px #1d4ed8; }
-.cg-members { display: grid; gap: 2px; align-content: start; max-height: 288px; overflow: auto; padding: 6px; border: 1px solid #e3ebf5; border-radius: 4px; background: #fbfcfe; }
-.cg-members label { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 3px; color: #3f5b7d; font-size: 11px; }
-.cg-members label:hover { background: #f2f7ff; }
-.cg-members label.checked { color: #1d4ed8; font-weight: 600; background: #eef4ff; }
-.cg-members label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cg-members label em { flex: none; color: #9aa8bb; font-size: 9.5px; font-style: normal; font-weight: 400; }
+/* 「本体草稿 → 概念分组」标签：左栏是色卡式的分组清单，右栏是分组配置。
+   两栏中间的分隔条与对象页共用 split-pane.ts；主体面板沿用 globals.css 的 .panel / .functional-panel。 */
+
+.manager-grid.concept-group-grid { grid-template-columns: var(--manager-split-left, 320px) 12px minmax(0, 1fr); gap: 0; align-items: stretch; height: clamp(540px, calc(100vh - 400px), 820px); }
+.concept-group-grid > .cg-rail, .concept-group-grid > .cg-sheet { min-width: 0; }
+.concept-group-grid > .cg-rail { display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding: 18px 16px; }
+.concept-group-grid > .cg-sheet { display: flex; flex-direction: column; gap: 16px; overflow: auto; padding: 20px 22px; }
+
+.cg-rail h2 { margin: 2px 0 4px; }
+.cg-rail-note { margin: 0; color: #7085a4; font-size: 11px; }
+.cg-rail-actions { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid #e6edf7; }
+.cg-rail-actions p { margin: 0; color: #8296b0; font-size: 10.5px; line-height: 1.5; }
+.cg-rows { display: grid; flex: 1; align-content: start; gap: 3px; min-height: 0; overflow: auto; }
+
+/* 分组行左边那道色条就是图上那个框的颜色：选中的一行连底色也用它。 */
+.cg-row { position: relative; display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 9px 10px 9px 14px; border: 1px solid transparent; border-radius: 4px; background: transparent; text-align: left; }
+.cg-row::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 4px; width: 3px; border-radius: 99px; background: var(--cg, #94a3b8); opacity: .45; }
+.cg-row:hover { background: #f6f9ff; }
+.cg-row.selected { border-color: color-mix(in srgb, var(--cg, #94a3b8) 38%, #ffffff); background: color-mix(in srgb, var(--cg, #94a3b8) 7%, #ffffff); }
+.cg-row.selected::before { opacity: 1; }
+.cg-row span { min-width: 0; flex: 1; }
+.cg-row b { display: block; color: #22384f; font-size: 12.5px; }
+.cg-row.selected b { color: color-mix(in srgb, var(--cg, #1e3a8a) 70%, #10233c); }
+.cg-row small { display: block; margin-top: 3px; overflow: hidden; color: #7085a4; font-size: 10.5px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.cg-ungrouped { margin: 0; padding-top: 10px; border-top: 1px solid #e6edf7; color: #8296b0; font-size: 10.5px; line-height: 1.6; }
+
+/* 右栏 */
+.cg-sheet-head { display: grid; gap: 7px; }
+.cg-title-row { display: flex; align-items: center; gap: 9px; }
+.cg-title-row i { flex: none; width: 13px; height: 13px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .1); }
+.cg-title-row input { flex: 1; min-width: 0; min-height: 37px; padding: 0 11px; border: 1px solid #d7e2f0; border-radius: 4px; color: #1b2f45; font-size: 15px; font-weight: 650; }
+.cg-title-row input:focus { border-color: #7ea7e8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); outline: 0; }
+.cg-title-row em { flex: none; padding: 3px 9px; border: 1px solid #f0d3a8; border-radius: 99px; background: #fff8ec; color: #a2620f; font-size: 10px; font-style: normal; font-weight: 700; }
+
+.cg-block { display: grid; gap: 9px; }
+.cg-block-label { display: inline-flex; align-items: center; gap: 5px; color: #57739b; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+
+/* 框色预览：直接按图谱「按逻辑分组」的画法摆一个虚线框，选色对着真东西选。 */
+.cg-frame { position: relative; display: flex; align-items: center; justify-content: center; min-height: 64px; padding: 18px 14px 14px; border: 1px dashed currentColor; border-radius: 12px; background: color-mix(in srgb, currentColor 6%, #ffffff); }
+.cg-frame > b { position: absolute; top: -8px; left: 12px; padding: 0 6px; background: var(--panel, #ffffff); font-size: 10.5px; font-weight: 700; }
+.cg-frame-nodes { display: flex; align-items: center; gap: 16px; }
+.cg-frame-nodes i { width: 12px; height: 12px; border-radius: 50%; background: currentColor; opacity: .28; }
+.cg-frame-nodes i:nth-child(2) { opacity: .55; }
+
+.cg-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.cg-colors .auto { min-height: 26px; padding: 0 9px; border: 1px solid #d7e2f0; border-radius: 4px; background: #fff; color: #58769c; font-size: 10px; font-weight: 700; }
+.cg-colors .auto.active { border-color: #a9c5ef; background: #eef4ff; color: #1d4ed8; }
+.cg-colors .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #d7e2f0; }
+.cg-colors .swatch.active { box-shadow: 0 0 0 2px #1e3a8a; }
+
+.cg-filter { min-height: 31px; padding: 0 10px; border: 1px solid #d7e2f0; border-radius: 4px; color: #26405f; font-size: 11.5px; }
+.cg-filter:focus { border-color: #7ea7e8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); outline: 0; }
+.cg-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; min-height: 88px; max-height: 260px; overflow: auto; padding: 10px; border: 1px solid #e4ecf7; border-radius: 4px; background: #fbfdff; }
+.cg-chips .cg-empty { flex: 1 1 100%; margin: 0; }
+.cg-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 27px; padding: 0 10px; border: 1px solid #dbe5f2; border-radius: 99px; background: #fff; color: #3f5b7d; font-size: 11px; }
+.cg-chip:hover { border-color: color-mix(in srgb, var(--chip, #1e3a8a) 45%, #ffffff); background: color-mix(in srgb, var(--chip, #1e3a8a) 6%, #ffffff); }
+.cg-chip i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--chip, #94a3b8); opacity: .35; }
+.cg-chip.checked { border-color: color-mix(in srgb, var(--chip, #1e3a8a) 52%, #ffffff); background: color-mix(in srgb, var(--chip, #1e3a8a) 11%, #ffffff); color: color-mix(in srgb, var(--chip, #1e3a8a) 68%, #10233c); font-weight: 650; }
+.cg-chip.checked i { opacity: 1; }
+.cg-chip.borrowed i { background: var(--other, #94a3b8); opacity: .75; }
+.cg-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-chip em { flex: none; color: #93a3b8; font-size: 9.5px; font-style: normal; font-weight: 400; }
+.cg-chip:disabled { cursor: not-allowed; }
+.cg-chip:disabled:hover { border-color: #dbe5f2; background: #fff; }
+
+.cg-hint { margin: 0; color: #7c93b1; font-size: 10.5px; line-height: 1.6; }
+.cg-empty { margin: 0; padding: 11px; border: 1px dashed #d7e2f0; border-radius: 4px; color: #7c93b1; font-size: 11px; line-height: 1.7; }
+
+.cg-sheet-foot { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 13px; border-top: 1px solid #e6edf7; }
+.cg-sheet-foot .action.danger { margin-right: auto; }
+
+.cg-blank { display: grid; flex: 1; place-items: center; align-content: center; gap: 6px; color: #7c93b1; text-align: center; }
+.cg-blank svg { color: #a9c0dd; }
+.cg-blank b { color: #47617f; font-size: 13px; }
+.cg-blank span { max-width: 320px; font-size: 11px; line-height: 1.7; }
+
+@media (max-width: 1000px) {
+  .manager-grid.concept-group-grid { grid-template-columns: 1fr; height: auto; }
+  .concept-group-grid > .cg-rail { overflow: visible; }
+  .concept-group-grid > .manager-split-handle { display: none; }
+}

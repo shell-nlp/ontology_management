@@ -223,7 +223,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         </button>
         <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
         <LayoutSwitcher value={layout} onChange={setLayout} />
-        <button className="ob-tool-action" disabled={!onOpenGroups} onClick={() => onOpenGroups?.()} title="概念分组（业务域）：在配置页里建分组、勾成员">
+        <button className="ob-tool-action" disabled={!onOpenGroups} onClick={() => onOpenGroups?.()} title="概念分组（业务域）：切到同一页的「概念分组」标签建分组、勾成员">
           <Boxes size={14} />概念分组 <b>{definition.groups.length}</b>
         </button>
         <span className="ob-count">{definition.entityTypes.length} 个对象类型 · {definition.relationshipTypes.length} 关系类型</span>

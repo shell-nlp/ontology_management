@@ -1,9 +1,10 @@
 "use client";
 
-import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, LayoutGrid, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Table2, Terminal, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { Children, FormEvent, KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Table2, Terminal, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { ConceptGroupManager } from "@/components/concept-group-manager";
+import { useSplitPane } from "@/components/split-pane";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import { GraphCanvas } from "@/components/graph-canvas";
@@ -24,7 +25,7 @@ import { entitySources, propertyTypeOptions, sourceName, type Definition, type E
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "ontologies" | "overview" | "ontology" | "groups" | "actions" | "rules" | "qa" | "mcp" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
+type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "qa" | "mcp" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -157,111 +158,23 @@ function useDisplaySettings() {
 
 const MANAGER_SPLIT_MIN_LEFT = 380;
 const MANAGER_SPLIT_MIN_DETAIL = 380;
-const MANAGER_SPLIT_HANDLE_WIDTH = 12;
 const MANAGER_SPLIT_MAX_LEFT = 900;
 const MANAGER_SPLIT_DEFAULT_LEFT = 520;
 
-function readManagerSplitWidth(storageKey: string, fallback: number) {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const stored = Number(window.localStorage.getItem(storageKey));
-    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+/** 对象页的两栏：左边清单、右边详情，中间是可拖的分隔条（拖拽逻辑与概念分组共用 split-pane.ts）。 */
 function ResizableManagerGrid({ children, defaultWidth = MANAGER_SPLIT_DEFAULT_LEFT, storageKey }: { children: ReactNode; defaultWidth?: number; storageKey: string }) {
-  const containerRef = useRef<HTMLElement | null>(null);
-  const [width, setWidth] = useState(() => readManagerSplitWidth(storageKey, defaultWidth));
-  const widthRef = useRef(width);
-
-  const clampWidth = useCallback((value: number) => {
-    const containerWidth = containerRef.current?.clientWidth ?? 0;
-    const maxByContainer = containerWidth > 0
-      ? containerWidth - MANAGER_SPLIT_MIN_DETAIL - MANAGER_SPLIT_HANDLE_WIDTH
-      : MANAGER_SPLIT_MAX_LEFT;
-    const max = Math.max(MANAGER_SPLIT_MIN_LEFT, Math.min(MANAGER_SPLIT_MAX_LEFT, maxByContainer));
-    return Math.round(Math.min(Math.max(value, MANAGER_SPLIT_MIN_LEFT), max));
-  }, []);
-
-  const applyWidth = useCallback((next: number) => {
-    const clamped = clampWidth(next);
-    widthRef.current = clamped;
-    setWidth(clamped);
-  }, [clampWidth]);
-
-  const persistWidth = useCallback(() => {
-    try { window.localStorage.setItem(storageKey, String(widthRef.current)); } catch { /* ignore unavailable storage */ }
-  }, [storageKey]);
-
-  useEffect(() => {
-    applyWidth(widthRef.current);
-    const onWindowResize = () => applyWidth(widthRef.current);
-    window.addEventListener("resize", onWindowResize);
-    return () => window.removeEventListener("resize", onWindowResize);
-  }, [applyWidth]);
-
-  const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = widthRef.current;
-    const onMove = (moveEvent: PointerEvent) => {
-      applyWidth(startWidth + moveEvent.clientX - startX);
-    };
-    const onEnd = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onEnd);
-      document.body.classList.remove("resizing-manager-split");
-      persistWidth();
-    };
-    document.body.classList.add("resizing-manager-split");
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onEnd);
-  }, [applyWidth, persistWidth]);
-
-  const resetWidth = useCallback(() => {
-    applyWidth(defaultWidth);
-    persistWidth();
-  }, [applyWidth, defaultWidth, persistWidth]);
-
-  const nudgeWidth = useCallback((delta: number) => {
-    applyWidth(widthRef.current + delta);
-    persistWidth();
-  }, [applyWidth, persistWidth]);
-
-  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      nudgeWidth(event.key === "ArrowLeft" ? -24 : 24);
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      resetWidth();
-    }
-  }, [nudgeWidth, resetWidth]);
-
+  const { containerRef, containerStyle, handleProps } = useSplitPane({
+    storageKey,
+    defaultWidth,
+    minLeft: MANAGER_SPLIT_MIN_LEFT,
+    minDetail: MANAGER_SPLIT_MIN_DETAIL,
+    maxLeft: MANAGER_SPLIT_MAX_LEFT,
+    label: "拖动调整列表宽度，双击恢复默认",
+  });
   const items = Children.toArray(children);
-  return <section className="manager-grid instance-manager-grid" ref={containerRef} style={{ "--manager-split-left": `${width}px` } as CSSProperties}>
+  return <section className="manager-grid instance-manager-grid" ref={containerRef} style={containerStyle}>
     {items[0]}
-    <div
-      aria-label="拖动调整列表宽度"
-      aria-orientation="vertical"
-      aria-valuemax={MANAGER_SPLIT_MAX_LEFT}
-      aria-valuemin={MANAGER_SPLIT_MIN_LEFT}
-      aria-valuenow={Math.round(width)}
-      className="manager-split-handle"
-      onDoubleClick={resetWidth}
-      onKeyDown={handleKeyDown}
-      onPointerDown={beginResize}
-      role="separator"
-      tabIndex={0}
-      title="拖动调整列表宽度，双击恢复默认"
-    >
-      <span aria-hidden="true" />
-    </div>
+    <div {...handleProps}><span aria-hidden="true" /></div>
     {items.slice(1)}
   </section>;
 }
@@ -313,7 +226,7 @@ type NavItem = readonly [View, string, LucideIcon];
 
 const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
   { label: "", items: [["ontologies", "本体", Boxes], ["overview", "总览", Activity]] },
-  { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["groups", "概念分组", LayoutGrid], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
+  { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
   { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
   { label: "能力验证", items: [["qa", "智能问答", MessagesSquare], ["mcp", "MCP 调试", Terminal]] },
   { label: "平台", items: [["data", "数据资源", Table2], ["targets", "存储资源", Database], ["settings", "设置", Settings2]] },
@@ -486,8 +399,7 @@ export function FunctionalWorkbench() {
       {view === "targets" && <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}
       {view === "data" && <DataResourceStudio canEdit={userProp.role === "ADMIN"} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); selectTarget(target.id); setView("overview"); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
-      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} onOpenGroups={() => setView("groups")} fail={fail} />}
-      {view === "groups" && <ConceptGroupManager definition={definition} canEdit={userProp.role === "ADMIN"} save={saveDefinition} notify={notify} fail={fail} />}
+      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
       {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialRun={pendingRun} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
@@ -791,13 +703,13 @@ function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; 
   return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog target-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑本体存储</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><TargetProbeResult result={probe.result} /><div className="dialog-actions"><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
-function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, onOpenActions, onOpenGroups, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; onOpenActions: () => void; onOpenGroups: () => void; fail: (reason: unknown) => void }) {
+function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, onOpenActions, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; onOpenActions: () => void; fail: (reason: unknown) => void }) {
   const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [rel, setRel] = useState({ name: "", source: "", target: "" });
   const [editingEntity, setEditingEntity] = useState<EntityType | null>(null);
   const [editingRelation, setEditingRelation] = useState<RelationType | null>(null);
   const [tab, setTab] = useState<"entity" | "relation">("entity");
-  // 默认用画布搭模型；表单模式保留给习惯逐项填写的场景。
-  const [mode, setMode] = useState<"visual" | "form">("visual");
+  // 默认用画布搭模型；表单模式保留给习惯逐项填写的场景，概念分组是同一页的第三个标签（同一次保存路径）。
+  const [mode, setMode] = useState<"visual" | "form" | "groups">("visual");
   // 画布上新建时 id 由调用方生成，便于创建后立刻选中刚出现的节点或连线。
   // 概念分组在保存这一刻才定 id：界面上填的是分组名，重名就复用已有的那一条（resolveGroup）。
   const createEntity = async (id: string, payload: EntityPayload) => { try { const trimmed = payload.name.trim(); if (!trimmed) throw new Error("请填写对象类型的名称。"); if (definition.entityTypes.some((item) => item.name === trimmed)) throw new Error("对象类型的名称已存在。"); const named = resolveGroup(definition.groups ?? [], payload.groupName ?? ""); await save({ ...definition, groups: named.groups, entityTypes: [...definition.entityTypes, { id, name: trimmed, description: payload.description.trim(), displayProperty: payload.displayProperty.trim(), groupId: named.groupId, parents: payload.parents, properties: payload.properties, sources: payload.sources }] }); notify("对象类型已加入草稿。"); } catch (reason) { fail(reason); } };
@@ -867,7 +779,7 @@ function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refr
     });
     try { await save({ ...definition, entityTypes, relationshipTypes }); notify("已用快照中的类型覆盖草稿。"); } catch (reason) { fail(reason); }
   };
-  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN" || !runtimeTypes} onClick={() => void extractTypesFromSnapshot()} title="从当前版本快照提取对象和关系类型并合并到草稿"><Database size={16} />从快照提取类型</button><button className="action" onClick={refreshRuntimeTypes} title="重新读取当前版本快照中的对象、关系、端点和属性推断"><RefreshCcw size={16} />刷新快照数据</button><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div>{mode === "visual" ? <p className="subtle">在画布上直接搭模型：加对象类型、从节点拉出关系类型、点开补属性与端点，每次改动都会立刻存进草稿。</p> : <p className="subtle">类型修改会先保存为草稿；发布前将检查快照中的对象和关系、端点契约及必填属性。请先在下方切换到「对象类型」或「关系类型」标签，再对单个类型点击「编辑」一并配置其属性。</p>}</div><div className="graph-view-switcher" aria-label="本体编辑方式"><button className={mode === "visual" ? "active" : ""} aria-pressed={mode === "visual"} onClick={() => setMode("visual")}>可视化建模</button><button className={mode === "form" ? "active" : ""} aria-pressed={mode === "form"} onClick={() => setMode("form")}>表单</button></div>{mode === "visual" ? <OntologyBuilder definition={definition} targetId={targetId} canEdit={user.role === "ADMIN"} hasSnapshot={Boolean(runtimeTypes)} onCreateEntity={createEntity} onUpdateEntity={async (id, payload) => updateEntity(id, { name: payload.name, description: payload.description, displayProperty: payload.displayProperty, groupName: payload.groupName, parents: payload.parents, properties: payload.properties, sources: payload.sources })} onDeleteEntity={deleteEntity} onCreateRelation={createRelation} onUpdateRelation={async (id, payload) => updateRelation(id, { name: payload.name, description: payload.description, sourceEntityTypeId: payload.sourceEntityTypeId, targetEntityTypeId: payload.targetEntityTypeId, properties: payload.properties })} onDeleteRelation={deleteRelation} onSaveDefinition={save} onExtract={extractTypesFromSnapshot} onOpenActions={onOpenActions} onOpenGroups={onOpenGroups} onFail={fail} /> : <>
+  return <section className="stack"><div className="panel functional-panel"><div className="title-row"><div><span className="eyebrow">本体草稿</span><h2>{draft ? `v${draft.version_number} · 未发布` : "尚无草稿"}</h2></div><div className="functional-actions"><button className="action" disabled={user.role !== "ADMIN" || !runtimeTypes} onClick={() => void extractTypesFromSnapshot()} title="从当前版本快照提取对象和关系类型并合并到草稿"><Database size={16} />从快照提取类型</button><button className="action" onClick={refreshRuntimeTypes} title="重新读取当前版本快照中的对象、关系、端点和属性推断"><RefreshCcw size={16} />刷新快照数据</button><button className="action" disabled={user.role !== "ADMIN"} onClick={() => validate().catch(fail)}><FileCheck2 size={16} />校验</button><button className="action primary" disabled={user.role !== "ADMIN"} onClick={() => publish().catch(fail)}><ShieldCheck size={16} />发布</button></div></div>{mode === "visual" ? <p className="subtle">在画布上直接搭模型：加对象类型、从节点拉出关系类型、点开补属性与端点，每次改动都会立刻存进草稿。</p> : mode === "form" ? <p className="subtle">类型修改会先保存为草稿；发布前将检查快照中的对象和关系、端点契约及必填属性。请先在下方切换到「对象类型」或「关系类型」标签，再对单个类型点击「编辑」一并配置其属性。</p> : <p className="subtle">按业务域把对象类型归堆：分组的颜色就是图谱「按逻辑分组」时画的那个框。分组只影响怎么摆、怎么画，不进图库、也不改对象类型的定义。</p>}</div><div className="graph-view-switcher" aria-label="本体编辑方式"><button className={mode === "visual" ? "active" : ""} aria-pressed={mode === "visual"} onClick={() => setMode("visual")}>可视化建模</button><button className={mode === "form" ? "active" : ""} aria-pressed={mode === "form"} onClick={() => setMode("form")}>表单</button><button className={mode === "groups" ? "active" : ""} aria-pressed={mode === "groups"} onClick={() => setMode("groups")}>概念分组 <b>{definition.groups.length}</b></button></div>{mode === "groups" ? <ConceptGroupManager definition={definition} canEdit={user.role === "ADMIN"} save={save} notify={notify} fail={fail} /> : mode === "visual" ? <OntologyBuilder definition={definition} targetId={targetId} canEdit={user.role === "ADMIN"} hasSnapshot={Boolean(runtimeTypes)} onCreateEntity={createEntity} onUpdateEntity={async (id, payload) => updateEntity(id, { name: payload.name, description: payload.description, displayProperty: payload.displayProperty, groupName: payload.groupName, parents: payload.parents, properties: payload.properties, sources: payload.sources })} onDeleteEntity={deleteEntity} onCreateRelation={createRelation} onUpdateRelation={async (id, payload) => updateRelation(id, { name: payload.name, description: payload.description, sourceEntityTypeId: payload.sourceEntityTypeId, targetEntityTypeId: payload.targetEntityTypeId, properties: payload.properties })} onDeleteRelation={deleteRelation} onSaveDefinition={save} onExtract={extractTypesFromSnapshot} onOpenActions={onOpenActions} onOpenGroups={() => setMode("groups")} onFail={fail} /> : <>
       <div className="graph-view-switcher" aria-label="本体编辑视图"><button className={tab === "entity" ? "active" : ""} aria-pressed={tab === "entity"} onClick={() => switchTab("entity")}>对象类型</button><button className={tab === "relation" ? "active" : ""} aria-pressed={tab === "relation"} onClick={() => switchTab("relation")}>关系类型</button></div>{tab === "entity" ? <div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addEntity}><span className="eyebrow">对象类型</span><h2>新增对象类型</h2><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required /></label><label>说明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="业务含义" /></label><button className="action primary"><Plus size={16} />加入草稿</button></form><div className="panel functional-panel type-list"><span className="eyebrow">对象类型清单</span><h2>{definition.entityTypes.length} 个对象类型</h2>{definition.entityTypes.map((item) => <div className="type-row" key={item.id}><CircleDot size={17} /><b>{item.name}</b><span>{item.description || "未填写说明"}</span><em>{item.properties.length} 属性</em>{item.sources?.length ? <i className="type-source"><Table2 size={11} />{sourceSummary(item)}</i> : null}<button className="action compact" disabled={user.role !== "ADMIN"} onClick={() => setEditingEntity(item)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={user.role !== "ADMIN"} onClick={() => void deleteEntity(item.id)}><Trash2 size={13} />删除</button></div>)}{!definition.entityTypes.length && <p className="empty">尚未创建对象类型。</p>}</div></div> : <div className="manager-grid"><form className="panel functional-panel form-panel" onSubmit={addRelation}><span className="eyebrow">关系类型</span><h2>新增关系类型</h2><label>关系名称<input value={rel.name} onChange={(event) => setRel({ ...rel, name: event.target.value })} placeholder="例如：负责" required /></label><label>起始对象类型<select value={rel.source} onChange={(event) => setRel({ ...rel, source: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>终止对象类型<select value={rel.target} onChange={(event) => setRel({ ...rel, target: event.target.value })} required><option value="">选择类型</option>{definition.entityTypes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><button className="action primary"><Plus size={16} />加入草稿</button></form><div className="panel functional-panel type-list"><span className="eyebrow">关系契约清单</span><h2>{definition.relationshipTypes.length} 个关系类型</h2>{definition.relationshipTypes.map((item) => <div className="type-row" key={item.id}><Link2 size={17} /><b>{item.name}</b><span>{item.sourceEntityTypeId ? definition.entityTypes.find((e) => e.id === item.sourceEntityTypeId)?.name ?? "?" : "未指定"} → {item.targetEntityTypeId ? definition.entityTypes.find((e) => e.id === item.targetEntityTypeId)?.name ?? "?" : "未指定"}</span><em>{item.properties.length} 属性</em><button className="action compact" disabled={user.role !== "ADMIN"} onClick={() => setEditingRelation(item)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={user.role !== "ADMIN"} onClick={() => void deleteRelation(item.id)}><Trash2 size={13} />删除</button></div>)}{!definition.relationshipTypes.length && <p className="empty">尚未创建关系类型。</p>}</div></div>}</>}
       {editingEntity && <TypeEditDialog kind="entity" entity={editingEntity} entityTypes={definition.entityTypes} groups={definition.groups} onClose={() => setEditingEntity(null)} onSave={async (payload) => { await updateEntity(editingEntity.id, { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, parents: payload.parents, properties: payload.properties, sources: payload.sources }); setEditingEntity(null); }} />}{editingRelation && <TypeEditDialog kind="relation" relation={editingRelation} entityTypes={definition.entityTypes} onClose={() => setEditingRelation(null)} onSave={async (payload) => { await updateRelation(editingRelation.id, { name: payload.name, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties }); setEditingRelation(null); }} />}
       {importPlan && <div className="dialog-backdrop" role="presentation"><div className="dialog graph-dialog"><button type="button" className="close-button" onClick={() => setImportPlan(null)} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">从快照提取类型</span><h2>选择提取方式</h2><p>当前快照中共有 {runtimeTypes?.labels.length ?? 0} 个标签、{runtimeTypes?.relationshipTypes.length ?? 0} 个关系类型。{importPlan.newEntities.length || importPlan.newRelations.length ? <>草稿缺少 {importPlan.newEntities.length} 个对象类型、{importPlan.newRelations.length} 个关系类型；</> : <>草稿已包含快照中的全部类型；</>}{importPlan.changedRelations || importPlan.changedEntities ? <>可为 {importPlan.changedEntities} 个已有的对象类型、{importPlan.changedRelations} 个已有关系类型补齐属性或端点。</> : ""}</p><p>属性将按现有数据推断：名称、取值类型，以及是否必填（该类型全部实例均含此键）与是否唯一（取值互不相同），共约 {importPlan.inferredProperties} 个属性。<br /><b>合并</b>：保留草稿中的现有配置，仅补充缺失类型并为空属性、空端点补齐。<br /><b>覆盖</b>：用快照类型整体替换草稿的类型清单，草稿中已配置的说明、显示属性与属性定义会被清空。</p>{importPlan.unresolved > 0 && <p>{importPlan.unresolved} 个关系类型仍无法确定起始/终止对象类型，导入后需手动补选。</p>}<div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setImportPlan(null)}>取消</button><button type="button" className="action" onClick={() => void mergeImport()}><Merge size={16} />合并</button><button type="button" className="action primary" onClick={() => void overwriteImport()}><RefreshCcw size={16} />覆盖</button></div></div></div>}</section>;

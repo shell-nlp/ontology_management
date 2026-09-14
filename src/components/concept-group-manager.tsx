@@ -1,20 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { LayoutGrid, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { Check, LayoutGrid, Palette, Pencil, Plus, Trash2 } from "lucide-react";
 import { GROUP_PALETTE, paletteColor, summarizeGroups } from "@/lib/concept-groups";
 import { newId } from "@/lib/ids";
+import { useSplitPane } from "@/components/split-pane";
 import type { ConceptGroup, Definition } from "@/lib/ontology-draft";
 import "./concept-group-manager.css";
 
 /**
- * 概念分组（业务域）的配置页。
+ * 概念分组（业务域）的配置区 —— 「本体草稿」页里与「可视化建模 / 表单」并列的第三个标签。
  *
  * 只做一件事：把对象类型按业务域归堆。分组是展示层的归类 —— 不进图库、不改对象类型的定义，
- * 图谱切到「按逻辑分组」时才看得见效果（一组一个虚线框）。
+ * 图谱切到「按逻辑分组」时才看得见效果：分组的颜色就是那时画在那一堆节点外面的虚线框。
  *
- * 左侧挑分组，右侧改名字 / 颜色 / 成员：勾选即归组，**一个对象类型同时只属于一个分组**，
- * 勾一个已经在别组的类型会把它移过来。改动先落在右侧草稿里，点「保存分组」才写进草稿定义。
+ * 左栏是色卡式的分组清单（色条就是图上那个框的颜色），右栏改名 / 换色 / 勾成员。
+ * 一个对象类型同时只属于一个分组：点一个已经在别组的类型会把它移过来。
+ * 改动先落在右栏草稿里，点「保存分组」才写进草稿定义（一次性覆盖，避免两次写互相盖掉）。
  */
 type GroupDraft = { id: string; name: string; color: string; memberIds: string[] };
 
@@ -26,12 +28,16 @@ type Props = {
   fail: (reason: unknown) => void;
 };
 
+/** 分组没自己填颜色就按它在清单里的位置取调色板色：左栏色条、右栏预览、图上的框是同一个颜色。 */
+function colorOf(groups: readonly ConceptGroup[], group: ConceptGroup) {
+  return group.color.trim() || paletteColor(groups.findIndex((item) => item.id === group.id));
+}
+
 function draftFor(group: ConceptGroup, groups: readonly ConceptGroup[], entityTypes: Definition["entityTypes"]): GroupDraft {
   return {
     id: group.id,
     name: group.name,
-    // 分组没自己填颜色就按它在清单里的位置取调色板色：画布上的框、这里的色点、左栏都是同一个颜色。
-    color: group.color.trim() || paletteColor(groups.findIndex((item) => item.id === group.id)),
+    color: colorOf(groups, group),
     memberIds: entityTypes.filter((item) => item.groupId === group.id).map((item) => item.id),
   };
 }
@@ -39,16 +45,36 @@ function draftFor(group: ConceptGroup, groups: readonly ConceptGroup[], entityTy
 export function ConceptGroupManager({ definition, canEdit, save, notify, fail }: Props) {
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<GroupDraft | null>(null);
+  const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const groups = definition.groups;
   const selected = groups.find((group) => group.id === selectedId) ?? null;
   const summary = useMemo(() => summarizeGroups(groups, definition.entityTypes), [groups, definition.entityTypes]);
+  const groupOf = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item.groupId ?? ""])), [definition.entityTypes]);
 
-  // 选中的分组换了（第一次点开、或刚新建）就在渲染期把右侧草稿重装一份：
+  // 选中的分组换了（第一次点开、或刚新建）就在渲染期把右栏草稿重装一份：
   // 用 effect 会多一次渲染，而且用户打字打到一半可能被覆盖。
   if (selected && draft?.id !== selected.id) setDraft(draftFor(selected, groups, definition.entityTypes));
   const current = selected && draft?.id === selected.id ? draft : null;
   const autoColor = selected ? paletteColor(groups.findIndex((group) => group.id === selected.id)) : "";
+  const savedColor = selected ? colorOf(groups, selected) : "";
+  const savedMembers = selected ? definition.entityTypes.filter((item) => item.groupId === selected.id).map((item) => item.id) : [];
+  const dirty = current && selected
+    ? current.name !== selected.name
+      || current.color.toLowerCase() !== savedColor.toLowerCase()
+      || [...current.memberIds].sort().join("|") !== [...savedMembers].sort().join("|")
+    : false;
+  const keyword = filter.trim().toLowerCase();
+  const visible = keyword ? definition.entityTypes.filter((item) => item.name.toLowerCase().includes(keyword)) : definition.entityTypes;
+
+  const { containerRef, containerStyle, handleProps } = useSplitPane({
+    storageKey: "concept-group-split",
+    defaultWidth: 320,
+    minLeft: 260,
+    minDetail: 420,
+    maxLeft: 620,
+    label: "拖动调整分组清单宽度，双击恢复默认",
+  });
 
   const commit = async (next: Definition, message: string) => {
     setBusy(true);
@@ -62,7 +88,15 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
     }
   };
 
+  /** 切换分组会丢掉右栏还没保存的改动，先问一句。 */
+  const selectGroup = (id: string) => {
+    if (id === selectedId) return;
+    if (dirty && !window.confirm(`「${current?.name ?? ""}」还有未保存的改动，切换分组会丢掉它们。继续？`)) return;
+    setSelectedId(id);
+  };
+
   const addGroup = () => {
+    if (dirty && !window.confirm(`「${current?.name ?? ""}」还有未保存的改动，新建分组会丢掉它们。继续？`)) return;
     let name = "新分组";
     let index = 2;
     while (groups.some((group) => group.name.trim().toLowerCase() === name.trim().toLowerCase())) { name = `新分组 ${index}`; index += 1; }
@@ -93,7 +127,8 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
   const removeGroup = () => {
     if (!selected) return;
     const members = definition.entityTypes.filter((item) => item.groupId === selected.id);
-    if (!window.confirm(`删除概念分组「${selected.name}」？${members.length ? `组里的 ${members.length} 个对象类型（${members.map((item) => item.name).join("、")}）会变成未归组，它们的定义不受影响。` : "这个分组还没有成员。"}`)) return;
+    const tail = members.length ? `组里的 ${members.length} 个对象类型（${members.map((item) => item.name).join("、")}）会变成未归组，它们的定义不受影响。` : "这个分组还没有成员。";
+    if (!window.confirm(`删除概念分组「${selected.name}」？${tail}`)) return;
     setSelectedId("");
     void commit(
       { ...definition, groups: groups.filter((group) => group.id !== selected.id), entityTypes: definition.entityTypes.map((item) => (item.groupId === selected.id ? { ...item, groupId: "" } : item)) },
@@ -107,33 +142,47 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
       : state);
   };
 
-  return <section className="manager-grid">
-    <div className="panel functional-panel result-list">
+  return <section className="manager-grid concept-group-grid" ref={containerRef} style={containerStyle}>
+    <div className="panel functional-panel cg-rail">
       <span className="eyebrow">概念分组</span>
-      <h2>{groups.length} 个分组 · {summary.ungrouped.length} 个对象类型未归组</h2>
-      <div className="cg-toolbar">
+      <h2>{groups.length} 个分组</h2>
+      <p className="cg-rail-note">{definition.entityTypes.length ? (summary.ungrouped.length ? `${summary.ungrouped.length} 个对象类型还没归组` : "所有对象类型都已归组") : "草稿里还没有对象类型"}</p>
+      <div className="cg-rail-actions">
         <button className="action compact" disabled={!canEdit || busy} onClick={addGroup}><Plus size={14} />新建分组</button>
-        <p>分组只影响图谱上怎么摆、怎么画框，不进图库、也不改对象类型的定义。</p>
+        <p>分组只影响图谱上怎么摆、怎么画框。</p>
       </div>
-      <div className="manager-rows">
+      <div className="cg-rows">
         {summary.groups.map((group) => (
-          <button key={group.id} className={selectedId === group.id ? "manager-row selected" : "manager-row"} onClick={() => setSelectedId(group.id)}>
-            <i className="cg-dot" style={{ background: group.color }} />
-            <span><b>{group.name}</b><small>{group.objectTypes.length ? `${group.objectTypes.length} 个对象类型 · ${group.objectTypes.join("、")}` : "还没有对象类型"}</small></span>
+          <button key={group.id} className={selectedId === group.id ? "cg-row selected" : "cg-row"} style={{ "--cg": group.color } as CSSProperties} onClick={() => selectGroup(group.id)}>
+            <span>
+              <b>{group.name}</b>
+              <small>{group.objectTypes.length ? `${group.objectTypes.length} 个对象类型 · ${group.objectTypes.join("、")}` : "还没有对象类型"}</small>
+            </span>
           </button>
         ))}
-        {!groups.length && <p className="empty">还没有概念分组。按业务域建几个（客户域 / 账务域 / 字典域…），图谱上就能按组看这张图。</p>}
+        {!groups.length && <p className="cg-empty">还没有分组。按业务域建几个（客户域 / 账务域 / 字典域…），图谱上就能按组看这张图。</p>}
       </div>
       {summary.ungrouped.length > 0 && <p className="cg-ungrouped">未归组（{summary.ungrouped.length}）：{summary.ungrouped.join("、")}</p>}
     </div>
-    <div className="panel functional-panel detail-panel">
+    <div {...handleProps}><span aria-hidden="true" /></div>
+    <div className="panel functional-panel cg-sheet">
       {selected && current ? <>
-        <span className="eyebrow">分组配置</span>
-        <h2>{selected.name}</h2>
-        <label className="cg-field"><span>名称</span>
-          <input value={current.name} disabled={!canEdit} onChange={(event) => setDraft({ ...current, name: event.target.value })} placeholder="例如：客户域" />
-        </label>
-        <div className="cg-field"><span>颜色（图谱上的分组框用的就是它）</span>
+        <div className="cg-sheet-head">
+          <span className="eyebrow">分组配置</span>
+          <div className="cg-title-row">
+            <i aria-hidden="true" style={{ background: current.color }} />
+            <input aria-label="分组名称" disabled={!canEdit} placeholder="例如：客户域" value={current.name} onChange={(event) => setDraft({ ...current, name: event.target.value })} />
+            {dirty && <em>未保存</em>}
+          </div>
+        </div>
+
+        <div className="cg-block">
+          <span className="cg-block-label"><Palette size={12} />图谱上的框色</span>
+          <div className="cg-frame" style={{ color: current.color }}>
+            <b>{current.name.trim() || "未命名分组"}</b>
+            <span className="cg-frame-nodes" aria-hidden="true"><i /><i /><i /></span>
+          </div>
+          <p className="cg-hint">图谱切到「按逻辑分组」时，同组的对象类型就装进这样一个虚线框。</p>
           <div className="cg-colors">
             <button type="button" className={current.color.toLowerCase() === autoColor.toLowerCase() ? "auto active" : "auto"} disabled={!canEdit} onClick={() => setDraft({ ...current, color: autoColor })}>按位置自动</button>
             {GROUP_PALETTE.map((color) => (
@@ -141,30 +190,47 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
             ))}
           </div>
         </div>
-        <div className="cg-field">
-          <span>包含哪些对象类型（{current.memberIds.length}）</span>
-          <p className="cg-hint">勾上就归到这个分组。勾一个已经在别的分组的类型，会把它从那边移过来 —— 一个对象类型同时只属于一个分组。</p>
-          <div className="cg-members">
-            {definition.entityTypes.map((entity) => {
+
+        <div className="cg-block">
+          <span className="cg-block-label">包含哪些对象类型（{current.memberIds.length} / {definition.entityTypes.length}）</span>
+          <input className="cg-filter" value={filter} disabled={!definition.entityTypes.length} onChange={(event) => setFilter(event.target.value)} placeholder="筛选对象类型" />
+          <div className="cg-chips">
+            {visible.map((entity) => {
               const checked = current.memberIds.includes(entity.id);
-              const other = checked ? undefined : groups.find((group) => group.id === entity.groupId && group.id !== selected.id);
+              const otherId = checked ? "" : groupOf.get(entity.id) ?? "";
+              const other = otherId && otherId !== selected.id ? groups.find((group) => group.id === otherId) : undefined;
               return (
-                <label key={entity.id} className={checked ? "checked" : ""}>
-                  <input type="checkbox" checked={checked} disabled={!canEdit} onChange={() => toggleMember(entity.id)} />
+                <button
+                  key={entity.id}
+                  type="button"
+                  className={checked ? "cg-chip checked" : other ? "cg-chip borrowed" : "cg-chip"}
+                  disabled={!canEdit}
+                  onClick={() => toggleMember(entity.id)}
+                  style={{ "--chip": current.color, "--other": other ? colorOf(groups, other) : "#94a3b8" } as CSSProperties}
+                  title={other ? `现在在「${other.name}」，点一下移过来` : checked ? "点一下移出这个分组" : "点一下归到这个分组"}
+                >
+                  <i aria-hidden="true" />
                   <span>{entity.name}</span>
-                  {other && <em>现在在「{other.name}」</em>}
-                </label>
+                  {checked && <Check size={11} />}
+                  {other && <em>{other.name}</em>}
+                </button>
               );
             })}
-            {!definition.entityTypes.length && <p className="empty">草稿里还没有对象类型，先去「本体草稿」建几个。</p>}
+            {!definition.entityTypes.length && <p className="cg-empty">草稿里还没有对象类型，先回「可视化建模」建几个。</p>}
+            {definition.entityTypes.length > 0 && !visible.length && <p className="cg-empty">没有名字里带「{filter.trim()}」的对象类型。</p>}
           </div>
+          <p className="cg-hint">点一下归到这一组，再点一下移出。一个对象类型同时只属于一个分组，点别组的成员会把它移过来。</p>
         </div>
-        <div className="functional-actions">
-          <button className="action primary" disabled={!canEdit || busy} onClick={saveDraft}><Pencil size={15} />保存分组</button>
+
+        <div className="cg-sheet-foot">
           <button className="action danger" disabled={!canEdit || busy} onClick={removeGroup}><Trash2 size={15} />删除分组</button>
+          <button className="action primary" disabled={!canEdit || busy || !dirty} onClick={saveDraft}><Pencil size={15} />{busy ? "保存中…" : "保存分组"}</button>
         </div>
-        <p className="subtle">保存写进当前草稿；发布之后，图谱的「按逻辑分组」与工具 list_concept_groups 才能看到它。</p>
-      </> : <div className="graph-inspector-empty"><LayoutGrid size={20} /><b>选择一个概念分组</b><span>左边挑一个分组，这里改名字、颜色，以及它包含哪些对象类型。</span></div>}
+      </> : <div className="cg-blank">
+        <LayoutGrid size={20} />
+        <b>{groups.length ? "选择一个分组" : "先建一个分组"}</b>
+        <span>{groups.length ? "左边挑一个分组，这里改名字、换框色，以及它包含哪些对象类型。" : "按业务域把对象类型归堆，图谱上就能按组看这张图。"}</span>
+      </div>}
     </div>
   </section>;
 }
