@@ -4,9 +4,14 @@
  * **默认全不限制**：想跑多少步、工具返回多长、一次取多少行，都由模型自己把握；
  * 只有你明确填了数字才按那个数卡。存在浏览器本地，一台机器一套，不跟着账号走。
  *
- * 这里刻意只有三个数：能改的都是"影响结论完不完整"的旋钮，
+ * 除了三个数，还有一段**系统提示词**（`systemPrompt`）：留空 = 用 `prompt.ts` 里的默认提示词，
+ * 抽屉里会把默认那段原文显示出来，改了就按改的走。本体概念清单由服务端自动接在后面，不用手写。
+ *
+ * 这里刻意只有这几个旋钮：能改的都是"影响结论完不完整 / 口味"的部分，
  * 真正保护数据库的那几条（只读事务、语句超时）不在其中，也不该被关掉。
  */
+
+import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
 
 export type ReasoningSettings = {
   /** 一次问答最多让模型走几步。留空 = 不限制（服务端兜底到 100，防死循环）。 */
@@ -15,7 +20,15 @@ export type ReasoningSettings = {
   toolResultLimit?: number;
   /** 数据资源查询一次最多取多少行。留空 = 不限制（服务端兜底到 5000，防一次拉爆内存）。 */
   sqlRowLimit?: number;
+  /**
+   * 自定义系统提示词。留空、或与默认那段一字不差 = 用默认提示词（请求里也不带这一项）。
+   * 上限 20000 字，和服务端校验一致。
+   */
+  systemPrompt?: string;
 };
+
+/** 提示词长度上限：和服务端 `z.string().max(20000)` 对齐。 */
+export const SYSTEM_PROMPT_LIMIT = 20_000;
 
 export const REASONING_SETTINGS_KEY = "ontology.qa.settings";
 
@@ -50,7 +63,10 @@ export const REASONING_SETTING_FIELDS = [
   },
 ] as const satisfies readonly { key: keyof ReasoningSettings; label: string; hint: string; placeholder: string; suffix: string }[];
 
-function clampField(key: keyof ReasoningSettings, value: unknown): number | undefined {
+/** 只有这三个是数字旋钮；`systemPrompt` 不在其中（它是文本，另有处理）。 */
+type NumericSettingKey = keyof typeof REASONING_SETTING_RANGES;
+
+function clampField(key: NumericSettingKey, value: unknown): number | undefined {
   const range = REASONING_SETTING_RANGES[key];
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric) || numeric < range.min) return undefined;
@@ -64,10 +80,13 @@ export function loadReasoningSettings(): ReasoningSettings {
     const raw: unknown = JSON.parse(window.localStorage.getItem(REASONING_SETTINGS_KEY) ?? "{}");
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
     const input = raw as Record<string, unknown>;
+    const prompt = typeof input.systemPrompt === "string" ? input.systemPrompt.slice(0, SYSTEM_PROMPT_LIMIT) : "";
     return {
       maxSteps: clampField("maxSteps", input.maxSteps),
       toolResultLimit: clampField("toolResultLimit", input.toolResultLimit),
       sqlRowLimit: clampField("sqlRowLimit", input.sqlRowLimit),
+      // 没改过的提示词不存：省得本机存一大段和默认一样的文本，"恢复默认"也就等于清空这一项。
+      systemPrompt: isCustomSystemPrompt(prompt) ? prompt : undefined,
     };
   } catch {
     return {};
@@ -96,5 +115,12 @@ export function reasoningSettingsPayload(settings: ReasoningSettings) {
     ...(settings.maxSteps ? { maxSteps: settings.maxSteps } : {}),
     ...(settings.toolResultLimit ? { toolResultLimit: settings.toolResultLimit } : {}),
     ...(settings.sqlRowLimit ? { sqlRowLimit: settings.sqlRowLimit } : {}),
+    // 没改过就不带：服务端自己回退到默认提示词，改过才把这段传上去。
+    ...(isCustomSystemPrompt(settings.systemPrompt) ? { systemPrompt: settings.systemPrompt!.trim() } : {}),
   };
+}
+
+/** 抽屉里文本框要显示的内容：没改过就显示默认那段（用户要"看得见默认提示词"）。 */
+export function systemPromptFieldValue(settings: ReasoningSettings) {
+  return isCustomSystemPrompt(settings.systemPrompt) ? settings.systemPrompt! : DEFAULT_SYSTEM_PROMPT;
 }

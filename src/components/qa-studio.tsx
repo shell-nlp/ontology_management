@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
+import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
 import {
   clearReasoningSettings,
   loadReasoningSettings,
@@ -11,6 +12,8 @@ import {
   REASONING_SETTING_FIELDS,
   REASONING_SETTING_RANGES,
   saveReasoningSettings,
+  SYSTEM_PROMPT_LIMIT,
+  systemPromptFieldValue,
   type ReasoningSettings,
 } from "@/lib/reasoning/settings";
 import type { ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
@@ -244,7 +247,8 @@ async function streamRun(
   question: string,
   thinking: boolean,
   conversationId: string | null,
-  settings: Record<string, number>,
+  /** 请求体里那几项：三个数字旋钮 + 可选的系统提示词。 */
+  settings: Record<string, number | string>,
   handlers: {
     onThinking: (text: string) => void;
     onAnswer: (text: string) => void;
@@ -413,6 +417,9 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
   const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit);
+  /** 抽屉里的提示词文本框：没改过就显示默认那段原文（用户要"看得见默认提示词"）。 */
+  const systemPromptText = systemPromptFieldValue(settings);
+  const customPrompt = isCustomSystemPrompt(settings.systemPrompt);
   const updateTurns = useCallback((updater: (current: Turn[]) => Turn[]) => {
     setSession((current) => {
       const sameTarget = current.targetId === targetId;
@@ -457,6 +464,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const resetSettings = useCallback(() => {
     clearReasoningSettings();
     setSettings({});
+  }, []);
+
+  /**
+   * 改系统提示词。**和默认一模一样（或清空）就存成"没改"**：本机不用存一大段和默认重复的文本，
+   * 请求里也不会带上它，服务端自动回退到默认那段。
+   */
+  const updateSystemPrompt = useCallback((raw: string) => {
+    setSettings((current) => ({ ...current, systemPrompt: isCustomSystemPrompt(raw) ? raw.slice(0, SYSTEM_PROMPT_LIMIT) : undefined }));
   }, []);
 
   /**
@@ -718,7 +733,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             </header>
             <div className="qa-config-body">
               <p className="qa-config-note">
-                这几个数只管「结论完不完整」。<b>留空就是不限制</b>，由模型自己把握；填了才按填的数卡。
+                上面这几个数只管「结论完不完整」。<b>留空就是不限制</b>，由模型自己把握；填了才按填的数卡。
+                下面那段系统提示词可以直接改，<b>默认的已经填好了</b>。
               </p>
               <div className="qa-config-section">
                 <div className="qa-config-section-head">
@@ -746,6 +762,28 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                     <small>{field.hint}</small>
                   </label>
                 ))}
+              </div>
+              <div className="qa-config-section">
+                <div className="qa-config-section-head">
+                  <span className="eyebrow">系统提示词</span>
+                  <button type="button" className="qa-config-reset" onClick={() => updateSystemPrompt(DEFAULT_SYSTEM_PROMPT)}>恢复默认</button>
+                </div>
+                <textarea
+                  className="qa-config-prompt"
+                  value={systemPromptText}
+                  spellCheck={false}
+                  onChange={(event) => updateSystemPrompt(event.target.value)}
+                  aria-label="系统提示词"
+                />
+                <small className="qa-config-hint">
+                  这是模型每次都会收到的系统提示词（就是上面那段原文，可以直接改）。
+                  <b>当前本体的概念清单会自动接在它后面</b>——概念分组与成员、对象类型与它绑的表、关系类型、动作、数据资源，这些是数据不是提示词，不用自己写。
+                </small>
+                <small className={customPrompt ? "qa-config-prompt-state custom" : "qa-config-prompt-state"}>
+                  {customPrompt
+                    ? `正在用自定义提示词（${systemPromptText.length} 字，超过 ${SYSTEM_PROMPT_LIMIT} 字会被截断）—— 点「恢复默认」回到默认那段。`
+                    : "当前用的是默认提示词。"}
+                </small>
               </div>
               <p className="qa-config-foot">
                 真正护着数据库的那几条不在这里，也不能关：只读事务、语句超时、写操作拦截。

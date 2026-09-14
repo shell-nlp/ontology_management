@@ -15,6 +15,8 @@ const inputSchema = z.object({
   /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
   toolResultLimit: z.number().int().min(500).max(200_000).optional(),
   sqlRowLimit: z.number().int().min(1).max(5000).optional(),
+  /** 「问答配置」里改过的系统提示词。不传（或空白）就用默认那段。 */
+  systemPrompt: z.string().trim().max(20_000).optional(),
 });
 
 /**
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
       question: input.question,
       context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
       maxSteps: input.maxSteps,
+      systemPrompt: input.systemPrompt,
     });
 
     await writeAuditEntry({

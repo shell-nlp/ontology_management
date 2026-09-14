@@ -470,3 +470,15 @@
   margin: 16px 0 0; padding-top: 12px; border-top: 1px solid #eef2f7;
   color: var(--qa-faint); font-size: 10.5px; line-height: 1.7;
 }
+
+/* 系统提示词：默认那段原文就填在框里，用户可以直接改。等宽字体是为了让它像"配置文本"而不是"聊天输入"。 */
+.qa-config-prompt {
+  width: 100%; min-height: 264px; max-height: 60vh; padding: 10px 11px; resize: vertical;
+  border: 1px solid #d6e1f0; border-radius: 5px; background: #fbfcfe; color: var(--qa-ink);
+  font: 11.5px/1.72 ui-monospace, "Cascadia Code", Consolas, monospace; outline: none;
+}
+.qa-config-prompt:focus { border-color: #93b4f5; background: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+.qa-config-hint { display: block; margin-top: 7px; color: var(--qa-faint); font-size: 10.5px; line-height: 1.65; }
+.qa-config-hint b { color: var(--qa-ink); }
+.qa-config-prompt-state { display: block; margin-top: 5px; color: var(--qa-muted); font-size: 10.5px; }
+.qa-config-prompt-state.custom { color: var(--qa-caution); }

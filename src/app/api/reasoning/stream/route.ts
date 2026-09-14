@@ -33,6 +33,8 @@ const inputSchema = z.object({
   /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
   toolResultLimit: z.number().int().min(500).max(200_000).optional(),
   sqlRowLimit: z.number().int().min(1).max(5000).optional(),
+  /** 「问答配置」里改过的系统提示词。不传（或空白）就用默认那段。 */
+  systemPrompt: z.string().trim().max(20_000).optional(),
 });
 
 /** 除了编排层的事件，这个接口自己还会补两条：error 与 saved。 */
@@ -87,13 +89,14 @@ export async function POST(request: NextRequest) {
           context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
           thinking: input.thinking,
+          systemPrompt: input.systemPrompt,
           onEvent: send,
         });
         await writeAuditEntry({
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
         // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
         try {

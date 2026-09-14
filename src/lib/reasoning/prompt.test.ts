@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { schemaBrief } from "@/lib/reasoning/agent";
+import { buildInstructions, DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt, schemaBrief } from "@/lib/reasoning/prompt";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -32,10 +32,11 @@ function definition(): OntologyDefinition {
 }
 
 const runtimeTypes: RuntimeTypeSet = { labels: [], relationshipTypes: [], entityCount: 0, relationshipCount: 0, relationshipEndpoints: {} };
+const context = () => ({ store: {} as never, definition: definition(), runtimeTypes });
 
 describe("schemaBrief", () => {
   it("概念分组直接带上成员，模型不调工具也知道每组里有哪些对象类型", () => {
-    const brief = schemaBrief({ store: {} as never, definition: definition(), runtimeTypes });
+    const brief = schemaBrief(context());
     expect(brief).toContain("概念分组：客户域（2 个：客户、用户）；未归组：账单");
     expect(brief).toContain("对象类型：");
     expect(brief).toContain("用户(绑定 GISTOOLS.TB_X)");
@@ -57,5 +58,39 @@ describe("schemaBrief", () => {
     const brief = schemaBrief({ store: {} as never, definition: definition(), runtimeTypes: withCounts });
     expect(brief).not.toContain("42");
     expect(brief).not.toContain("7 条");
+  });
+});
+
+describe("buildInstructions", () => {
+  it("没配提示词就用默认的，概念清单照样接在后面", () => {
+    const instructions = buildInstructions(undefined, context());
+    expect(instructions.startsWith(DEFAULT_SYSTEM_PROMPT)).toBe(true);
+    expect(instructions).toContain("当前本体的概念清单");
+    expect(instructions).toContain("概念分组：客户域（2 个：客户、用户）");
+  });
+
+  it("空白（只打了空格）也算没配", () => {
+    expect(buildInstructions("   \n  ", context()).startsWith(DEFAULT_SYSTEM_PROMPT)).toBe(true);
+  });
+
+  it("配了就用自己的那段，并且在最前面", () => {
+    const instructions = buildInstructions("你是专线业务的助手，回答必须先说结论。", context());
+    expect(instructions.startsWith("你是专线业务的助手，回答必须先说结论。")).toBe(true);
+    expect(instructions).not.toContain("你是本体（ontology）推理助手");
+    // 概念清单是数据不是提示词：无论用哪段提示词都自动带上
+    expect(instructions).toContain("当前本体的概念清单");
+  });
+});
+
+describe("isCustomSystemPrompt", () => {
+  it("空、空白、以及和默认一模一样都算没改", () => {
+    expect(isCustomSystemPrompt(undefined)).toBe(false);
+    expect(isCustomSystemPrompt("  ")).toBe(false);
+    expect(isCustomSystemPrompt(DEFAULT_SYSTEM_PROMPT)).toBe(false);
+  });
+
+  it("改了才算改（前后空格不算改）", () => {
+    expect(isCustomSystemPrompt(` ${DEFAULT_SYSTEM_PROMPT} `)).toBe(false);
+    expect(isCustomSystemPrompt(`${DEFAULT_SYSTEM_PROMPT}\n补充：先给结论。`)).toBe(true);
   });
 });

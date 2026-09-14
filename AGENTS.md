@@ -213,6 +213,12 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 `loadTargets` / `loadOntologies` 只从本体列表决定 `targetId`；`loadVersions` 在目标变化时先清空
 版本与运行时统计，避免切换的一瞬间显示上一个本体的草稿。改动这块时别把两者再拆成独立取值。
 
+**侧栏「当前本体」的长名字会撑破侧栏**（2026-09-14 修）：`<select>` 在 grid 里默认按 **min-content** 撑宽，
+本体名一长（例如「中国移动客户账务订购业务网络V3（含概念域）」）就把 240px 的侧栏顶破、文字压到内容区上。
+修法是给 `.target-picker` 和它的 `select` 加 `min-width: 0` + `width: 100%` + `text-overflow: ellipsis`，
+并给 select 挂 `title`（鼠标停上去能看到全名）。以后往侧栏里加"用户自己起名的东西"（本体名、标签、数据资源名）
+都要按这条处理 —— 名字长度不由我们决定。
+
 ### 本体包（导出 / 导入）
 
 记录时间：2026-09-14。对标 bkn-foundry 的知识网络导出：**一个 JSON 文件带走整份结构**，方便传播。
@@ -364,6 +370,23 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   设过任意一项才挂「已设」角标。
 - 抽屉改完**立即生效**并写 localStorage，没有「保存」按钮 —— 这几个数没有"改到一半"的中间态；
   带「恢复默认」，Esc 与点遮罩都能关。
+
+**系统提示词也能改，默认那段就显示在抽屉里**（2026-09-14，用户要求"这里也要可以配置模型的系统提示词，默认的提示词要显示出来"）：
+
+- 提示词与"本体概念清单"拆成独立模块 `src/lib/reasoning/prompt.ts`（`DEFAULT_SYSTEM_PROMPT` / `schemaBrief` /
+  `buildInstructions` / `isCustomSystemPrompt`）。**单独一个文件是有原因的**：界面要显示默认提示词原文，
+  而 `agent.ts` 会 import AI SDK 的 provider —— 客户端组件直接引 `agent.ts` 会把它们白打进浏览器包。
+- 抽屉里多一段可编辑的 textarea，**默认值就是默认提示词的原文**（这是用户的原话要求："默认的提示词要显示出来"）。
+  改了才存 localStorage（`systemPrompt`）；和默认一字不差、或只有空白，都当"没改"（`isCustomSystemPrompt`），
+  请求里也不带这一项，服务端自己回退。`reasoningSettingsPayload` 负责这个转换，「恢复默认」= 清掉这一项。
+- **概念清单永远自动接在提示词后面**（`buildInstructions`）：概念分组与成员、对象类型与它绑的表、关系类型、动作、数据资源
+  都是**数据不是提示词**，让用户手写就会和本体漂移；抽屉里也把这句话写给了用户。
+- 两条链路都认这个参数：`/api/reasoning/stream`（页面）与 `/api/reasoning/run`（一次性），
+  服务端 `z.string().trim().max(20_000)`（前端 `SYSTEM_PROMPT_LIMIT` 与它对齐）；
+  流式那条的审计里多记一个 `customSystemPrompt: boolean`（**不记原文**）。
+- 改这块时注意：`settings.ts` 的 `clampField` 只认三个数字键（`NumericSettingKey`），别再往 `REASONING_SETTING_RANGES` 里塞非数字项。
+- 实测（2026-09-14）：把提示词换成"严格三段：结论 / 依据 / 风险，全文不超过 200 字"后，模型照做；
+  点「恢复默认」回到默认那段，localStorage 里那一项也清掉了。
 - **刻意不放进配置的东西**：只读事务、语句超时、写操作拦截（护着数据库，不该由这个抽屉关掉）；
   模型与系统提示词也先不做成可改 —— 改坏了会把"只读""不查本体实例"这些规矩一起改没。
 
