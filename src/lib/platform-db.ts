@@ -47,7 +47,8 @@ async function ensurePlatformSchemaOnce() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
-      // 本体存储表从 neo4j_targets 演进为后端无关的 graph_targets，并保留历史数据。
+      // 本体存储表从 neo4j_targets 演进为后端无关的 graph_targets；这条改名迁移保留，
+      // 老部署升级时历史数据不会丢（Neo4j 引擎本身已于 2026-09-14 移除）。
       await client.query(`
         DO $$
         BEGIN
@@ -62,16 +63,16 @@ async function ensurePlatformSchemaOnce() {
         CREATE TABLE IF NOT EXISTS ontology_platform.graph_targets (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL UNIQUE,
-          kind TEXT NOT NULL DEFAULT 'NEO4J',
+          kind TEXT NOT NULL DEFAULT 'JENA',
           uri TEXT NOT NULL,
-          database_name TEXT NOT NULL DEFAULT 'neo4j',
+          database_name TEXT NOT NULL DEFAULT 'ds',
           username TEXT NOT NULL DEFAULT '',
           credential_secret TEXT NOT NULL DEFAULT '',
           options JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
-      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'NEO4J'`);
+      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'JENA'`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
@@ -119,7 +120,7 @@ async function ensurePlatformSchemaOnce() {
           target_id TEXT NOT NULL UNIQUE REFERENCES ontology_platform.graph_targets(id) ON DELETE CASCADE,
           /** 用户挑的那个存储资源。Jena 上会另开一条受管记录，这里记住它从哪来。 */
           owner_target_id TEXT REFERENCES ontology_platform.graph_targets(id) ON DELETE SET NULL,
-          /** Jena 的命名图；Neo4j 为空。 */
+          /** Fuseki 里的命名图，一个本体一个。 */
           namespace TEXT,
           created_by TEXT REFERENCES ontology_platform.users(id),
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

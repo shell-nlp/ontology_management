@@ -9,7 +9,7 @@ export function describeTargetError(kind: GraphTargetKind, error: unknown) {
   const label = graphTargetKindInfo(kind).label;
   const message = error instanceof Error ? error.message : String(error);
   if (/Cannot find module|MODULE_NOT_FOUND/i.test(message)) return `缺少 ${label} 驱动，请先安装依赖。`;
-  if (/unauthorized|authentication failure|authentication error|Neo\.ClientError\.Security/i.test(message)) return `${label} 认证失败：用户名或密码不对。`;
+  if (/unauthorized|authentication failure|authentication error/i.test(message)) return `${label} 认证失败：用户名或密码不对。`;
   if (/ECONNREFUSED|ServiceUnavailable|Could not connect|connection refused|NJS-503/i.test(message)) return `连不上 ${label}：${message}`;
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(message)) return `域名解析不了，检查地址里的主机名：${message}`;
   if (/ETIMEDOUT|timeout|timed out/i.test(message)) return `连接超时，检查地址与端口是否可达：${message}`;
@@ -24,13 +24,12 @@ export async function getTarget(targetId: string): Promise<GraphTarget | null> {
     [targetId],
   );
   const row = result.rows[0];
-  if (!row) return null;
-  return { ...row, kind: isGraphTargetKind(row.kind) ? row.kind : "NEO4J", options: (row.options ?? {}) as Record<string, unknown> };
+  // 库里可能残留平台已不再支持的 kind（例如 2026-09-14 移除的 Neo4j）。
+  // 这类记录当作不存在：让接口明确回答「不存在」，而不是拿错后端去连。
+  if (!row || !isGraphTargetKind(row.kind)) return null;
+  return { ...row, kind: row.kind, options: (row.options ?? {}) as Record<string, unknown> };
 }
 
-export function normalizeTargetKind(value: unknown): GraphTargetKind {
-  return isGraphTargetKind(value) ? value : "NEO4J";
-}
 
 export function parseTargetOptions(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -43,18 +42,16 @@ export async function listTargets(): Promise<GraphTarget[]> {
     `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
      FROM ontology_platform.graph_targets ORDER BY kind, name`,
   );
-  return result.rows.map((row) => ({
-    ...row,
-    kind: isGraphTargetKind(row.kind) ? row.kind : "NEO4J",
-    options: (row.options ?? {}) as Record<string, unknown>,
-  }));
+  return result.rows
+    .filter((row) => isGraphTargetKind(row.kind))
+    .map((row) => ({ ...row, kind: row.kind as GraphTargetKind, options: (row.options ?? {}) as Record<string, unknown> }));
 }
 
-/** 端点归一成 host:port：bolt:// 与 neo4j:// 指向同一台机器时算同一个。 */
-function endpointKey(kind: GraphTargetKind, uri: string) {
+/** 端点归一成 host:port，缺端口时用 Fuseki 的默认端口。 */
+function endpointKey(_kind: GraphTargetKind, uri: string) {
   try {
     const url = new URL(uri);
-    return `${url.hostname.toLowerCase()}:${url.port || (kind === "JENA" ? "3030" : "7687")}`;
+    return `${url.hostname.toLowerCase()}:${url.port || "3030"}`;
   } catch {
     return uri.trim().toLowerCase();
   }
@@ -63,10 +60,9 @@ function endpointKey(kind: GraphTargetKind, uri: string) {
 /**
  * 找出会互相覆盖的已登记本体存储。
  *
- * 发布走的是「整图替换」：Neo4j 是 `MATCH (n) DETACH DELETE n`，Jena 是清掉目标图或默认图。
- * 所以同一个库（Neo4j 的 实例+库名、Jena 的 数据集+命名图）上登记两个本体存储，
- * 发布时会把对方清空 —— 这里提前拦下来，并把「怎么办」写进提示。
- * Neo4j 社区版一个实例只有一个库，多本体要靠多实例（不同端口）。
+ * 发布走的是「整图替换」：Jena 是清掉目标命名图或默认图。
+ * 所以同一个「数据集 + 命名图」上登记两个本体存储，发布时会把对方清空
+ * —— 这里提前拦下来，并把「怎么办」写进提示。
  */
 export function findTargetConflict(
   candidate: Pick<GraphTarget, "kind" | "uri" | "database_name" | "options">,
@@ -77,7 +73,7 @@ export function findTargetConflict(
     target.kind,
     endpointKey(target.kind, target.uri),
     (target.database_name ?? "").toLowerCase(),
-    target.kind === "JENA" ? String(target.options?.namedGraph ?? "") : "",
+    String(target.options?.namedGraph ?? ""),
   ].join("|");
   const wanted = key(candidate);
   return existing.find((item) => item.id !== ignoreId && key(item) === wanted) ?? null;
@@ -86,10 +82,8 @@ export function findTargetConflict(
 /** 冲突时给用户看的说明：说清为什么不能这么登记、以及怎么改。 */
 export function describeTargetConflict(conflict: GraphTarget, candidate: Pick<GraphTarget, "kind">) {
   const label = graphTargetKindInfo(candidate.kind).label;
-  const scope = candidate.kind === "JENA" ? "同一个数据集 / 命名图" : "同一个库";
-  const advice = candidate.kind === "NEO4J"
-    ? "Neo4j 社区版一个实例只有一个库，发布时是整库替换，两个本体存储会互相清空 —— 请再起一个实例（换一组端口，例如 7475/7688）后登记。"
-    : "发布时会清掉这一份图数据，两个本体存储会互相清空 —— 请换一个数据集，或给它们配不同的命名图。";
+  const scope = "同一个数据集 / 命名图";
+  const advice = "发布时会清掉这一份图数据，两个本体存储会互相清空 —— 请换一个数据集，或给它们配不同的命名图。";
   return `${scope}上已经登记了「${conflict.name}」（${label}）。${advice}`;
 }
 

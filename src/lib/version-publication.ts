@@ -81,7 +81,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
         atomicReplace,
         entityCount: snapshot.nodes.length,
         relationshipCount: snapshot.relationships.length,
-        // 只有 Neo4j 企业版能落地必填约束；其余后端如实记录为未强制。
+        // Jena 侧不落地必填约束（capabilities.strongRules 为 false），如实记录为未强制。
         strongRulesEnforced: canEnforceRequired,
       },
     });

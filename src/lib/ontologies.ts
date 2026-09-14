@@ -10,7 +10,7 @@ import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
  * 「数据集 / 命名图」——建本体时只挑一个存储资源，剩下的由这里分配：
  * - Apache Jena：在这个 Fuseki 上另开一条受管记录，命名图取 `urn:ontology:<id>`，
  *   同一个 Fuseki 可以承载任意多个本体；
- * - Neo4j 社区版：一个库只能装一个本体，所以直接占用那条记录；已被占用时报错并给出办法。
+ * - 隔离由命名图承担，所以同一个 Fuseki 上可以并存任意多个本体。
  */
 export type Ontology = {
   id: string;
@@ -90,7 +90,7 @@ async function createManagedTarget(storage: GraphTarget, ontologyId: string, nam
 }
 
 export async function createOntology(
-  input: { name: string; description?: string; color?: string; tags?: string[]; storageTargetId: string },
+  input: { name: string; description?: string; color?: string; tags?: string[]; storageTargetId: string; identifier?: string },
   userId?: string,
 ): Promise<Ontology> {
   const name = input.name.trim();
@@ -99,19 +99,13 @@ export async function createOntology(
   if (!storage) throw new Error("存储资源不存在。");
 
   const id = crypto.randomUUID();
-  let targetId = storage.id;
-  let namespace: string | null = null;
-  if (storage.kind === "JENA") {
-    namespace = `urn:ontology:${id}`;
-    targetId = await createManagedTarget(storage, id, name, namespace);
-  } else {
-    const occupied = await getOntologyByTargetId(storage.id);
-    if (occupied) {
-      throw new Error(`「${storage.name}」上已经装了本体「${occupied.name}」。Neo4j 社区版一个库只能装一个本体，请先登记一个新的实例（scripts/neo4j-instance.ps1），再选它。`);
-    }
-  }
+  // 每个本体独占一个命名图（urn:ontology:<id>），这就是多本体隔离的单位：
+  // 同一个 Fuseki 数据集上可以并存任意多个本体，不必各起一套实例。
+  const namespace = `urn:ontology:${id}`;
+  const targetId = await createManagedTarget(storage, id, name, namespace);
 
-  const identifier = await uniqueIdentifier(slugify(name, id));
+  // 导入本体包时希望能沿用包里的标识；被占了就自动往后加序号，不因为重名而失败。
+  const identifier = await uniqueIdentifier(slugify(input.identifier?.trim() || name, id));
   await platformQuery(
     `INSERT INTO ontology_platform.ontologies
        (id, identifier, name, description, color, tags, target_id, owner_target_id, namespace, created_by)
@@ -124,7 +118,7 @@ export async function createOntology(
       (input.color ?? "").trim(),
       input.tags ?? [],
       targetId,
-      storage.kind === "JENA" ? storage.id : null,
+      storage.id,
       namespace,
       userId ?? null,
     ],
@@ -174,8 +168,7 @@ export async function updateOntology(
 }
 
 /**
- * 删本体。Jena 的受管存储记录是它专用的隔离空间，跟着一起删；
- * 直接复用 Neo4j 记录的那种，只解除本体的登记，不动存储资源本身。
+ * 删本体。受管存储记录是它专用的隔离空间（一个命名图），跟着一起删。
  */
 export async function deleteOntology(id: string): Promise<{ removedTargetId: string | null }> {
   const current = await getOntology(id);

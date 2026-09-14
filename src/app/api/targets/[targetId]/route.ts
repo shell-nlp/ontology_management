@@ -4,12 +4,12 @@ import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { getObjectIndex } from "@/lib/object-index";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
-import { describeTargetConflict, findTargetConflict, getTarget, listTargets, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
+import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
-  kind: z.enum(["NEO4J", "JENA"]).optional(),
+  kind: z.enum(["JENA"]).optional(),
   uri: z.string().trim().url().optional(),
   databaseName: z.string().trim().min(1).max(100).optional(),
   username: z.string().trim().max(100).optional(),
@@ -30,7 +30,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const values: unknown[] = [];
     // 改连接信息也可能撞到别的本体存储的库上，先按改完之后的样子检查一次。
     const candidate = {
-      kind: input.kind ? normalizeTargetKind(input.kind) : target.kind,
+      kind: input.kind ?? target.kind,
       uri: input.uri ?? target.uri,
       database_name: input.databaseName ?? target.database_name,
       options: input.options ? parseTargetOptions(input.options) : target.options,
@@ -38,7 +38,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const conflict = findTargetConflict(candidate, await listTargets(), targetId);
     if (conflict) return NextResponse.json({ error: describeTargetConflict(conflict, candidate) }, { status: 409 });
     if (input.name !== undefined) { updates.push(`name = $${updates.length + 1}`); values.push(input.name); }
-    if (input.kind !== undefined) { updates.push(`kind = $${updates.length + 1}`); values.push(normalizeTargetKind(input.kind)); }
+    if (input.kind !== undefined) { updates.push(`kind = $${updates.length + 1}`); values.push(input.kind); }
     if (input.uri !== undefined) { updates.push(`uri = $${updates.length + 1}`); values.push(input.uri); }
     if (input.databaseName !== undefined) { updates.push(`database_name = $${updates.length + 1}`); values.push(input.databaseName); }
     if (input.username !== undefined) { updates.push(`username = $${updates.length + 1}`); values.push(input.username); }

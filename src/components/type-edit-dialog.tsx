@@ -298,7 +298,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     <option value="">默认（按 name / 名称 / title / id 自动选择）</option>
                     {properties.map((prop) => <option key={prop.name} value={prop.name}>{prop.name}</option>)}
                   </select>
-                  <small>节点上显示哪条属性；在本体草稿页「复制显示样式」可导出对应的 Neo4j Browser caption 规则。</small>
+                  <small>节点上显示哪条属性。图谱与对象页都用它当标题；留空则按 name / 名称 / title / id 依次自动选。</small>
                 </label>
                 <div className="ted-field">
                   <span><Layers size={12} />父类（继承）</span>

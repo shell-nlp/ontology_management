@@ -53,12 +53,12 @@ describe("version snapshot", () => {
     expect(messages).toContain("关系使用了草稿中不存在的关系类型。");
   });
 
-  it("flags unique values that exceed the index size limit", () => {
+  it("flags unique values that are too large to be a unique key", () => {
     const snapshot = validSnapshot();
     const oversized = "汉".repeat(2800);
     snapshot.nodes[0].properties.名称 = oversized;
     const violations = validateVersionSnapshot(snapshot);
-    const match = violations.find((violation) => violation.message.includes("超过 Neo4j 索引大小限制"));
+    const match = violations.find((violation) => violation.message.includes("不适合当唯一键"));
     expect(match).toBeDefined();
     expect(match!.rule).toBe("客户.名称");
     expect(match!.count).toBe(1);

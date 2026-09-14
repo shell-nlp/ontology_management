@@ -7,13 +7,12 @@ import { writeAuditEntry } from "@/lib/platform-db";
 
 /**
  * 后端无关的只读查询入口。
- * Neo4j 本体存储执行 Cypher，Apache Jena 本体存储执行 SPARQL；
+ * Apache Jena 本体存储执行 SPARQL（只读）；
  * 写入一律走草稿快照 + 发布流程，这里不接受任何写语句。
  */
 const requestInput = z.object({
   targetId: z.string().uuid(),
   query: z.string().trim().min(1).max(50000).optional(),
-  cypher: z.string().trim().min(1).max(50000).optional(),
   parameters: z.record(z.string(), z.unknown()).default({}),
   confirmWrite: z.boolean().default(false),
 });
@@ -23,7 +22,7 @@ export async function POST(request: NextRequest) {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: "未授权。" }, { status: 401 });
     const input = requestInput.parse(await request.json());
-    const statement = input.query ?? input.cypher;
+    const statement = input.query;
     if (!statement) return NextResponse.json({ error: "查询语句不能为空。" }, { status: 400 });
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });

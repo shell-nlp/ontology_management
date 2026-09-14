@@ -6,7 +6,7 @@ import { describeTargetError, getTarget } from "@/lib/targets";
 
 export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
   // 出错时也要按这个存储的引擎给提示，所以 kind 提到 try 外面。
-  let kind: GraphTargetKind = "NEO4J";
+  let kind: GraphTargetKind = "JENA";
   try {
     await requireRole("ADMIN");
     const { targetId } = await context.params;

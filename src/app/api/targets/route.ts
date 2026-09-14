@@ -3,21 +3,17 @@ import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
-import { describeTargetConflict, findTargetConflict, listTargets, normalizeTargetKind, parseTargetOptions, publicTarget } from "@/lib/targets";
+import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { graphTargetKindInfo, type GraphTarget } from "@/lib/graph/types";
 
 const targetInput = z.object({
   name: z.string().trim().min(2).max(100),
-  kind: z.enum(["NEO4J", "JENA"]).default("NEO4J"),
+  kind: z.enum(["JENA"]).default("JENA"),
   uri: z.string().trim().url(),
-  databaseName: z.string().trim().min(1).max(100).default("neo4j"),
+  databaseName: z.string().trim().min(1).max(100).default("ds"),
   username: z.string().trim().max(100).default(""),
   password: z.string().max(500).default(""),
   options: z.record(z.string(), z.unknown()).default({}),
-}).superRefine((value, context) => {
-  if (value.kind !== "NEO4J") return;
-  if (!value.username) context.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "Neo4j 连接必须填写用户名。" });
-  if (!value.password) context.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: "Neo4j 连接必须填写密码。" });
 });
 
 export async function GET() {
@@ -37,7 +33,7 @@ export async function POST(request: NextRequest) {
     const target: GraphTarget = {
       id: crypto.randomUUID(),
       name: input.name,
-      kind: normalizeTargetKind(input.kind),
+      kind: input.kind,
       uri: input.uri,
       database_name: input.databaseName,
       username: input.username,

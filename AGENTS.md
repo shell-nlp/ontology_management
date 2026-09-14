@@ -35,7 +35,7 @@
 两点提醒：
 
 1. `entityTypes` 这个字段名是历史原因，读代码时一律理解成「类」，不要因为它叫 entity 就把它当成「实体」另一个概念。
-2. 「对象类型」不等于「标签」。它在 Neo4j 里落成节点标签、在 Jena 里落成 `rdf:type` 的宾语，那只是它在图库里的形态；
+2. 「对象类型」不等于「标签」。它在 Jena 里落成 `rdf:type` 的宾语，那只是它在图库里的形态；
    它本身是带属性、主键、父类与数据来源的定义（见「本体核心模型」一节）。
 
 ## 验证约定
@@ -52,8 +52,8 @@
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| P1 | 增量发布 | 每次发布都是整图替换：Neo4j `DETACH DELETE` + 重建，Jena 清空 + 重写 | 快照与当前图做 diff，只写增删改；`GraphStore` 增加 `applyDelta` 能力，版本里记录基线版本 |
-| P2 | 大图导出流式化 | `exportGraph()` 全量进内存（Jena 单条 `SELECT ?s ?p ?o`，Neo4j `MATCH (n)`），快照写入也一次性构造 | 分页/游标导出（Jena 按主语分页、Neo4j 用分批 `LIMIT`），快照写入改流式 |
+| P1 | 增量发布 | 每次发布都是整图替换：Jena 清空目标命名图 + 重写 | 快照与当前图做 diff，只写增删改；`GraphStore` 增加 `applyDelta` 能力，版本里记录基线版本 |
+| P2 | 大图导出流式化 | `exportGraph()` 全量进内存（Jena 单条 `SELECT ?s ?p ?o`），快照写入也一次性构造 | 分页/游标导出（按主语分页的 `SELECT`），快照写入改流式 |
 | P3 | 版本状态机补 `PUBLISHING` | 图库替换成功而版本状态更新失败时，只能靠审计 `VERSION_PUBLISH_FAILED` 事后诊断 | 发布前写 `PUBLISHING`，成功后转 `PUBLISHED`；失败态在前端提供“重新发布以恢复一致” |
 | P4 | 本体存储 `kind` 变更的历史版本策略 | 快照后端无关，改 `kind` 后老版本仍能发布，目前没有任何提示 | 明确产品决定：允许（加提示并记录审计）或禁止（有版本时锁定 kind） |
 | P5 | `/api/ontology/:versionId` 的 GET / DELETE | README 接口表写了 `GET/PATCH/DELETE`，路由只实现了 `PATCH` | 补 GET/DELETE（已发布版本禁止删除）或改 README 对齐实现 |
@@ -67,9 +67,9 @@
 | G3 | Jena 读路径请求数 | `hydrateNodes` / `readEdges` 每 200 个主语一次往返，大子图多轮请求 | 调大批次或改为一次 `CONSTRUCT` / 大 `VALUES` 取子图 |
 | G4 | 新增后端的契约测试模板 | 目前只有 ADR 0017 的文字说明；Jena 有单测，但没有通用的适配器契约用例 | 抽出契约测试（连接、读写、导出、原子替换、失败后图不变），新后端按模板补齐 |
 
-| G5 | 后端定位与许可 | 两个后端功能对等、界面上并列；但 Apache Jena 是 Apache-2.0，Neo4j Community 是 **GPL-3.0**（企业版为商业许可）——随产品分发 Neo4j 需要履行 GPLv3 义务（平台只是客户端，连接方式本身不传染） | Jena 作为**推理、元模型、多本体隔离**的默认推荐后端（Fuseki 用命名图/多数据集隔离，不必像 Neo4j 那样起多个实例）；Neo4j 定位为「实例存储 + 高性能遍历」，适合已有环境与深链场景（Fuseki/TDB2 是单机，SPARQL 深链慢）。**暂不删除**，等实际用量或维护成本给出信号再定。2026-09-13 决定：**Neo4j 已从前端下线**——不再出现在「选择图数据库类型」与「新建本体」的存储下拉里（`FRONTEND_GRAPH_TARGET_KINDS` / `isFrontendGraphTargetKind`，见 `src/lib/graph/types.ts`）；后端适配器 `src/lib/graph/neo4j.ts` 与接口保留，已登记的 Neo4j 记录在「存储资源」页单独归到「已下线」组，仍可查看 / 测试 / 编辑 / 删除 |
+| G5 | ~~后端定位与许可~~ | **已于 2026-09-14 关闭：Neo4j 整体移除，见下方「Neo4j 移除记录」。** |
 
-| G6 | Neo4j 侧的类层级 | Jena 已落地「发布写 `rdfs:subClassOf` + 读路径类型传播」，Neo4j 没有等价实现 | 若 Neo4j 重新上架才做：自建 `(:Class)` 节点保存层级并让读路径按层级展开；难点是元模型节点与实例节点的隔离（同 G5）。当前已从前端下线，暂不投入 |
+| G6 | ~~Neo4j 侧的类层级~~ | **随 Neo4j 移除一并关闭（2026-09-14）**：只有 Jena 需要落地类层级，已由 M3 完成。 |
 
 ### 本体核心模型
 
@@ -79,7 +79,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`neo4j.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
+| M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`jena.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
 | M2 | 接口（interfaces） | 完全没有 | Palantir 用接口表达共享能力与多继承：接口是抽象的、不能被直接实例化，object type 实现接口后按接口被消费，链接与动作也能定义在接口上。工作量在定义层语义（接口定义、类实现、属性/链接/动作的继承与覆盖）加图库落地方式，建议先出 ADR 再实现。参考 https://palantir.com/docs/foundry/interfaces/interface-overview/ |
 
 **M3（类层级与类型传播，第一档推理）已于 2026-09-13 完成（Jena 侧）**，记录如下：
@@ -89,7 +89,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 - 读路径做类型传播：图库侧用 `?s rdf:type ?t . ?t rdfs:subClassOf* <类>`（`selectSubjects`）；快照侧用 `expandLabelFilter`（`class-hierarchy.ts`，界面默认走这条）。两条路径结果一致：按父类筛，子类的对象也出现。
 - 继承属性对实例生效：`mergeInheritedProperties` 用于对象写入、发布前校验（必填 / 唯一）、运行时类型清单与对象编辑表单。不补这一层，子类的对象连父类定义的字段都填不了。
 - 本体视图（`readSchemaGraph`）改为**始终**画出声明的类与 `subClassOf` 边，不再只在图库为空时才回退到 RDF Schema。
-- Neo4j 侧没有等价实现，已作为 G6 记录（Neo4j 已从前端下线，暂不补）。
+- 类层级与类型传播只在 Jena 侧落地；Neo4j 已于 2026-09-14 整体移除，不再需要考虑它的等价实现。
 
 ### 数据资源
 
@@ -123,22 +123,50 @@ SSPL / ELv2 / AGPLv3 三选一对闭源产品分发都有风险（详见 `docs/a
 
 | U4 | 本体骨架从图库反推 | 「本体骨架」读的是 `db.schema.visualization()` / 实例的 `rdf:type`，所以图库一空骨架就空——草稿里定义了类也看不见，而且图里的标签可能与定义漂移 | 骨架改为直接渲染版本快照里的类与关系类型；图库侧只作为「已发布生效结构」的对照 |
 
-### 多本体隔离（Neo4j 社区版）
+### 多本体隔离
 
-Neo4j Community 只能有一个库，而平台按「本体存储」登记连接、发布时整库替换
-（`neo4j.ts` 的 `replaceGraph` 是 `MATCH (n) DETACH DELETE n`，读路径也是 `MATCH (n)`），
-所以同一个库上登记两个本体存储会互相看见、发布时互相清空 —— 需要真正的隔离手段。
-记录时间：2026-09-12。**2026-09-12 决定采用 N1（多实例）**，并已落地两件事：
-新建 / 编辑本体存储时拦截"同一个库上再登记一个"（HTTP 409 + 说明怎么改），
-以及 `scripts/neo4j-instance.ps1`（起 / 停 / 列出实例）。本机已登记 B 实例
-`bolt://localhost:7688`（容器 `ontology-neo4j-b`），实测在 B 上发布不影响 A（7687）。
+**结论：隔离单位是「命名图」，不是「多起一套实例」。** 2026-09-14 之后的实现：
+
+- 新建本体时自动分配 `urn:ontology:<本体 id>`，写进 `graph_targets.options.namedGraph`；
+  `createOntology` 走 `createManagedTarget` 开一条受管存储记录，用户不需要理解数据集与命名图。
+- 发布是**整图替换**，作用范围就是这个命名图（`jena.ts` 的 `replaceGraph` 清掉目标命名图后重写，
+  没配命名图时才是默认图），所以同一个 Fuseki 上可以并存任意多个本体。
+- 仍然拦截「同一个数据集 + 命名图」被登记两次（HTTP 409 + 说明怎么改），因为那两边的发布确实会互相清空。
+- 要按环境 / 租户再分一层时用**多 dataset**（一个 Fuseki 下配多个 dataset，登记时选不同数据集）；
+  需要资源或权限硬隔离时才单起一套 Fuseki/TDB2。
+
+历史（已作废）：2026-09-12 曾按 Neo4j Community「一个库一个本体」的限制选了"N 个实例各自登记"的方案
+（`scripts/neo4j-instance.ps1`，已在 2026-09-14 随 Neo4j 一并删除）。下表的 N1/N3/N4 都是 Neo4j 专属路径，
+保留只为说明当时的取舍。
 
 | 编号 | 方案 | 说明 |
 | --- | --- | --- |
-| N1 | 多实例 | 一台机器跑多个 Neo4j Community（不同端口/容器），各登记一个本体存储。零改动，隔离最彻底，代价是每个实例一份进程与内存 |
-| N2 | 用 Fuseki/Jena 承载多本体 | 平台已支持：一个 Fuseki 下配多个 dataset，或同一 dataset 内用「命名图」（`options.namedGraph`）。社区版没有多库限制 |
-| N3 | 单实例逻辑隔离 | 给本体存储加 `namespace` 选项，Neo4j 适配器对标签/关系类型统一加前缀并让所有读路径按它过滤，查询工作台自动带上约束。落点：本体存储配置字段、`GraphStore` 读写路径、`/api/query` 与工作台提示 |
-| N4 | 升级 Enterprise / Aura | 真多库，`CREATE DATABASE`；现有代码本来就是按 `database_name` 建会话，属于最省事的功能路径 |
+| N1 | 多实例（Neo4j，已作废） | 一台机器跑多个 Neo4j Community（不同端口/容器），各登记一个本体存储。隔离最彻底，代价是每个实例一份进程与内存 |
+| N2 | 用 Fuseki/Jena 承载多本体 | **已采用**：同一 dataset 内用命名图（`options.namedGraph`），或一个 Fuseki 下配多个 dataset |
+| N3 | 单实例逻辑隔离（Neo4j，已作废） | 给本体存储加 `namespace`，对标签/关系类型统一加前缀并让读路径按它过滤 |
+| N4 | 升级 Enterprise / Aura（Neo4j，已作废） | Neo4j Enterprise 才有多库，`CREATE DATABASE` |
+
+### Neo4j 移除记录
+
+记录时间：2026-09-14。用户要求「去掉 neo4j」，这次是**整体移除**，不是像 2026-09-13 那样只从前端下线。
+
+删掉的东西：
+
+- 代码：`src/lib/graph/neo4j.ts`、`src/lib/graph/neo4j.test.ts`、`scripts/neo4j-instance.ps1`
+- 依赖：`package.json` 的 `neo4j-driver`（`next.config.ts` 的 `serverExternalPackages` 同步去掉）
+- 类型：`GraphTargetKind` 收窄成 `"JENA"`，`QueryLanguage` 收窄成 `"sparql"`，`GRAPH_TARGET_KINDS` 只剩 Jena；
+  `retiredGraphTargetKinds()` 与「已下线」分组一并删除（`FRONTEND_GRAPH_TARGET_KINDS` 保留为 `GRAPH_TARGET_KINDS` 的别名）
+- 界面：存储资源页只剩 Jena 分组；新建本体存储因为只有一个引擎，直接进连接表单，不再有"选类型"步骤；
+  图谱页的查询工作台固定 SPARQL；本体草稿页的「复制显示样式」（Neo4j Browser GraSS）按钮删除
+- 行为：`createOntology` 不再有「资源被占用」分支（命名图天然隔离）；`/api/query` 去掉遗留的 `cypher` 入参别名
+
+**有意保留的两处**：
+
+1. `platform-db.ts` 里 `neo4j_targets` → `graph_targets` 的改名迁移**必须留着** —— 老部署升级时靠它保住历史数据。
+2. 数据库里若残留 `kind` 不是受支持引擎的记录，`getTarget` / `listTargets` 直接跳过（当作不存在），
+   不再回退成某个后端去连。要清理就手写一条 SQL：
+   `DELETE FROM ontology_platform.graph_targets WHERE kind NOT IN ('JENA');`
+   （本机两个连接都是 Jena，没有需要清理的行。）
 
 ### 本体一等公民（对标 bkn-studio）
 
@@ -146,7 +174,7 @@ Neo4j Community 只能有一个库，而平台按「本体存储」登记连接�
 而不是让用户先去理解「本体存储 / 数据集 / 命名图」。
 
 现状的问题是隔离单位错了：现在隔离粒度是**本体存储**（一个连接 = 一个本体，1:1），
-于是用户必须先想清楚"存哪"才能建本体，Neo4j 社区版一个库的限制就直接暴露在界面上。
+于是用户必须先想清楚"存哪"才能建本体，图库的隔离限制就直接暴露在界面上（Neo4j 时代是社区版一个库的限制）。
 参照 bkn-studio：`KnowledgeNetworkRecord = { id, identifier, name, description, color, icon, tags,
 createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }`，
 对象类型 / 关系类型 / 动作类型全部挂在知识网络 id 下，存储完全不出现在用户面前。
@@ -161,7 +189,7 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
 | O1 | 「本体」成为一等公民 | 隔离粒度是本体存储，版本与快照都按 `target_id` 归类 | 新表 `ontology_platform.ontologies`：id / identifier / name / description / color / tags / created_by / created_at / updated_at / target_id / namespace；版本记录加 `ontology_id`，老数据迁移成一个默认本体（名字取原本体存储名）。快照磁盘结构不动 |
-| O2 | 落点自动分配 | Jena 的命名图写在 `target.options.namedGraph` 上，是整个存储一份；Neo4j 只能一个存储一个本体 | Jena：新建本体时自动分配 `urn:ontology:<id>`，命名图改为**按调用传入**（`jena.ts` 的 endpoints 解析 + `getGraphStore` 增加可选 namespace），于是一个 Fuseki 能承载多个本体；Neo4j：社区版一个库只能一个本体，实例被占用时提示"再起一个实例"（复用 `scripts/neo4j-instance.ps1` 与现有 409 逻辑） |
+| O2 | 落点自动分配 | **已完成**：新建本体时自动分配 `urn:ontology:<id>` 写成 `target.options.namedGraph`，一个 Fuseki 能承载任意多个本体 | Neo4j 分支已随 2026-09-14 的移除取消，`createOntology` 不再需要"资源被占用"的判断 |
 | O3 | 本体列表页 | 左侧是「本体存储」下拉，没有本体概念 | 对标截图：卡片列表（名字 / 描述 / 标签 / 统计 / 创建人 / 更新时间）+「新建 / 导入 / 搜索 / 分页」；顶部「当前本体」选择器取代「当前本体存储」；原「本体存储」页改名「存储资源」，显示每个存储挂了几个本体 |
 | O4 | 本体统计 | 无 | 卡片上显示对象类型数 / 关系类型数 / 对象数 / 关系数（`statistics`），数据从版本快照 + 图库统计来 |
 
@@ -171,6 +199,27 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 `loadTargets` / `loadOntologies` 只从本体列表决定 `targetId`；`loadVersions` 在目标变化时先清空
 版本与运行时统计，避免切换的一瞬间显示上一个本体的草稿。改动这块时别把两者再拆成独立取值。
 
+### 本体包（导出 / 导入）
+
+记录时间：2026-09-14。对标 bkn-foundry 的知识网络导出：**一个 JSON 文件带走整份结构**，方便传播。
+
+- 模块：`src/lib/ontology-bundle.ts`（纯函数，单测 `ontology-bundle.test.ts`）。
+- 接口：`GET /api/ontologies/:ontologyId/export`（取已发布版本的定义，没有就取草稿）、
+  `POST /api/ontologies/import`（建本体 + 写草稿，**不发布**）。
+- 界面：本体卡片上的「导出」；页头「导入本体包」。
+
+三条不变量，改动时别破：
+
+1. **`definition` 就是 `OntologyDefinition` 原样进出**，不新造形状 —— 导出的就是"卡位上写着的那份定义"。
+2. **包里绝不写凭据**；数据资源只记连接坐标，导入端按坐标匹配本机资源。
+   匹配顺序是「五项全等」→「少模式一项（放宽 + 提醒）」→ 找不到就**留空绑定并点名是哪个类**。
+3. **导入停在草稿**，不碰图库。别人的文件不能绕过版本边界。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| E1 | 带实例导出 | 只导结构，`statistics.objects` 只是"导出端当时有多少" | 加可选 `instances` 字段（nodes / relationships），导入同样换 id、按类名认对象类型。因为是可选字段，格式版本不用动 |
+| E2 | 概念域分组与指标 | 本体模型里**没有**这两个概念（bkn 的 `concept_groups` / `metrics`） | 先在定义层加模型，再进本体包。别为了"和 bkn 对齐"往包里塞平台不认识的段 |
+| E3 | 包与已有本体合并 | 导入只有"新建"，不能"并进已有本体" | 要合并得按名字匹配类/关系类型并让人确认冲突，属于独立特性，别顺手做 |
 ### 能力验证（智能问答与 MCP）
 
 记录时间：2026-09-13。**对标 bkn-studio 的「能力验证」：用大模型编排本体工具，多步查询后给带证据的结论。**

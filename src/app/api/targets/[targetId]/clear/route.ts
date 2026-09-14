@@ -11,7 +11,7 @@ const clearInput = z.object({ confirm: z.string().min(1) });
 
 /** 清空前的预览：这个图库里现在有多少对象和关系。统计失败不影响清空本身。 */
 export async function GET(_: NextRequest, context: { params: Promise<{ targetId: string }> }) {
-  let kind: GraphTargetKind = "NEO4J";
+  let kind: GraphTargetKind = "JENA";
   try {
     await requireRole("VIEWER");
     const { targetId } = await context.params;
@@ -31,7 +31,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ targetId:
  * 要键入本体存储名称才执行；只动图库，平台的版本记录与快照保留，重新发布一次即可写回。
  */
 export async function POST(request: NextRequest, context: { params: Promise<{ targetId: string }> }) {
-  let kind: GraphTargetKind = "NEO4J";
+  let kind: GraphTargetKind = "JENA";
   try {
     const user = await requireRole("ADMIN");
     const { targetId } = await context.params;

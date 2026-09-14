@@ -650,7 +650,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
       const snippet = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
       return `「${shortName}」(${node.id}，${entry.propertyName}开头：${snippet})`;
     }).join("、");
-    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」存在 ${entry.nodes.length} 个超过 Neo4j 索引大小限制（约 ${MAX_INDEXED_VALUE_BYTES} 字节）的值，无法建立唯一约束。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
+    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」有 ${entry.nodes.length} 个值的长度超过 ${MAX_INDEXED_VALUE_BYTES} 字节（约 8KB），不适合当唯一键。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
   const actionViolations: SnapshotViolation[] = validateActionDefinition(snapshot.definition);
   return [...violations, ...actionViolations];

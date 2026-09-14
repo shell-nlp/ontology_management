@@ -4,22 +4,22 @@ import type { DataType } from "@/lib/instance-property-editor";
  * 图数据库抽象层的公共契约。
  *
  * 这里只描述“任何图后端都成立”的概念：本体存储、图数据、运行时类型、查询结果。
- * 具体后端（Neo4j / Apache Jena）各自实现 GraphStore，由 @/lib/graph 的注册表
- * 按 target.kind 分派。上层 API 路由与 React 组件只依赖这里的类型，
- * 不直接依赖 neo4j-driver 或 SPARQL。
+ * 目前只有 Apache Jena 一个后端（Neo4j 已于 2026-09-14 移除），
+ * 它实现 GraphStore，由 @/lib/graph 的注册表按 target.kind 分派。
+ * 上层 API 路由与 React 组件只依赖这里的类型，不直接依赖 SPARQL 客户端。
  *
  * 新增后端（NetworkX、Elasticsearch 等）时只需要：
  * 1. 在 GraphTargetKind 中登记类型；
  * 2. 在 GRAPH_TARGET_KINDS 中补充连接表单元数据；
  * 3. 新增一个实现 GraphStore 的适配器并在 registry 中注册。
  */
-export type GraphTargetKind = "NEO4J" | "JENA";
+export type GraphTargetKind = "JENA";
 
 /** 后端原生查询语言。上层只用于展示与“是否允许直接写入”的判断。 */
-export type QueryLanguage = "cypher" | "sparql";
+export type QueryLanguage = "sparql";
 
 export type GraphStoreCapabilities = {
-  /** 能否读取“类型级”结构视图（Neo4j 用 db.schema.visualization，Jena 用 RDF Schema 推导）。 */
+  /** 能否读取“类型级”结构视图（Jena 用实例的 rdf:type 与 RDF Schema 推导）。 */
   schemaVisualization: boolean;
   /** 能否在图库侧落地唯一 / 必填等强约束。 */
   strongRules: boolean;
@@ -32,9 +32,9 @@ export type GraphStoreCapabilities = {
 
 /**
  * 引擎标记的几何来源：直接用该引擎自己的数据模型画，而不是套一个通用数据库图标。
- * property-graph = 节点 + 卫星点；triple = 闭合的主谓宾；mesh = 无向网格；shards = 分片。
+ * triple = 闭合的主谓宾；mesh = 无向网格；shards = 分片。
  */
-export type GraphTargetMark = "property-graph" | "triple" | "mesh" | "shards";
+export type GraphTargetMark = "triple" | "mesh" | "shards";
 
 export type GraphTargetKindInfo = {
   kind: GraphTargetKind;
@@ -62,21 +62,6 @@ export type GraphTargetKindInfo = {
 };
 
 export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
-  {
-    kind: "NEO4J",
-    label: "Neo4j",
-    shortLabel: "Neo4j",
-    description: "Cypher 图数据库，属性图模型：节点带标签与属性，关系有类型与方向。",
-    modelLabel: "属性图",
-    accent: "#0b84d8",
-    mark: "property-graph",
-    queryLanguage: "cypher",
-    queryLanguageLabel: "Cypher",
-    capabilities: { schemaVisualization: true, strongRules: true, atomicReplace: true },
-    endpoint: { label: "Neo4j URI", placeholder: "neo4j+s://host:7687", example: "neo4j://localhost:7687" },
-    dataset: { label: "数据库名称", placeholder: "neo4j", example: "neo4j", required: true },
-    credentials: { usernameLabel: "用户名", usernameExample: "neo4j", passwordLabel: "密码", required: true },
-  },
   {
     kind: "JENA",
     label: "Apache Jena",
@@ -115,25 +100,20 @@ export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
 ];
 
 /**
- * 前端对外提供的引擎。Neo4j 已从前端下线：
+ * 前端对外提供的引擎。
  *
- * Neo4j 社区版没有多库隔离、强约束也弱，界面上不再提供它的新建入口。
- * 后端适配器（src/lib/graph/neo4j.ts）和已登记的 Neo4j 本体存储继续可用，
- * 只是为了兼容历史数据，不再出现在「选择图数据库类型」里。
+ * 2026-09-14：**Neo4j 已整体移除** —— 适配器、驱动依赖、类型枚举、界面入口一并删掉。
+ * 原因是它的能力撑不起这里的模型：社区版一个库只能装一个本体（没有多库隔离）、
+ * 强约束弱，也没有类层级与推理。现在前后端都只有 Apache Jena 一个后端。
  */
-export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS.filter((info) => info.kind !== "NEO4J");
+export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS;
 
-/** 前端新建本体存储时的默认引擎。 */
-export const DEFAULT_GRAPH_TARGET_KIND: GraphTargetKind = FRONTEND_GRAPH_TARGET_KINDS[0]?.kind ?? "JENA";
+/** 新建本体存储时的默认引擎。 */
+export const DEFAULT_GRAPH_TARGET_KIND: GraphTargetKind = "JENA";
 
-/** 这个引擎是否还在前端提供。Neo4j 返回 false，但它的数据仍然可读可写。 */
+/** 这个引擎是否还在前端提供。现在只有 Jena，恒为 true。 */
 export function isFrontendGraphTargetKind(kind: GraphTargetKind): boolean {
-  return FRONTEND_GRAPH_TARGET_KINDS.some((item) => item.kind === kind);
-}
-
-/** 已从前端下线、但可能有历史存储记录的引擎。用于把它们单独归组，避免数据凭空消失。 */
-export function retiredGraphTargetKinds(): GraphTargetKindInfo[] {
-  return GRAPH_TARGET_KINDS.filter((info) => !isFrontendGraphTargetKind(info.kind));
+  return GRAPH_TARGET_KINDS.some((item) => item.kind === kind);
 }
 
 export function isGraphTargetKind(value: unknown): value is GraphTargetKind {
@@ -149,9 +129,9 @@ export type GraphTarget = {
   id: string;
   name: string;
   kind: GraphTargetKind;
-  /** Neo4j 为 bolt/neo4j URI；Jena 为 Fuseki 服务地址。 */
+  /** Fuseki 的 SPARQL 服务地址。 */
   uri: string;
-  /** Neo4j 为数据库名；Jena 为数据集名。 */
+  /** Fuseki 的数据集名。 */
   database_name: string;
   username: string;
   credential_secret: string;
@@ -222,7 +202,7 @@ export type GraphWriteSnapshot = {
   relationships: GraphWriteRelationship[];
 };
 
-/** 导出视图：id 由后端给出（Neo4j elementId / Jena IRI），上层负责转成快照 UUID。 */
+/** 导出视图：id 由后端给出（Jena IRI），上层负责转成快照 UUID。 */
 export type GraphExport = {
   nodes: { id: string; labels: string[]; properties: Record<string, unknown> }[];
   relationships: { id: string; sourceId: string; targetId: string; type: string; properties: Record<string, unknown> }[];
@@ -260,7 +240,7 @@ export type ListRelationshipsOptions = {
 
 /**
  * 一个已登记本体存储的统一操作面。
- * 每个方法都必须是后端无关的语义：调用方不应该知道 Cypher 或 SPARQL。
+ * 每个方法都必须是后端无关的语义：调用方不应该知道底层是哪种查询语言。
  */
 export interface GraphStore {
   readonly kind: GraphTargetKind;
@@ -271,7 +251,7 @@ export interface GraphStore {
   testConnection(): Promise<ConnectionInfo>;
   /** 判断一条原生查询是否会写入图库。 */
   containsWriteStatement(query: string): boolean;
-  /** 执行原生查询（Cypher / SPARQL），返回表格结果与可绘制的图数据。 */
+  /** 执行原生查询（SPARQL），返回表格结果与可绘制的图数据。 */
   execute(query: string, parameters?: Record<string, unknown>, options?: { readOnly?: boolean }): Promise<QueryResult>;
   /** 原生查询工作台的默认语句与提示。 */
   queryTemplate(): { defaultQuery: string; placeholder: string; visualizationHint: string };

@@ -4,16 +4,16 @@ import { isUnauthorized, requireRole } from "@/lib/auth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTarget, GraphTargetKind } from "@/lib/graph/types";
-import { describeTargetError, getTarget, normalizeTargetKind, parseTargetOptions } from "@/lib/targets";
+import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/targets";
 
 /**
  * 试连一个还没保存（或刚改过）的本体存储：弹窗里的「测试连接」用它。
  * 只做一次连接探测，不落库、不改图数据。
  */
 const testInput = z.object({
-  kind: z.enum(["NEO4J", "JENA"]).default("NEO4J"),
+  kind: z.enum(["JENA"]).default("JENA"),
   uri: z.string().trim().url(),
-  databaseName: z.string().trim().min(1).max(100).default("neo4j"),
+  databaseName: z.string().trim().min(1).max(100).default("ds"),
   username: z.string().trim().max(100).default(""),
   password: z.string().max(500).default(""),
   options: z.record(z.string(), z.unknown()).default({}),
@@ -23,17 +23,16 @@ const testInput = z.object({
 
 export async function POST(request: NextRequest) {
   // 解析失败时也要按用户选的类型给提示，所以 kind 提到 try 外面。
-  let kind: GraphTargetKind = "NEO4J";
+  let kind: GraphTargetKind = "JENA";
   try {
     await requireRole("ADMIN");
     const input = testInput.parse(await request.json());
-    kind = normalizeTargetKind(input.kind);
+    kind = input.kind;
     let password = input.password;
     if (!password && input.targetId) {
       const stored = await getTarget(input.targetId);
       password = stored?.credential_secret ? decryptSecret(stored.credential_secret) : "";
     }
-    if (!password && kind === "NEO4J") return NextResponse.json({ error: "Neo4j 需要密码：先填上密码再试连。" }, { status: 400 });
     const draft: GraphTarget = {
       id: input.targetId ?? "unsaved",
       name: "连接测试",

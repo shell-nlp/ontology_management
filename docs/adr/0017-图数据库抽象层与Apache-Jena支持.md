@@ -2,7 +2,9 @@
 
 ## 状态
 
-已采纳。
+已采纳。**部分被 0019 取代（2026-09-14）**：抽象层与 `GraphStore` 契约继续有效，
+但「Neo4j 与 Jena 两个后端并列」不再成立 —— Neo4j 适配器、`neo4j-driver` 依赖与
+`scripts/neo4j-instance.ps1` 已整体移除，平台只保留 Apache Jena。本文中描述 Neo4j 的段落为历史记录。
 
 ## 背景
 

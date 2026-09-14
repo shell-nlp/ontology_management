@@ -6,7 +6,7 @@ import { LEGACY_PRIMARY_SOURCE_ID } from "@/lib/ontology-sources";
  *
  * 这里只保留与图数据库无关的定义结构。落地到具体图库的读写能力
  * （校验必填、同步唯一约束与索引、整体替换图数据）由
- * @/lib/graph 的 GraphStore 适配器实现，不再和 Cypher 绑定。
+ * @/lib/graph 的 GraphStore 适配器实现，不绑定任何一种图库的查询语言。
  *
  * 动作（actionTypes）与规则（rules）是本体的一等公民，不是某个类的字段：
  * 一个动作可以跨多个类写入，规则挂在动作上拦截写入。

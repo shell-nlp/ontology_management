@@ -2,13 +2,13 @@ import type { DataType } from "@/lib/instance-property-editor";
 
 /**
  * 与后端无关的取值与类型推断工具。
- * 放在共享模块里，避免 Jena 适配器为了一个纯函数去依赖 neo4j-driver。
+ * 放在共享模块里，让适配器不必为了一个纯函数去依赖具体的图库客户端。
  */
 
 const MAX_AUTO_UNIQUE_BYTES = 1000;
 const MAX_UTF8_BYTES_PER_CHARACTER = 4;
 
-/** 自动推断唯一约束时使用的保守字符长度上限（Neo4j 索引键为 UTF-8 字节）。 */
+/** 自动推断唯一约束时使用的保守字符长度上限（按 UTF-8 字节算）。 */
 export const MAX_AUTO_UNIQUE_CHARACTERS = Math.floor(MAX_AUTO_UNIQUE_BYTES / MAX_UTF8_BYTES_PER_CHARACTER);
 
 export function isAutoUniqueCandidate(row: { cnt: number; distinctCount: number; maxCharacterLength: number }) {

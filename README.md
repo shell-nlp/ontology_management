@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  面向 Neo4j 与 Apache Jena 的本体与图数据管理平台<br/>
+  面向 Apache Jena 的本体与图数据管理平台<br/>
   可插拔图数据库抽象 · 版本化本体快照 · 草稿安全编辑 · 发布重建图数据
 </p>
 
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Neo4j" src="https://img.shields.io/badge/Neo4j-Graph-008CC1?style=flat-square&logo=neo4j&logoColor=white" />
+  <img alt="Apache Jena" src="https://img.shields.io/badge/Apache_Jena-RDF_Graph-6D4AFF?style=flat-square" />
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Platform_DB-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-11-F69220?style=flat-square&logo=pnpm&logoColor=white" />
   <img alt="Vitest" src="https://img.shields.io/badge/Vitest-Unit_Tests-6E9F18?style=flat-square&logo=vitest&logoColor=white" />
@@ -31,9 +31,9 @@
 
 ---
 
-使用 Next.js 管理多个图数据库（当前支持 Neo4j 与 Apache Jena）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密的本体存储凭据、版本索引与审计记录。
+使用 Next.js 管理图数据库（当前支持 Apache Jena / Fuseki）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密的本体存储凭据、版本索引与审计记录。
 
-图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知 Cypher / SPARQL 差异。接入新的图后端只需新增一个适配器。
+图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知底层查询语言与存储模型的差异。接入新的图后端只需新增一个适配器。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
@@ -49,6 +49,7 @@
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
 - [统一版本快照](#统一版本快照)
+- [本体包（导出与导入）](#本体包导出与导入)
 - [角色与安全](#角色与安全)
 - [服务端接口](#服务端接口)
 - [数据资源](#数据资源)
@@ -70,19 +71,20 @@
 | 📐 | **本体草稿** | 类、关系类型、端点契约与属性规则；校验后发布 |
 | 🔗 | **对象与关系** | 对象绑定单一已发布类型（Label）；关系端点须符合契约 |
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON |
-| 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由各后端推导（Neo4j / RDF）。两种视图的节点都可拖拽摆放：有草稿的实例位置写入图快照，只读浏览与本体骨架的摆放只记在本机浏览器 |
-| ⌨️ | **查询工作台** | 按本体存储后端切换 Cypher / SPARQL；默认只读，禁止绕过发布直接写入 |
+| 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由图库侧推导（RDF `rdf:type`）。两种视图的节点都可拖拽摆放：有草稿的实例位置写入图快照，只读浏览与本体骨架的摆放只记在本机浏览器 |
+| ⌨️ | **查询工作台** | SPARQL 只读查询与可视化；禁止绕过发布直接写入 |
 | 🗄 | **本体存储管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
-| 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，Neo4j 与 Apache Jena 已实现 |
+| 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，当前实现 Apache Jena |
 | 🧱 | **数据资源** | 外部关系库的只读连接（PostgreSQL / MySQL / Oracle）：列结构、字段与数据预览，再把类绑到表上（一个类可挂多份来源，按主键合并属性） |
 | 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
+| 📤 | **本体包** | 一个 `.ontology.json` 带走整份**结构**（类 / 关系类型 / 动作 / 规则 + 数据资源坐标），导入停在草稿。不含实例数据，也不含凭据 |
 
 ## 技术栈
 
 | 层级 | 选型 |
 | --- | --- |
 | 前端 / API | Next.js（App Router）、React 19 |
-| 图数据库 | Neo4j · `neo4j-driver`；Apache Jena / Fuseki · SPARQL 1.1 |
+| 图数据库 | Apache Jena / Fuseki · SPARQL 1.1（Neo4j 已于 2026-09-14 移除） |
 | 平台元数据 | PostgreSQL · Schema `ontology_platform` |
 | 图可视化 | Sigma / Graphology、React Flow |
 | 校验 | Zod |
@@ -168,7 +170,6 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 后端 | 原子替换的实现 |
 | --- | --- |
-| Neo4j | 单个写事务内 `DETACH DELETE` + 分批 `UNWIND CREATE`，任一批失败整体回滚 |
 | Apache Jena | 单个 SPARQL Update 请求完成「清空 + 插入」（TDB2 上单请求即事务）；超过 5000 条三元组时先写入影子命名图，再用一个请求 `CLEAR + ADD + DROP` 原子切换 |
 
 发布过程写三条审计：`VERSION_PUBLISH_STARTED`（含后端类型与 `atomicReplace`）、`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`，用于判断图是否已被改动）。同一个本体存储的发布在进程内队列与 PostgreSQL advisory lock 两层串行，多实例部署也不会并发替换同一个本体存储。
@@ -183,18 +184,56 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 > **多实例生产环境**：`ONTOLOGY_VERSION_DIR` 必须是所有实例共享的持久卷，不能用各机本地临时目录。
 
-无实例快照的旧归档版本不可激活；当前发布版与草稿会在首次使用时从真实 Neo4j 生成快照。
+无实例快照的旧归档版本不可激活；当前发布版与草稿会在首次使用时从真实图库生成快照。
+
+## 本体包（导出与导入）
+
+版本快照是**平台内部**的形态：一个目录四个文件，id 全是本机的 UUID。要在人和环境之间传播，
+需要的是另一种东西 —— **本体包**：一个 `.ontology.json` 文件，单文件、自描述、只装结构。
+
+```json
+{
+  "format": "ontology.bundle",
+  "formatVersion": 1,
+  "exportedAt": "2026-09-14T06:58:39.413Z",
+  "generator": { "name": "ontology-management", "version": "0.1.0" },
+  "ontology": { "identifier": "m3-1789283543253", "name": "...", "description": "...", "color": "", "tags": ["m3"] },
+  "statistics": { "objectTypes": 3, "relationTypes": 1, "actionTypes": 0, "rules": 0, "objects": 3, "relationships": 0 },
+  "dataSources": [{ "id": "<导出端的数据资源 id>", "kind": "ORACLE", "host": "39.164.136.34", "port": 1251, "databaseName": "orcl", "schemaName": "GISTOOLS" }],
+  "definition": { "entityTypes": [], "relationshipTypes": [], "actionTypes": [], "rules": [] }
+}
+```
+
+三条不变量：
+
+1. **`definition` 就是平台内部的 `OntologyDefinition`，原样进出。** 不新造一套形状，
+   所以导出/导入不可能出现"两份定义各说各话"。
+2. **包里绝不写凭据。** 数据资源只记连接坐标（kind / host / port / 库 / 模式），
+   导入端按坐标去匹配本机已登记的资源。
+3. **导入一定停在草稿。** 别人的文件不该绕过版本边界——导入只写本地快照，
+   校验、发布仍走平台既有流程。
+
+### 导入时做的三件事
+
+1. **换 id。** 包里的 UUID 全部重发新号，父子类、关系端点、动作作用域、规则条件一起改写
+   （一次遍历建立映射，避免"边改边查"漏改）。
+2. **接回数据资源。** 先按 kind + host + port + 库 + 模式五项全等匹配；只差模式时放宽一次并给出提醒；
+   还是找不到就把这条来源绑定**留空**，并在弹窗里点名是哪个类需要重新选表——不静默丢绑定。
+3. **建本体 + 写草稿。** 本体名（可改）与标识沿用包里的，标识被占用就自动加序号。
+
+实例数据**不在**包里：`statistics.objects` 只是告诉接收方"导出端当时有多少对象"。
+所以导入后的本体对象数是 0，需要自己补数据或从数据资源实例化。
 
 ## 角色与安全
 
 | 角色 | 权限 |
 | --- | --- |
-| `ADMIN` 本体存储、本体版本、实例写入、Cypher 写入（需确认） |
+| `ADMIN` | 本体存储、本体版本、实例写入、原生查询写入（已默认禁止） |
 | `VIEWER` | 登录、浏览与只读查询 |
 
 - 会话：HttpOnly Cookie，`AUTH_SECRET` 签署  
-- 数据面：Neo4j / PostgreSQL 仅服务端访问，浏览器不接触密码与主密钥  
-- 写入边界：业务写经草稿快照与发布；Cypher 默认只读，避免绕过版本  
+- 数据面：图库 / PostgreSQL 仅服务端访问，浏览器不接触密码与主密钥  
+- 写入边界：业务写经草稿快照与发布；原生查询一律只读，避免绕过版本  
 
 ## 服务端接口
 
@@ -211,7 +250,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 </details>
 
 <details>
-<summary><b>本体存储（Neo4j / Apache Jena）</b></summary>
+<summary><b>本体存储（Apache Jena）</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -235,6 +274,8 @@ curl -X POST http://localhost:3000/api/bootstrap
 | `POST` | `/api/ontology/:versionId/validate` | 校验草稿 |
 | `POST` | `/api/ontology/:versionId/publish` | 发布并重建图 |
 | `POST` | `/api/ontology/:versionId/activate` | 激活历史快照 |
+| `GET` | `/api/ontologies/:ontologyId/export` | 导出本体包（单文件 JSON，仅结构） |
+| `POST` | `/api/ontologies/import` | 从本体包导入：建本体 + 写草稿（不发布） |
 
 </details>
 
@@ -263,7 +304,7 @@ curl -X POST http://localhost:3000/api/bootstrap
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/query` | 按连接的后端执行只读 Cypher / SPARQL，写入一律 409 |
+| `POST` | `/api/query` | 执行只读 SPARQL，写入一律 409 |
 
 </details>
 
@@ -288,46 +329,35 @@ curl -X POST http://localhost:3000/api/bootstrap
 | 文件 | 职责 |
 | --- | --- |
 | `types.ts` | `GraphTarget`、`GraphData`、`RuntimeTypeSet`、`GraphStore` 契约与连接元数据 |
-| `neo4j.ts` | Neo4j 适配器：Cypher、约束/索引、`db.schema.visualization` |
 | `jena.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
 | `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
 
 ### 本体存储配置字段
 
-| 字段 | Neo4j | Apache Jena |
-| --- | --- | --- |
-| `uri` | `neo4j://host:7687` | Fuseki 服务地址，如 `http://host:3030`（也接受 `/ds/query`、`/ds/sparql`） |
-| `database_name` | 数据库名 | 数据集名 |
-| `username` / `password` | 必填 | 可选（写入通常需要管理员凭据） |
-| `options.namedGraph` | — | 可选，写入/读取指定命名图，默认图可留空 |
+| 字段 | Apache Jena |
+| --- | --- |
+| `uri` | Fuseki 服务地址，如 `http://host:3030`（也接受 `/ds/query`、`/ds/sparql`） |
+| `database_name` | 数据集名 |
+| `username` / `password` | 可选（写入通常需要管理员凭据） |
+| `options.namedGraph` | 可选，写入/读取指定命名图，默认图可留空；平台给每个本体自动分配 `urn:ontology:<id>` |
 
 RDF 与属性图的映射：`?s rdf:type ?t` → 节点标签，字面量三元组 → 节点属性，资源三元组 → 关系；关系自身属性用 `urn:bkn:Relationship` 具体化表达，同时保留一条直接三元组，外部 SPARQL 工具照常可查。
 
 ### 多个本体放在哪（隔离）
 
-平台的「发布」是**整图替换**：Neo4j 执行 `MATCH (n) DETACH DELETE n` 后重建，Jena 清掉目标图或默认图后重写。
-因此**同一个库上不能登记两个本体存储**——两边会互相看见数据，发布时互相清空。
+平台的「发布」是**整图替换**：Jena 侧清掉目标命名图（没配命名图时是默认图）后重写。
+因此**同一个「数据集 + 命名图」上不能登记两个本体存储**——两边会互相看见数据，发布时互相清空。
 新建 / 编辑本体存储时平台会拦下这种情况（HTTP 409），并说明怎么改。
+
+隔离单位是**命名图**，不是「多起一套实例」：
 
 | 做法 | 适用 | 说明 |
 | --- | --- | --- |
-| 多实例（默认做法） | Neo4j 社区版 | 一个实例一个库，一个库一个本体；端口错开即可，隔离最彻底 |
-| 多 dataset / 命名图 | Apache Jena | 一个 Fuseki 下配多个 dataset，或同一 dataset 内用「命名图」，社区版没有多库限制 |
-| 多库 | Neo4j Enterprise / Aura | `CREATE DATABASE`，登记时把库名填对即可 |
-
-再加一个 Neo4j 本体，一条命令：
-
-```powershell
-pwsh scripts/neo4j-instance.ps1 -Name ontology-neo4j-c -BoltPort 7689 -HttpPort 7476
-pwsh scripts/neo4j-instance.ps1 -List          # 看现有实例和端口
-pwsh scripts/neo4j-instance.ps1 -Stop <容器名>  # 停掉，数据卷保留
-```
-
-脚本会打印登记用的四项（URI `bolt://localhost:7689`、库名 `neo4j`、账号、密码），
-填进「本体存储」新建向导、点「测试连接」通过即可。每个实例一份数据卷 `${名称}-data`，删容器不丢数据。
+| 命名图（默认做法） | Apache Jena | 一个数据集里一个本体一个命名图。在「本体」页新建本体时**不用选**，平台自动分配 `urn:ontology:<本体 id>`，同一个 Fuseki 上可以并存任意多个本体 |
+| 多 dataset | Apache Jena | 需要按环境 / 租户再分一层时，一个 Fuseki 下配多个 dataset，登记存储时选不同数据集 |
+| 独立实例 | Apache Jena | 需要资源或权限硬隔离时才单起一套 Fuseki/TDB2；日常使用不需要 |
 
 ### 新增图后端
-*** End Patch
 
 1. 在 `GraphTargetKind` 登记类型，并在 `GRAPH_TARGET_KINDS` 补齐连接表单元数据；
 2. 新增实现 `GraphStore` 的适配器；
@@ -337,7 +367,7 @@ API 路由、版本发布流程与界面组件无需改动。
 
 ## 数据资源
 
-数据资源是**外部数据来源**，和本体存储不是一回事：本体存储（Neo4j / Apache Jena）是本体自己的落库位置，数据资源是「类下面那些对象从哪来」。
+数据资源是**外部数据来源**，和本体存储不是一回事：本体存储（Apache Jena）是本体自己的落库位置，数据资源是「类下面那些对象从哪来」。
 
 `src/lib/data-source` 是唯一的数据来源访问入口：
 
@@ -407,7 +437,7 @@ ontology_management/
 ├── src/
 │   ├── app/              # 页面与 API 路由
 │   ├── components/       # 工作台、图画布、属性编辑器
-│   └── lib/              # 认证、图数据库抽象（graph/）、数据来源抽象（data-source/）、本体、版本快照
+│   └── lib/              # 认证、图数据库抽象（graph/）、数据来源抽象（data-source/）、本体、版本快照、本体包（ontology-bundle.ts）
 ├── docs/
 │   └── adr/              # 架构决策记录
 ├── e2e/                  # Playwright 端到端

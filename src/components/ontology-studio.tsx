@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { Boxes, Clock3, Database, Layers, Plus, Search, Tag, Trash2, X } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { Boxes, Clock3, Database, Download, FileJson, Layers, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { api, describeApiError } from "@/lib/api-client";
 import { graphColor } from "@/lib/graph-palette";
 import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/graph/types";
 /** 存储资源选项：只用到这几项，调用方传完整的 Target 也能满足。 */
@@ -49,7 +49,7 @@ const PAGE_SIZE = 12;
 export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refresh, onOpen, notify, fail }: Props) {
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
-  const [creating, setCreating] = useState(false);
+  const [dialog, setDialog] = useState<null | "create" | "import">(null);
 
   const filtered = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
@@ -62,6 +62,34 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, pageCount);
   const rows = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+
+  /**
+   * 导出本体包：一个 JSON 文件带走这份本体的结构。
+   * 用 fetch 而不是 api()，因为要拿的是文件本体与 Content-Disposition 里的文件名。
+   */
+  const exportBundle = async (ontology: OntologySummary) => {
+    try {
+      const response = await fetch(`/api/ontologies/${ontology.id}/export`);
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: unknown };
+        throw new Error(describeApiError(response.status, data.error));
+      }
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = encoded ? decodeURIComponent(encoded) : `${ontology.identifier}.ontology.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      notify(`已导出「${ontology.name}」的结构包。`);
+    } catch (reason) {
+      fail(reason);
+    }
+  };
 
   const remove = async (ontology: OntologySummary) => {
     if (!window.confirm(`删除本体「${ontology.name}」？它的草稿、版本记录与图数据都会一并删除，无法撤销。`)) return;
@@ -87,7 +115,8 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
               <Search size={15} />
               <input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索名称 / 标识 / 标签" />
             </label>
-            <button className="action primary" disabled={!canEdit} onClick={() => setCreating(true)}><Plus size={16} />新建本体</button>
+            <button className="action" disabled={!canEdit} onClick={() => setDialog("import")}><Upload size={15} />导入本体包</button>
+            <button className="action primary" disabled={!canEdit} onClick={() => setDialog("create")}><Plus size={16} />新建本体</button>
           </div>
         </div>
         <p className="subtle">每个本体是一份互相隔离的图数据。新建时只需要挑一个存储资源——Jena 会自动分配一份命名图，所以同一个 Fuseki 里能放多个本体。</p>
@@ -136,6 +165,7 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
               </div>
               <div className="os-card-actions">
                 <button className="graph-action primary" onClick={() => onOpen(ontology)}>打开</button>
+                <button className="graph-action" onClick={() => void exportBundle(ontology)}><Download size={13} />导出</button>
                 <button className="graph-action danger" disabled={!canEdit} onClick={() => void remove(ontology)}><Trash2 size={13} />删除</button>
                 <span className="os-time"><Clock3 size={11} />{new Date(ontology.updated_at).toLocaleDateString("zh-CN")}</span>
               </div>
@@ -152,12 +182,22 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
         </div>
       )}
 
-      {creating && (
+      {dialog && (
         <CreateOntologyDialog
+          mode={dialog}
           targets={targets}
           ontologies={ontologies}
-          onClose={() => setCreating(false)}
-          onCreated={async (ontology) => { await refresh(); setCreating(false); notify(`本体「${ontology.name}」已创建。`); onOpen(ontology); }}
+          onClose={() => setDialog(null)}
+          // 导入成功就先把列表刷新出来：即使后面还停在提醒页，用户关掉也能看到新本体。
+          onImported={async () => { await refresh(); }}
+          onFinished={async (ontologyId, name, options) => {
+            await refresh();
+            setDialog(null);
+            const rows = await api<OntologySummary[]>("/api/ontologies").catch(() => []);
+            const summary = rows.find((item) => item.id === ontologyId);
+            if (summary) onOpen(summary);
+            notify(options?.imported ? `本体「${name}」已从本体包导入到草稿，核对后即可发布。` : `本体「${name}」已创建。`);
+          }}
           fail={fail}
         />
       )}
@@ -165,11 +205,15 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
   );
 }
 
-function CreateOntologyDialog({ targets, ontologies, onClose, onCreated, fail }: {
+function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, onFinished, fail }: {
+  mode: "create" | "import";
   targets: StorageOption[];
   ontologies: OntologySummary[];
   onClose: () => void;
-  onCreated: (ontology: OntologySummary) => Promise<void>;
+  /** 导入已经落库、但还要留在弹窗里给人看提醒时，先把列表刷新掉。 */
+  onImported: () => Promise<void>;
+  /** 收尾：关弹窗、打开新本体、给提示。 */
+  onFinished: (ontologyId: string, name: string, options?: { imported?: boolean }) => Promise<void>;
   fail: (reason: unknown) => void;
 }) {
   const [name, setName] = useState("");
@@ -178,22 +222,74 @@ function CreateOntologyDialog({ targets, ontologies, onClose, onCreated, fail }:
   const [storageTargetId, setStorageTargetId] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 导入模式专用：原文件内容 + 客户端解析出的预览（真正的校验在服务端）。
+  const [fileText, setFileText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState<{ name: string; identifier: string; description: string; tags: string[]; counts: string } | null>(null);
+  const [fileError, setFileError] = useState("");
+  const [warnings, setWarnings] = useState<string[] | null>(null);
+  /** 导入已经落库，等着走收尾（关弹窗 + 打开）。有提醒时中间会停一下。 */
+  const [pending, setPending] = useState<{ id: string; name: string } | null>(null);
+
   // 受管记录（本体自己开的隔离空间）不该出现在「存储资源」里让用户再选一次。
   const managedIds = useMemo(() => new Set(ontologies.filter((item) => item.storage?.managed).map((item) => item.storage!.id)), [ontologies]);
-  // 下线的引擎（Neo4j）不再出现在新建本体的选项里；已有本体照常打开。
+  // 可选存储：受管记录（本体自己开的命名图）不再让用户选第二次。
   const choices = targets.filter((target) => !managedIds.has(target.id) && isFrontendGraphTargetKind(target.kind as GraphTargetKind));
-  // 已经被本体占用的 Neo4j 资源标出来：一个库只能装一个本体。
-  const occupied = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of ontologies) if (item.storage && !item.storage.managed) map.set(item.storage.id, item.name);
-    return map;
-  }, [ontologies]);
+
+  const readFile = async (file: File | null) => {
+    setFileError("");
+    setPreview(null);
+    setFileText("");
+    setFileName("");
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { format?: unknown; formatVersion?: unknown; ontology?: { name?: unknown; identifier?: unknown; description?: unknown; tags?: unknown }; statistics?: Record<string, unknown> };
+      if (parsed?.format !== "ontology.bundle") throw new Error("这不是本体包（缺少 format: ontology.bundle）。");
+      const source = parsed.ontology ?? {};
+      if (typeof source.name !== "string" || !source.name.trim()) throw new Error("本体包里没有本体名称。");
+      const stats = parsed.statistics ?? {};
+      const counts = [
+        `对象类型 ${Number(stats.objectTypes ?? 0)}`,
+        `关系类型 ${Number(stats.relationTypes ?? 0)}`,
+        `动作 ${Number(stats.actionTypes ?? 0)}`,
+        `规则 ${Number(stats.rules ?? 0)}`,
+      ].join(" · ");
+      setFileText(text);
+      setFileName(file.name);
+      setPreview({
+        name: source.name,
+        identifier: typeof source.identifier === "string" ? source.identifier : "",
+        description: typeof source.description === "string" ? source.description : "",
+        tags: Array.isArray(source.tags) ? source.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        counts,
+      });
+      if (!name.trim()) setName(source.name);
+    } catch (reason) {
+      setFileError(reason instanceof Error ? reason.message : "这个文件读不出来。");
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !name.trim() || !storageTargetId) return;
+    if (busy) return;
+    if (!storageTargetId) return;
     setBusy(true);
     try {
+      if (mode === "import") {
+        const result = await api<{ ontology: { id: string; name: string }; warnings: string[] }>("/api/ontologies/import", {
+          method: "POST",
+          body: JSON.stringify({ bundle: fileText, storageTargetId, name: name.trim() || undefined }),
+        });
+        setPending({ id: result.ontology.id, name: result.ontology.name });
+        setBusy(false);
+        await onImported();
+        // 有提醒就停在这里让人读完，等「完成」再收尾；没有就直接收尾。
+        if (result.warnings.length) { setWarnings(result.warnings); return; }
+        await finish(result.ontology.id, result.ontology.name);
+        return;
+      }
+      if (!name.trim()) return;
       const created = await api<{ id: string }>("/api/ontologies", {
         method: "POST",
         body: JSON.stringify({
@@ -203,41 +299,79 @@ function CreateOntologyDialog({ targets, ontologies, onClose, onCreated, fail }:
           storageTargetId,
         }),
       });
-      const rows = await api<OntologySummary[]>("/api/ontologies");
-      const summary = rows.find((item) => item.id === created.id);
-      if (summary) await onCreated(summary);
-      else { await onCreated({ ...(created as unknown as OntologySummary) }); }
+      await finish(created.id, name.trim());
     } catch (reason) {
       fail(reason);
-    } finally {
       setBusy(false);
     }
   };
 
+  const finish = async (ontologyId: string, name: string) => {
+    await onFinished(ontologyId, name, { imported: mode === "import" });
+  };
+
+  const importing = mode === "import";
+  const ready = Boolean(storageTargetId) && (importing ? Boolean(fileText) : Boolean(name.trim()));
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <form className="dialog os-dialog" onSubmit={submit}>
-        <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
-        <div className="dialog-icon"><Boxes size={22} /></div>
-        <span className="eyebrow">新建</span>
-        <h2>新建本体</h2>
-        <p>本体是一份互相隔离的图数据。落点由存储资源决定：Jena 会自动分配一份命名图，同一个 Fuseki 里可以放多个本体。</p>
-        <label>名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：专线业务本体" required /></label>
-        <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>
-        <label>标签<input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="用逗号或空格分隔，可留空" /></label>
+        <button type="button" className="close-button" onClick={pending ? () => void finish(pending.id, pending.name) : onClose} title="关闭"><X size={18} /></button>
+        <div className="dialog-icon">{importing ? <Upload size={22} /> : <Boxes size={22} />}</div>
+        <span className="eyebrow">{importing ? "导入" : "新建"}</span>
+        <h2>{importing ? "导入本体包" : "新建本体"}</h2>
+        <p>
+          {importing
+            ? "选一个 .ontology.json 文件，它的结构会作为新本体的草稿导入。导入不会立刻改图库——确认无误后再发布。"
+            : "本体是一份互相隔离的图数据。落点由存储资源决定：Jena 会自动分配一份命名图，同一个 Fuseki 里可以放多个本体。"}
+        </p>
+
+        {importing && (
+          <label className="os-file">
+            本体包文件
+            <span>
+              <input type="file" accept=".json,application/json" onChange={(event) => void readFile(event.target.files?.[0] ?? null)} />
+              <button type="button" className="graph-action" onClick={(event) => { const input = event.currentTarget.parentElement?.querySelector("input[type=file]"); if (input instanceof HTMLInputElement) input.click(); }}>
+                <FileJson size={14} />选择文件
+              </button>
+              <b>{fileName || "未选择"}</b>
+            </span>
+          </label>
+        )}
+        {fileError && <p className="os-file-error"><TriangleAlert size={13} />{fileError}</p>}
+        {preview && (
+          <div className="os-import-preview">
+            <b>{preview.name}</b>
+            {preview.identifier && <code>{preview.identifier}</code>}
+            <small>{preview.counts}</small>
+            {preview.description && <span>{preview.description}</span>}
+            {preview.tags.length > 0 && <div className="os-tags">{preview.tags.map((tag) => <em key={tag}><Tag size={10} />{tag}</em>)}</div>}
+          </div>
+        )}
+        {warnings && warnings.length > 0 && (
+          <div className="os-warnings">
+            <b><TriangleAlert size={14} />已导入，但有 {warnings.length} 处需要你核对</b>
+            <ul>{warnings.map((text) => <li key={text}>{text}</li>)}</ul>
+          </div>
+        )}
+
+        <label>{importing ? "本体名称（可改）" : "名称"}<input autoFocus={!importing} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：专线业务本体" required={!importing} /></label>
+        {!importing && <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>}
+        {!importing && <label>标签<input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="用逗号或空格分隔，可留空" /></label>}
         <label>存储资源
           <select value={storageTargetId} onChange={(event) => setStorageTargetId(event.target.value)} required>
             <option value="">选择一个存储资源</option>
-            {choices.map((target) => {
-              const holder = occupied.get(target.id);
-              const blocked = target.kind !== "JENA" && Boolean(holder);
-              return <option key={target.id} value={target.id} disabled={blocked}>{target.name} · {target.kindLabel}{blocked ? `（已被「${holder}」占用）` : ""}</option>;
-            })}
+            {choices.map((target) => <option key={target.id} value={target.id}>{target.name} · {target.kindLabel}</option>)}
           </select>
         </label>
+
         <div className="dialog-actions">
-          <button type="button" className="quiet-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={busy || !name.trim() || !storageTargetId}>{busy ? "创建中…" : "创建本体"}</button>
+          {warnings
+            ? <button type="button" className="primary-button" onClick={() => pending && void finish(pending.id, pending.name)}>完成</button>
+            : <>
+                <button type="button" className="quiet-button" onClick={onClose}>取消</button>
+                <button className="primary-button" disabled={busy || !ready}>{busy ? (importing ? "导入中…" : "创建中…") : importing ? "导入为草稿" : "创建本体"}</button>
+              </>}
         </div>
       </form>
     </div>
