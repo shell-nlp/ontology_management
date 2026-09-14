@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, leadingKeyword, stripSqlNoise } from "@/lib/data-source/sql-guard";
+import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, leadingKeyword, SQL_ROWS_CEILING, stripSqlNoise, takeRows } from "@/lib/data-source/sql-guard";
 
 describe("leadingKeyword", () => {
   it("取语句开头的动词", () => {
@@ -79,9 +79,26 @@ describe("boundedStatement", () => {
   it("套不上的语句原样执行，上限夹在 1000 以内", () => {
     expect(boundedStatement("MYSQL", "SHOW TABLES", 10)).toBe("SHOW TABLES");
     expect(boundedStatement("POSTGRES", "EXPLAIN SELECT 1", 10)).toBe("EXPLAIN SELECT 1");
-    expect(boundedStatement("POSTGRES", "SELECT 1", 99_999)).toContain("LIMIT 1000");
+    // 上限是 SQL_ROWS_CEILING + 1：多出来的那一行是判截断用的探针（takeRows）
+    expect(boundedStatement("POSTGRES", "SELECT 1", 99_999)).toContain(`LIMIT ${SQL_ROWS_CEILING + 1}`);
     expect(boundedStatement("POSTGRES", "SELECT 1", 0)).toContain("LIMIT 1");
   });
+
+describe("takeRows", () => {
+  it("多出来的那一行不进结果，只用来判截断", () => {
+    // 连接器按 limit + 1 去查：拿回 101 行 = 表里还有更多
+    const overflow = takeRows(Array.from({ length: 101 }, (_, index) => index), 100);
+    expect(overflow.rows).toHaveLength(100);
+    expect(overflow.truncated).toBe(true);
+    // 正好 100 行 = 刚取完，不算截断
+    const exact = takeRows(Array.from({ length: 100 }, (_, index) => index), 100);
+    expect(exact.rows).toHaveLength(100);
+    expect(exact.truncated).toBe(false);
+    const few = takeRows([1, 2, 3], 100);
+    expect(few).toEqual({ rows: [1, 2, 3], truncated: false });
+    expect(takeRows([], 100)).toEqual({ rows: [], truncated: false });
+  });
+});
 });
 
 describe("beginReadOnlyStatement", () => {

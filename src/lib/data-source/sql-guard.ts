@@ -102,12 +102,33 @@ export function assertReadOnlySql(sql: string): string {
  * 原样执行，由驱动侧截断）；Oracle 没有 LIMIT，用 ROWNUM 包一层。
  */
 export function boundedStatement(kind: DataSourceKind, statement: string, limit: number) {
-  const rows = Math.min(Math.max(1, Math.floor(limit)), 1000);
+  // 比 SQL_ROWS_CEILING 多留一行：调用方为了判"有没有被截断"会多要一行探针（见 takeRows）。
+  // 不留这一行的话，请求正好打在上限时永远查不出第 5001 行，截断标记就会漏报。
+  const rows = Math.min(Math.max(1, Math.floor(limit)), SQL_ROWS_CEILING + 1);
   const leading = leadingKeyword(statement);
   if (!["SELECT", "WITH", "VALUES", "TABLE"].includes(leading)) return statement;
   return kind === "ORACLE"
     ? `SELECT * FROM (${statement}) WHERE ROWNUM <= ${rows}`
     : `SELECT * FROM (${statement}) AS bkn_query LIMIT ${rows}`;
+}
+
+/**
+ * 只读查询一次最多取多少行。**全链路就这一个数**：工具层 `SQL_ROW_CEILING`、
+ * 连接器 `QUERY_LIMIT_MAX`、「问答配置」里 `sqlRowLimit` 的上界都对齐到它，
+ * 免得出现"界面上能填 5000、实际只给 500"这种对不上的情况。
+ */
+export const SQL_ROWS_CEILING = 5000;
+
+/**
+ * 把"可能多取一行"的结果切成「要返回的行 + 是否还有剩下的」。
+ *
+ * 为什么调用方要多取一行：给语句套上 `LIMIT n` 之后就**永远查不出超过 n 行**，
+ * 于是"结果被截断了吗"这个判断会永远是假。所以连接器按 `n + 1` 去查，
+ * 拿到 n + 1 行就说明还有更多 —— 这一行不返回给模型，只用来打 `truncated` 标记。
+ */
+export function takeRows<T>(list: readonly T[], limit: number) {
+  const size = Math.max(0, Math.floor(limit));
+  return { rows: list.slice(0, size), truncated: list.length > size };
 }
 
 /** 只读事务怎么开：三种库各是各的标准写法。 */

@@ -61,6 +61,13 @@ export type SchemaMatch = {
 /** 「取数行数上限」留空时的兜底：一次最多取这么多行，防止一条语句把内存拉爆。 */
 const SQL_ROW_CEILING = 5000;
 
+/**
+ * run_sql 自己的默认行数（模型不传 limit 时用它）。
+ * 与连接器的 `DEFAULT_QUERY_ROWS` 保持一致：**默认 100 行**，
+ * 超过就靠多取一行判出来，返回里标 `truncated: true` 并附一段人话提示。
+ */
+const DEFAULT_SQL_ROWS = 100;
+
 export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
@@ -121,13 +128,13 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_sql",
     description:
-      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；结果默认最多 50 行。写查询前先用 get_table_ddl 确认字段名。",
+      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。写查询前先用 get_table_ddl 确认字段名。",
     parameters: {
       type: "object",
       properties: {
         data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
         sql: { type: "string", description: "一条只读的 SQL 语句" },
-        limit: { type: "integer", description: "返回行数上限，默认 50" },
+        limit: { type: "integer", description: "返回行数上限，默认 100（上限 5000）" },
       },
       required: ["data_source", "sql"],
     },
@@ -712,7 +719,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!sql.trim()) throw new Error("sql 不能为空。");
       // 模型自己给的行数；「问答配置」里设了取数上限就再夹一道，没设就用兜底上限。
       const ceiling = context.sqlRowLimit ?? SQL_ROW_CEILING;
-      const limit = Math.min(clamp(args.limit, 50, SQL_ROW_CEILING), ceiling);
+      const limit = Math.min(clamp(args.limit, DEFAULT_SQL_ROWS, SQL_ROW_CEILING), ceiling);
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
       if (!connector.runReadOnlyQuery) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持 SQL 查询。`);
@@ -728,6 +735,11 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           columns: result.columns,
           rows: result.rows,
           truncated: result.truncated,
+          // 截断了就要说人话：模型只看到一个 true 时，
+          // 很容易把"前 100 行"当成"一共就这么多"，进而下一个错结论。
+          ...(result.truncated
+            ? { truncation_note: `结果已被截断：只返回了前 ${result.rows.length} 行（本次上限 ${result.rowLimit}），表里还有更多行。要全貌就用更精确的 WHERE、聚合或更强的取数上限重新查；把"前 ${result.rows.length} 行"当成全量会得出错误结论。` }
+            : {}),
           note: readOnlyPolicyNote(record.kind),
           // 只读事务起没起得来要如实报：起不来时只剩语句检查在挡，不能让人以为库里有保险。
           read_only_transaction: result.readOnlyTransaction,

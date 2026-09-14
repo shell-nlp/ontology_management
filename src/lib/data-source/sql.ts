@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 
-import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, statementTimeoutStatements } from "@/lib/data-source/sql-guard";
+import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/data-source/sql-guard";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,
@@ -38,8 +38,9 @@ const PREVIEW_LIMIT_MAX = 200;
 const VIEW_LIMIT_MAX = 5000;
 const DEFAULT_PREVIEW_ROWS = 20;
 /** 只读查询：给模型看的默认行数与硬上限；超时就放弃，别让一条语句拖着整个服务。 */
-const DEFAULT_QUERY_ROWS = 50;
-const QUERY_LIMIT_MAX = 500;
+const DEFAULT_QUERY_ROWS = 100;
+/** 硬上限与「问答配置」里的「取数行数上限」上界对齐（`SQL_ROWS_CEILING`），不然界面上填了 5000 也只给 500。 */
+const QUERY_LIMIT_MAX = SQL_ROWS_CEILING;
 const QUERY_TIMEOUT_MS = 15_000;
 /** 原始 DDL 可能很长（Oracle 会带存储子句），截到这里为止。 */
 const DDL_LIMIT = 8000;
@@ -596,14 +597,16 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           const readOnlyTransaction = await beginReadOnlyTransaction(runner, kind);
           for (const setup of timeout.inside) await runner.query(setup).catch(() => undefined);
 
-          const raw = await runner.query(boundedStatement(kind, statement, rows));
+          // 多取一行：套了 LIMIT n 之后永远查不出超过 n 行，靠这一行才能知道"还有没有剩下的"。
+          const raw = await runner.query(boundedStatement(kind, statement, rows + 1));
           const list = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+          const page = takeRows(list, rows);
           return {
             statement,
-            columns: list.length ? Object.keys(list[0]) : [],
-            rows: list.slice(0, rows).map(normalizeRow),
+            columns: page.rows.length ? Object.keys(page.rows[0]) : [],
+            rows: page.rows.map(normalizeRow),
             rowLimit: rows,
-            truncated: list.length > rows,
+            truncated: page.truncated,
             readOnlyTransaction,
           };
         } finally {

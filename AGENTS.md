@@ -360,7 +360,24 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | --- | --- | --- | --- |
 | 工具步数上限 | 不限制 | 一次问答最多让模型走几步（一步里可并发调多个工具） | 100 步（防死循环） |
 | 工具结果上限 | 不限制 | 单个工具返回给模型的字符超过就截断 | 无 |
-| 取数行数上限 | 不限制 | `run_sql` 一次最多返回多少行 | 5000 行（防一次拉爆内存） |
+| 取数行数上限 | 不限制 | `run_sql` 一次最多返回多少行（**只往下压**：留空时模型不指定就按工具默认 100 行） | 5000 行（防一次拉爆内存） |
+
+**run_sql 的默认行数与「已被截断」标记**（2026-09-14 修，用户口径"默认限制 100 条，超过就在 JSON 里标已截断"）：
+
+- 默认从 50 改成 **100**（工具层 `DEFAULT_SQL_ROWS`、连接器 `DEFAULT_QUERY_ROWS` 两处一致）；
+  模型传了 `limit` 就按它的来，再被「取数行数上限」往下压，最后被 `SQL_ROWS_CEILING = 5000` 兜住。
+- **截断检测以前是坏的**：连接器给语句套了 `LIMIT n`（Oracle 是 `ROWNUM <= n`），
+  于是返回行数永远不可能超过 n，而判断写的是 `list.length > n` —— 对 SELECT 恒为 false，
+  只有 `SHOW` / `EXPLAIN` 这类套不上 LIMIT 的语句才会真的标出来。
+  现在按 **`n + 1` 多取一行**当探针，再用 `takeRows()`（纯函数，有单测）切掉那一行并给出 `truncated`。
+  `boundedStatement` 的内部硬上限因此是 `SQL_ROWS_CEILING + 1`：正好打在上限时也要能探出第 5001 行。
+- payload 里除了 `truncated: true` 还多一句人话 `truncation_note`：
+  「结果已被截断：只返回了前 100 行（本次上限 100），表里还有更多行……」——
+  只给模型一个 boolean，它很容易把"前 100 行"当成全量。
+- 顺带把连接器的硬上限从 500 抬到 5000（`QUERY_LIMIT_MAX = SQL_ROWS_CEILING`）：
+  在这之前「取数行数上限」界面上能填 5000、实际最多只给 500，两边对不上。
+- 实测（Oracle 测试 1251）：默认 → `returned 100 / row_limit 100 / truncated true`；
+  `limit=6000` → 压到 5000 且 `truncated true`；SQL 自带 `ROWNUM <= 100` → 正好 100 行、`truncated false`（不误报）。
 
 - 请求体里**不带**的项就是"不限制"：`/api/reasoning/stream` 与 `/run` 只认这几个字段，
   服务端把步数夹到 100、`run_sql` 的行数夹到 5000。界面页脚也不显示 `x/分母 步` ——

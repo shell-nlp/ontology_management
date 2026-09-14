@@ -57,7 +57,7 @@ export const REASONING_SETTING_FIELDS = [
   {
     key: "sqlRowLimit",
     label: "取数行数上限",
-    hint: "run_sql 一次最多返回多少行。",
+    hint: "run_sql 一次最多返回多少行。填了只往下压，不会把默认值抬上去：留空时模型不指定就按 100 行（超过会在结果里标「已截断」）。",
     placeholder: "不限制",
     suffix: "行",
   },
