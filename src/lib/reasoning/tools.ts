@@ -136,6 +136,8 @@ export function longestCommonSubstring(a: string, b: string): number {
 export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null): SchemaConcept[] {
   const objectCount = new Map((runtimeTypes?.labels ?? []).map((item) => [item.name, item.count]));
   const relationshipCount = new Map((runtimeTypes?.relationshipTypes ?? []).map((item) => [item.name, item.count]));
+  // 图库连不上时统计拿不到，这时宁可什么都不说，也不要报"对象数 0"——那是在撒谎。
+  const hasStats = runtimeTypes !== null;
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
   const concepts: SchemaConcept[] = [];
 
@@ -147,7 +149,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       name: entity.name,
       haystack: normalize([entity.name, entity.description, ...parents, ...properties.map((property) => property.name)].join(" ")),
       detail: [
-        `对象数 ${objectCount.get(entity.name) ?? 0}`,
+        hasStats ? `对象数 ${objectCount.get(entity.name) ?? 0}` : "",
         parents.length ? `父类 ${parents.join("、")}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
@@ -171,7 +173,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       kind: "RELATION_TYPE",
       name: relationship.name,
       haystack: normalize([relationship.name, source, target].join(" ")),
-      detail: `${source || "未指定"} → ${target || "未指定"}；关系数 ${relationshipCount.get(relationship.name) ?? 0}`,
+      detail: `${source || "未指定"} → ${target || "未指定"}${hasStats ? `；关系数 ${relationshipCount.get(relationship.name) ?? 0}` : ""}`,
       weight: relationshipCount.get(relationship.name) ?? 0,
     });
   }

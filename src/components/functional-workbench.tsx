@@ -1,7 +1,7 @@
 "use client";
 
 import { Children, type CSSProperties, FormEvent, KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, Sparkles, Table2, TableProperties, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { Activity, AlertCircle, BookOpen, Boxes, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Table2, TableProperties, Terminal, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { mergeInheritedProperties } from "@/lib/class-hierarchy";
@@ -9,7 +9,8 @@ import { GraphCanvas } from "@/components/graph-canvas";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
 import { OntologyStudio, type OntologySummary } from "@/components/ontology-studio";
-import { ReasoningStudio } from "@/components/reasoning-studio";
+import { QaStudio } from "@/components/qa-studio";
+import { McpStudio } from "@/components/mcp-studio";
 import { PropertyEditor } from "@/components/property-editor";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { DataResourceStudio } from "@/components/data-resource-studio";
@@ -20,7 +21,7 @@ import { entitySources, propertyTypeOptions, sourceName, type Definition, type E
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "cypher" | "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
-type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "reasoning" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
+type View = "ontologies" | "overview" | "ontology" | "actions" | "rules" | "qa" | "mcp" | "graph" | "entities" | "relations" | "targets" | "data" | "settings";
 type QueryResult = { keys: string[]; records: Record<string, unknown>[]; graph: GraphData; summary: string };
 type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 type RelationshipRow = { id: string; type: string; sourceId: string; targetId: string; properties: Record<string, unknown>; sourceLabels?: string[]; sourceProperties?: Record<string, unknown>; targetLabels?: string[]; targetProperties?: Record<string, unknown> };
@@ -312,7 +313,7 @@ const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
   { label: "", items: [["ontologies", "本体", Boxes], ["overview", "总览", Activity]] },
   { label: "语义模型", items: [["ontology", "本体草稿", BookOpen], ["graph", "图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
   { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
-  { label: "能力验证", items: [["reasoning", "推理", Sparkles]] },
+  { label: "能力验证", items: [["qa", "智能问答", MessagesSquare], ["mcp", "MCP 调试", Terminal]] },
   { label: "平台", items: [["data", "数据资源", Table2], ["targets", "存储资源", Database], ["settings", "设置", Settings2]] },
 ];
 
@@ -476,7 +477,7 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.role === "ADMIN" ? "管理员" : "查看者"}</small></span><button title="退出登录" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "ontologies" ? "本体" : view === "targets" ? "存储资源" : view === "reasoning" ? "推理" : selectedOntology?.name ?? "选择一个本体"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <section className="functional-content"><header><div><p>图谱治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "ontologies" ? "本体" : view === "targets" ? "存储资源" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : selectedOntology?.name ?? "选择一个本体"}</h1></div><div className="header-state">{selectedTarget ? <><span className="state-dot" />{draft ? `编辑草稿 v${draft.version_number}` : published ? `运行版本 v${published.version_number}` : "尚未发布"}</> : "需要登记本体存储"}</div></header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {selectedTarget && view !== "targets" && view !== "data" && <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} />}
       {view === "ontologies" && <OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={userProp.role === "ADMIN"} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} />}
       {view === "overview" && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenOntology={() => { setGraphMode("ontology"); setGraphModeTargetId(targetId); setView("graph"); }} />}
@@ -488,7 +489,7 @@ export function FunctionalWorkbench() {
       {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={userProp.role === "ADMIN"} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} mode={activeGraphMode} onModeChange={(mode) => { setGraphMode(mode); setGraphModeTargetId(targetId); }} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
-      {view === "reasoning" && <ReasoningStudio
+      {view === "qa" && <QaStudio
         targetId={targetId}
         ontologyName={selectedOntology?.name ?? "未选择本体"}
         published={versionsReady && published !== null}
@@ -496,6 +497,7 @@ export function FunctionalWorkbench() {
         notify={notify}
         fail={fail}
       />}
+      {view === "mcp" && <McpStudio ontologies={ontologies} notify={notify} fail={fail} />}
       {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0 } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
       {view === "settings" && <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} />}
     </section>

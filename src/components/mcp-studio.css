@@ -1,0 +1,121 @@
+/*
+ * MCP 调试：一个"接口台"。
+ * 左边按使用顺序列工具，右边是被选中的那一个：说明 → 参数 → 请求体 → 响应。
+ * 视觉上比智能问答更"工具"：等宽字体承担标识符与请求响应，颜色只用来标记状态。
+ */
+
+.mcp-root { display: grid; gap: 14px; }
+
+/* ---------- 连接信息 ---------- */
+
+.mcp-connect { display: grid; gap: 10px; }
+.mcp-connect-head { display: flex; align-items: center; gap: 11px; }
+.mcp-connect-mark {
+  width: 32px; height: 32px; display: grid; place-items: center; flex: none;
+  border-radius: 5px; background: #0f172a; color: #e2e8f0;
+}
+.mcp-connect-head b { display: block; color: var(--ink); font-size: 12.5px; }
+.mcp-token {
+  margin-left: auto; padding: 3px 9px; border: 1px solid #ccece2; border-radius: 3px;
+  background: #ecfdf5; color: #0f766e; font-size: 10.5px; font-weight: 650; white-space: nowrap;
+}
+.mcp-token.off { border-color: #f3e0c0; background: #fffbeb; color: #b45309; }
+.mcp-connect-row { display: flex; align-items: center; gap: 8px; }
+.mcp-connect-row code {
+  flex: 1; min-width: 0; padding: 8px 11px; border: 1px solid var(--line); border-radius: 4px;
+  background: #f8fafc; color: #1e293b; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mcp-copy {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; height: 30px; padding: 0 11px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff; color: #475569; font-size: 11.5px; cursor: pointer;
+}
+.mcp-copy:hover { border-color: #93b4f5; color: #2563eb; }
+.mcp-connect-note { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+.mcp-connect-note code {
+  padding: 1px 5px; border-radius: 3px; background: #eef2f7; color: #334155;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
+}
+
+/* ---------- 两栏 ---------- */
+
+.mcp-body { display: grid; grid-template-columns: minmax(240px, 290px) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .mcp-body { grid-template-columns: 1fr; } }
+
+/* ---------- 左：工具清单 ---------- */
+
+.mcp-tools { display: grid; gap: 4px; padding: 14px; }
+.mcp-tools-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 2px 6px; }
+.mcp-tools-head b { color: var(--ink); font-size: 12.5px; }
+.mcp-group { padding-top: 8px; }
+.mcp-group + .mcp-group { margin-top: 4px; border-top: 1px solid var(--line); }
+.mcp-group-head { padding: 0 2px 6px; }
+.mcp-group-head b { display: block; color: #334155; font-size: 11.5px; }
+.mcp-group-head small { display: block; margin-top: 2px; color: #94a3b8; font-size: 10.5px; line-height: 1.5; }
+.mcp-tool {
+  display: grid; gap: 1px; width: 100%; padding: 7px 10px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; text-align: left; cursor: pointer;
+}
+.mcp-tool:hover { background: #f4f7fd; }
+.mcp-tool.active { border-color: #cfe0fb; background: #eef4ff; box-shadow: inset 2px 0 0 #2563eb; }
+.mcp-tool b { color: var(--ink); font-size: 12px; }
+.mcp-tool code { color: #94a3b8; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+.mcp-tool.active code { color: #2563eb; }
+
+/* ---------- 右：接口台 ---------- */
+
+.mcp-desk { display: grid; gap: 14px; }
+.mcp-desk-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.mcp-desk-head h2 { margin: 2px 0 3px; color: var(--ink); font-size: 17px; }
+.mcp-desk-name { color: #2563eb; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11.5px; }
+.mcp-desk-actions { display: flex; gap: 7px; flex: none; }
+.mcp-desk-desc { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+
+.mcp-doc {
+  margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 4px;
+  background: #f8fafc; color: #334155; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11px; line-height: 1.65; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+
+.mcp-section { display: grid; gap: 7px; }
+.mcp-section-head { display: flex; align-items: baseline; justify-content: space-between; }
+.mcp-section-head small { color: #94a3b8; font-size: 10.5px; font-family: ui-monospace, monospace; }
+
+.mcp-params { display: grid; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.mcp-param {
+  display: grid; grid-template-columns: minmax(120px, 168px) 118px minmax(0, 1fr);
+  gap: 10px; align-items: baseline; padding: 8px 12px; background: #fff;
+}
+.mcp-param + .mcp-param { border-top: 1px solid #eef2f7; }
+.mcp-param code { color: #1e293b; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11.5px; }
+.mcp-param-type { color: #64748b; font-family: ui-monospace, monospace; font-size: 10.5px; }
+.mcp-param-type.required { color: #b45309; }
+.mcp-param p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+@media (max-width: 720px) { .mcp-param { grid-template-columns: 1fr; gap: 3px; } }
+
+.mcp-body-input {
+  width: 100%; min-height: 150px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 4px;
+  background: #fff; color: #1e293b; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11.5px; line-height: 1.7; resize: vertical; outline: none;
+}
+.mcp-body-input:focus { border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+
+.mcp-status {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 3px;
+  font-size: 10.5px; font-weight: 650;
+}
+.mcp-status.ok { background: #ecfdf5; color: #0f766e; }
+.mcp-status.bad { background: #fff3f2; color: #a33f38; }
+
+.mcp-response {
+  margin: 0; min-height: 150px; max-height: 460px; overflow: auto; padding: 13px 15px;
+  border: 1px solid #0f172a; border-radius: 4px; background: #0f172a; color: #cbd5e1;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px; line-height: 1.65;
+  white-space: pre-wrap; word-break: break-word;
+}
+.mcp-response.bad { border-color: #7f2d24; background: #2a1512; color: #fbd5cf; }
+
+.mcp-empty { display: flex; align-items: center; gap: 7px; margin: 0; color: #94a3b8; font-size: 12px; }
+.mcp-spin { animation: mcp-spin 1s linear infinite; }
+@keyframes mcp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mcp-spin { animation: none; } }

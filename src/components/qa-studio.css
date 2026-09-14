@@ -1,0 +1,229 @@
+/*
+ * 智能问答（能力验证）。
+ *
+ * 设计取向：这是"实验记录"，不是聊天玩具。用户的话缩成右侧小气泡，
+ * Agent 的回复是通栏的求证报告：求证轨迹 → 结论 → 依据。
+ * 全页唯一的签名元素是那条轨迹，其余部分刻意安静。
+ *
+ * 颜色只在"依据"上用了一处核实绿（teal），与主蓝区分开：蓝是操作，绿是已核实。
+ */
+
+.qa-root {
+  --qa-ink: var(--ink);
+  --qa-muted: var(--muted);
+  --qa-faint: #94a3b8;
+  --qa-line: var(--line);
+  --qa-verified: #0f766e;
+  --qa-verified-bg: #ecfdf5;
+  --qa-caution: #b45309;
+  --qa-caution-bg: #fffbeb;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 148px);
+  gap: 14px;
+}
+
+/* ---------- 头部 ---------- */
+
+.qa-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 12px 16px; background: var(--panel); border: 1px solid var(--qa-line); border-radius: 6px;
+}
+.qa-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.qa-head-eyebrow {
+  padding: 3px 8px; border-radius: 3px; background: #eef2ff; color: #2563eb;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+}
+.qa-head-main b { color: var(--qa-ink); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qa-model {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  padding: 3px 9px; border: 1px solid #dbe6fb; border-radius: 3px; background: #f5f8ff;
+  color: #2563eb; font-size: 10.5px; font-weight: 650;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+.qa-model.off { border-color: #f3e0c0; background: var(--qa-caution-bg); color: var(--qa-caution); }
+
+/* ---------- 会话流 ---------- */
+
+/* 底部留出输入条的高度：它是 sticky 的，不留白的话最后一段内容会被永久盖住。 */
+.qa-feed { display: flex; flex-direction: column; gap: 22px; flex: 1; padding: 4px 2px 92px; }
+
+.qa-empty { margin: auto; max-width: 620px; text-align: center; padding: 40px 20px 20px; }
+.qa-empty-mark {
+  width: 46px; height: 46px; margin: 0 auto 16px; display: grid; place-items: center;
+  border-radius: 50%; background: #eef2ff; color: #2563eb;
+}
+.qa-empty h3 { margin: 0 0 8px; color: var(--qa-ink); font-size: 17px; }
+.qa-empty p { margin: 0 auto; max-width: 520px; color: var(--qa-muted); font-size: 12.5px; line-height: 1.75; }
+.qa-warn {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 14px !important;
+  padding: 7px 12px; border-radius: 4px; background: var(--qa-caution-bg); color: var(--qa-caution) !important; font-size: 12px !important;
+}
+.qa-examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
+.qa-examples button {
+  padding: 7px 13px; border: 1px solid var(--qa-line); border-radius: 999px; background: #fff;
+  color: #475569; font-size: 12px; cursor: pointer; transition: border-color .14s ease, color .14s ease;
+}
+.qa-examples button:hover:not(:disabled) { border-color: #93b4f5; color: #2563eb; }
+.qa-examples button:disabled { opacity: .5; cursor: not-allowed; }
+
+.qa-turn { display: flex; flex-direction: column; gap: 14px; }
+
+/* 用户的话：右侧小气泡。它只是提问，不该占太多视觉权重。 */
+.qa-ask { display: flex; justify-content: flex-end; align-items: flex-start; gap: 9px; }
+.qa-ask > span {
+  order: 2; flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 50%; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700;
+}
+.qa-ask p {
+  order: 1; margin: 0; max-width: min(560px, 72%); padding: 9px 14px;
+  border-radius: 12px 3px 12px 12px; background: #eef2ff; color: #1e293b;
+  font-size: 13px; line-height: 1.65;
+}
+
+/* Agent 的回复：通栏报告，不用气泡。 */
+.qa-answer { padding-left: 35px; display: flex; flex-direction: column; gap: 12px; }
+.qa-answer-head { display: flex; align-items: center; gap: 8px; }
+.qa-answer-mark {
+  padding: 2px 7px; border-radius: 3px; background: #0f172a; color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: .5px;
+}
+.qa-answer-head b { color: var(--qa-ink); font-size: 12.5px; }
+
+.qa-pending {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 9px 13px; border-radius: 4px; background: #f1f5f9; color: #475569; font-size: 12.5px;
+}
+.qa-error {
+  display: flex; align-items: center; gap: 8px; padding: 10px 13px;
+  border-left: 3px solid #e06055; border-radius: 3px; background: #fff3f2; color: #a33f38; font-size: 12.5px;
+}
+
+/* ---------- 签名元素：求证轨迹 ---------- */
+
+.qa-trail { border: 1px solid var(--qa-line); border-radius: 6px; background: #fbfcfe; overflow: hidden; }
+.qa-trail-summary {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 12px; border: 0; background: transparent; text-align: left; cursor: pointer;
+}
+.qa-trail-summary:hover { background: #f4f7fd; }
+.qa-trail-badge {
+  flex: none; padding: 2px 7px; border-radius: 3px; background: #eef2ff; color: #2563eb;
+  font-size: 10px; font-weight: 700; letter-spacing: .4px;
+}
+.qa-trail-text { flex: 1; color: #475569; font-size: 12px; font-variant-numeric: tabular-nums; }
+.qa-trail-summary svg { color: var(--qa-faint); transition: transform .16s ease; }
+.qa-trail-summary svg.is-open { transform: rotate(180deg); }
+
+.qa-trail-steps { position: relative; margin: 0; padding: 4px 12px 12px 12px; list-style: none; }
+/* 连接线：说明这几步是一条时间线，不是一堆并列的卡片。 */
+.qa-trail-steps::before {
+  content: ""; position: absolute; left: 25px; top: 14px; bottom: 22px; width: 1px; background: #dbe4f0;
+}
+.qa-trail-step { position: relative; }
+.qa-trail-step + .qa-trail-step { margin-top: 5px; }
+.qa-trail-step > button {
+  display: grid; grid-template-columns: 22px minmax(90px, auto) minmax(0, 1fr) auto;
+  align-items: center; gap: 9px; width: 100%; padding: 7px 9px 7px 0;
+  border: 0; background: transparent; text-align: left; cursor: pointer; border-radius: 4px;
+}
+.qa-trail-step > button:hover { background: #f4f7fd; }
+.qa-trail-node {
+  z-index: 1; width: 22px; height: 22px; display: grid; place-items: center;
+  border: 1px solid #cfe0fb; border-radius: 50%; background: #fff; color: #2563eb;
+  font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.qa-trail-step.failed .qa-trail-node { border-color: #f3c9c4; color: #a33f38; }
+.qa-trail-step b { color: var(--qa-ink); font-size: 12.5px; }
+.qa-trail-step code {
+  color: var(--qa-faint); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qa-trail-facts {
+  display: inline-flex; align-items: baseline; gap: 8px; color: var(--qa-verified);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.qa-trail-facts i { color: var(--qa-faint); font-style: normal; font-family: ui-monospace, monospace; font-size: 10.5px; }
+.qa-trail-step.failed .qa-trail-facts { color: #a33f38; }
+.qa-step-result {
+  margin: 2px 0 6px 31px; padding: 10px 12px; border: 1px solid var(--qa-line); border-radius: 4px;
+  background: #0f172a; color: #cbd5e1; font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10.5px; line-height: 1.65; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.qa-trail-empty { padding: 6px 0 6px 31px; color: var(--qa-faint); font-size: 12px; }
+
+/* ---------- 结论（Markdown） ---------- */
+
+.qa-markdown { color: #1e293b; font-size: 13.5px; line-height: 1.8; }
+.qa-markdown p { margin: 0 0 10px; }
+.qa-markdown h4 { margin: 14px 0 6px; color: var(--qa-ink); font-size: 13.5px; }
+.qa-markdown ul { margin: 0 0 10px; padding-left: 20px; }
+.qa-markdown li { margin-bottom: 4px; }
+.qa-markdown b { color: var(--qa-ink); }
+.qa-markdown code {
+  padding: 1px 5px; border-radius: 3px; background: #eef2f7; color: #334155;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11.5px;
+}
+.qa-table-wrap { overflow-x: auto; margin: 0 0 12px; }
+.qa-markdown table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.qa-markdown th, .qa-markdown td { border: 1px solid var(--qa-line); padding: 6px 10px; text-align: left; vertical-align: top; }
+.qa-markdown th { background: #f8fafc; color: #475569; font-weight: 650; }
+.qa-markdown td code { background: transparent; padding: 0; color: #475569; }
+
+/* ---------- 依据 ---------- */
+
+.qa-evidence { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.qa-evidence-label {
+  flex: none; padding-top: 3px; color: var(--qa-faint); font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+}
+.qa-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.qa-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+  border: 1px solid var(--qa-line); border-radius: 3px; background: #fff;
+  color: #475569; font-size: 11.5px;
+}
+.qa-chip.concept { border-color: #e2e8f0; color: #64748b; }
+.qa-chip.object {
+  border-color: #ccece2; background: var(--qa-verified-bg); color: var(--qa-verified);
+  cursor: pointer; font-weight: 600;
+}
+.qa-chip.object:hover { border-color: #7dd3b8; background: #e0f7ee; }
+
+.qa-meta {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  margin-top: 2px; padding-top: 10px; border-top: 1px solid #eef2f7;
+  color: var(--qa-faint); font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.qa-meta em { color: var(--qa-caution); font-style: normal; }
+
+/* ---------- 输入条 ---------- */
+
+.qa-compose {
+  position: sticky; bottom: 0; z-index: 5;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end;
+  margin: 0 -4px -8px; padding: 12px 4px 12px;
+  background: linear-gradient(to bottom, rgba(247, 249, 252, 0) 0, var(--paper) 28px, var(--paper) 100%);
+}
+.qa-compose textarea {
+  width: 100%; min-height: 44px; max-height: 168px; padding: 11px 14px;
+  border: 1px solid #d6e1f0; border-radius: 6px; background: #fff; color: var(--qa-ink);
+  font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; outline: none;
+}
+.qa-compose textarea:focus { border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+.qa-compose textarea:disabled { background: #f1f5f9; }
+.qa-compose .action { height: 44px; padding: 0 20px; }
+
+.qa-spin { animation: qa-spin 1s linear infinite; }
+@keyframes qa-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .qa-spin { animation: none; }
+  .qa-trail-summary svg { transition: none; }
+}
+
+@media (max-width: 900px) {
+  .qa-answer { padding-left: 0; }
+  .qa-ask p { max-width: 84%; }
+  .qa-trail-step > button { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .qa-trail-step code { display: none; }
+}
