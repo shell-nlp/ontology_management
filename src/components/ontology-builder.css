@@ -63,3 +63,11 @@
   .ob-count { border-left: 0; padding-left: 0; }
   .ob-gaps { top: 92px; max-width: calc(100% - 24px); }
 }
+
+/* 右栏「实现接口」：每个接口一个虚线小 chip，点一下就地取消实现。 */
+.ob-iface-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.ob-iface-label { display: inline-flex; align-items: center; gap: 5px; color: #57739b; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+.ob-iface-label svg { color: #9aa8bb; }
+.ob-iface-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; color: #1e3a8a; background: #eff5ff; border: 1px dashed #bcd2f5; border-radius: 3px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.ob-iface-chip:hover:not(:disabled) { color: #b04f3d; background: #fff1ed; border-color: #e0bdb4; }
+.ob-iface-chip:disabled { cursor: not-allowed; opacity: .65; }

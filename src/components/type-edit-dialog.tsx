@@ -347,11 +347,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     : "还没有概念分组。去左侧「概念分组」页按业务域建几个，再回来挑。"}</small>
                 </label>
                 <div className="ted-field">
-                  <span><Boxes size={12} />实现接口</span>
+                  <span className="ted-iface-head"><Boxes size={12} />实现接口{implementsList.length > 0 && <em>已实现 {implementsList.length}</em>}{implementsList.length > 0 && <button type="button" className="ted-iface-clear" onClick={() => setImplementsList([])}>全部取消</button>}</span>
                   {interfaces.length > 0 ? (
                     <div className="ted-source-picker">
                       {interfaces.map((item) => (
-                        <label key={item.id} className={implementsList.includes(item.id) ? "ted-chip iface active" : "ted-chip iface"}>
+                        <label key={item.id} className={implementsList.includes(item.id) ? "ted-chip iface active" : "ted-chip iface"} title={implementsList.includes(item.id) ? "再点一下取消实现" : "点一下实现这个接口"}>
                           <input type="checkbox" checked={implementsList.includes(item.id)} onChange={() => toggleImplement(item.id)} />
                           {item.name}
                         </label>
@@ -362,7 +362,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     <div className="ted-iface-status">
                       {implementsList.map((id) => {
                         const item = interfaces.find((candidate) => candidate.id === id);
-                        if (!item) return <p key={id} className="ted-inherit"><AlertTriangle size={12} />这个接口已经不在草稿里了，保存前请取消勾选。</p>;
+                        if (!item) return <p key={id} className="ted-inherit warn"><AlertTriangle size={12} />这个接口已经不在草稿里了<span className="ted-iface-actions"><button type="button" className="action compact danger" onClick={() => setImplementsList((list) => list.filter((candidate) => candidate !== id))}>取消实现</button></span></p>;
                         const required = effectiveInterfaceProperties(interfaces, id).filter((property) => property.required !== false);
                         const missing = required.filter((property) => !properties.some((mine) => mine.name === property.name));
                         const absentTypes = required
@@ -372,18 +372,17 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                           <p key={id} className={missing.length ? "ted-inherit warn" : "ted-inherit"}>
                             <CornerDownRight size={12} />
                             {item.name}：{required.length - missing.length}/{required.length} 条必填属性已对上
-                            {missing.length > 0 && (
-                              <>
-                                {`，还缺 ${missing.map((property) => property.name).join("、")}`}
-                                <button type="button" className="action compact" onClick={() => addInterfaceProperties(absentTypes)}>按接口补齐属性</button>
-                              </>
-                            )}
+                            {missing.length > 0 && `，还缺 ${missing.map((property) => property.name).join("、")}`}
+                            <span className="ted-iface-actions">
+                              {missing.length > 0 && <button type="button" className="action compact" onClick={() => addInterfaceProperties(absentTypes)}>按接口补齐属性</button>}
+                              <button type="button" className="action compact danger" onClick={() => setImplementsList((list) => list.filter((candidate) => candidate !== id))}>取消实现</button>
+                            </span>
                           </p>
                         );
                       })}
                     </div>
                   )}
-                  <small>接口是抽象契约：勾上之后，这个对象类型必须有接口里所有必填的同名属性，以及必填的关系约束；发布前校验会拦住没满足的实现。</small>
+                  <small>接口是抽象契约：勾上之后，这个对象类型必须有接口里所有必填的同名属性，以及必填的关系约束；发布前校验会拦住没满足的实现。勾上之后再点一下、或用行尾的「取消实现」，就能取消这个实现。</small>
                 </div>                <div className="ted-field">
                   <span><Layers size={12} />父类（继承）</span>
                   {parentCandidates.length > 0 ? (

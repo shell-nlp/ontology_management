@@ -159,7 +159,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, positionKey]);
 
   const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
-  const selectedInterfaces = (selectedEntity?.implements ?? []).map((id) => definition.interfaces.find((item) => item.id === id)?.name ?? "").filter(Boolean);
+  // 实现接口：这里留接口对象而不是名字——右栏的「实现接口」要能就地取消实现。
+  const selectedInterfaces = (selectedEntity?.implements ?? []).map((id) => definition.interfaces.find((item) => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
 
   const organize = useCallback(() => {
@@ -171,6 +172,13 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   /** 改一个对象类型的归属（空串 = 移出分组）：分组不属于任何类型，所以整份存草稿。 */
   const assignGroup = (entityId: string, groupId: string) => {
     void onSaveDefinition({ ...definition, entityTypes: definition.entityTypes.map((item) => (item.id === entityId ? { ...item, groupId } : item)) }).catch(onFail);
+  };
+
+  /** 取消一个接口的实现：只摘掉这个对象类型身上的实现声明，接口定义本身不动。 */
+  const dropImplementation = (interfaceId: string) => {
+    const entity = selectedEntity;
+    if (!entity) return;
+    void onSaveDefinition({ ...definition, entityTypes: definition.entityTypes.map((item) => (item.id === entity.id ? { ...item, implements: (item.implements ?? []).filter((candidate) => candidate !== interfaceId) } : item)) }).catch(onFail);
   };
 
   const openCreateRelation = (source: string, target: string) => {
@@ -291,8 +299,16 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                 <p className="ob-lineage"><CornerDownRight size={12} />继承自 <b>{selectedLineage.direct.join("、")}</b></p>
               )}
               {selectedInterfaces.length > 0 && (
-                <p className="ob-lineage"><Boxes size={12} />实现接口 <b>{selectedInterfaces.join("、")}</b></p>
-              )}              {selectedLineage.extra.length > 0 && (
+                <div className="ob-iface-row">
+                  <span className="ob-iface-label"><Boxes size={12} />实现接口</span>
+                  {selectedInterfaces.map((item) => (
+                    <button key={item.id} type="button" className="ob-iface-chip" disabled={!canEdit} title="点一下取消这个接口的实现" onClick={() => dropImplementation(item.id)}>
+                      <Boxes size={11} />{item.name}<X size={11} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedLineage.extra.length > 0 && (
                 <p className="ob-lineage"><CornerDownRight size={12} />也属于 <b>{selectedLineage.extra.join("、")}</b></p>
               )}
               {selectedEntity.properties.length > 0 || selectedInherited.length > 0 ? (

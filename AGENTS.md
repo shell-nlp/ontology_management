@@ -211,6 +211,24 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 - 工具侧：`list_interfaces`（接口清单 + 属性 + 关系约束 + 实现者），`get_object_type` 带 `interfaces`（接口属性映射状态），
   `search_schema` 与概念清单都能命中接口；MCP 里 `list_interfaces` 归在 `model` 组、标题「接口」。
 
+**实现可以加、也可以摘（2026-09-15）**：Palantir 的文档写得很明确 ——
+[Edit an interface implementation](https://www.palantir.com/docs/foundry/interfaces/edit-interface-implementation/) 一节的原话是
+「Once implemented on an object, you can update the implementation by **deleting it** or changing the mappings」，
+具体做法是「Select the … icon and choose **Remove interface**」再 Save；
+另一侧 [Implement an interface](https://www.palantir.com/docs/foundry/interfaces/implement-interface/) 里，
+接口总览页也有 `Implementations → + New` 直接挂实现。
+所以「实现」在平台里必须是**可加可摘**的一条记录，不是单向的一次性绑定。三处入口：
+
+- 对象类型弹窗（可视化 / 表单共用）：勾上 = 实现；再点一下 chip 就取消；
+  已实现的行尾有「取消实现」，标题行的「全部取消」一次摘掉全部。
+  chip 的勾选态画成真方框（蓝底白勾 / 虚线空框），别再退化成看不出来的浅色块。
+- 接口页「实现情况」：直接实现项尾巴上的 ✕ 取消；「+ 添加实现…」给还没实现的类挂上
+  （选项里直接写「还缺 N 条必填属性」，挂上后 chip 标「还差 N 项」）。
+  间接实现（继承子接口来的）故意没有 ✕ —— 得去实现方的对象类型上摘那个子接口。
+- 可视化画布右栏「实现接口」：每个接口一个小 chip，点一下就地取消（写草稿）。
+
+三处都只动 `entityTypes[].implements`，不碰接口定义本身，保存走各自页面原有的保存路径。
+
 已知未做（有意留白，别以为漏了）：接口的**动作约束**（Palantir 的 action type constraints、参数映射，本身还在 beta）、
 shared properties / struct、接口的 status 与 searchable 元数据、把接口画在可视化画布上（只画在「接口」标签与骨架图里）。
 ### 数据资源

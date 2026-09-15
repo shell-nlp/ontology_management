@@ -72,3 +72,14 @@
   .interface-grid > .iface-rail { overflow: visible; }
   .interface-grid > .manager-split-handle { display: none; }
 }
+
+/* 「实现情况」里的每个直接实现都能就地取消：chip 尾巴上一个 ✕（间接实现的没有，要去实现方改）。 */
+.iface-chip-x { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin: 0 -5px 0 0; border: 0; border-radius: 50%; background: transparent; color: #7492b8; cursor: pointer; }
+.iface-chip-x:hover:not(:disabled) { background: #e2ecfb; color: #b04f3d; }
+.iface-chip-x:disabled { cursor: not-allowed; opacity: .38; }
+
+/* 接口这一侧也能挂实现（Palantir 的接口总览页同样有 Implementations → + New）。 */
+.iface-block-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.iface-add { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; color: #1e3a8a; background: #eff5ff; border: 1px solid #bcd2f5; border-radius: 4px; font-size: 11px; font-weight: 650; cursor: pointer; }
+.iface-add:hover { border-color: #8fb2ea; background: #e4eefc; }
+.iface-add select { min-height: 100%; max-width: 190px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; outline: 0; }

@@ -211,3 +211,13 @@
 .ted-inherit.warn { color: #a2620f; background: #fff8ec; border-color: #f0d3a8; }
 .ted-inherit.warn svg { color: #c98a2e; }
 .ted-inherit .action.compact { margin-left: auto; }
+
+/* 实现接口：勾选态画成真方框（勾上 = 蓝底白勾，没勾 = 虚线空框），并且到处都给一条取消实现的路。 */
+.ted-chip.iface.active::before { content: "\2713"; display: grid; place-items: center; color: #fff; background: #2563eb; border-style: solid; border-color: #2563eb; font-size: 8px; line-height: 1; }
+.ted-chip.iface.active:hover { border-color: #8fb2ea; }
+.ted-field > span.ted-iface-head { display: flex; align-items: center; gap: 6px; }
+.ted-iface-head em { padding: 1px 6px; color: #1e3a8a; background: #eff5ff; border: 1px solid #d6e4fb; border-radius: 99px; font-size: 9.5px; font-style: normal; font-weight: 700; }
+.ted-iface-clear { margin-left: auto; height: 20px; padding: 0 7px; color: #b04f3d; background: #fff; border: 1px solid #e0bdb4; border-radius: 3px; font-size: 10px; font-weight: 650; cursor: pointer; }
+.ted-iface-clear:hover { background: #fff1ed; border-color: #d19b8e; }
+.ted-iface-actions { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.ted-iface-actions .action.compact { margin-left: 0; }

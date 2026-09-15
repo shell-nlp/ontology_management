@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Link2, Plus, Save, ShieldAlert, Trash2 } from "lucide-react";
+import { Check, Link2, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
 import { newId } from "@/lib/ids";
 import {
   checkImplementations,
@@ -143,6 +143,27 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
     );
   };
 
+  /** 取消某个对象类型对这个接口的实现：只摘掉对象类型身上的实现声明，接口定义本身不动。 */
+  const cancelImplementation = (entityId: string, entityName: string) => {
+    if (!selected) return;
+    void commit(
+      { ...definition, entityTypes: definition.entityTypes.map((entity) => (entity.id === entityId ? { ...entity, implements: (entity.implements ?? []).filter((id) => id !== selected.id) } : entity)) },
+      `已取消对象类型「${entityName}」对接口「${selected.name}」的实现。`,
+    );
+  };
+
+  /**
+   * 在这里加一个实现（Palantir 的接口总览页也有「Implementations → + New」这一条路）。
+   * 加的时候不拦人：缺哪些必填属性会立刻在下面的实现情况里标出来，发布前校验再兜底。
+   */
+  const addImplementation = (entityId: string, entityName: string) => {
+    if (!selected) return;
+    void commit(
+      { ...definition, entityTypes: definition.entityTypes.map((entity) => (entity.id === entityId ? { ...entity, implements: [...(entity.implements ?? []), selected.id] } : entity)) },
+      `已让对象类型「${entityName}」实现接口「${selected.name}」。`,
+    );
+  };
+
   const patchDraft = (patch: Partial<InterfaceType>) => setDraft((state) => (state ? { ...state, ...patch } : state));
 
   const toggleExtend = (id: string) => {
@@ -170,6 +191,10 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
     setDraft((state) => (state ? { ...state, linkConstraints: state.linkConstraints.filter((item) => item.id !== id) } : state));
   };
 
+  const implementerIds = new Set(implementers.map((entry) => entry.id));
+  const addCandidates = selected ? definition.entityTypes.filter((entity) => !implementerIds.has(entity.id)) : [];
+  const requiredNames = selected ? effectiveInterfaceProperties(interfaces, selected.id).filter((property) => property.required !== false).map((property) => property.name) : [];
+  const missingRequiredCount = (entity: (typeof definition.entityTypes)[number]) => requiredNames.filter((name) => !entity.properties.some((property) => property.name === name)).length;
   const inheritedRows = current ? interfacePropertyRows(interfaces, current.id).filter((row) => row.inherited) : [];
   const ownNames = new Set(current?.properties.map((property) => property.name) ?? []);
   const constraintTargets = current
@@ -282,18 +307,30 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
         </div>
 
         <div className="iface-block">
-          <span className="iface-block-label">实现情况（{implementers.length}）</span>
+          <div className="iface-block-head">
+            <span className="iface-block-label">实现情况（{implementers.length}）</span>
+            {canEdit && addCandidates.length > 0 && (
+              <label className="iface-add" title="给这个接口挂一个实现；缺哪些必填属性会立刻标出来">
+                <Plus size={12} />
+                <select value="" disabled={busy} onChange={(event) => { const picked = addCandidates.find((item) => item.id === event.target.value); if (picked) addImplementation(picked.id, picked.name); }}>
+                  <option value="">添加实现…</option>
+                  {addCandidates.map((item) => { const gap = missingRequiredCount(item); return <option key={item.id} value={item.id}>{item.name}{gap ? ` · 还缺 ${gap} 条必填属性` : " · 已满足"}</option>; })}
+                </select>
+              </label>
+            )}
+          </div>
           <div className="iface-chips">
             {checks.map(({ entity, check }) => {
               const missing = [...(check?.missingProperties ?? []), ...(check?.missingLinks ?? []).map((item) => `关系「${item.name}」`)];
               return <span key={entity.id} className={missing.length ? "iface-chip missing" : "iface-chip borrowed"} title={missing.length ? `还差：${missing.join("、")}` : "已满足接口要求"}>
                 <i />{entity.name}{missing.length ? ` · 还差 ${missing.length} 项` : ""}
+                <button type="button" className="iface-chip-x" disabled={!canEdit || busy} aria-label={`取消对象类型「${entity.name}」的实现`} title={`取消「${entity.name}」对这个接口的实现`} onClick={() => cancelImplementation(entity.id, entity.name)}><X size={11} /></button>
               </span>;
             })}
-            {implementers.filter((entry) => !entry.direct).map((entry) => <span key={entry.id} className="iface-chip" title="通过继承的子接口间接实现"><i />{entry.name} · 间接</span>)}
+            {implementers.filter((entry) => !entry.direct).map((entry) => <span key={entry.id} className="iface-chip" title="通过继承的子接口间接实现：要取消得去实现方的对象类型上摘掉那个子接口"><i />{entry.name} · 间接</span>)}
             {!implementers.length && <p className="iface-empty">还没有对象类型实现它。到「可视化建模」或「表单」里打开对象类型，在「实现接口」里勾上。</p>}
           </div>
-          <p className="iface-hint">实现 = 对象类型提供同名属性 + 满足必填的关系约束；发布前校验会拦住没满足的实现。</p>
+          <p className="iface-hint">实现 = 对象类型提供同名属性 + 满足必填的关系约束；发布前校验会拦住没满足的实现。摘掉实现可以点实现项尾巴上的 ✕，也可以到对象类型那一侧的「实现接口」里取消勾选。</p>
         </div>
 
         <div className="iface-sheet-foot">
