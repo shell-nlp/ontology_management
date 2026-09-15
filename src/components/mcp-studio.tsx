@@ -23,6 +23,8 @@ type McpInfo = {
   transport: string;
   tokenConfigured: boolean;
   groups: { key: string; label: string; description: string; disabled?: boolean }[];
+  /** 被关掉的工具名：关掉之后模型与外部客户端都拿不到它。 */
+  disabledTools: string[];
   tools: McpTool[];
 };
 
@@ -211,6 +213,20 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
 
   const active = useMemo(() => info?.tools.find((tool) => tool.name === activeName) ?? null, [info, activeName]);
 
+  /** 开关一个工具：写完立刻刷新清单，因为「运行」与外部客户端看到的都是服务端那一份。 */
+  const toggleTool = async (name: string, enabled: boolean) => {
+    if (!info) return;
+    const next = enabled ? info.disabledTools.filter((item) => item !== name) : [...info.disabledTools, name];
+    try {
+      const saved = await api<{ disabledTools: string[] }>("/api/reasoning/tools", { method: "PUT", body: JSON.stringify({ disabledTools: next }) });
+      setInfo({ ...info, disabledTools: saved.disabledTools });
+      const label = info.tools.find((tool) => tool.name === name)?.title ?? name;
+      notify(enabled ? `已开启「${label}」，模型与外部客户端都能用它。` : `已关闭「${label}」，模型不再使用它。`);
+    } catch (reason) {
+      fail(reason);
+    }
+  };
+
   const select = useCallback((tool: McpTool) => {
     setActiveName(tool.name);
     setArgumentsText(JSON.stringify(exampleArguments(tool, ontologyId, defaultDataSource), null, 2));
@@ -342,8 +358,9 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
           <div className="mcp-tools-head">
             <span className="eyebrow">工具</span>
             <span className="mcp-tools-count">
-              <b>{info.tools.filter((tool) => !tool.disabled).length} 个</b>
-              {/* 灰着列出来的那些不算"可用"，单独说一句，别让人以为总数就是可用的。 */}
+              <b>{info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length} 个可用</b>
+              {/* 关掉的与平台停用的都要单独说清，否则"总数"会被当成"可用数"。 */}
+              {info.disabledTools.length > 0 && <em>{info.disabledTools.length} 个已关闭</em>}
               {info.tools.some((tool) => tool.disabled) && <em>{info.tools.filter((tool) => tool.disabled).length} 个暂不使用</em>}
             </span>
           </div>
@@ -356,19 +373,37 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
                   <b>{group.label}{group.disabled && <em>暂不使用</em>}</b>
                   <small>{group.description}</small>
                 </div>
-                {tools.map((tool) => (
-                  <button
-                    key={tool.name}
-                    type="button"
-                    className={`mcp-tool${tool.name === activeName ? " active" : ""}${tool.disabled ? " parked" : ""}`}
-                    onClick={() => select(tool)}
-                    disabled={tool.disabled}
-                    title={tool.disabled ? "暂时不使用：这一版只在对象类型 / 关系类型这一层推理，不查实例" : tool.title}
-                  >
-                    <b>{tool.title}</b>
-                    <code>{tool.name}</code>
-                  </button>
-                ))}
+                {tools.map((tool) => {
+                  const off = info.disabledTools.includes(tool.name);
+                  return (
+                    <div className={`mcp-tool-row${off ? " off" : ""}`} key={tool.name}>
+                      <button
+                        type="button"
+                        className={`mcp-tool${tool.name === activeName ? " active" : ""}${tool.disabled ? " parked" : ""}`}
+                        onClick={() => select(tool)}
+                        disabled={tool.disabled}
+                        title={tool.disabled ? "暂时不使用：这一版只在对象类型 / 关系类型这一层推理，不查实例" : tool.title}
+                      >
+                        <b>{tool.title}</b>
+                        <code>{tool.name}</code>
+                      </button>
+                      {/* 平台自己停用的工具不给开关：开不了；其余的都能单独关掉。 */}
+                      {!tool.disabled && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={!off}
+                          aria-label={`${off ? "开启" : "关闭"}工具 ${tool.name}`}
+                          className={`mcp-switch${off ? " off" : ""}`}
+                          onClick={() => void toggleTool(tool.name, off)}
+                          title={off ? "已关闭：模型与外部客户端都拿不到它，点一下开启" : "已开启：点一下关掉，模型就不再用它"}
+                        >
+                          <i />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -390,7 +425,7 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
                   <button className="action compact" onClick={() => setArgumentsText(JSON.stringify(exampleArguments(active, ontologyId), null, 2))}>
                     <Wand2 size={13} />自动填参
                   </button>
-                  <button className="action primary compact" disabled={busy} onClick={() => void run()}>
+                  <button className="action primary compact" disabled={busy || info.disabledTools.includes(activeName)} onClick={() => void run()}>
                     {busy ? <Loader2 size={13} className="mcp-spin" /> : <Play size={13} />}运行
                   </button>
                 </div>

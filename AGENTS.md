@@ -377,7 +377,23 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 界面上：类型编辑弹窗里可编辑，属性列表显示名当主标题、机器名收成小标签、说明跟在后面；
 对象 / 关系的属性表单用显示名当字段名、说明挂 `title`。
 
-### 能力验证（智能问答与 MCP）
+### 工具开关（哪些工具给模型用）
+
+记录时间：2026-09-15。用户要求：「MCP 调试」里的每个工具都能单独开关，**关掉之后模型就不使用它**。
+
+- 开关存在**平台库**（`ontology_platform.platform_settings`，key `reasoning.toolPolicy`），不是浏览器本地 ——
+  MCP 端点在外部客户端手里，服务端看不到你的浏览器偏好；只关界面不关服务端等于没关。
+  读写走 `src/lib/reasoning/tool-policy.ts` 的 `loadToolPolicy` / `saveToolPolicy`，
+  界面入口是 `GET/PUT /api/reasoning/tools`（**只有 ADMIN 能改**，改动写一条审计 `REASONING_TOOL_POLICY_UPDATED`）。
+- 两种"不可用"要分清：`REASONING_TOOLS[].disabled` 是**平台停用**（这一版不查实例，谁都开不了，调试页不给开关）；
+  `disabledTools` 是**用户关掉的**。两者都从模型能看到的工具集里去掉。
+- 生效范围有**两处，必须同时生效**：平台内智能问答（`/api/reasoning/run` / `stream` → `runReasoning({ disabledTools })`
+  → `reasoningToolSet(context, onEvidence, disabledTools)`）与外部 MCP 客户端（`/api/mcp` 的 `tools/list` 过滤、
+  `tools/call` 直接报「工具已关闭」）。只改一处就会出现"界面上关了、MCP 还能调"。
+- 归一化在 `normalizeToolPolicy`：只接受"确实存在且可开关"的工具名。**库里数据脏了当"全开"**，
+  不能因为一条坏记录把工具误关掉。
+- 调试页（`mcp-studio.tsx`）每个工具一行：左边是工具、右边是开关；关掉的行整行变淡，
+  表头写「N 个可用 · M 个已关闭 · K 个暂不使用」，工具被关时「运行」也不给按。### 能力验证（智能问答与 MCP）
 
 记录时间：2026-09-13。**对标 bkn-studio 的「能力验证」：用大模型编排本体工具，多步查询后给带证据的结论。**
 bkn 那边的形态是 `search_schema / query_object_instance / query_instance_subgraph / execute_action`

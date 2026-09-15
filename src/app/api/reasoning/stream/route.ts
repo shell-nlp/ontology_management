@@ -8,6 +8,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { runReasoning, type AgentEvent } from "@/lib/reasoning/agent";
 import { saveTurn } from "@/lib/reasoning/conversations";
+import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { getTarget } from "@/lib/targets";
 
 /**
@@ -84,10 +85,13 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(frame(event)));
       };
       try {
-        const run = await runReasoning({
+        // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
+    const policy = await loadToolPolicy();
+    const run = await runReasoning({
           question: input.question,
           context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
+      disabledTools: policy.disabledTools,
           thinking: input.thinking,
           systemPrompt: input.systemPrompt,
           onEvent: send,

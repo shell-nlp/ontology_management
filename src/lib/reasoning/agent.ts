@@ -35,6 +35,8 @@ export type AgentEvent =
 export type RunReasoningOptions = {
   question: string;
   context: ToolContext;
+  /** 被用户关掉的工具名；不传 = 全开（平台自己停用的那几个仍然不放开）。 */
+  disabledTools?: string[];
   /** 步数上限；不传就是"不限制"，服务端兜到 MAX_STEPS_CEILING。 */
   maxSteps?: number;
   /** 是否让模型先思考。默认交给服务端（实测默认开启）；false 会显式下发 thinking.type=disabled。 */
@@ -80,7 +82,7 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     instructions: buildInstructions(options.systemPrompt, options.context),
     tools: reasoningToolSet(options.context, (toolCallId, items) => {
       evidenceByCall.set(toolCallId, items.map((item) => ({ ...item, step: 0 })));
-    }),
+    }, options.disabledTools ?? []),
     stopWhen: stepCountIs(maxSteps),
     // 思考开关必须放在构造层：AgentCallParameters（stream()/generate() 的入参）没有 providerOptions。
     providerOptions: thinkingProviderOptions(options.thinking),

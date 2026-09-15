@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
-import { callMcpTool, findMcpTool, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION, MCP_TOOLS } from "@/lib/reasoning/mcp";
+import { loadToolPolicy, type ToolPolicy } from "@/lib/reasoning/tool-policy";
+import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
 
 /**
  * MCP（Model Context Protocol）服务端：Streamable HTTP 传输，JSON 响应。
@@ -40,7 +41,7 @@ async function authorization(request: NextRequest) {
   return { ok: false as const, via: "none" as const, reason: "未授权：带上平台会话 Cookie，或 Authorization: Bearer <MCP_API_TOKEN>。" };
 }
 
-async function handleMessage(message: JsonRpcRequest) {
+async function handleMessage(message: JsonRpcRequest, policy: ToolPolicy) {
   if (!message || typeof message !== "object" || message.jsonrpc !== "2.0" || typeof message.method !== "string") {
     return rpcError(message?.id, -32600, "不是合法的 JSON-RPC 2.0 请求。");
   }
@@ -70,7 +71,7 @@ async function handleMessage(message: JsonRpcRequest) {
       jsonrpc: "2.0" as const,
       id: id ?? null,
       result: {
-        tools: MCP_TOOLS.map((tool) => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema })),
+        tools: mcpTools(policy.disabledTools).map((tool) => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema })),
       },
     };
   }
@@ -79,9 +80,9 @@ async function handleMessage(message: JsonRpcRequest) {
     const name = typeof params.name === "string" ? params.name : "";
     const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? (params.arguments as Record<string, unknown>) : {};
     if (!name) return rpcError(id, -32602, "tools/call 需要 name。");
-    if (!findMcpTool(name)) return rpcError(id, -32602, `没有叫「${name}」的工具。先调 tools/list。`);
+    if (!findMcpTool(name, policy.disabledTools)) return rpcError(id, -32602, policy.disabledTools.includes(name) ? `工具「${name}」已在平台的「MCP 调试」里被关闭，当前不可用。` : `没有叫「${name}」的工具。先调 tools/list。`);
     try {
-      const outcome = await callMcpTool(name, args);
+      const outcome = await callMcpTool(name, args, policy.disabledTools);
       return {
         jsonrpc: "2.0" as const,
         id: id ?? null,
@@ -121,11 +122,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(rpcError(null, -32700, "请求体不是合法 JSON。"), { status: 400, headers });
   }
 
+  // 工具开关是平台级设置：每次请求读一次，关了之后连 tools/list 都不再出现它。
+  const policy = await loadToolPolicy();
   const batch = Array.isArray(body);
   const messages = (batch ? body : [body]) as JsonRpcRequest[];
   const responses: unknown[] = [];
   for (const message of messages) {
-    const response = await handleMessage(message);
+    const response = await handleMessage(message, policy);
     if (response) responses.push(response);
   }
 

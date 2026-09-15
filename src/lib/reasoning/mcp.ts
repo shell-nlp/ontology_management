@@ -96,7 +96,8 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
 }
 
 /** 给「MCP 调试」页看的全量目录：**含**暂时不用的工具，界面把它们灰着显示。 */
-export const MCP_TOOL_CATALOG: McpTool[] = [
+export function mcpToolCatalog(): McpTool[] {
+  return [
   {
     name: "list_ontologies",
     title: TOOL_TITLES.list_ontologies,
@@ -104,14 +105,23 @@ export const MCP_TOOL_CATALOG: McpTool[] = [
     description: "列出平台上登记的本体：id、名称、标识、落在哪个存储、版本状态与对象数量。查其它工具前先用它拿 ontology_id。",
     inputSchema: { type: "object", properties: {} },
   },
-  ...REASONING_TOOLS.map(withOntology),
-];
+    ...REASONING_TOOLS.map(withOntology),
+  ];
+}
 
-/** 真正对外提供的工具：tools/list 与 tools/call 都走这一份，暂时不用的不在其中。 */
-export const MCP_TOOLS: McpTool[] = MCP_TOOL_CATALOG.filter((tool) => !tool.disabled);
+/**
+ * 真正对外提供的工具：tools/list 与 tools/call 都走这一份。
+ *
+ * 两种"不提供"：平台自己停用的（`tool.disabled`，这一版不查实例），
+ * 以及用户在「MCP 调试」里关掉的（`disabledTools`）。关掉的工具在外部客户端眼里就等于不存在。
+ */
+export function mcpTools(disabledTools: readonly string[] = []): McpTool[] {
+  const off = new Set(disabledTools);
+  return mcpToolCatalog().filter((tool) => !tool.disabled && !off.has(tool.name));
+}
 
-export function findMcpTool(name: string) {
-  return MCP_TOOLS.find((tool) => tool.name === name) ?? null;
+export function findMcpTool(name: string, disabledTools: readonly string[] = []) {
+  return mcpTools(disabledTools).find((tool) => tool.name === name) ?? null;
 }
 
 async function listOntologySummaries() {
@@ -157,11 +167,11 @@ async function contextFor(ontologyId: string): Promise<ToolContext> {
   return { store, definition, runtimeTypes, dataSources };
 }
 
-export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {
+export async function callMcpTool(name: string, args: Record<string, unknown>, disabledTools: readonly string[] = []): Promise<ToolOutcome> {
   if (name === "list_ontologies") {
     return { payload: { ontologies: await listOntologySummaries() }, evidence: [] };
   }
-  if (!findMcpTool(name)) throw new Error(`没有叫「${name}」的工具。先调 tools/list 看可用工具。`);
+  if (!findMcpTool(name, disabledTools)) throw new Error(`没有叫「${name}」的工具。先调 tools/list 看可用工具（被关掉的工具不在里面）。`);
   const { ontology_id: ontologyId, ...rest } = args;
   const context = await contextFor(typeof ontologyId === "string" ? ontologyId : "");
   return runReasoningTool(name, rest, context);

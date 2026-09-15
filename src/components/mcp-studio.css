@@ -202,3 +202,13 @@
 .mcp-spin { animation: mcp-spin 1s linear infinite; }
 @keyframes mcp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mcp-spin { animation: none; } }
+/* 工具开关：一行 = 工具按钮 + 开关。关掉的行整行变淡，"模型拿不到它"这件事一眼能看出来。 */
+.mcp-tool-row { display: flex; align-items: center; gap: 6px; }
+.mcp-tool-row .mcp-tool { flex: 1; min-width: 0; }
+.mcp-tool-row.off .mcp-tool b, .mcp-tool-row.off .mcp-tool code { opacity: .5; }
+.mcp-switch { flex: none; width: 30px; height: 17px; padding: 0; border: 1px solid #c7d7ec; border-radius: 99px; background: #e8effa; transition: background .15s ease, border-color .15s ease; }
+.mcp-switch i { display: block; width: 13px; height: 13px; margin-left: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(23, 56, 105, .25); transition: margin-left .15s ease; }
+.mcp-switch.off { background: #eef2f7; border-color: #dbe3ee; }
+.mcp-switch.off i { margin-left: 2px; }
+.mcp-switch:hover { border-color: #9dc0ef; }
+.mcp-switch:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }

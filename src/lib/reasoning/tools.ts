@@ -535,6 +535,8 @@ function resolveDataSource(context: ToolContext, name: string) {
 export function reasoningToolSet(
   context: ToolContext,
   onEvidence: (toolCallId: string, evidence: ToolOutcome["evidence"]) => void,
+  /** 被用户关掉的工具名（见 reasoning/tool-policy.ts）：关掉的不进模型能看到的那份工具集。 */
+  disabledTools: readonly string[] = [],
 ) {
   const build = (spec: ToolSpec) => tool({
     description: spec.description,
@@ -556,7 +558,8 @@ export function reasoningToolSet(
     },
   });
   // 标记为 disabled 的工具不进模型能看到的那份工具集（MCP 调试页里仍然灰着列出来）。
-  return Object.fromEntries(REASONING_TOOLS.filter((spec) => !spec.disabled).map((spec) => [spec.name, build(spec)]));
+  const off = new Set(disabledTools);
+  return Object.fromEntries(REASONING_TOOLS.filter((spec) => !spec.disabled && !off.has(spec.name)).map((spec) => [spec.name, build(spec)]));
 }
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {

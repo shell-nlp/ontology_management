@@ -5,6 +5,7 @@ import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
+import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { runReasoning } from "@/lib/reasoning/agent";
 import { getTarget } from "@/lib/targets";
 
@@ -43,10 +44,13 @@ export async function POST(request: NextRequest) {
     const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
     // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
     const dataSources = await listDataSources().catch(() => []);
+    // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
+    const policy = await loadToolPolicy();
     const run = await runReasoning({
       question: input.question,
       context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
       maxSteps: input.maxSteps,
+      disabledTools: policy.disabledTools,
       systemPrompt: input.systemPrompt,
     });
 

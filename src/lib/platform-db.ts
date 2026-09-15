@@ -148,6 +148,14 @@ async function ensurePlatformSchemaOnce() {
        * 才没有本体可挂，这时退化成按落点归类；本体换落点之后历史仍然属于这个本体。
        */
       await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.platform_settings (
+          key TEXT PRIMARY KEY,
+          value JSONB NOT NULL,
+          updated_by TEXT REFERENCES ontology_platform.users(id),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.reasoning_conversations (
           id TEXT PRIMARY KEY,
           ontology_id TEXT REFERENCES ontology_platform.ontologies(id) ON DELETE CASCADE,
@@ -297,4 +305,26 @@ export async function listAuditEntries(input: { targetId: string; actions?: stri
     details: row.details ?? {},
     createdAt: new Date(row.created_at).toISOString(),
   }));
+}
+
+/**
+ * 平台级设置：一段 JSON 存在库里，按 key 取。
+ *
+ * 与「问答配置」的区别：那几个数是**浏览器本地**的偏好（一台机器一套），
+ * 而工具开关要影响服务端 —— MCP 端点在外部客户端手里，模型看不到浏览器，
+ * 所以这类"跟着部署走"的设置必须落在平台库上。
+ */
+export async function readPlatformSetting<T>(key: string): Promise<T | null> {
+  const result = await platformQuery<{ value: T }>("SELECT value FROM ontology_platform.platform_settings WHERE key = $1", [key]);
+  return result.rows[0]?.value ?? null;
+}
+
+export async function writePlatformSetting<T>(key: string, value: T, updatedBy?: string): Promise<T> {
+  await platformQuery(
+    `INSERT INTO ontology_platform.platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+    [key, JSON.stringify(value), updatedBy ?? null],
+  );
+  return value;
 }
