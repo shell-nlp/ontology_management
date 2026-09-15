@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
@@ -16,7 +16,8 @@ import {
   systemPromptFieldValue,
   type ReasoningSettings,
 } from "@/lib/reasoning/settings";
-import type { ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
+import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
+import type { ReasoningAttachment, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import "./qa-studio.css";
 
 /**
@@ -47,6 +48,8 @@ const EXAMPLES = [
 type Turn = {
   id: string;
   question: string;
+  /** 这一轮一起问的图片：当场问的是刚贴的，回看历史读的是当时存在运行记录里的那份。 */
+  attachments: ReasoningAttachment[];
   thinking: string;
   answer: string;
   steps: ReasoningStep[];
@@ -62,6 +65,7 @@ function messageToTurn(message: ConversationMessage): Turn {
   return {
     id: message.id,
     question: message.question,
+    attachments: message.run?.attachments ?? [],
     thinking: message.thinking,
     answer: message.answer,
     steps: message.run?.steps ?? [],
@@ -246,10 +250,86 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
   );
 }
 
+/** 一轮最多带几张图、缩到多大：和 lib/reasoning/attachments.ts 的上限配套。 */
+const MAX_ATTACHMENTS = 4;
+const MAX_IMAGE_EDGE = 1600;
+/** 单张 data URL 的字符上限，比服务端那道（3.2M）留一点余量。 */
+const MAX_IMAGE_CHARS = 2_800_000;
+
+/** 读成可画的图：优先 createImageBitmap（快、不占 DOM），老浏览器退回 <img> + object URL。 */
+async function loadDrawable(file: File) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return { source: bitmap as CanvasImageSource, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`「${file.name}」读不出来，换一张图试试。`));
+      element.src = url;
+    });
+    return { source: image as CanvasImageSource, width: image.naturalWidth, height: image.naturalHeight, release: () => URL.revokeObjectURL(url) };
+  } catch (reason) {
+    URL.revokeObjectURL(url);
+    throw reason;
+  }
+}
+
+/**
+ * 图片进 state 之前先在浏览器里过一遍画布：长边超过 MAX_IMAGE_EDGE 就等比缩小，
+ * 编码后仍然过大就换 JPEG 再压两次。
+ *
+ * 非缩不可的原因：模型看 1600px 已经够清楚，而原图直接 base64 进请求体与对话历史是几 MB 起，
+ * 一次粘贴三张截图就能把一轮问答拖成几十秒。
+ * 截图类图片保持原格式（PNG 的文字比 JPEG 清楚），照片才用 JPEG。
+ */
+async function prepareImage(file: File): Promise<ReasoningAttachment> {
+  if (!file.type.startsWith("image/")) throw new Error(`「${file.name}」不是图片。`);
+  const drawable = await loadDrawable(file);
+  try {
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(drawable.width, drawable.height, 1));
+    const width = Math.max(1, Math.round(drawable.width * scale));
+    const height = Math.max(1, Math.round(drawable.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("这个浏览器画不了图（拿不到 canvas 上下文），换一个浏览器再试。");
+    context.drawImage(drawable.source, 0, 0, width, height);
+    const keep = ["image/png", "image/jpeg", "image/webp"].includes(file.type) ? file.type : "image/png";
+    let dataUrl = canvas.toDataURL(keep, keep === "image/png" ? undefined : 0.86);
+    if (dataUrl.length > MAX_IMAGE_CHARS) dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    if (dataUrl.length > MAX_IMAGE_CHARS) dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+    if (dataUrl.length > MAX_IMAGE_CHARS) throw new Error(`「${file.name}」压缩完还是太大，换一张小一点的图。`);
+    return {
+      name: file.name || "粘贴的图片",
+      // 压缩时可能换了格式，所以媒体类型看编码结果，不看原文件类型。
+      mediaType: mediaTypeOf(dataUrl, keep),
+      dataUrl,
+      width,
+      height,
+      bytes: Math.round(((dataUrl.length - dataUrl.indexOf(",") - 1) * 3) / 4),
+    };
+  } finally {
+    drawable.release();
+  }
+}
+
+/** 字节数给人看的样子。 */
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** 消费 SSE：把后端的事件翻译成界面状态。 */
 async function streamRun(
   targetId: string,
   question: string,
+  /** 和问题一起发过去的图片；空数组就是纯文字提问。 */
+  attachments: ReasoningAttachment[],
   thinking: boolean,
   conversationId: string | null,
   /** 请求体里那几项：三个数字旋钮 + 可选的系统提示词。 */
@@ -266,7 +346,7 @@ async function streamRun(
   const response = await fetch("/api/reasoning/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}) }),
+    body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}), ...(attachments.length ? { attachments } : {}) }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string } | null;
@@ -401,6 +481,12 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   // conversationId 也放这里，因为"现在在跟哪段历史对话"同样是随本体走的。
   const [session, setSession] = useState<{ targetId: string; conversationId: string | null; turns: Turn[] }>(() => ({ targetId, conversationId: null, turns: [] }));
   const [question, setQuestion] = useState("");
+  /** 这一轮要带上的图片。发送后清空 —— 图属于某一轮问答，不该黏在下一条问题上。 */
+  const [attachments, setAttachments] = useState<ReasoningAttachment[]>([]);
+  const [preparing, setPreparing] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  /** 点开看的原图；null 就是没开。 */
+  const [preview, setPreview] = useState<ReasoningAttachment | null>(null);
   const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
@@ -414,6 +500,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 「图片」按钮点开的就是这个藏起来的 file input。 */
+  const fileRef = useRef<HTMLInputElement | null>(null);
   // 用户往上翻了就不自动跟随，免得读一半被拽回底部。
   const stickRef = useRef(true);
 
@@ -458,6 +546,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [configOpen]);
+
+  // 原图预览开着时按 Esc 关掉，和平台里其它浮层一致。
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setPreview(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview]);
 
   /** 改一个参数。空输入 = 不限制（不往请求里带这一项）。 */
   const updateSetting = useCallback((key: keyof ReasoningSettings, raw: string) => {
@@ -504,17 +600,48 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  /**
+   * 收图片：按钮选的、粘贴的、拖进来的都走这里。
+   *
+   * 一律先在浏览器里缩一遍（prepareImage）再进 state —— 发给模型的、存进对话历史的都是缩过的那张。
+   * 超过张数上限的部分直接说明并丢掉，不静默截断。
+   */
+  const addFiles = useCallback(async (incoming: Iterable<File>) => {
+    const files = [...incoming].filter((file) => file.type.startsWith("image/"));
+    if (!files.length) { fail(new Error("只能带图片：截图直接粘贴，或者选一个图片文件。")); return; }
+    if (attachments.length >= MAX_ATTACHMENTS) { notify(`一轮最多带 ${MAX_ATTACHMENTS} 张图片，先去掉一张再加。`); return; }
+    setPreparing(true);
+    try {
+      const room = MAX_ATTACHMENTS - attachments.length;
+      const prepared: ReasoningAttachment[] = [];
+      for (const file of files.slice(0, room)) prepared.push(await prepareImage(file));
+      setAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS));
+      if (files.length > room) notify(`一轮最多带 ${MAX_ATTACHMENTS} 张图片，后面 ${files.length - room} 张没有加上。`);
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setPreparing(false);
+    }
+  }, [attachments.length, fail, notify]);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((current) => current.filter((_, position) => position !== index));
+  }, []);
+
   const ask = useCallback(async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    const images = attachments.slice(0, MAX_ATTACHMENTS);
+    // 只贴了图没写字也算一次提问：补上 IMAGE_ONLY_QUESTION，界面与模型看到的是同一句。
+    if ((!trimmed && !images.length) || busy) return;
     if (!targetId) { fail(new Error("请先在左侧选择一个本体。")); return; }
     const id = `${Date.now()}`;
+    const asked = trimmed || IMAGE_ONLY_QUESTION;
     setQuestion("");
     setBusy(true);
     stickRef.current = true;
-    updateTurns((current) => [...current, { id, question: trimmed, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
+    updateTurns((current) => [...current, { id, question: asked, attachments: images, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
     try {
-      await streamRun(targetId, trimmed, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), {
+      await streamRun(targetId, asked, images, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), {
         onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
         onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
         // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
@@ -539,9 +666,11 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     } finally {
       patchTurn(id, { busy: false });
       setBusy(false);
+      // 图片属于刚问完的那一轮，不该黏在下一条问题上。
+      setAttachments([]);
       inputRef.current?.focus();
     }
-  }, [busy, conversationId, fail, notify, patchTurn, refreshConversations, settings, thinkingEnabled, targetId, updateTurns]);
+  }, [attachments, busy, conversationId, fail, notify, patchTurn, refreshConversations, settings, thinkingEnabled, targetId, updateTurns]);
 
   const toggleHistory = useCallback(() => {
     setHistoryOpen((current) => {
@@ -556,6 +685,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     if (busy) return;
     setSession({ targetId, conversationId: null, turns: [] });
     setQuestion("");
+    setAttachments([]);
+    setPreview(null);
     setConfirmingDelete(null);
     stickRef.current = true;
     inputRef.current?.focus();
@@ -662,7 +793,28 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
         {turns.map((turn) => (
           <article className="qa-turn" key={turn.id}>
-            <div className="qa-ask"><span>我</span><p>{turn.question}</p></div>
+            <div className="qa-ask">
+              <span>我</span>
+              <div className="qa-ask-body">
+                <p>{turn.question}</p>
+                {turn.attachments.length > 0 && (
+                  <div className="qa-ask-images">
+                    {turn.attachments.map((item, index) => (
+                      <button
+                        key={`${item.name}-${index}`}
+                        type="button"
+                        className="qa-ask-image"
+                        onClick={() => setPreview(item)}
+                        title={`${item.name} · ${item.width}×${item.height} · 点开看原图`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element -- 图片是本地压缩后的 data URL，next/image 没法优化它（也不该走图片服务）。 */}
+                        <img src={item.dataUrl} alt={item.name} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="qa-answer">
               <div className="qa-answer-head"><span className="qa-answer-mark">本体</span><b>Agent</b></div>
 
@@ -698,20 +850,80 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         ))}
       </div>
 
-      <div className="qa-compose">
-        <textarea
-          ref={inputRef}
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void ask(question); } }}
-          placeholder={published ? "问一个业务问题，例如：哪些用户开了专线？" : "当前本体还没有发布版本，先去发布"}
-          rows={1}
-          disabled={busy}
+      <div
+        className={`qa-compose${dragging ? " dragging" : ""}`}
+        onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDragging(true); } }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          if (!event.dataTransfer?.files.length) return;
+          event.preventDefault();
+          setDragging(false);
+          // 同样是活对象：拖放的 files 出了事件回调就可能失效，先拷一份。
+          void addFiles([...event.dataTransfer.files]);
+        }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          // 先把 FileList 拷成数组再清空 input：`event.target.files` 是活的对象，清空后它自己也空了。
+          onChange={(event) => { const files = [...(event.target.files ?? [])]; event.target.value = ""; void addFiles(files); }}
         />
-        <button className="action primary" disabled={busy || !question.trim() || !published} onClick={() => void ask(question)}>
-          {busy ? <Loader2 size={15} className="qa-spin" /> : <Send size={15} />}
-          发送
-        </button>
+        <div className="qa-compose-main">
+          {attachments.length > 0 && (
+            <div className="qa-attachments">
+              {attachments.map((item, index) => (
+                <figure className="qa-attachment" key={`${item.name}-${index}`}>
+                  <button type="button" className="qa-attachment-open" onClick={() => setPreview(item)} title="点开看原图">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- 图片是本地压缩后的 data URL，next/image 没法优化它（也不该走图片服务）。 */}
+                    <img src={item.dataUrl} alt={item.name} />
+                  </button>
+                  <figcaption>{item.width}×{item.height} · {formatBytes(item.bytes)}</figcaption>
+                  <button type="button" className="qa-attachment-remove" onClick={() => removeAttachment(index)} aria-label={`移除图片 ${item.name}`} title="移除这张图"><X size={12} /></button>
+                </figure>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={inputRef}
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            onPaste={(event) => {
+              // 截图直接粘贴进来。纯文字粘贴照旧走浏览器默认行为。
+              const pasted = [...event.clipboardData.items]
+                .filter((item) => item.kind === "file")
+                .map((item) => item.getAsFile())
+                .filter((file): file is File => Boolean(file));
+              if (!pasted.length) return;
+              event.preventDefault();
+              void addFiles(pasted);
+            }}
+            onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void ask(question); } }}
+            placeholder={published ? "问一个业务问题，例如：哪些用户开了专线？（截图可以直接粘贴或拖进来）" : "当前本体还没有发布版本，先去发布"}
+            rows={1}
+            disabled={busy}
+          />
+        </div>
+        <div className="qa-compose-actions">
+          <button
+            type="button"
+            className="qa-attach"
+            disabled={busy || !published || preparing}
+            onClick={() => fileRef.current?.click()}
+            title="加一张图片（截图直接粘贴、或者把图片拖进来也行）"
+          >
+            {preparing ? <Loader2 size={15} className="qa-spin" /> : <ImagePlus size={15} />}
+            图片
+            {attachments.length > 0 && <em>{attachments.length}/{MAX_ATTACHMENTS}</em>}
+          </button>
+          <button className="action primary" disabled={busy || (!question.trim() && !attachments.length) || !published} onClick={() => void ask(question)}>
+            {busy ? <Loader2 size={15} className="qa-spin" /> : <Send size={15} />}
+            发送
+          </button>
+        </div>
+        {dragging && <div className="qa-compose-drop">松手就把它加进这一轮</div>}
       </div>
 
       {historyOpen && (
@@ -795,6 +1007,20 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
               </p>
             </div>
           </aside>
+        </div>
+      )}
+
+      {preview && (
+        <div className="qa-lightbox" role="dialog" aria-modal="true" aria-label="图片预览" onClick={() => setPreview(null)}>
+          <figure onClick={(event) => event.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- 图片是本地压缩后的 data URL，next/image 没法优化它（也不该走图片服务）。 */}
+            <img src={preview.dataUrl} alt={preview.name} />
+            <figcaption>
+              <b>{preview.name}</b>
+              <span>{preview.width}×{preview.height} · {formatBytes(preview.bytes)} · {preview.mediaType}</span>
+              <button type="button" className="qa-lightbox-close" onClick={() => setPreview(null)} aria-label="关闭预览"><X size={15} /></button>
+            </figcaption>
+          </figure>
         </div>
       )}
     </section>

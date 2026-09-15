@@ -1,9 +1,10 @@
 import { ToolLoopAgent, stepCountIs, type ModelMessage } from "ai";
+import { userMessageContent } from "@/lib/reasoning/attachments";
 import { llmModel, llmSettings, thinkingProviderOptions } from "@/lib/reasoning/provider";
 import { buildInstructions } from "@/lib/reasoning/prompt";
 import { reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
 import { toolResultSummary } from "@/lib/reasoning/tool-summary";
-import type { ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
+import type { ReasoningAttachment, ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 
 /**
  * 本体推理闭环的编排层。
@@ -34,6 +35,8 @@ export type AgentEvent =
 
 export type RunReasoningOptions = {
   question: string;
+  /** 和问题一起发给模型的图片（多模态输入）。不传就是纯文字提问。 */
+  attachments?: ReasoningAttachment[];
   context: ToolContext;
   /** 被用户关掉的工具名；不传 = 全开（平台自己停用的那几个仍然不放开）。 */
   disabledTools?: string[];
@@ -88,7 +91,12 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     providerOptions: thinkingProviderOptions(options.thinking),
   });
 
-  const messages: ModelMessage[] = [{ role: "user", content: question }];
+  const attachments = options.attachments ?? [];
+  const messages: ModelMessage[] = [{
+    role: "user",
+    // 带图时给的是多模态 part 列表（一句文字 + 每张图一个 file part）；不带图保持原来的纯文本形状。
+    content: attachments.length ? userMessageContent(question, attachments) : question,
+  }];
   const result = await agent.stream({
     messages,
     abortSignal: options.abortSignal,
@@ -183,6 +191,8 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
   const deduped = [...new Map(evidence.map((item) => [`${item.kind}\u0000${item.id}`, item])).values()];
   const run: ReasoningRun = {
     question,
+    // 图片跟着运行记录一起落库：历史里点回来，还能看到当时问的是哪张图。
+    attachments: attachments.length ? attachments : undefined,
     answer: finalAnswer,
     reasoning,
     steps,

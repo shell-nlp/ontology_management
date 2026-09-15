@@ -580,6 +580,27 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - **刻意不放进配置的东西**：只读事务、语句超时、写操作拦截（护着数据库，不该由这个抽屉关掉）；
   模型与系统提示词也先不做成可改 —— 改坏了会把"只读""不查本体实例"这些规矩一起改没。
 
+**智能问答可以带图（多模态输入）**（2026-09-15）：用户要求"能同时输入图片"。三处都能进：
+输入条上的「图片」按钮、**直接粘贴截图**、把图片**拖进输入条**；图片先在本机缩一遍再进 state，
+缩略图带 ✕ 可移除，点缩略图就地放大看原图（data URL 不能开新标签页，浏览器会拦）。
+
+- 传输：走 AI SDK 的多模态输入 ——`content` 是 part 数组，一句 `{type:"text"}` + 每张图一个
+  `{type:"file", mediaType, data:{type:"data", data: 裸 base64}}`（**不带 `data:` 前缀**，
+  openai-compatible provider 自己拼 `image_url: data:<mediaType>;base64,...`）。
+  构造在 `agent.ts`，可单测的纯函数在 `src/lib/reasoning/attachments.ts`。
+- 两道上限，缺一不可：**浏览器先缩图**（`qa-studio.tsx` 的 `prepareImage`：长边 ≤1600，
+  编码后仍 >2.8M 字符就转 JPEG 再压两次）、**服务端 zod 兜底**
+  （`attachment-schema.ts`：≤4 张、单张 ≤3.2M 字符、合计 ≤8M）。只挡一边都不行 ——
+  只在前端挡，换个客户端就绕过去；只在服务端挡，20MB 的截图要先在网络上走一遍。
+- **只带图不带字也算一次提问**：`effectiveQuestion()` 补上 `IMAGE_ONLY_QUESTION`，
+  而且**审计、对话历史、模型入参三处必须用同一个结果**，否则历史里会出现一条空标题的记录。
+  `question` 在路由里因此不能是 `.min(1)`，是在 `effectiveQuestion` 之后判空的。
+- 图片存进 `reasoning_messages.run.attachments`（就是那份 data URL）：历史点回来还能看到当时问的是哪张图。
+  `attachments.ts` **故意不 import zod** —— 界面要用它的常量与 `mediaTypeOf`，
+  schema 单独放 `attachment-schema.ts`，别把 zod 打进浏览器包。
+- 踩过的坑：`input.files` / `dataTransfer.files` 是**活对象**，`event.target.value = ""` 之后它自己也空了 ——
+  在两个都先 `[...files]` 拷成数组再处理。这个 bug 只在真实浏览器里点一次才看得见（单测查不出来）。
+
 **智能问答的对话历史**（2026-09-14，对应原先的待办 L2）：
 
 - 两张表（`platform-db.ts`）：`reasoning_conversations`（id / ontology_id / target_id / title / created_by）

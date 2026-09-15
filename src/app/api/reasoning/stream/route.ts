@@ -7,6 +7,8 @@ import { getOntologyByTargetId } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { runReasoning, type AgentEvent } from "@/lib/reasoning/agent";
+import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
+import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { saveTurn } from "@/lib/reasoning/conversations";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { getTarget } from "@/lib/targets";
@@ -25,7 +27,10 @@ import { getTarget } from "@/lib/targets";
 
 const inputSchema = z.object({
   targetId: z.string().uuid(),
-  question: z.string().trim().min(1).max(500),
+  // 问题可以为空：只带图片提问时由 effectiveQuestion 补一句默认的（见 attachments.ts）。
+  question: z.string().trim().max(500),
+  /** 和问题一起发过去的图片；张数 / 体积 / 类型上限见 attachments.ts。 */
+  attachments: attachmentsSchema,
   // 上限与服务端 agent.ts 的 MAX_STEPS_CEILING 对齐：那是防跑穿的兜底，不是给用户设的门槛。
   maxSteps: z.number().int().min(1).max(100).optional(),
   thinking: z.boolean().optional(),
@@ -60,6 +65,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status });
   }
 
+  // 真正下发的问题文本：带图不带字时就是那句默认问题。审计、历史、模型入参三处都用它。
+  const question = effectiveQuestion(input.question, input.attachments ?? []);
+  if (!question) return Response.json({ error: "问题不能为空。" }, { status: 400 });
+
   const target = await getTarget(input.targetId);
   if (!target) return Response.json({ error: "本体存储不存在。" }, { status: 404 });
 
@@ -88,7 +97,8 @@ export async function POST(request: NextRequest) {
         // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
     const policy = await loadToolPolicy();
     const run = await runReasoning({
-          question: input.question,
+          question,
+          attachments: input.attachments,
           context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
       disabledTools: policy.disabledTools,
@@ -100,7 +110,7 @@ export async function POST(request: NextRequest) {
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question, attachments: input.attachments?.length ?? 0, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
         // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
         try {
@@ -108,7 +118,7 @@ export async function POST(request: NextRequest) {
             scope,
             userId: actorId,
             conversationId: input.conversationId ?? null,
-            question: input.question,
+            question,
             answer: run.answer,
             thinking: run.reasoning,
             thinkingOn: input.thinking !== false,

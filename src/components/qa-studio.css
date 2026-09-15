@@ -482,3 +482,39 @@
 .qa-config-hint b { color: var(--qa-ink); }
 .qa-config-prompt-state { display: block; margin-top: 5px; color: var(--qa-muted); font-size: 10.5px; }
 .qa-config-prompt-state.custom { color: var(--qa-caution); }
+
+/* ---------- 图片附件（多模态提问） ---------- */
+
+/* 提问里的图片：缩略图挂在气泡下面；点开看原图，原图看的是发出去的那份。 */
+.qa-ask-body { order: 1; display: grid; gap: 6px; justify-items: end; max-width: min(560px, 72%); }
+.qa-ask-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.qa-ask-image { width: 104px; height: 76px; padding: 0; overflow: hidden; border: 1px solid #d6e1f0; border-radius: 8px; background: #fff; cursor: zoom-in; }
+.qa-ask-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.qa-ask-image:hover { border-color: #93b4f5; box-shadow: 0 2px 10px rgba(37, 99, 235, .14); }
+
+/* 输入条：左边是"图片 + 文字"，右边是"加图 + 发送"。 */
+.qa-compose-main { display: grid; gap: 6px; min-width: 0; }
+.qa-compose-actions { display: flex; align-items: flex-end; gap: 8px; }
+.qa-attach { display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 13px; border: 1px solid #d6e1f0; border-radius: 6px; background: #fff; color: #47606f; font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.qa-attach:hover:not(:disabled) { border-color: #93b4f5; background: #f7faff; color: #1e3a8a; }
+.qa-attach:disabled { color: #9aa8b5; background: #f1f5f9; cursor: not-allowed; }
+.qa-attach em { padding: 1px 6px; border-radius: 99px; background: #eef4ff; color: #1e3a8a; font-size: 10px; font-style: normal; }
+.qa-attachments { display: flex; flex-wrap: wrap; justify-self: start; max-width: 100%; gap: 10px; padding: 9px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fbfcfe; }
+.qa-attachment { position: relative; display: grid; gap: 3px; justify-items: center; margin: 0; }
+.qa-attachment-open { width: 84px; height: 62px; padding: 0; overflow: hidden; border: 1px solid #d6e1f0; border-radius: 6px; background: #fff; cursor: zoom-in; }
+.qa-attachment-open img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.qa-attachment-open:hover { border-color: #93b4f5; }
+.qa-attachment figcaption { color: var(--qa-faint); font-size: 9.5px; line-height: 1.4; }
+.qa-attachment-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid #d6e1f0; border-radius: 50%; background: #fff; color: #64748b; cursor: pointer; }
+.qa-attachment-remove:hover { border-color: #f0a9a0; background: #fff1ed; color: #b04f3d; }
+.qa-compose.dragging { border-radius: 8px; box-shadow: inset 0 0 0 2px rgba(37, 99, 235, .28); }
+.qa-compose-drop { position: absolute; inset: 6px 4px; display: grid; place-items: center; border: 2px dashed #93b4f5; border-radius: 8px; background: rgba(239, 244, 255, .94); color: #1e3a8a; font-size: 12.5px; font-weight: 650; }
+
+/* 原图预览：data URL 不能开新标签页（浏览器会拦），所以就地放大看。 */
+.qa-lightbox { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 32px; background: rgba(15, 23, 42, .62); cursor: zoom-out; }
+.qa-lightbox figure { display: grid; gap: 10px; max-width: min(1100px, 92vw); max-height: 92vh; margin: 0; cursor: default; }
+.qa-lightbox img { max-width: 100%; max-height: 78vh; border-radius: 8px; background: #fff; }
+.qa-lightbox figcaption { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 44px 10px 14px; border-radius: 6px; background: #0f172a; color: #e2e8f0; font-size: 12px; }
+.qa-lightbox figcaption span { color: #94a3b8; font-size: 11px; }
+.qa-lightbox-close { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #334155; border-radius: 4px; background: transparent; color: #cbd5e1; cursor: pointer; }
+.qa-lightbox-close:hover { background: #1e293b; color: #fff; }

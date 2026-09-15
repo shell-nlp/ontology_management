@@ -7,11 +7,16 @@ import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { runReasoning } from "@/lib/reasoning/agent";
+import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
+import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { getTarget } from "@/lib/targets";
 
 const inputSchema = z.object({
   targetId: z.string().uuid(),
-  question: z.string().trim().min(1).max(500),
+  // 问题可以为空：只带图片提问时由 effectiveQuestion 补一句默认的（见 attachments.ts）。
+  question: z.string().trim().max(500),
+  /** 和问题一起发过去的图片；张数 / 体积 / 类型上限见 attachments.ts。 */
+  attachments: attachmentsSchema,
   maxSteps: z.number().int().min(1).max(100).optional(),
   /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
   toolResultLimit: z.number().int().min(500).max(200_000).optional(),
@@ -30,6 +35,8 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("VIEWER");
     const input = inputSchema.parse(await request.json());
+    const question = effectiveQuestion(input.question, input.attachments ?? []);
+    if (!question) return NextResponse.json({ error: "问题不能为空。" }, { status: 400 });
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
 
@@ -47,7 +54,8 @@ export async function POST(request: NextRequest) {
     // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
     const policy = await loadToolPolicy();
     const run = await runReasoning({
-      question: input.question,
+      question,
+      attachments: input.attachments,
       context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
       maxSteps: input.maxSteps,
       disabledTools: policy.disabledTools,
@@ -58,7 +66,7 @@ export async function POST(request: NextRequest) {
       actorId: user.id,
       targetId: target.id,
       action: "REASONING_RUN",
-      details: { question: input.question, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs },
+      details: { question, attachments: input.attachments?.length ?? 0, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs },
     });
 
     return NextResponse.json(run);

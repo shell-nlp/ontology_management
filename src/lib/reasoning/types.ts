@@ -50,6 +50,23 @@ export type ReasoningStep = {
   summary?: string;
 };
 
+/**
+ * 提问时一起带上的图片。
+ *
+ * 存的就是 data URL（`data:image/png;base64,...`）：它既是发给模型的多模态输入，
+ * 也是历史回看时显示的那张图 —— 不再单独存一份二进制，免得"库里一份、界面上又一份"。
+ * 体积由 attachments.ts 的上限兜住（浏览器侧先缩图再发）。
+ */
+export type ReasoningAttachment = {
+  name: string;
+  mediaType: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  /** 编码后的字节数（估算），界面上标出来让人知道模型收到的这张图有多大。 */
+  bytes: number;
+};
+
 export type ReasoningUsage = {
   promptTokens: number;
   completionTokens: number;
@@ -58,6 +75,8 @@ export type ReasoningUsage = {
 
 export type ReasoningRun = {
   question: string;
+  /** 这一轮连图一起问的图片。旧记录没有这个字段，界面要能兜底。 */
+  attachments?: ReasoningAttachment[];
   answer: string;
   /** 模型的思考过程，累加所有轮次。关闭思考或模型不支持时是空串。 */
   reasoning: string;
