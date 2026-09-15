@@ -1,4 +1,5 @@
 import { platformQuery, withPlatformTransaction } from "@/lib/platform-db";
+import type { HistoryTurn } from "@/lib/reasoning/history";
 import { conversationTitle } from "@/lib/reasoning/conversation-view";
 import type { ConversationDetail, ConversationMessage, ConversationSummary } from "@/lib/reasoning/conversation-view";
 import type { ReasoningRun } from "@/lib/reasoning/types";
@@ -109,6 +110,61 @@ export async function deleteConversation(scope: ConversationScope, userId: strin
     [userId, scope.ontologyId, scope.targetId, conversationId],
   );
   return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * 多轮上下文要的那一份：**已经压好的摘要** + 摘要覆盖到哪一条 + 这段对话里的全部轮次。
+ *
+ * 和 `getConversation` 分开是有意的：那个是给界面看的（标题、时间、整份 run），
+ * 这个是给推理用的（轨迹能少则少，摘要进度要单独读）。
+ */
+export type ConversationContext = {
+  /** 已经压好的摘要；没有就是空串。 */
+  summary: string;
+  /** 摘要覆盖到最后哪一条消息（id）；空串表示还没压过。 */
+  summaryThrough: string;
+  /** 这段对话里已有的轮次，按时间正序。 */
+  turns: HistoryTurn[];
+};
+
+export async function loadConversationContext(scope: ConversationScope, userId: string, conversationId: string): Promise<ConversationContext | null> {
+  // 归属条件必须先过一遍：客户端手里的 id 是会被改的，不能拿它去读别人的对话。
+  const head = await platformQuery<{ history_summary: string | null; history_summary_through: string | null }>(
+    `SELECT c.history_summary, c.history_summary_through
+       FROM ontology_platform.reasoning_conversations c
+      WHERE c.id = $4 AND ${SCOPE}`,
+    [userId, scope.ontologyId, scope.targetId, conversationId],
+  );
+  if (!head.rows.length) return null;
+  const rows = await platformQuery<{ id: string; question: string; answer: string; run: ReasoningRun | null }>(
+    `SELECT id, question, answer, run
+       FROM ontology_platform.reasoning_messages
+      WHERE conversation_id = $1
+      ORDER BY created_at ASC, id ASC`,
+    [conversationId],
+  );
+  return {
+    summary: head.rows[0].history_summary ?? "",
+    summaryThrough: head.rows[0].history_summary_through ?? "",
+    turns: rows.rows.map((row) => ({
+      id: row.id,
+      question: row.question,
+      answer: row.answer,
+      // 老记录没有 steps（那时还没记轨迹）：回放时就是"本轮没有调用工具"，如实呈现。
+      steps: row.run?.steps ?? [],
+      images: row.run?.attachments?.length ?? 0,
+    })),
+  };
+}
+
+/** 把摘要与"压到哪一条"一起存回去：下一轮只压新滚出窗口的那几轮。 */
+export async function saveConversationSummary(conversationId: string, summary: string, throughMessageId: string): Promise<void> {
+  await platformQuery(
+    `UPDATE ontology_platform.reasoning_conversations
+        SET history_summary = $2, history_summary_through = $3
+      WHERE id = $1`,
+    [conversationId, summary, throughMessageId],
+  );
 }
 
 export type SaveTurnInput = {

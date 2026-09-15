@@ -601,6 +601,29 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 踩过的坑：`input.files` / `dataTransfer.files` 是**活对象**，`event.target.value = ""` 之后它自己也空了 ——
   在两个都先 `[...files]` 拷成数组再处理。这个 bug 只在真实浏览器里点一次才看得见（单测查不出来）。
 
+**多轮上下文（连轨迹一起带）+ 上下文压缩**（2026-09-15）：用户先问"模型有历史上下文吗"（当时答案是**没有**，
+每次运行只有一条 user 消息），随后选定：**连求证轨迹一起带**，并且**要能压缩**。
+
+- **消息本身交给 AI SDK，不自己拼**：每一轮还原成框架的 `UIMessage`（assistant 的 parts 里是 `tool-<名字>`
+  调用与结果 + 结论文本，`history.ts` 的 `turnUIMessages`），再交给 `convertToModelMessages()` 与
+  `pruneMessages()`（`history-messages.ts`）—— tool-call 与 tool-result 的配对、错误结果、附件都由框架保证，
+  自己拼"轨迹文本"既容易踩配对，也比框架差。两条裁剪口径：**思考一律不回放**（`reasoning: 'all'`，
+  一轮几千字且信息量最低）；**轨迹只留最近一轮**（`toolCalls: 'before-last-message'`，更早的轮次留结论，
+  结论是 assistant 文本，不受裁剪影响）。
+- **窗口 + 压缩是我们的策略代码**（框架没有现成的摘要能力）：最近 5 轮原样带（`historyTurns` 可调，
+  **0 = 完全不带历史**），滚出窗口的轮次由模型压成一段摘要，**摘要与"压到哪一条消息"一起存回**
+  `reasoning_conversations.history_summary / history_summary_through`，下一轮只压新滚出去的那几轮（增量）。
+  压缩要调一次模型，路由先发 `context: start / compressing` 事件，界面显示"正在整理这段对话的上下文…"。
+- 摘要拼在 **instructions 的最后**（提示词 → 概念清单 → 摘要），并写清"只作线索，数字/表名要用本轮工具重新核对"
+  （`prompt.ts` 的 `summaryBlock`）—— 旧结论里的类型名与表名是可能变的。
+- **压缩失败不推翻这一轮**：摘要保持老的那份（或空），warning 随 `run.context` 出去，界面在结论下方用小字标出。
+- 图**不重放**：历史里的图只在那条用户消息里注明张数（重发像素等于每轮再算一次，接着问图时重新贴一张最省事）。
+- 界面：结论下方那行 `上下文 N 轮 · 已压缩 M 轮`（`run.context`），第一轮不带历史时不显示这一项。
+- 实测（2026-09-15，本体「…备份V4」）：第 1 轮无上下文；第 2 轮 `上下文 1 轮`、0 次工具调用、直接按上文答对；
+  把「历史轮数」调成 1 后第 3 轮 `上下文 1 轮 · 已压缩 1 轮`、第 4 轮 `… · 已压缩 2 轮`，
+  且问"我一共问过哪几件事"时模型**按摘要**把前三轮的结论都列了出来；库里 `history_summary` 570 字、
+  `history_summary_through` 指向被压的最后一条消息。
+
 **智能问答的对话历史**（2026-09-14，对应原先的待办 L2）：
 
 - 两张表（`platform-db.ts`）：`reasoning_conversations`（id / ontology_id / target_id / title / created_by）
@@ -691,7 +714,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | --- | --- | --- | --- |
 | L3 | 语义检索用向量 | `search_schema` 是关键词 + 中文 2 元组匹配，没有语义召回 | 等 R2 接上 embedding 后，给概念建向量索引，与关键词分数融合 |
 | L4 | 让模型执行动作 | 工具全只读，动作只能看不能跑 | 若要开放，走"模型提议 + 人确认"：用 AI SDK 的 `toolApproval`（`new ToolLoopAgent({ tools, toolApproval: { name: 'user-approval' } })`）让工具返回审批请求而不是直接执行，流里会给到 `tool-approval-request`，由界面二次确认后再落到动作引擎。不要直接给写权限 |
-| L5 | 多轮追问 | 一次运行一问一答，没有上下文（智能问答页只是把多轮**并列**展示）。会话表已随对话历史落地（`reasoning_conversations` / `reasoning_messages`），但**没有把上一轮喂给模型** | 把同一段对话里上一轮的结论压缩进 system；注意结论里的 id 仍是真实的才能复用 |
+| L5 | ~~多轮追问~~ | **已于 2026-09-15 完成**：见上面「多轮上下文（连轨迹一起带）+ 上下文压缩」一节（最近 5 轮原样带轨迹、更早的压成摘要存回对话记录）。 |
 
 **L2（历史推理记录）已于 2026-09-14 完成**，见上面「智能问答的对话历史」一节。
 

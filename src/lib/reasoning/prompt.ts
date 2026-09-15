@@ -1,4 +1,5 @@
 import { implementsIdsOf, interfaceAncestorsOf } from "@/lib/interfaces";
+import { summaryBlock } from "@/lib/reasoning/history";
 import { entitySources } from "@/lib/ontology-sources";
 import type { ToolContext } from "@/lib/reasoning/tools";
 
@@ -90,12 +91,16 @@ export function schemaBrief(context: ToolContext): string {
 }
 
 /**
- * 最终交给模型的 instructions：提示词（自定义优先，空白回退默认）+ 概念清单。
- * 概念清单永远在后面，用户改提示词不用管它。
+ * 最终交给模型的 instructions：提示词（自定义优先，空白回退默认）+ 概念清单 +（有的话）对话上文摘要。
+ *
+ * 顺序是有讲究的：**提示词最前、概念清单居中、上下文摘要最后** —— 摘要是"这次对话的临时背景"，
+ * 越靠近本轮问题，模型越不会把它当成常驻设定；而概念清单永远来自本体，不能被对话内容顶掉。
  */
-export function buildInstructions(systemPrompt: string | undefined, context: ToolContext): string {
+export function buildInstructions(systemPrompt: string | undefined, context: ToolContext, extras: { historySummary?: string } = {}): string {
   const prompt = systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
-  return `${prompt}\n\n当前本体的概念清单（括号里是它绑定的表）：\n${schemaBrief(context)}`;
+  const brief = `${prompt}\n\n当前本体的概念清单（括号里是它绑定的表）：\n${schemaBrief(context)}`;
+  const history = summaryBlock(extras.historySummary ?? "");
+  return history ? `${brief}\n\n${history}` : brief;
 }
 
 /** 这个提示词是不是"自己改过"的（空白或和默认一模一样都算没改）。 */

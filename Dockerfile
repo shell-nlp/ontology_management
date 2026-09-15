@@ -51,8 +51,21 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN if [ -n "${NPM_REGISTRY}" ]; then pnpm config set registry "${NPM_REGISTRY}"; fi
-RUN pnpm install --frozen-lockfile --prod
+# 装生产依赖，装完就地清掉运行期用不到的东西。
+# 为什么必须写在同一个 RUN 里：换个 RUN 去 rm，只是加了层 whiteout，被删文件的数据依旧记在
+# 上一层里，镜像一点都不会变小。
+# 清这几种：
+#   1. pnpm 自己的下载缓存，以及 corepack 拉下来的 pnpm 本体（~/.cache 下约 360MB）——
+#      CMD 是直接跑 node，运行期不会再用到 pnpm；
+#   2. pnpm 的内容寻址仓库 store —— node_modules 里的文件是它的硬链接，删掉仓库不会影响硬链接
+#      本身，但能保证第 3 条删掉的包，数据真的不留在层里；
+#   3. playwright —— next 把 @playwright/test 声明成 optional peer，pnpm 于是把 devDependencies
+#      里的测试框架一起拉进了生产树（约 19MB），跑服务的镜像不需要它。
+# 注意 @next/swc-linux-x64-gnu 不能删：实测 next start 启动时仍会加载它，缺了会转 fallback 并崩。
+RUN if [ -n "${NPM_REGISTRY}" ]; then pnpm config set registry "${NPM_REGISTRY}"; fi \
+ && pnpm install --frozen-lockfile --prod \
+ && rm -rf "${HOME}/.cache/pnpm" "${HOME}/.cache/node" "${HOME}/.local/share/pnpm/store" \
+ && rm -rf node_modules/.pnpm/playwright* node_modules/.pnpm/@playwright*
 COPY --from=builder --chown=node:node /app/.next ./.next
 # next start 会读配置：少了它，serverExternalPackages 这类设置就丢了。
 COPY --from=builder --chown=node:node /app/next.config.ts ./next.config.ts

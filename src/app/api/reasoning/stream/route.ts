@@ -10,7 +10,9 @@ import { runReasoning, type AgentEvent } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { saveTurn } from "@/lib/reasoning/conversations";
+import { prepareHistory } from "@/lib/reasoning/history-context";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
+import type { ReasoningContext } from "@/lib/reasoning/types";
 import { getTarget } from "@/lib/targets";
 
 /**
@@ -19,6 +21,8 @@ import { getTarget } from "@/lib/targets";
  * - thinking / answer：文字增量，边收边渲染
  * - answerReset：这一轮其实是去调工具的过渡语，界面要把已显示的文字清掉
  * - step：某一步工具执行完成
+ * - context：多轮上下文准备好了（start / compressing / ready）—— 压缩要调一次模型，
+ *   界面得先知道"在整理上下文"，而不是干等
  * - saved：这一轮已经记进对话历史（`conversationId` 为 null 表示没记上）
  * - done / error：收尾
  *
@@ -41,11 +45,14 @@ const inputSchema = z.object({
   sqlRowLimit: z.number().int().min(1).max(5000).optional(),
   /** 「问答配置」里改过的系统提示词。不传（或空白）就用默认那段。 */
   systemPrompt: z.string().trim().max(20_000).optional(),
+  /** 「问答配置」里的「历史轮数」：原样回放最近几轮。不传 = 默认 5；0 = 完全不带历史。 */
+  historyTurns: z.number().int().min(0).max(20).optional(),
 });
 
-/** 除了编排层的事件，这个接口自己还会补两条：error 与 saved。 */
+/** 除了编排层的事件，这个接口自己还会补几条：context / error / saved。 */
 type RouteEvent =
   | AgentEvent
+  | { type: "context"; phase: "start" | "compressing" | "ready"; turns?: number; history?: ReasoningContext }
   | { type: "error"; message: string }
   | { type: "saved"; conversationId: string | null; warning?: string };
 
@@ -94,11 +101,36 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(frame(event)));
       };
       try {
+        /*
+         * 多轮上下文：同一段对话里的前面几轮要回放给模型 —— 最近几轮连求证轨迹一起原样带，
+         * 更早的轮次压成一段摘要（摘要存在对话记录里，下一轮直接复用）。
+         * 压缩要调一次模型，先发一条事件，别让界面干等。
+         */
+        send({ type: "context", phase: "start" });
+        const history = await prepareHistory({
+          scope,
+          userId: actorId,
+          conversationId: input.conversationId ?? null,
+          verbatimTurns: input.historyTurns,
+          onCompress: (turns) => send({ type: "context", phase: "compressing", turns }),
+        });
+        send({
+          type: "context",
+          phase: "ready",
+          history: {
+            verbatimTurns: history.verbatimTurns,
+            compressedTurns: history.compressedTurns,
+            summaryChars: history.summary.length,
+            chars: history.chars,
+            ...(history.warning ? { warning: history.warning } : {}),
+          },
+        });
         // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
     const policy = await loadToolPolicy();
     const run = await runReasoning({
           question,
           attachments: input.attachments,
+          history,
           context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
       disabledTools: policy.disabledTools,
@@ -110,7 +142,7 @@ export async function POST(request: NextRequest) {
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question, attachments: input.attachments?.length ?? 0, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question, attachments: input.attachments?.length ?? 0, historyTurns: history.verbatimTurns, historyCompressed: history.compressedTurns, historyContextChars: history.chars, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
         // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
         try {

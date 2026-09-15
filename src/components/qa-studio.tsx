@@ -17,7 +17,8 @@ import {
   type ReasoningSettings,
 } from "@/lib/reasoning/settings";
 import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
-import type { ReasoningAttachment, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
+import { historyLabel } from "@/lib/reasoning/history";
+import type { ReasoningAttachment, ReasoningContext, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import "./qa-studio.css";
 
 /**
@@ -50,6 +51,10 @@ type Turn = {
   question: string;
   /** 这一轮一起问的图片：当场问的是刚贴的，回看历史读的是当时存在运行记录里的那份。 */
   attachments: ReasoningAttachment[];
+  /** 这一轮回放了哪些历史上下文（多轮）；老记录没有这一项。 */
+  context?: ReasoningContext;
+  /** 正在整理上下文（读历史 / 压摘要）——这两步也要几秒，界面得说出来。 */
+  preparing?: boolean;
   thinking: string;
   answer: string;
   steps: ReasoningStep[];
@@ -66,6 +71,7 @@ function messageToTurn(message: ConversationMessage): Turn {
     id: message.id,
     question: message.question,
     attachments: message.run?.attachments ?? [],
+    context: message.run?.context,
     thinking: message.thinking,
     answer: message.answer,
     steps: message.run?.steps ?? [],
@@ -339,6 +345,7 @@ async function streamRun(
     onAnswer: (text: string) => void;
     onAnswerReset: () => void;
     onStep: (step: ReasoningStep) => void;
+    onContext: (phase: "start" | "compressing" | "ready", history: ReasoningContext | undefined) => void;
     onDone: (run: ReasoningRun) => void;
     onSaved: (conversationId: string | null, warning: string | undefined) => void;
   },
@@ -376,6 +383,7 @@ async function streamRun(
       else if (event.type === "answer") handlers.onAnswer(String(event.text ?? ""));
       else if (event.type === "answerReset") handlers.onAnswerReset();
       else if (event.type === "step") handlers.onStep(event.step as ReasoningStep);
+      else if (event.type === "context") handlers.onContext(String(event.phase) as "start" | "compressing" | "ready", event.history as ReasoningContext | undefined);
       else if (event.type === "done") handlers.onDone(event.run as ReasoningRun);
       else if (event.type === "saved") handlers.onSaved((event.conversationId as string | null) ?? null, typeof event.warning === "string" ? event.warning : undefined);
       else if (event.type === "error") throw new Error(String(event.message ?? "推理失败。"));
@@ -509,7 +517,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const conversationId = session.targetId === targetId ? session.conversationId : null;
   const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
-  const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit);
+  const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit)
+    || settings.historyTurns !== undefined;
   /** 抽屉里的提示词文本框：没改过就显示默认那段原文（用户要"看得见默认提示词"）。 */
   const systemPromptText = systemPromptFieldValue(settings);
   const customPrompt = isCustomSystemPrompt(settings.systemPrompt);
@@ -650,6 +659,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
           turn.id === id ? { ...turn, thinking: turn.thinking ? `${turn.thinking}\n${turn.answer}` : turn.answer, answer: "" } : turn
         ))),
         onStep: (step) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, steps: [...turn.steps, step] } : turn))),
+        // 上下文这两步（读历史 + 压摘要）都发生在模型开始答之前，所以先挂"整理中"，拿到结果再落数。
+        onContext: (phase, history) => patchTurn(id, phase === "ready" ? { preparing: false, context: history } : { preparing: true }),
         onDone: (run) => { patchTurn(id, { run, busy: false }); notify(`推理完成：${run.steps.length} 步，引用 ${run.evidence.length} 项证据。`); },
         // 历史 id 由服务端定：新对话的第一轮跑完才有 id，这里把"当前在跟哪段对话"接上去。
         onSaved: (savedId, warning) => {
@@ -828,7 +839,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                   <Markdown text={turn.answer} />
                 </div>
               )}
-              {turn.busy && !turn.answer && !turn.thinking && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />正在检索本体…</div>}
+              {turn.busy && !turn.answer && !turn.thinking && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />{turn.preparing ? "正在整理这段对话的上下文…" : "正在检索本体…"}</div>}
               {!turn.thinkingOn && turn.busy && turn.thinking === "" && <p className="qa-nothink">已关闭思考，直接检索。</p>}
 
               {turn.run && (
@@ -841,6 +852,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                     {/* 步数 = 模型调用次数；工具调用可能一步并发多个，所以两个数字分开显示。 */}
                     {/* 平时只说用了几步：没设上限时那个分母（服务端兜底值）不该冒充"限制"。 */}
                     <span>{turn.run.stepCount} 步 · 工具 {turn.run.steps.length} 次</span>
+                    {turn.run.context && <span title="同一段对话里回放给模型的历史：最近几轮连求证轨迹一起带，更早的压成摘要">{historyLabel(turn.run.context)}</span>}
+                    {turn.run.context?.warning && <em>{turn.run.context.warning}</em>}
                     {turn.run.truncated && <em>步数用满（{turn.run.stepCount}/{turn.run.maxSteps}），模型是被拦停的，结论可能不完整</em>}
                   </footer>
                 </>

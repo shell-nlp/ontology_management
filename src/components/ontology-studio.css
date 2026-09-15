@@ -61,5 +61,9 @@
 .os-warnings { display: grid; gap: 6px; padding: 10px 12px; color: #7a4a12; background: #fdf8ee; border: 1px solid #f0e0c0; border-radius: 4px; }
 .os-warnings b { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .os-warnings svg { flex: none; }
-.os-warnings ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+/* 导入 bkn 时提醒可能二十几条（每个对象类型一条）：列表自己滚，否则弹窗会长过一屏、
+   「完成」掉到视口外面点不到（2026-09-15 实测）。 */
+.os-warnings ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; max-height: 240px; overflow: auto; }
+/* 兜底：内容再长也让弹窗自己滚，底部那两个按钮永远够得着。 */
+.dialog.os-dialog { max-height: calc(100vh - 40px); overflow: auto; }
 .os-warnings li { font-size: 11.5px; line-height: 1.6; }

@@ -67,6 +67,24 @@ export type ReasoningAttachment = {
   bytes: number;
 };
 
+/**
+ * 这一轮带了哪些历史上下文。
+ *
+ * 界面照它显示「上下文 N 轮 · 已压缩 M 轮」，审计照它记一笔；
+ * 压缩失败这类情况随 `warning` 出来，而不是把整轮问答抛掉。
+ */
+export type ReasoningContext = {
+  /** 原样回放的历史轮数。 */
+  verbatimTurns: number;
+  /** 累计压进摘要的轮数（含以前压的）。 */
+  compressedTurns: number;
+  /** 摘要的字符数。 */
+  summaryChars: number;
+  /** 原样那几轮占的字符数。 */
+  chars: number;
+  warning?: string;
+};
+
 export type ReasoningUsage = {
   promptTokens: number;
   completionTokens: number;
@@ -77,6 +95,8 @@ export type ReasoningRun = {
   question: string;
   /** 这一轮连图一起问的图片。旧记录没有这个字段，界面要能兜底。 */
   attachments?: ReasoningAttachment[];
+  /** 这一轮回放了哪些历史上下文。旧记录没有这个字段，界面要能兜底。 */
+  context?: ReasoningContext;
   answer: string;
   /** 模型的思考过程，累加所有轮次。关闭思考或模型不支持时是空串。 */
   reasoning: string;

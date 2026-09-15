@@ -9,7 +9,8 @@ import type { OntologyDefinition } from "@/lib/ontology";
  *
  * bkn 的字段比我们多，转换时**只搬我们装得下的，其余逐条报出来** —— 静默丢内容比报错更糟。
  * 装得下：对象类型（含属性 / 主键 / 数据来源）、关系类型（含说明）、概念分组（concept_groups → `groups`）。
- * 已知装不下的（见 warnings）：指标、关系类型的连接规则（mapping_rules）。
+ * 已知装不下的（见 warnings）：指标、关系类型的连接规则（mapping_rules）、
+ * 以及每类对象上的 operations（那是「能不能查/能增删改」的能力开关，不是带参数与规则的动作定义）。
  *
  * 记录时间：2026-09-14。
  */
@@ -185,6 +186,14 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
     const groupId = groupOfEntity.get(entity.id);
     return groupId ? { ...entity, groupId } : entity;
   });
+  /*
+   * operations：bkn 里是 view_detail / create / modify / delete / query_data / authorize / task_manage
+   * 这类**能力开关**，既没有参数也没有规则，和我们这边的「动作」（Palantir Action Type：定义在某个
+   * 对象类型上、带参数与提交校验）不是一回事。硬造一堆同名的空动作只会污染动作清单，所以不导，但要说出来。
+   */
+  const operations = list(source.operations);
+  if (operations.length) warnings.push(`bkn 里的 ${operations.length} 类操作能力（${operations.join("、")}）是权限开关而不是动作定义，平台的动作还需要参数与校验规则，本次没有导入。`);
+
   const metrics = Array.isArray(source.metrics) ? source.metrics : [];
   if (metrics.length) warnings.push(`bkn 里的 ${metrics.length} 条指标（${metrics.map((metric) => text((metric as Unknown).name)).filter(Boolean).join("、")}）平台还没有对应的模型，本次没有导入。`);
 

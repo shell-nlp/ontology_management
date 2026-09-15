@@ -179,6 +179,10 @@ async function ensurePlatformSchemaOnce() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      // 多轮上下文：更早的轮次压成一段摘要存这儿，下一轮直接复用（不重复压）。
+      // 用 ADD COLUMN IF NOT EXISTS 而不是重建表：老部署升级时历史记录要原样留着。
+      await client.query(`ALTER TABLE ontology_platform.reasoning_conversations ADD COLUMN IF NOT EXISTS history_summary TEXT`);
+      await client.query(`ALTER TABLE ontology_platform.reasoning_conversations ADD COLUMN IF NOT EXISTS history_summary_through TEXT`);
       await client.query(`
         CREATE INDEX IF NOT EXISTS reasoning_conversations_scope_idx
           ON ontology_platform.reasoning_conversations (created_by, ontology_id, updated_at DESC)

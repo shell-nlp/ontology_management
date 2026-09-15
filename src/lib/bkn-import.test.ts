@@ -13,6 +13,7 @@ function knowledgeNetwork() {
     module_type: "knowledge_network",
     concept_groups: [{ id: "g1", name: "客户域", comment: "客户相关", object_type_ids: ["t1"] }],
     metrics: [{ id: "m1", name: "客户数", comment: "客户数量" }],
+    operations: ["view_detail", "create", "modify", "delete", "query_data"],
     object_types: [
       {
         id: "t1",
@@ -117,6 +118,9 @@ describe("bkn → 本体包", () => {
     expect(joined).toContain("指标");
     expect(joined).toContain("请在类型编辑里为它选一次数据资源");
     expect(joined).toContain("主键（customer_id）改记在属性上");
+    // operations 是权限开关，不是动作定义：不导，但要说清楚为什么。
+    expect(joined).toContain("操作能力");
+    expect(joined).toContain("view_detail");
   });
 
   it("概念分组搬过来：分组名、颜色、成员都落在对象类型那一侧", () => {

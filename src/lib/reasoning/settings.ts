@@ -4,7 +4,10 @@
  * **默认全不限制**：想跑多少步、工具返回多长、一次取多少行，都由模型自己把握；
  * 只有你明确填了数字才按那个数卡。存在浏览器本地，一台机器一套，不跟着账号走。
  *
- * 除了三个数，还有一段**系统提示词**（`systemPrompt`）：留空 = 用 `prompt.ts` 里的默认提示词，
+ * 另外还有「历史轮数」一个旋钮（多轮上下文）：留空 = 服务端默认 5 轮，填 0 = **完全不带历史**
+ * （回到单轮问答，也就不压缩）。轨迹怎么裁剪不在这里调 —— 那是 AI SDK 的 `pruneMessages()` 的活。
+ *
+ * 除了这几个数，还有一段**系统提示词**（`systemPrompt`）：留空 = 用 `prompt.ts` 里的默认提示词，
  * 抽屉里会把默认那段原文显示出来，改了就按改的走。本体概念清单由服务端自动接在后面，不用手写。
  *
  * 这里刻意只有这几个旋钮：能改的都是"影响结论完不完整 / 口味"的部分，
@@ -20,6 +23,12 @@ export type ReasoningSettings = {
   toolResultLimit?: number;
   /** 数据资源查询一次最多取多少行。留空 = 不限制（服务端兜底到 5000，防一次拉爆内存）。 */
   sqlRowLimit?: number;
+  /**
+   * 原样回放的历史轮数（连求证轨迹一起）。留空 = 默认 5 轮；**0 = 完全不带历史**。
+   * 超出这个窗口的轮次会被压成一段摘要，而不是丢掉。
+   */
+  historyTurns?: number;
+
   /**
    * 自定义系统提示词。留空、或与默认那段一字不差 = 用默认提示词（请求里也不带这一项）。
    * 上限 20000 字，和服务端校验一致。
@@ -37,6 +46,7 @@ export const REASONING_SETTING_RANGES = {
   maxSteps: { min: 1, max: 100, fallbackCeiling: 100 },
   toolResultLimit: { min: 500, max: 200_000 },
   sqlRowLimit: { min: 1, max: 5000, fallbackCeiling: 5000 },
+  historyTurns: { min: 0, max: 20 },
 } as const;
 
 export const REASONING_SETTING_FIELDS = [
@@ -61,6 +71,14 @@ export const REASONING_SETTING_FIELDS = [
     placeholder: "不限制",
     suffix: "行",
   },
+  {
+    key: "historyTurns",
+    label: "历史轮数",
+    hint: "同一段对话里，最近几轮连求证轨迹一起原样带给模型。留空 = 默认 5 轮；填 0 = 不带历史（回到单轮问答）。更早的轮次不会丢，会被压成摘要。",
+    placeholder: "默认 5",
+    suffix: "轮",
+  },
+
 ] as const satisfies readonly { key: keyof ReasoningSettings; label: string; hint: string; placeholder: string; suffix: string }[];
 
 /** 只有这三个是数字旋钮；`systemPrompt` 不在其中（它是文本，另有处理）。 */
@@ -85,6 +103,8 @@ export function loadReasoningSettings(): ReasoningSettings {
       maxSteps: clampField("maxSteps", input.maxSteps),
       toolResultLimit: clampField("toolResultLimit", input.toolResultLimit),
       sqlRowLimit: clampField("sqlRowLimit", input.sqlRowLimit),
+      // 这里不能用 `||`：0 是"不带历史"的**有效值**，不能被当成没填。
+      historyTurns: clampField("historyTurns", input.historyTurns),
       // 没改过的提示词不存：省得本机存一大段和默认一样的文本，"恢复默认"也就等于清空这一项。
       systemPrompt: isCustomSystemPrompt(prompt) ? prompt : undefined,
     };
@@ -115,6 +135,8 @@ export function reasoningSettingsPayload(settings: ReasoningSettings) {
     ...(settings.maxSteps ? { maxSteps: settings.maxSteps } : {}),
     ...(settings.toolResultLimit ? { toolResultLimit: settings.toolResultLimit } : {}),
     ...(settings.sqlRowLimit ? { sqlRowLimit: settings.sqlRowLimit } : {}),
+    // 同理：0 要发出去（服务端把它当"不带历史"），所以判 undefined 而不是真假。
+    ...(settings.historyTurns !== undefined ? { historyTurns: settings.historyTurns } : {}),
     // 没改过就不带：服务端自己回退到默认提示词，改过才把这段传上去。
     ...(isCustomSystemPrompt(settings.systemPrompt) ? { systemPrompt: settings.systemPrompt!.trim() } : {}),
   };
