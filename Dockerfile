@@ -67,6 +67,9 @@ RUN if [ -n "${NPM_REGISTRY}" ]; then pnpm config set registry "${NPM_REGISTRY}"
  && rm -rf "${HOME}/.cache/pnpm" "${HOME}/.cache/node" "${HOME}/.local/share/pnpm/store" \
  && rm -rf node_modules/.pnpm/playwright* node_modules/.pnpm/@playwright*
 COPY --from=builder --chown=node:node /app/.next ./.next
+# 本体技能（仓库根的 skills/）：运行时按需读盘，不拷进来「本体技能」页就是空的。
+# 它们是数据不是源码，所以直接从 builder 阶段的同一份拷，构建上下文只多带几十 KB。
+COPY --from=builder --chown=node:node /app/skills ./skills
 # next start 会读配置：少了它，serverExternalPackages 这类设置就丢了。
 COPY --from=builder --chown=node:node /app/next.config.ts ./next.config.ts
 # Oracle Thick 模式要的客户端（含 instantclient -> instantclient_23_4 的软链）。

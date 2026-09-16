@@ -1,0 +1,226 @@
+{
+  "format": "ontology.bundle",
+  "formatVersion": 1,
+  "exportedAt": "2026-09-16T10:00:00.000Z",
+  "generator": { "name": "ontology-skills", "version": "1.0.0" },
+  "ontology": {
+    "identifier": "telecom-line-service-demo",
+    "name": "专线服务示例本体",
+    "description": "演示用：客户、专线产品用户、固话用户、专线产品，以及「停机」动作与一条拦截规则。",
+    "color": "#2563eb",
+    "tags": ["示例", "专线"]
+  },
+  "statistics": {
+    "objectTypes": 4,
+    "relationTypes": 5,
+    "actionTypes": 1,
+    "rules": 1,
+    "objects": 0,
+    "relationships": 0
+  },
+  "dataSources": [
+    {
+      "id": "f1000000-0000-4000-8000-000000000001",
+      "name": "Oracle 测试",
+      "kind": "ORACLE",
+      "host": "10.0.0.10",
+      "port": 1521,
+      "databaseName": "orcl",
+      "schemaName": "GISTOOLS"
+    }
+  ],
+  "definition": {
+    "groups": [
+      { "id": "a1000000-0000-4000-8000-000000000001", "name": "客户域", "color": "#2563eb" },
+      { "id": "a1000000-0000-4000-8000-000000000002", "name": "产品域", "color": "#16a34a" }
+    ],
+    "interfaces": [
+      {
+        "id": "c1000000-0000-4000-8000-000000000001",
+        "name": "可服务对象",
+        "description": "客服可以按服务号码定位、并对其执行服务动作的对象。",
+        "properties": [
+          {
+            "name": "SERV_NUMBER",
+            "displayName": "服务号码",
+            "description": "业务上用来定位这个对象的号码，客服按它检索。",
+            "dataType": "TEXT",
+            "required": true
+          }
+        ],
+        "extends": [],
+        "linkConstraints": [
+          {
+            "id": "c1000000-0000-4000-8000-000000000002",
+            "name": "归属客户",
+            "description": "每个可服务对象都必须归属到一个客户。",
+            "targetKind": "OBJECT_TYPE",
+            "targetId": "b1000000-0000-4000-8000-000000000001",
+            "cardinality": "ONE",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "entityTypes": [
+      {
+        "id": "b1000000-0000-4000-8000-000000000001",
+        "name": "客户",
+        "description": "订购并使用业务的自然人或单位。",
+        "displayProperty": "CUST_NAME",
+        "groupId": "a1000000-0000-4000-8000-000000000001",
+        "implements": [],
+        "properties": [
+          { "name": "CUST_ID", "displayName": "客户标识", "description": "客户在本系统中的唯一标识。", "dataType": "TEXT", "required": true, "unique": true, "indexed": false },
+          { "name": "CUST_NAME", "displayName": "客户名称", "description": "客户的业务名称，图上展示用。", "dataType": "TEXT", "required": true, "unique": false, "indexed": false },
+          { "name": "CUST_LEVEL", "displayName": "客户等级", "description": "客户的信用/服务等级编码。", "dataType": "TEXT", "required": false, "unique": false, "indexed": false },
+          { "name": "AREA_CODE", "displayName": "归属地市", "description": "客户归属的地市编码，用于按地市筛选。", "dataType": "TEXT", "required": false, "unique": false, "indexed": true }
+        ],
+        "sources": []
+      },
+      {
+        "id": "b1000000-0000-4000-8000-000000000002",
+        "name": "专线产品用户",
+        "description": "开通了专线产品的客户侧使用实例，是服务动作的直接对象。",
+        "displayProperty": "USER_NAME",
+        "groupId": "a1000000-0000-4000-8000-000000000001",
+        "implements": ["c1000000-0000-4000-8000-000000000001"],
+        "properties": [
+          { "name": "USER_ID", "displayName": "用户标识", "description": "专线产品用户的唯一标识。", "dataType": "TEXT", "required": true, "unique": true, "indexed": false, "sourceField": "USER_ID" },
+          { "name": "SERV_NUMBER", "displayName": "服务号码", "description": "专线电路编号，客服按它定位用户。", "dataType": "TEXT", "required": true, "unique": true, "indexed": true, "sourceField": "SERV_NUMBER" },
+          { "name": "USER_NAME", "displayName": "用户名称", "description": "用户名称，图上展示用。", "dataType": "TEXT", "required": false, "unique": false, "indexed": false, "sourceField": "CUST_NAME" },
+          { "name": "SERV_STATUS", "displayName": "服务状态", "description": "当前服务状态，取值来自业务系统的状态字典。", "dataType": "TEXT", "required": false, "unique": false, "indexed": true, "sourceField": "STATUS" }
+        ],
+        "sources": [
+          {
+            "id": "primary",
+            "dataSourceId": "f1000000-0000-4000-8000-000000000001",
+            "schema": "GISTOOLS",
+            "view": "TB_MK_GRP_LINE_LIST_DAY",
+            "primaryKey": ["USER_ID"],
+            "titleField": "USER_NAME"
+          }
+        ]
+      },
+      {
+        "id": "b1000000-0000-4000-8000-000000000003",
+        "name": "专线产品",
+        "description": "可被用户订购的专线产品目录项。",
+        "displayProperty": "OFFER_NAME",
+        "groupId": "a1000000-0000-4000-8000-000000000002",
+        "implements": [],
+        "properties": [
+          { "name": "OFFER_ID", "displayName": "产品标识", "description": "产品的唯一标识。", "dataType": "TEXT", "required": true, "unique": true, "indexed": false },
+          { "name": "OFFER_NAME", "displayName": "产品名称", "description": "产品对外名称。", "dataType": "TEXT", "required": true, "unique": false, "indexed": false },
+          { "name": "MONTHLY_FEE", "displayName": "月费", "description": "产品月功能费，单位：元。", "dataType": "DECIMAL", "required": false, "unique": false, "indexed": false }
+        ],
+        "sources": []
+      },
+      {
+        "id": "b1000000-0000-4000-8000-000000000004",
+        "name": "固话用户",
+        "description": "开通了固定电话业务的客户侧使用实例。",
+        "displayProperty": "USER_NAME",
+        "groupId": "a1000000-0000-4000-8000-000000000001",
+        "implements": ["c1000000-0000-4000-8000-000000000001"],
+        "properties": [
+          { "name": "USER_ID", "displayName": "用户标识", "description": "固话用户的唯一标识。", "dataType": "TEXT", "required": true, "unique": true, "indexed": false },
+          { "name": "SERV_NUMBER", "displayName": "服务号码", "description": "固话号码，客服按它定位用户。", "dataType": "TEXT", "required": true, "unique": true, "indexed": true },
+          { "name": "USER_NAME", "displayName": "用户名称", "description": "用户名称，图上展示用。", "dataType": "TEXT", "required": false, "unique": false, "indexed": false }
+        ],
+        "sources": []
+      }
+    ],
+    "relationshipTypes": [
+      {
+        "id": "d1000000-0000-4000-8000-000000000001",
+        "name": "客户拥有专线产品用户",
+        "description": "一个有专线的客户可能对应多个专线产品用户。",
+        "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000001",
+        "targetEntityTypeId": "b1000000-0000-4000-8000-000000000002",
+        "properties": [
+          { "name": "CUST_SINCE", "displayName": "成为客户的日期", "description": "这个用户成为该客户的日期。", "dataType": "DATE", "required": false, "unique": false, "indexed": false }
+        ]
+      },
+      {
+        "id": "d1000000-0000-4000-8000-000000000002",
+        "name": "专线产品用户归属客户",
+        "description": "专线产品用户归属的客户，满足接口「可服务对象」的必填关系约束。",
+        "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000002",
+        "targetEntityTypeId": "b1000000-0000-4000-8000-000000000001",
+        "properties": []
+      },
+      {
+        "id": "d1000000-0000-4000-8000-000000000003",
+        "name": "客户拥有固话用户",
+        "description": "一个有固话的客户可能对应多个固话用户。",
+        "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000001",
+        "targetEntityTypeId": "b1000000-0000-4000-8000-000000000004",
+        "properties": []
+      },
+      {
+        "id": "d1000000-0000-4000-8000-000000000004",
+        "name": "固话用户归属客户",
+        "description": "固话用户归属的客户，满足接口「可服务对象」的必填关系约束。",
+        "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000004",
+        "targetEntityTypeId": "b1000000-0000-4000-8000-000000000001",
+        "properties": []
+      },
+      {
+        "id": "d1000000-0000-4000-8000-000000000005",
+        "name": "用户订购专线产品",
+        "description": "专线产品用户订购的产品；订购时间挂在这条关系上。",
+        "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000002",
+        "targetEntityTypeId": "b1000000-0000-4000-8000-000000000003",
+        "properties": [
+          { "name": "ORDER_TIME", "displayName": "订购时间", "description": "这条订购关系建立的时间。", "dataType": "DATETIME", "required": false, "unique": false, "indexed": false }
+        ]
+      }
+    ],
+    "actionTypes": [
+      {
+        "id": "e1000000-0000-4000-8000-000000000001",
+        "name": "停机",
+        "code": "suspend_line_service",
+        "description": "把专线产品用户的服务状态置为已停机。动作定义在「专线产品用户」上。",
+        "scopeEntityTypeId": "b1000000-0000-4000-8000-000000000002",
+        "params": [
+          { "code": "reason", "name": "停机原因", "kind": "VALUE", "entityTypeId": "", "dataType": "TEXT", "required": true }
+        ],
+        "edits": [
+          {
+            "op": "SET_PROPERTY",
+            "alias": "",
+            "entityTypeId": "",
+            "relationshipTypeId": "",
+            "entityRef": { "kind": "SUBJECT", "code": "" },
+            "sourceRef": { "kind": "PARAM", "code": "" },
+            "targetRef": { "kind": "PARAM", "code": "" },
+            "assignments": [
+              { "property": "SERV_STATUS", "value": { "kind": "CONST", "code": "", "value": "已停机" } }
+            ]
+          }
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "id": "e1000000-0000-4000-8000-000000000002",
+        "name": "已停机不能重复停机",
+        "effect": "BLOCK",
+        "priority": 10,
+        "enabled": true,
+        "actionId": "e1000000-0000-4000-8000-000000000001",
+        "conditions": [
+          {
+            "subject": { "kind": "SUBJECT", "code": "", "relationshipTypeId": "", "direction": "OUT" },
+            "property": "SERV_STATUS",
+            "operator": "EQUALS",
+            "compareValue": "已停机"
+          }
+        ],
+        "message": "这个用户的专线服务已经是停机状态，不需要重复停机。"
+      }
+    ]
+  }
+}

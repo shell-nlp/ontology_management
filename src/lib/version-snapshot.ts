@@ -647,6 +647,14 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     }).join("、");
     violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」有 ${entry.nodes.length} 个值的长度超过 ${MAX_INDEXED_VALUE_BYTES} 字节（约 8KB），不适合当唯一键。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
+  /*
+   * 接口是抽象契约：声明实现了就必须满足它的必填属性与必填关系约束，否则应用拿到的是缺字段的对象。
+   * 这两条校验原先只挂在接口管理页（客户端提示），发布路径上漏了 —— 于是"接口页写着还差 2 项"的草稿照样能发布。
+   * 接进发布前校验后，界面上的承诺（发布前校验会拦住没满足的实现）才成立。
+   */
+  for (const item of [...validateInterfaces(snapshot.definition), ...validateInterfaceImplementations(snapshot.definition)]) {
+    violations.push({ rule: item.rule, message: item.message, count: item.count });
+  }
   const actionViolations: SnapshotViolation[] = validateActionDefinition(snapshot.definition);
   return [...violations, ...actionViolations];
 }

@@ -100,6 +100,44 @@
 **裸主机名（`http://<计算机名>:<port>`）仍会被拦** —— 它不在白名单里，要测就临时把机器名加进去。
 生产构建（`next build` / Docker 里的 `next start`）不读这一项，不受影响。
 
+## 本体技能（AI Skills 构建）
+
+记录时间：2026-09-16。用户要求「参考 bkn-foundry（后端）与 bkn-studio（前端），实现一套构建本体的 skill
+在本系统中，方便用户使用，最好是直接生成 json 的，这样方便导入」。对标 bkn-studio 首页的「AI Skills 构建」
+（编号技能 + 适用场景 + 主要产物 + 「获取 Skills」弹窗），**但技能内容就在本平台里**，不指向外部仓库。
+
+技能是什么：一组 Markdown，教 Agent "怎么按本平台的规范建模、怎么出包"。
+三条链路 —— 需求澄清（`ontology-requirement`）→ 本体设计（`ontology-builder`）→ 出包交付（`ontology-bundle`）；
+最终产物是**平台能直接导入的本体包 JSON**（`format: ontology.bundle`）。
+技能可以整套下载成 zip，解压进 `~/.codex/skills/` 或 `~/.agents/skills/` 就能用。
+
+- 文件在仓库根 `skills/`：**是数据不是源码**。`skills/README.md` + 三个技能目录，每个目录一个
+  `SKILL.md`（带 `name` / `description` front-matter）与 `references/`（格式说明、示例包、建模细则）。
+- **交付契约就是平台自己的本体包格式**，所以文档与示例必须跟着 schema 走：`skills.test.ts` 会
+  拿 `ontology-bundle/references/example.bundle.json` 跑
+  `readOntologyBundle` → `planBundleImport` → `validateVersionSnapshot`，要求**零违规**（连 WARN 都不能有），
+  并断言 `bundle-format.md` 里出现关键字段名与枚举。**改 `ontology.ts` 的 schema 就要同步改文档与示例**，
+  否则测试直接红 —— 这是防止"技能教的格式平台不认"的唯一机制。
+- 服务端 `src/lib/skills.ts`：目录扫描、front-matter 解析（借 `@/lib/markdown`）、
+  `resolveSkillFile` 防目录穿越（`..` / 绝对路径 / 越界一律 null）。接口：
+  `GET /api/skills`（清单）、`GET /api/skills/:id`（正文，含 references 内容）、
+  `GET /api/skills/:id/file?path=`（单文件下载）、`GET /api/skills/:id/archive`（整套 zip）。
+  `SKILL_CATALOG` 只放界面文案（编号 / 场景 / 产物 / 图标），**正文一律读盘**，别抄进代码。
+- 打包用 `src/lib/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
+  验证方式是实测：单测比对 CRC32 与 zip 结构，端到端用 `Expand-Archive` 解一次（2026-09-16 验过）。
+- 界面 `src/components/skill-studio.tsx`（侧栏「语义模型 → 本体技能」）：左栏技能卡（编号 / 名称 / 技能名 / 说明 / 文件数），
+  右栏技能原文（Markdown 渲染，**入口文件的 front-matter 要摘掉**，否则第一眼是一堆 YAML），
+  按钮有复制、单文件下载、整套 zip；顶部「获取 Skills」弹窗给安装路径与下载项；
+  底部一块写清交付契约与「导入 → 校验 → 发布」三步。
+- **Dockerfile 的 runner 必须 `COPY --from=builder /app/skills ./skills`**（2026-09-16 已加）：
+  技能是运行时读盘的数据，不拷进镜像这一页就是空的；`.dockerignore` 也别把 `skills` 挡掉。
+- 顺带抽出来的共用件（别再各写一份）：
+  - `src/lib/markdown.ts`：front-matter 解析 / 剥离（纯函数，客户端也要用）。
+  - `src/components/markdown-view.tsx`：Markdown 渲染器，问答页（`qa-markdown`）与技能页共用，
+    支持围栏代码块与 `- [ ]` 清单；自研而非引库（只渲染我们自己产出的文本）。
+  - `src/lib/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
+    （Blob 下载、读 `Content-Disposition` 文件名）—— MCP 页复制、本体导出、技能下载共用同一份。
+
 ## 部署（Docker Compose）
 
 记录时间：2026-09-14。用户要求提供容器化部署：先明确"只部署平台本体"，
@@ -242,6 +280,9 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 2. **实现 = 同名属性 + 必填关系约束**：判断口径只有一处 —— `src/lib/interfaces.ts` 的 `checkImplementations`
    （纯函数、有单测）。发布前校验（`validateVersionSnapshot` → `validateInterfaces` / `validateInterfaceImplementations`）
    与界面提示都走它；校验返回的 message 是**给用户看的界面文案**，按术语约定写「对象类型」。
+   **2026-09-16 补**：`validateVersionSnapshot` 里原先只 import 了这两个校验函数却没调用（只有接口页在客户端提示），
+   于是"接口页写着还差 2 项"的草稿照样能发布 —— 现在这两条接进了发布前校验，
+   `version-snapshot.test.ts` 有「缺必填属性 / 缺必填关系会被拦」的用例。
 3. **实现了子接口 = 实现了父接口**：`implementersOf` 把"实现了子接口的对象类型"也算成父接口的实现者；
    图库侧靠 `rdfs:subClassOf` 的类型传播天然成立（按接口筛对象能筛到实现者）。实现同时写 `urn:bkn:implements`，
    读骨架时才能把「实现」与「接口继承」分成两种边（`readSchemaGraph` 的 `implementPairs`）。

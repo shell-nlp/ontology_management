@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { MarkdownView } from "@/components/markdown-view";
 import { api } from "@/lib/api-client";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
@@ -91,64 +92,6 @@ type Props = {
   fail: (reason: unknown) => void;
 };
 
-/** 极简 Markdown：只覆盖模型实际会输出的那几种（标题、粗体、行内代码、列表、表格）。 */
-function inline(text: string, keyPrefix: string): ReactNode[] {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter((part) => part !== "");
-  return parts.map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) return <b key={`${keyPrefix}-${index}`}>{part.slice(2, -2)}</b>;
-    if (part.startsWith("`") && part.endsWith("`")) return <code key={`${keyPrefix}-${index}`}>{part.slice(1, -1)}</code>;
-    return <Fragment key={`${keyPrefix}-${index}`}>{part}</Fragment>;
-  });
-}
-
-function Markdown({ text }: { text: string }) {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let index = 0;
-  let key = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) { index += 1; continue; }
-    if (line.trim().startsWith("|")) {
-      const header = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
-      const rows: string[][] = [];
-      let cursor = index + 2;
-      while (cursor < lines.length && lines[cursor].trim().startsWith("|")) {
-        rows.push(lines[cursor].trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()));
-        cursor += 1;
-      }
-      blocks.push(
-        <div className="qa-table-wrap" key={`t-${key}`}>
-          <table><thead><tr>{header.map((cell, cellIndex) => <th key={cellIndex}>{inline(cell, `th-${key}-${cellIndex}`)}</th>)}</tr></thead>
-            <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{inline(cell, `td-${key}-${rowIndex}-${cellIndex}`)}</td>)}</tr>)}</tbody>
-          </table>
-        </div>,
-      );
-      key += 1; index = cursor; continue;
-    }
-    if (/^#{1,6}\s/.test(line)) {
-      blocks.push(<h4 key={`h-${key}`}>{inline(line.replace(/^#{1,6}\s/, ""), `h-${key}`)}</h4>);
-      key += 1; index += 1; continue;
-    }
-    if (/^\s*([-*]|\d+\.)\s/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^\s*([-*]|\d+\.)\s/.test(lines[index])) {
-        items.push(lines[index].replace(/^\s*([-*]|\d+\.)\s+/, ""));
-        index += 1;
-      }
-      blocks.push(<ul key={`ul-${key}`}>{items.map((item, itemIndex) => <li key={itemIndex}>{inline(item, `li-${key}-${itemIndex}`)}</li>)}</ul>);
-      key += 1; continue;
-    }
-    const paragraph: string[] = [];
-    while (index < lines.length && lines[index].trim() && !lines[index].trim().startsWith("|") && !/^#{1,6}\s/.test(lines[index]) && !/^\s*([-*]|\d+\.)\s/.test(lines[index])) {
-      paragraph.push(lines[index]);
-      index += 1;
-    }
-    blocks.push(<p key={`p-${key}`}>{inline(paragraph.join(" "), `p-${key}`)}</p>);
-    key += 1;
-  }
-  return <div className="qa-markdown">{blocks}</div>;
-}
 
 /** 入参里单个值的写法：字符串带引号（区分「郑州」和郑州这段文本本身），数组展开成 []。 */
 function formatArgument(value: unknown): string {
@@ -836,7 +779,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
               {turn.answer && (
                 <div className={`qa-stream${turn.busy ? " live" : ""}`}>
-                  <Markdown text={turn.answer} />
+                  <MarkdownView text={turn.answer} className="qa-markdown" />
                 </div>
               )}
               {turn.busy && !turn.answer && !turn.thinking && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />{turn.preparing ? "正在整理这段对话的上下文…" : "正在检索本体…"}</div>}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { copyText } from "@/lib/clipboard";
 import type { OntologySummary } from "@/components/ontology-studio";
 import "./mcp-studio.css";
 
@@ -64,35 +65,6 @@ function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource =
 const TOKEN_PLACEHOLDER = "<MCP_API_TOKEN>";
 const SERVER_NAME = "ontology-management";
 
-/**
- * 复制到剪贴板。先走 Clipboard API（https 与 localhost 下可用），
- * 不可用时退回隐藏 textarea + execCommand —— 复制是这一页的主要动作，不该挑环境。
- */
-async function copyText(value: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-  } catch {
-    // 落到下面的兜底
-  }
-  try {
-    const area = document.createElement("textarea");
-    area.value = value;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.top = "-1000px";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(area);
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 /** 复制按钮：点完自己变成「已复制」再变回来，不用盯着提示条确认。 */
 function CopyButton({ value, label, notify, small }: { value: string; label: string; notify: (text: string) => void; small?: boolean }) {

@@ -1,0 +1,51 @@
+/* ---------- 本体技能 ---------- */
+
+.sk-list { display: grid; align-content: start; gap: 8px; }
+.sk-list > h2 { margin: 2px 0 6px; }
+.sk-hint { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 6px; padding: 8px 9px; color: #8a5a1f; background: #fff8ec; border-left: 3px solid #d19a4a; font-size: 11px; line-height: 1.55; }
+.sk-hint svg { flex: none; margin-top: 1px; }
+
+.sk-card { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.sk-card:hover { border-color: #b9d1f5; background: #fbfdff; }
+.sk-card.selected { border-color: #2563eb; background: #f4f8ff; box-shadow: inset 0 0 0 1px rgba(37,99,235,.18); }
+.sk-stage { display: grid; place-items: center; width: 22px; height: 22px; color: #315b9f; background: #eef4ff; border: 1px solid #cbd9ed; border-radius: 3px; font-size: 11px; font-weight: 700; }
+.sk-card.selected .sk-stage { color: #fff; background: #2563eb; border-color: #2563eb; }
+.sk-card-body { display: grid; gap: 3px; min-width: 0; }
+.sk-card-title { display: flex; align-items: center; gap: 5px; color: #14213d; font-size: 12.5px; font-weight: 650; }
+.sk-card-title svg { color: #2563eb; }
+.sk-card-code { color: #58769c; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; }
+.sk-card-body small { color: var(--muted); font-size: 11px; line-height: 1.55; }
+.sk-card-meta { color: #8397b2; font-size: 10px; }
+.sk-empty { margin: 8px 0 0; color: var(--muted); font-size: 11.5px; }
+.sk-list-foot { display: flex; gap: 6px; margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--line); }
+.sk-list-foot button { flex: 1; justify-content: center; }
+
+.sk-detail { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.sk-detail-code { color: #58769c; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px; font-weight: 500; }
+.sk-files { display: flex; flex-wrap: wrap; gap: 5px; padding-bottom: 2px; }
+.sk-file { padding: 5px 9px; color: #47607f; background: #fff; border: 1px solid var(--line); border-radius: 999px; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; cursor: pointer; }
+.sk-file:hover { border-color: #b9d1f5; color: #1d4ed8; }
+.sk-file.active { color: #fff; background: #2563eb; border-color: #2563eb; }
+.sk-file-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; background: #f8fafc; border: 1px solid var(--line); border-bottom: 0; border-radius: 4px 4px 0 0; color: #56708f; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; }
+.sk-file-actions { display: flex; gap: 6px; }
+.sk-doc { max-height: 62vh; padding: 12px 14px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 0 0 4px 4px; }
+.sk-loading { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11.5px; }
+
+.sk-contract { display: grid; gap: 8px; }
+.sk-contract > h2 { margin: 0; }
+.sk-contract-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.sk-contract-grid > div { padding: 10px 11px; background: #f8fafc; border: 1px solid var(--line); border-radius: 4px; }
+.sk-contract-grid b { display: flex; align-items: center; gap: 5px; color: #14213d; font-size: 12px; }
+.sk-contract-grid b svg { color: #2563eb; }
+.sk-contract-grid p { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.65; }
+.sk-contract-grid code, .sk-modal code, .sk-install-item code { padding: 1px 4px; color: #1d4ed8; background: #eef4ff; border-radius: 3px; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; }
+
+.sk-modal { width: min(820px, calc(100vw - 40px)); max-height: 84vh; overflow: auto; display: grid; gap: 10px; }
+.sk-modal-note { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+.sk-install-list { display: grid; gap: 8px; }
+.sk-install-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 11px; background: #f8fafc; border: 1px solid var(--line); border-radius: 4px; }
+.sk-install-item b { display: block; color: #14213d; font-size: 12.5px; }
+.sk-install-item code { display: inline-block; margin-top: 3px; }
+.sk-install-item p { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.sk-install-actions { display: flex; flex: none; flex-direction: column; gap: 6px; }
+.sk-install-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }

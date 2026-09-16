@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Boxes, Clock3, Database, Download, FileJson, Layers, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
-import { api, describeApiError } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
+import { downloadResponse } from "@/lib/clipboard";
 import { graphColor } from "@/lib/graph-palette";
 import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/graph/types";
 /** 存储资源选项：只用到这几项，调用方传完整的 Target 也能满足。 */
@@ -65,26 +66,12 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
 
   /**
    * 导出本体包：一个 JSON 文件带走这份本体的结构。
-   * 用 fetch 而不是 api()，因为要拿的是文件本体与 Content-Disposition 里的文件名。
+   * 下载细节（Blob、Content-Disposition 里的文件名、失败文案）在 @/lib/clipboard 的 downloadResponse 里，
+   * 技能页下载 zip 走的是同一份实现。
    */
   const exportBundle = async (ontology: OntologySummary) => {
     try {
-      const response = await fetch(`/api/ontologies/${ontology.id}/export`);
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(describeApiError(response.status, data.error));
-      }
-      const disposition = response.headers.get("content-disposition") ?? "";
-      const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = encoded ? decodeURIComponent(encoded) : `${ontology.identifier}.ontology.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadResponse(`/api/ontologies/${ontology.id}/export`, `${ontology.identifier}.ontology.json`);
       notify(`已导出「${ontology.name}」的结构包。`);
     } catch (reason) {
       fail(reason);

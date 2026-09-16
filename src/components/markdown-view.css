@@ -1,0 +1,24 @@
+/* Markdown 渲染的通用样式（技能原文、模型结论共用一套排版） */
+.md-view { color: #1e293b; font-size: 12.5px; line-height: 1.75; }
+.md-view p { margin: 0 0 9px; }
+.md-view h4 { margin: 14px 0 6px; color: #0f2547; font-size: 13px; font-weight: 700; }
+.md-view h4:first-child { margin-top: 0; }
+.md-view ul { margin: 0 0 10px; padding-left: 18px; }
+.md-view li { margin-bottom: 4px; }
+.md-view b { color: #0f2547; font-weight: 650; }
+.md-view .md-check { display: inline-block; width: 15px; color: #2563eb; font-size: 12px; }
+.md-view code { padding: 1px 4px; color: #1d4ed8; background: #f1f5f9; border-radius: 3px; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11.5px; }
+.md-view .md-code {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  overflow: auto;
+  background: #0f172a;
+  border-radius: 4px;
+  max-height: 460px;
+}
+.md-view .md-code code { padding: 0; color: #e2e8f0; background: transparent; font-size: 11.5px; line-height: 1.65; white-space: pre; }
+.md-table-wrap { margin: 0 0 10px; overflow-x: auto; }
+.md-view table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+.md-view th, .md-view td { padding: 6px 9px; border: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+.md-view th { background: #f8fafc; color: #334155; font-weight: 650; }
+.md-view td code { background: transparent; padding: 0; color: #475569; }

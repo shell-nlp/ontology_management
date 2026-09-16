@@ -108,3 +108,48 @@ describe("按对象类型筛：字面匹配（类之间没有继承）", () => {
     expect(rows).toEqual([]);
   });
 });
+
+// 2026-09-16：发布前校验补上接口那一段（原先只在接口页提示，发布路径漏了）。
+describe("发布前校验：接口实现", () => {
+  const 接口id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const 约束id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const 客户类id = "11111111-1111-4111-8111-111111111111";
+  const 用户类id = "22222222-2222-4222-8222-222222222222";
+  const 归属关系id = "33333333-3333-4333-8333-333333333333";
+
+  function 带接口的({ 有属性, 有关系 }: { 有属性: boolean; 有关系: boolean }): VersionSnapshot {
+    return {
+      definition: {
+        groups: [],
+        interfaces: [{
+          id: 接口id, name: "可服务对象", description: "",
+          properties: [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: true, unique: false, indexed: false }],
+          extends: [],
+          linkConstraints: [{ id: 约束id, name: "归属", description: "", targetKind: "OBJECT_TYPE", targetId: 客户类id, cardinality: "ONE", required: true }],
+        }],
+        entityTypes: [
+          { id: 客户类id, name: "客户", description: "", displayProperty: "", groupId: "", implements: [], properties: [], sources: [] },
+          {
+            id: 用户类id, name: "用户", description: "", displayProperty: "", groupId: "", implements: [接口id], sources: [],
+            properties: 有属性 ? [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }] : [],
+          },
+        ],
+        relationshipTypes: 有关系 ? [{ id: 归属关系id, name: "用户归属客户", description: "", sourceEntityTypeId: 用户类id, targetEntityTypeId: 客户类id, properties: [] }] : [],
+        actionTypes: [],
+        rules: [],
+      },
+      nodes: [],
+      relationships: [],
+    };
+  }
+
+  it("实现接口但缺必填属性 / 缺必填关系时会被拦下", () => {
+    const rules = validateVersionSnapshot(带接口的({ 有属性: false, 有关系: false })).map((item) => item.rule);
+    expect(rules).toContain("INTERFACE_PROPERTY_MISSING");
+    expect(rules).toContain("INTERFACE_LINK_MISSING");
+  });
+
+  it("满足了同名属性与方向正确的关系就不拦", () => {
+    expect(validateVersionSnapshot(带接口的({ 有属性: true, 有关系: true }))).toEqual([]);
+  });
+});
