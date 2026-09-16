@@ -4,7 +4,6 @@ import { useCallback, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import { actionInvolvement } from "@/lib/action-engine";
-import { ancestorsOf, inheritedPropertiesOf, indexNodes } from "@/lib/class-hierarchy";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import { newId } from "@/lib/ids";
@@ -43,7 +42,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
   return positions;
 }
 
-export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; parents?: string[]; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
+export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
@@ -77,7 +76,7 @@ type Props = {
 /**
  * 本体草稿的可视化工作台：类是节点，关系类型是带箭头的连线。
  *
- * 画布上做的每一次改动都会立刻写回草稿（和表单模式同一套保存路径），
+ * 画布上做的每一次改动都会立刻写回草稿（和「对象类型 / 关系类型」两个列表标签同一套保存路径），
  * 摆放位置只记在本机浏览器，不属于草稿定义。
  */
 export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onSaveDefinition, onExtract, onOpenActions, onOpenGroups, onFail }: Props) {
@@ -96,22 +95,6 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
 
   const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
   const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
-  // 选中一个类时顺着父类往上算：得到隐含的祖先，以及它从祖先那里继承来的属性。
-  const hierarchyNodes = useMemo(() => indexNodes(definition.entityTypes), [definition.entityTypes]);
-  /** 选中类的血统：直接父类（用户勾的）和更远的祖先（推出来的）分开说，不混成一句话。 */
-  const selectedLineage = useMemo(() => {
-    const selectedEntity = selected?.kind === "entity" ? definition.entityTypes.find((item) => item.id === selected.id) : undefined;
-    if (!selectedEntity) return { direct: [] as string[], extra: [] as string[] };
-    const direct = (selectedEntity.parents ?? []).map((id) => entityById.get(id)?.name ?? "已删除");
-    const extra = ancestorsOf(selectedEntity.id, hierarchyNodes)
-      .map((id) => hierarchyNodes.get(id)?.name ?? id)
-      .filter((name) => !direct.includes(name));
-    return { direct, extra };
-  }, [selected, definition.entityTypes, entityById, hierarchyNodes]);
-  const selectedInherited = useMemo(() => {
-    const node = selected?.kind === "entity" ? hierarchyNodes.get(selected.id) : undefined;
-    return node ? inheritedPropertiesOf(node, hierarchyNodes) : [];
-  }, [selected, hierarchyNodes]);
 
   const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(() => {
     // 拖过的节点记在这里：它是**覆盖**，压在算出来的坐标上面，所以拖完不会弹回去，分组框也跟着它变。
@@ -295,9 +278,6 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                 </select>
                 <small>{definition.groups.length ? "选一个业务域，图谱「按逻辑分组」时它会和同组的类型画在一个框里。" : "还没有分组，点工具栏的「概念分组」新建一个。"}</small>
               </label>
-              {selectedLineage.direct.length > 0 && (
-                <p className="ob-lineage"><CornerDownRight size={12} />继承自 <b>{selectedLineage.direct.join("、")}</b></p>
-              )}
               {selectedInterfaces.length > 0 && (
                 <div className="ob-iface-row">
                   <span className="ob-iface-label"><Boxes size={12} />实现接口</span>
@@ -308,10 +288,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   ))}
                 </div>
               )}
-              {selectedLineage.extra.length > 0 && (
-                <p className="ob-lineage"><CornerDownRight size={12} />也属于 <b>{selectedLineage.extra.join("、")}</b></p>
-              )}
-              {selectedEntity.properties.length > 0 || selectedInherited.length > 0 ? (
+              {selectedEntity.properties.length > 0 ? (
                 <div className="graph-properties">
                   {selectedEntity.properties.map((property) => (
                     <div key={property.name}>
@@ -319,12 +296,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                       <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
                     </div>
                   ))}
-                  {selectedInherited.map(({ property, from }) => (
-                    <div key={`inherited-${property.name}`} className="inherited">
-                      <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
-                      <span>{property.dataType} · 来自 {from}</span>
-                    </div>
-                  ))}
+
                 </div>
               ) : <p className="ob-inspector-note">还没有属性。点「编辑」补上业务属性与必填约束。</p>}
               <InvolvedActions definition={definition} entityTypeId={selectedEntity.id} onOpen={onOpenActions} />
@@ -383,7 +355,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           interfaces={definition.interfaces}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, parents: payload.parents, implements: payload.implements, properties: payload.properties, sources: payload.sources };
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, implements: payload.implements, properties: payload.properties, sources: payload.sources };
             if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
             else await onUpdateEntity(dialog.id, body);
           }}

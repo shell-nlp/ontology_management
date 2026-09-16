@@ -14,8 +14,8 @@ function validSnapshot(): VersionSnapshot {
       groups: [],
       interfaces: [],
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", parents: [], implements: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", parents: [], implements: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", implements: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", implements: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", description: "", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
@@ -67,20 +67,20 @@ describe("version snapshot", () => {
   });
 });
 
-describe("类型传播：按父类筛子类的对象", () => {
+describe("按对象类型筛：字面匹配（类之间没有继承）", () => {
   const 用户类 = "11111111-1111-4111-8111-111111111111";
   const 专线类 = "22222222-2222-4222-8222-222222222222";
   const 用户对象 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const 专线对象 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-  function hierarchySnapshot(): VersionSnapshot {
+  function twoTypesSnapshot(): VersionSnapshot {
     return {
       definition: {
         groups: [],
         interfaces: [],
         entityTypes: [
-          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", parents: [], implements: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
-          { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", groupId: "", parents: [用户类], implements: [], properties: [], sources: [] },
+          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", implements: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+          { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", groupId: "", implements: [], properties: [], sources: [] },
         ],
         relationshipTypes: [],
         actionTypes: [],
@@ -94,23 +94,17 @@ describe("类型传播：按父类筛子类的对象", () => {
     };
   }
 
-  it("按父类筛对象，子类的对象也算", () => {
-    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "用户" });
-    expect(rows.map((row) => row.id)).toEqual([用户对象, 专线对象]);
+  // 2026-09-16 起类之间没有父子关系：按某个类筛，就是筛这个类自己的对象。
+  it("按某个类筛，只有这个类的对象", () => {
+    expect(listSnapshotEntities(twoTypesSnapshot(), { label: "用户" }).map((row) => row.id)).toEqual([用户对象]);
+    expect(listSnapshotEntities(twoTypesSnapshot(), { label: "专线产品用户" }).map((row) => row.id)).toEqual([专线对象]);
   });
 
-  it("按子类筛不会把父类的对象带出来", () => {
-    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "专线产品用户" });
-    expect(rows.map((row) => row.id)).toEqual([专线对象]);
+  it("图谱筛选也是字面匹配", () => {
+    expect(graphFromSnapshot(twoTypesSnapshot(), { labels: ["用户"] }).nodes.map((node) => node.id)).toEqual([用户对象]);
   });
-
-  it("图谱筛选走同一份类型传播", () => {
-    const graph = graphFromSnapshot(hierarchySnapshot(), { labels: ["用户"] });
-    expect(graph.nodes.map((node) => node.id)).toEqual([用户对象, 专线对象]);
-  });
-
   it("传了不存在的标签时不会误伤：只匹配真实存在的类名", () => {
-    const rows = listSnapshotEntities(hierarchySnapshot(), { label: "订单" });
+    const rows = listSnapshotEntities(twoTypesSnapshot(), { label: "订单" });
     expect(rows).toEqual([]);
   });
 });

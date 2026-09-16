@@ -39,12 +39,6 @@
 
 .ob-inspector-note { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
 
-/* 继承：一行血统 + 从祖先带来的属性。左侧虚线脊说明这两样是"推出来的"，不是本类直接写的。 */
-.ob-lineage { display: flex; align-items: center; gap: 5px; margin: 0; color: #4d6b8a; font-size: 11px; line-height: 1.5; }
-.ob-lineage svg { flex: none; color: #9aa8bb; }
-.ob-lineage b { color: #1d4ed8; font-weight: 600; }
-.graph-properties > div.inherited { padding-left: 10px; border-left: 2px dashed #c8d5ea; }
-.graph-properties > div.inherited b { color: #47605f; font-weight: 500; }
 
 /* 类 / 关系类型看"谁在动我"：动作为动作页的入口。 */
 .ob-actions { display: grid; gap: 5px; }

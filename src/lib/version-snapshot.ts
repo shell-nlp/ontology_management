@@ -8,7 +8,6 @@ import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/graph";
 import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology-sources";
-import { expandLabelFilter, mergeInheritedProperties, validateClassHierarchy } from "@/lib/class-hierarchy";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
@@ -499,8 +498,8 @@ function searchable(values: unknown[]) {
 
 export function listSnapshotEntities(snapshot: VersionSnapshot, options: { label?: string | null; search?: string | null; limit?: number } = {}) {
   const search = options.search?.trim().toLocaleLowerCase();
-  // 按父类筛时子类的对象也算，和图库侧 rdfs:subClassOf* 的类型传播保持一致。
-  const labels = options.label ? new Set(expandLabelFilter([options.label], snapshot.definition.entityTypes)) : null;
+  // 按对象类型筛就是字面匹配（类之间不再有父子关系；接口那层传播在图库侧读路径上做）。
+  const labels = options.label ? new Set([options.label]) : null;
   return snapshot.nodes
     .filter((node) => !labels || node.labels.some((label) => labels.has(label)))
     .filter((node) => !search || searchable(Object.values(node.properties)).includes(search))
@@ -524,7 +523,7 @@ export function listSnapshotRelationships(snapshot: VersionSnapshot, options: { 
 }
 
 export function graphFromSnapshot(snapshot: VersionSnapshot, options: { labels?: string[]; relationshipTypes?: string[]; search?: string | null; nodeLimit?: number } = {}): GraphData {
-  const labels = new Set(expandLabelFilter(options.labels ?? [], snapshot.definition.entityTypes));
+  const labels = new Set(options.labels ?? []);
   const relationshipTypes = new Set(options.relationshipTypes ?? []);
   const search = options.search?.trim().toLocaleLowerCase();
   let nodes = snapshot.nodes.filter((node) => (!labels.size || node.labels.some((label) => labels.has(label))) && (!search || searchable([...node.labels, ...Object.values(node.properties)]).includes(search)));
@@ -542,13 +541,10 @@ export function graphFromSnapshot(snapshot: VersionSnapshot, options: { labels?:
   };
 }
 
-/**
- * 一个类最终生效的属性：自己写的 + 从父类继承来的。
- * 写实例、渲染属性表单、校验唯一值都按这一份算，界面与写入才不会各说各话。
- */
+/** 一个类的属性。**不再有继承**：这一份就是类自己定义的属性（写实例 / 表单 / 唯一值校验共用）。 */
 export function classProperties(definition: OntologyDefinition, typeName: string) {
   const type = definition.entityTypes.find((item) => item.name === typeName);
-  return type ? mergeInheritedProperties(type, definition.entityTypes) : undefined;
+  return type ? type.properties : undefined;
 }
 
 export function runtimeTypesFromSnapshot(snapshot: VersionSnapshot): RuntimeTypeSet {
@@ -587,8 +583,6 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const violations: SnapshotViolation[] = [];
   // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
   for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
-  // 类层级同样只在定义里：父类是否存在、有没有绕成环、继承来的属性有没有打架。
-  violations.push(...validateClassHierarchy(snapshot.definition.entityTypes));
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
@@ -602,7 +596,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
       continue;
     }
     const type = entityTypes.get(managed[0])!;
-    const properties = mergeInheritedProperties(type, snapshot.definition.entityTypes);
+    const properties = type.properties;
     const businessProperties = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key !== "fx" && key !== "fy"));
     try { parsePropertyValues(properties, businessProperties); } catch (error) {
       violations.push({ rule: `${type.name}:${node.id}`, message: error instanceof Error ? error.message : "对象属性校验失败。", count: 1 });
@@ -697,8 +691,7 @@ export async function createSnapshotEntity(versionId: string, entityType: string
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
     if (!type) throw new Error("对象类型未在当前草稿中定义。");
-    // 继承来的属性也是这个类的属性，否则子类的对象填不了父类定义的字段。
-    const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(mergeInheritedProperties(type, snapshot.definition.entityTypes), rawProperties) });
+    const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawProperties) });
     snapshot.nodes.push(node);
     return entityFromSnapshot(node);
   });
@@ -711,7 +704,7 @@ export async function updateSnapshotEntity(versionId: string, entityId: string, 
     const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
     if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
-    node.properties = { ...parsePropertyValues(mergeInheritedProperties(type, snapshot.definition.entityTypes), rawProperties), ...layout };
+    node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
     return entityFromSnapshot(node);
   });
 }

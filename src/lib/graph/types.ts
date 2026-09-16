@@ -199,8 +199,8 @@ export type GraphPropertyDefinition = {
 export type GraphDefinitionLike = {
   /** interfaces 是接口定义：发布时声明成抽象类，并写"谁实现了它"。 */
   interfaces?: { id?: string; name: string; extends?: string[] }[];
-  /** parents 是父类 id：发布时据此写 rdfs:subClassOf，读路径据此做类型传播。 */
-  entityTypes: { id?: string; name: string; parents?: string[]; implements?: string[]; properties: GraphPropertyDefinition[] }[];
+  /** 抽象关系只有一种：`implements`（实现了哪些接口）。发布时据此写 rdfs:subClassOf + bkn:implements。 */
+  entityTypes: { id?: string; name: string; implements?: string[]; properties: GraphPropertyDefinition[] }[];
   relationshipTypes: { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string; properties: GraphPropertyDefinition[] }[];
 };
 

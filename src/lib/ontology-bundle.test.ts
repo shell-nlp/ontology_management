@@ -19,7 +19,7 @@ function definition(): OntologyDefinition {
         properties: [{ name: "名称", dataType: "TEXT" }],
         sources: [{ id: "primary", dataSourceId: DATA_SOURCE, schema: "GISTOOLS", view: "TB_CUST", primaryKey: ["CUST_ID"], titleField: "CUST_NAME" }],
       },
-      { id: ORDER, name: "订单", parents: [CUSTOMER], displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT" }] },
+      { id: ORDER, name: "订单", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT" }] },
     ],
     relationshipTypes: [{ id: PLACES, name: "下单", sourceEntityTypeId: CUSTOMER, targetEntityTypeId: ORDER }],
     actionTypes: [{
@@ -104,7 +104,7 @@ describe("本体包导入", () => {
     expect(() => readOntologyBundle(broken)).toThrow(/字段/);
   });
 
-  it("导入时全部 id 换新，且引用跟着换（父子类、关系端点、动作作用域、规则条件）", () => {
+  it("导入时全部 id 换新，且引用跟着换（实现接口、关系端点、动作作用域、规则条件）", () => {
     const plan = planBundleImport(bundle(), [localSource], counter());
     const [customer, order] = plan.definition.entityTypes;
     const [places] = plan.definition.relationshipTypes;
@@ -116,7 +116,6 @@ describe("本体包导入", () => {
     expect(new Set(plan.definition.entityTypes.map((item) => item.id)).size).toBe(2);
 
     // 引用必须指向新号，不能残留原号
-    expect(order.parents).toEqual([customer.id]);
     expect(places.sourceEntityTypeId).toBe(customer.id);
     expect(places.targetEntityTypeId).toBe(order.id);
     expect(action.scopeEntityTypeId).toBe(customer.id);

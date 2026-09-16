@@ -12,18 +12,17 @@ function definition(): OntologyDefinition {
   return {
     groups: [{ id: 客户域id, name: "客户域", color: "" }],
     entityTypes: [
-      { id: 客户id, name: "客户", description: "社会实体", displayProperty: "", groupId: 客户域id, parents: [], properties: [], sources: [] },
+      { id: 客户id, name: "客户", description: "社会实体", displayProperty: "", groupId: 客户域id, properties: [], sources: [] },
       {
         id: 用户id,
         name: "用户",
         description: "客户订购的服务实例",
         displayProperty: "",
         groupId: 客户域id,
-        parents: [],
         properties: [],
         sources: [{ id: "primary", dataSourceId: "src-1", schema: "GISTOOLS", view: "TB_X", primaryKey: ["USER_ID"], titleField: "USER_ID" }],
       },
-      { id: 账单id, name: "账单", description: "账期费用", displayProperty: "", groupId: "", parents: [], properties: [], sources: [] },
+      { id: 账单id, name: "账单", description: "账期费用", displayProperty: "", groupId: "", properties: [], sources: [] },
     ],
     relationshipTypes: [{ id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, properties: [] }],
     actionTypes: [],

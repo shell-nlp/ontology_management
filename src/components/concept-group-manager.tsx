@@ -9,7 +9,7 @@ import type { ConceptGroup, Definition } from "@/lib/ontology-draft";
 import "./concept-group-manager.css";
 
 /**
- * 概念分组（业务域）的配置区 —— 「本体草稿」页里与「可视化建模 / 表单」并列的第三个标签。
+ * 概念分组（业务域）的配置区 —— 「本体草稿」页的一级标签之一（可视化建模 → 概念分组 → 对象类型 → 关系类型 → 接口）。
  *
  * 只做一件事：把对象类型按业务域归堆。分组是展示层的归类 —— 不进图库、不改对象类型的定义，
  * 图谱切到「按逻辑分组」时才看得见效果：分组的颜色就是那时画在那一堆节点外面的虚线框。
@@ -216,7 +216,7 @@ export function ConceptGroupManager({ definition, canEdit, save, notify, fail }:
                 </button>
               );
             })}
-            {!definition.entityTypes.length && <p className="cg-empty">草稿里还没有对象类型，先回「可视化建模」建几个。</p>}
+            {!definition.entityTypes.length && <p className="cg-empty">草稿里还没有对象类型，先回「可视化建模」或「对象类型」建几个。</p>}
             {definition.entityTypes.length > 0 && !visible.length && <p className="cg-empty">没有名字里带「{filter.trim()}」的对象类型。</p>}
           </div>
           <p className="cg-hint">点一下归到这一组，再点一下移出。一个对象类型同时只属于一个分组，点别组的成员会把它移过来。</p>

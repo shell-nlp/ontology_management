@@ -18,7 +18,7 @@ import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, typ
 import "./interface-manager.css";
 
 /**
- * 接口（Palantir 的 Interface）的配置区 —— 「本体草稿」页里与「可视化建模 / 表单 / 概念分组」并列的标签。
+ * 接口（Palantir 的 Interface）的配置区 —— 「本体草稿」页的一级标签之一（可视化建模 → 概念分组 → 对象类型 → 关系类型 → 接口）。
  *
  * 接口是**抽象契约**：只描述"实现我的对象类型必须有哪些属性、哪些关系"，
  * 不绑数据、不能被实例化。谁实现了它，就按这套形状被应用统一消费。
@@ -214,12 +214,12 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
       <div className="iface-rows">
         {interfaces.map((item) => {
           const count = implementersOf(interfaces, definition.entityTypes, item.id).length;
-          const parents = interfaceAncestorsOf(interfaces, item.id).map((id) => interfaceNameOf(definition, id)).filter(Boolean);
+          const ancestors = interfaceAncestorsOf(interfaces, item.id).map((id) => interfaceNameOf(definition, id)).filter(Boolean);
           return <button key={item.id} className={selectedId === item.id ? "iface-row selected" : "iface-row"} onClick={() => selectInterface(item.id)}>
             <i className="iface-mark" aria-hidden="true" />
             <span>
               <b>{item.name}</b>
-              <small>{`${item.properties.length} 个属性 · ${count} 个实现`}{parents.length ? ` · 继承 ${parents.join("、")}` : ""}</small>
+              <small>{`${item.properties.length} 个属性 · ${count} 个实现`}{ancestors.length ? ` · 继承 ${ancestors.join("、")}` : ""}</small>
             </span>
           </button>;
         })}
@@ -328,7 +328,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
               </span>;
             })}
             {implementers.filter((entry) => !entry.direct).map((entry) => <span key={entry.id} className="iface-chip" title="通过继承的子接口间接实现：要取消得去实现方的对象类型上摘掉那个子接口"><i />{entry.name} · 间接</span>)}
-            {!implementers.length && <p className="iface-empty">还没有对象类型实现它。到「可视化建模」或「表单」里打开对象类型，在「实现接口」里勾上。</p>}
+            {!implementers.length && <p className="iface-empty">还没有对象类型实现它。到「可视化建模」或「对象类型」标签里打开那个对象类型，在「实现接口」里勾上。</p>}
           </div>
           <p className="iface-hint">实现 = 对象类型提供同名属性 + 满足必填的关系约束；发布前校验会拦住没满足的实现。摘掉实现可以点实现项尾巴上的 ✕，也可以到对象类型那一侧的「实现接口」里取消勾选。</p>
         </div>

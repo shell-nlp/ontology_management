@@ -243,11 +243,6 @@ export const ontologyDefinitionSchema = z.object({
     /** 所属逻辑分组；空字符串表示还没归组。 */
     groupId: z.union([z.string().uuid(), z.literal("")]).default(""),
     /**
-     * 父类：这个类继承谁。可填多个（多继承），用来表达「专线产品用户也是一种用户」。
-     * 空数组表示这个类还没有层级（加字段之前的老快照读出来也是空数组）。
-     */
-    parents: z.array(z.string().uuid()).default([]),
-    /**
      * 实现的接口（`interfaces[].id`）。可以写多个：Palantir 里一个对象类型能实现多个接口，
      * 分别服务不同的应用场景。声明实现之后必须满足接口的属性与关系约束（发布前校验会查）。
      */

@@ -1,4 +1,3 @@
-import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import type { InterfaceType, Property } from "@/lib/ontology-draft";
 
 /**
@@ -8,8 +7,8 @@ import type { InterfaceType, Property } from "@/lib/ontology-draft";
  * 对象类型用 `implements` 声明"我实现了它"，并因此背上一组必须满足的条件。
  * 这里的函数不碰界面、不碰图库，服务端（发布前校验）与浏览器（编辑面板）共用同一份判断。
  *
- * 与父类（`parents`）的区别：父类表达具体类型之间的继承；接口表达能力与形状的契约。
- * 一个对象类型可以有多个父类，也可以实现多个接口，两者互不替代。
+ * **接口是本平台唯一的抽象机制**（2026-09-16 起）：类之间不再有父类 / 继承，
+ * 要表达"这套应用只关心某几种能力"就用接口。
  */
 
 export type InterfacePropertyLike = { name: string; dataType?: string; required?: boolean; displayName?: string; description?: string };
@@ -36,7 +35,6 @@ export type InterfaceLike = {
 export type ImplementerLike = {
   id: string;
   name: string;
-  parents?: readonly string[];
   properties?: readonly InterfacePropertyLike[];
   implements?: readonly string[];
 };
@@ -181,10 +179,8 @@ export function satisfiesLinkConstraint(
   const targetId = relationship.targetEntityTypeId;
   if (!targetId || !constraint.targetId) return false;
   const target = entities.find((item) => item.id === targetId);
-  if (constraint.targetKind === "OBJECT_TYPE") {
-    if (targetId === constraint.targetId) return true;
-    return Boolean(target && (target.parents ?? []).includes(constraint.targetId));
-  }
+  // 类之间不再有父子关系：关系约束的终点必须是那个对象类型本身（或实现了目标接口的类型）。
+  if (constraint.targetKind === "OBJECT_TYPE") return targetId === constraint.targetId;
   if (targetId === constraint.targetId) return false;
   if (!target) return false;
   const ids = implementsIdsOf(target);
@@ -209,7 +205,7 @@ export type ImplementationCheck = {
 /**
  * 对象类型实现接口的完整检查：每个已实现的接口一条结果。
  *
- * - 属性：接口里 `required` 的属性，对象类型（含父类继承）必须有**同名**属性。
+ * - 属性：接口里 `required` 的属性，对象类型必须有**同名**属性。
  *   Palantir 允许把现有属性映射到接口属性上；平台这一版按同名映射 —— 足够表达，
  *   也不必再维护第二张映射表；缺的同名属性在界面上可以一键补齐。
  * - 关系：`required` 的关系约束必须有一条具体关系类型满足它。
@@ -220,12 +216,8 @@ export function checkImplementations(
   relationshipTypes: readonly { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string }[],
   entities: readonly ImplementerLike[] = [],
 ): ImplementationCheck[] {
-  const ownProperties = new Set(
-    mergeInheritedProperties(
-      { id: entity.id, parents: [...(entity.parents ?? [])], properties: [...(entity.properties ?? [])] },
-      entities.map((item) => ({ id: item.id, parents: [...(item.parents ?? [])], properties: [...(item.properties ?? [])] })),
-    ).map((property) => property.name),
-  );
+  // 类的属性就是它自己写的那些（没有继承可言）。
+  const ownProperties = new Set((entity.properties ?? []).map((property) => property.name));
   return implementsIdsOf(entity).map((interfaceId) => {
     const node = interfaces.find((item) => item.id === interfaceId);
     const missingProperties: string[] = [];
@@ -284,14 +276,6 @@ export function validateInterfaces(definition: { interfaces: readonly InterfaceL
       if (!pool.some((candidate) => candidate.id === constraint.targetId)) {
         violations.push({ rule: "INTERFACE_LINK_TARGET_MISSING", message: `接口「${item.name}」的关系约束「${constraint.name}」指向了一个不存在的目标。`, count: 1 });
       }
-    }
-  }
-  // 把接口写进父类是最常见的误用：接口不是"具体的父类型"，报出来并说明该写在实现上。
-  const interfaceIds = new Set(interfaces.map((item) => item.id));
-  for (const entity of definition.entityTypes) {
-    for (const parentId of entity.parents ?? []) {
-      if (!interfaceIds.has(parentId)) continue;
-      violations.push({ rule: "INTERFACE_AS_PARENT", message: `对象类型「${entity.name}」把接口写在了父类里；接口应当写在「实现接口」上。`, count: 1 });
     }
   }
   return violations;

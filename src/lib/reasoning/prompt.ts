@@ -19,7 +19,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是本体（ontology）推理助手。�
 
 工作方式：
 1. 先理解问题涉及哪些业务概念，用 search_schema 确认本体里真实存在的对象类型与关系类型名字。
-2. 需要字段、父类、一跳的关系类型、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions。
+2. 需要字段、实现了哪些接口、一跳的关系类型、可用动作、数据来源绑定（这个对象类型绑了哪张表）时调 get_object_type 或 list_actions。
 3. 问"某对象类型一圈都和什么有关""隔两跳能到哪些类型""A 和 B 之间怎么连"时用 traverse_object_types（默认 3 跳、最多 5 跳，可用 object_types / relationship_types 限定范围，不填就是不限定）。一跳的细节就在 get_object_type 里，不必重复调。
 4. **概念分组（业务域）和每组包含的对象类型已经写在下面的概念清单里**，直接据此回答；要看"哪些类型还没归组"这类完整清单才需要 list_concept_groups。
 5. **接口（抽象契约）与它的实现情况也写在下面的概念清单里**：问"有哪些接口""这个接口谁实现了""这个类型实现了哪些接口"时直接据此回答；要看接口属性与关系约束的完整清单才调 list_interfaces，单个类型的接口细节在 get_object_type 里。
@@ -71,8 +71,8 @@ export function schemaBrief(context: ToolContext): string {
   });
   const interfacesLine = (context.definition.interfaces ?? []).map((item) => {
     const implementers = context.definition.entityTypes.filter((entity) => implementsIdsOf(entity).includes(item.id)).map((entity) => entity.name);
-    const parents = interfaceAncestorsOf(context.definition.interfaces ?? [], item.id).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
-    const suffix = [parents.length ? `继承 ${parents.join("、")}` : "", implementers.length ? `${implementers.length} 个实现：${implementers.join("、")}` : "还没有对象类型实现"]
+    const ancestors = interfaceAncestorsOf(context.definition.interfaces ?? [], item.id).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
+    const suffix = [ancestors.length ? `继承 ${ancestors.join("、")}` : "", implementers.length ? `${implementers.length} 个实现：${implementers.join("、")}` : "还没有对象类型实现"]
       .filter(Boolean).join("；");
     return `${item.name}（${suffix}）`;
   }).join("；");

@@ -12,9 +12,9 @@ const 停机动作 = "55555555-5555-4555-8555-555555555555";
 function definition(): OntologyDefinition {
   return {
     entityTypes: [
-      { id: 用户类, name: "用户", description: "使用业务的客户", displayProperty: "姓名", parents: [], properties: [{ name: "姓名", dataType: "TEXT", required: true, unique: false, indexed: false }], sources: [] },
-      { id: 专线类, name: "专业线产品用户", description: "开通了专线产品的用户", displayProperty: "姓名", parents: [用户类], properties: [{ name: "套餐", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
-      { id: 订单类, name: "订单", description: "业务订单", displayProperty: "编号", parents: [], properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+      { id: 用户类, name: "用户", description: "使用业务的客户", displayProperty: "姓名", properties: [{ name: "姓名", dataType: "TEXT", required: true, unique: false, indexed: false }], sources: [] },
+      { id: 专线类, name: "专业线产品用户", description: "开通了专线产品的用户", displayProperty: "姓名", properties: [{ name: "套餐", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+      { id: 订单类, name: "订单", description: "业务订单", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
     ],
     relationshipTypes: [{ id: 下单关系, name: "下单", sourceEntityTypeId: 用户类, targetEntityTypeId: 订单类, properties: [] }],
     actionTypes: [{ id: 停机动作, name: "停机", code: "suspend_line", description: "暂停专线服务", scopeEntityTypeId: 专线类, params: [{ name: "原因", dataType: "TEXT", required: true }], edits: [] }],
@@ -55,16 +55,16 @@ describe("longestCommonSubstring", () => {
 });
 
 describe("schemaConcepts", () => {
-  it("对象类型带上父类与属性，关系带上端点；实例层面的数字不进文案", () => {
+  it("对象类型带上属性，关系带上端点；实例层面的数字不进文案", () => {
     const concepts = schemaConcepts(definition(), runtimeTypes);
     const 用户 = concepts.find((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")!;
     expect(用户.detail).toContain("属性 姓名");
     // 只在定义这一层推理：给模型看的文案里不该出现对象数 / 关系数
     expect(用户.detail).not.toContain("对象数");
     const 专线 = concepts.find((item) => item.kind === "OBJECT_TYPE" && item.name === "专业线产品用户")!;
-    expect(专线.detail).toContain("父类 用户");
-    // 继承来的属性也算这个类的属性
-    expect(concepts.some((item) => item.kind === "PROPERTY" && item.name === "专业线产品用户.姓名")).toBe(true);
+    // 类之间没有继承（2026-09-16 移除）：文案里不再有「父类 …」，也不会凭空多出别的类的属性。
+    expect(专线.detail).not.toContain("父类");
+    expect(concepts.some((item) => item.kind === "PROPERTY" && item.name === "专业线产品用户.姓名")).toBe(false);
     const 下单 = concepts.find((item) => item.kind === "RELATION_TYPE")!;
     expect(下单.detail).toContain("用户 → 订单");
     expect(下单.detail).not.toContain("关系数");
@@ -282,9 +282,8 @@ describe("get_object_type 的数据来源", () => {
     expect(套餐.source_field).toBe("PACKAGE_NAME");
     expect(套餐.source_role).toBe("主来源");
     expect(套餐.display_name).toBe("套餐名");
-    // 继承来、没有映射列的属性不该硬安一个来源角色。
-    const 姓名 = payload.properties.find((item) => item.name === "姓名")!;
-    expect(姓名.source_role).toBe("");
+    // 只有这个类自己定义的属性（继承已移除）：别的类的属性不会跟过来。
+    expect(payload.properties.some((item) => item.name === "姓名")).toBe(false);
   });
 
   it("没绑数据源时如实说明，不编造 sources", async () => {
@@ -308,7 +307,7 @@ const 订购关系id = "aaaaaaa4-4444-4444-8444-444444444444";
  * 应收既在 2 跳上（经用户）、又在 3 跳上（经订购关系），用来验证 hop 取的是**最短**距离。
  */
 function chainDefinition(): OntologyDefinition {
-  const type = (id: string, name: string, description: string, groupId = "") => ({ id, name, description, displayProperty: "", groupId, parents: [], properties: [], sources: [] });
+  const type = (id: string, name: string, description: string, groupId = "") => ({ id, name, description, displayProperty: "", groupId, properties: [], sources: [] });
   return {
     groups: [{ id: "aaaaaaa9-9999-4999-8999-999999999999", name: "客户域", color: "" }],
     entityTypes: [

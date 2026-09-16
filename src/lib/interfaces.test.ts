@@ -67,24 +67,24 @@ describe("implementers", () => {
 describe("checkImplementations", () => {
   it("缺必填属性会报出来，可选属性不报", () => {
     const checks = checkImplementations(
-      { id: airport, name: "机场", parents: [], properties: [{ name: "位置" }], implements: [facility] },
+      { id: airport, name: "机场", properties: [{ name: "位置" }], implements: [facility] },
       interfaces,
       [],
-      [{ id: airport, name: "机场", parents: [], properties: [{ name: "位置" }], implements: [facility] }],
+      [{ id: airport, name: "机场", properties: [{ name: "位置" }], implements: [facility] }],
     );
     expect(checks[0].missingProperties).toEqual(["设施名称", "资产编号"]);
     expect(checks[0].mappedProperties).toEqual(["位置"]);
   });
 
-  it("父类继承来的属性也算满足接口", () => {
-    const base = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "基类", parents: [], properties: [{ name: "资产编号" }, { name: "设施名称" }] };
+  // 类之间没有继承（2026-09-16 移除）：属性只能写在类自己身上，接口要求必须同名属性自己对上。
+  it("属性只算类自己写的，没写就报缺", () => {
     const checks = checkImplementations(
-      { id: airport, name: "机场", parents: [base.id], properties: [], implements: [facility] },
+      { id: airport, name: "机场", properties: [], implements: [facility] },
       interfaces,
       [],
-      [base],
+      [{ id: airport, name: "机场", properties: [] }],
     );
-    expect(checks[0].missingProperties).toEqual([]);
+    expect(checks[0].missingProperties).toEqual(["设施名称", "资产编号"]);
   });
 
   it("出生点在实现方的具体关系类型才算满足约束", () => {
@@ -130,14 +130,14 @@ describe("checkImplementations", () => {
 });
 
 describe("validation", () => {
-  it("重名、缺父接口、继承成环、约束目标缺失、接口当成父类都要报", () => {
+  it("重名、缺父接口、继承成环、约束目标缺失都要报", () => {
     const bad = {
       interfaces: [
         { id: asset, name: "设施", properties: [], extends: [alertInterface], linkConstraints: [] },
         { id: facility, name: "设施", properties: [{ name: "名字", required: true }, { name: "名字", required: true }], extends: [alertInterface, airport], linkConstraints: [{ id: link3, name: "空的", targetKind: "OBJECT_TYPE" as const, targetId: "", cardinality: "ONE" as const, required: true }] },
         { id: alertInterface, name: "告警", properties: [], extends: [asset], linkConstraints: [] },
       ],
-      entityTypes: [{ id: airport, name: "机场", parents: [asset], implements: [] }],
+      entityTypes: [{ id: airport, name: "机场", implements: [] }],
     };
     const rules = validateInterfaces(bad).map((item) => item.rule);
     expect(rules).toContain("INTERFACE_DUPLICATE_NAME");
@@ -145,7 +145,6 @@ describe("validation", () => {
     expect(rules).toContain("INTERFACE_MISSING_PARENT");
     expect(rules).toContain("INTERFACE_CYCLE");
     expect(rules).toContain("INTERFACE_LINK_TARGET_MISSING");
-    expect(rules).toContain("INTERFACE_AS_PARENT");
   });
 
   it("实现不完整（缺属性 / 缺必填关系）会挡住发布", () => {

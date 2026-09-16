@@ -213,7 +213,7 @@ function mapDataSources(bundle: OntologyBundle, localSources: LocalSourceRef[], 
   return map;
 }
 
-/** 收集定义里出现过的全部 id（含父类、端点、动作作用域与规则引用）。 */
+/** 收集定义里出现过的全部 id（含接口、端点、动作作用域与规则引用）。 */
 function collectDefinitionIds(definition: OntologyDefinition) {
   const ids = new Set<string>();
   // 概念分组与接口的 id 和对象类型共用一套 id 空间：导入时要一起换新，`groupId` / `implements` 才能跟着指对。
@@ -226,7 +226,6 @@ function collectDefinitionIds(definition: OntologyDefinition) {
   for (const type of definition.entityTypes) {
     if (type.id) ids.add(type.id);
     if (type.groupId) ids.add(type.groupId);
-    for (const parent of type.parents) if (parent) ids.add(parent);
     for (const interfaceId of type.implements) if (interfaceId) ids.add(interfaceId);
   }
   for (const relation of definition.relationshipTypes) {
@@ -271,7 +270,6 @@ export function relinkDefinitionIds(
       ...type,
       id: id(type.id),
       groupId: id(type.groupId),
-      parents: type.parents.map(id),
       implements: type.implements.map(id),
       sources: type.sources.map((item) => ({ ...item, dataSourceId: source(item.dataSourceId) })),
     })),

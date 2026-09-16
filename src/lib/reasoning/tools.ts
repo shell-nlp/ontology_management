@@ -1,5 +1,4 @@
 import { jsonSchema, tool } from "ai";
-import { mergeInheritedProperties } from "@/lib/class-hierarchy";
 import {
   checkImplementations,
   effectiveInterfaceLinkConstraints,
@@ -93,7 +92,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_object_type",
     description:
-      "读取一个对象类型的完整定义：属性（含从父类继承来的，映射到哪一列也会带上）、父类、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。",
+      "读取一个对象类型的完整定义：属性（映射到哪一列也会带上）、实现了哪些接口、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。",
     parameters: {
       type: "object",
       properties: { type_name: { type: "string", description: "对象类型名称，必须来自 search_schema 的结果" } },
@@ -163,7 +162,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
     name: "query_object_instance",
     disabled: true,
     description:
-      "按对象类型查询真实实例。传父类型时子类型的实例也会一起返回（类型传播）。返回的 _instance_identity.object_id 是真实标识，后续只能用返回过的 id。",
+      "按对象类型查询真实实例。传接口名时，实现了该接口的类型的实例也会一起返回（接口的类型传播）。返回的 _instance_identity.object_id 是真实标识，后续只能用返回过的 id。",
     parameters: {
       type: "object",
       properties: {
@@ -246,8 +245,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   const concepts: SchemaConcept[] = [];
 
   for (const entity of definition.entityTypes) {
-    const parents = (entity.parents ?? []).map((id) => typeNameById.get(id)).filter((name): name is string => Boolean(name));
-    const properties = mergeInheritedProperties(entity, definition.entityTypes);
+    const properties = entity.properties;
     const group = groupNameById.get(entity.groupId ?? "") ?? "";
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
     const tables = entitySources(entity).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
@@ -258,10 +256,9 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       kind: "OBJECT_TYPE",
       name: entity.name,
       // 概念分组也进检索面：问「客户域里有什么」时，该组的成员会被搜出来。
-      haystack: normalize([entity.name, entity.description, group, ...parents, ...tables, ...properties.map((property) => property.name), ...implemented].join(" ")),
+      haystack: normalize([entity.name, entity.description, group, ...tables, ...properties.map((property) => property.name), ...implemented].join(" ")),
       detail: [
         group ? `分组 ${group}` : "",
-        parents.length ? `父类 ${parents.join("、")}` : "",
         implemented.length ? `实现接口 ${implemented.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
@@ -403,7 +400,6 @@ export type TypeGraphNode = {
   description: string;
   /** 绑定的表（`SCHEMA.TABLE`），没绑就是空数组。 */
   bound_tables: string[];
-  parents: string[];
 };
 
 export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number };
@@ -492,7 +488,6 @@ export function traverseTypeGraph(
       hop: hopOf.get(item.name) ?? 0,
       description: describeBriefly(item.description ?? ""),
       bound_tables: entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean),
-      parents: (item.parents ?? []).map((id) => typeNameById.get(id) ?? "").filter(Boolean),
     }));
   const edges: TypeGraphEdge[] = definition.relationshipTypes
     .map((relation) => {
@@ -589,7 +584,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const type = definition.entityTypes.find((item) => item.name === typeName);
       if (!type) throw new Error(`本体里没有对象类型「${typeName}」。先用 search_schema 确认名字。`);
       const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
-      const own = new Set(type.properties.map((property) => property.name));
+      const interfaceNameById = new Map((definition.interfaces ?? []).map((item) => [item.id, item.name]));
       /*
        * 数据来源绑定里存的是数据资源的 id 与来源 id（都是 UUID），模型看不懂。
        * 这里把两份 id 翻成「哪个资源、哪张表、第几份来源」——否则模型只能凭空说
@@ -599,17 +594,16 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const group = (definition.groups ?? []).find((item) => item.id === (type.groupId ?? "")) ?? null;
       const resourceNameById = new Map((context.dataSources ?? []).map((item) => [item.id, item.name]));
       const sourceRoleById = new Map(sources.map((source, index) => [source.id, sourceRoleLabel(index)]));
-      const properties = mergeInheritedProperties(type, definition.entityTypes).map((property) => ({
+      const properties = type.properties.map((property) => ({
         name: property.name,
         display_name: property.displayName ?? "",
         description: property.description ?? "",
         data_type: property.dataType,
         required: property.required,
         unique: property.unique,
-        inherited: !own.has(property.name),
         // 属性取自源表的哪一列、哪一份来源；没映射就是空串。
         source_field: property.sourceField ?? "",
-        // 只有映射了列才有来源角色可谈；继承来又没映射列的属性不硬套一个。
+        // 只有映射了列才有来源角色可谈；没映射列的属性不硬套一个。
         source_role: property.sourceField ? (property.sourceId ? sourceRoleById.get(property.sourceId) ?? "" : sources.length ? sourceRoleLabel(0) : "") : "",
       }));
       const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
@@ -642,7 +636,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           description: type.description,
           // 概念分组：模型答"它属于哪个域"靠这一项。
           group: group?.name ?? "",
-          parents: (type.parents ?? []).map((id) => typeNameById.get(id)).filter(Boolean),
+          // 实现了哪些接口：模型答"这个类型能不能当某某接口用"靠这一项。
+          implements: (type.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean),
           properties,
           one_hop: oneHop,
           actions,
@@ -866,7 +861,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!definition.entityTypes.some((item) => item.name === typeName)) throw new Error(`本体里没有对象类型「${typeName}」。`);
       const limit = clamp(args.limit, 20, 50);
       const search = typeof args.search === "string" && args.search.trim() ? args.search.trim() : null;
-      // 传父类型时子类的实例也会回来，这是发布时写进图库的 rdfs:subClassOf 在起作用。
+      // 传接口名时，实现它的对象类型的实例也会回来：发布时把「实现」写成 rdfs:subClassOf，读路径沿它做类型传播。
       const nodes = await store.listEntities({ label: typeName, search, limit });
       const instances = nodes.slice(0, limit).map((node) => ({ _instance_identity: identityOf(definition, node), labels: node.labels, properties: businessProperties(node) }));
       return {
@@ -874,7 +869,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           object_type: typeName,
           returned: instances.length,
           instances,
-          note: "子类型的实例也会出现在结果里，看 labels 区分具体类型。回答时只引用上面出现过的 object_id。",
+          note: "实现该接口的对象类型的实例也会出现在结果里，看 labels 区分具体类型。回答时只引用上面出现过的 object_id。",
         },
         evidence: instances.map((item) => ({ kind: "OBJECT" as const, id: item._instance_identity.object_id, label: item._instance_identity.title })),
       };

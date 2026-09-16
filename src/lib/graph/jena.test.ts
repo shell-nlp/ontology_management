@@ -223,7 +223,7 @@ describe("schemaStatements", () => {
     return {
       entityTypes: [
         { id: "t-user", name: "用户", properties: [] },
-        { id: "t-line", name: "专线产品用户", parents: ["t-user"], properties: [] },
+        { id: "t-line", name: "专线产品用户", properties: [] },
       ],
       relationshipTypes: [
         { name: "下单", sourceEntityTypeId: "t-user", targetEntityTypeId: "t-line", properties: [] },
@@ -239,17 +239,10 @@ describe("schemaStatements", () => {
     }
   });
 
-  it("父类写成 rdfs:subClassOf：这是读路径做类型传播的依据", () => {
+  // 类之间不再有父子继承（2026-09-16 移除）：没有父类，就没有隐式继承带来的 subClassOf。
+  it("对象类型之间不写 rdfs:subClassOf（抽象只走接口）", () => {
     const statements = schemaStatements(definition());
-    expect(statements).toContain(`<urn:bkn:class:专线产品用户> <${SUBCLASS}> <urn:bkn:class:用户> .`);
-  });
-
-  it("父类 id 找不到时跳过，不写出指向空节点的三元组", () => {
-    const statements = schemaStatements({
-      entityTypes: [{ id: "t-x", name: "孤儿", parents: ["t-missing"], properties: [] }],
-      relationshipTypes: [],
-    });
-    expect(statements.some((statement) => statement.includes(SUBCLASS))).toBe(false);
+    expect(statements.some((statement) => statement.includes(`<urn:bkn:class:专线产品用户> <${SUBCLASS}>`))).toBe(false);
   });
 
   it("关系类型写 domain / range，并带上元模型标记", () => {

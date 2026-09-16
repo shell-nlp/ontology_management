@@ -64,7 +64,7 @@ const RDF_PROPERTY = `${RDF}Property`;
 const OWL_SAME_AS = `${OWL}sameAs`;
 
 const BKN = "urn:bkn:";
-/** 平台自己的谓词：区分「接口实现」与「父类继承」（两者都写 rdfs:subClassOf）。 */
+/** 平台自己的谓词：区分「接口实现」与「接口继承」（两者都写 rdfs:subClassOf）。 */
 const BKN_IMPLEMENTS = `${BKN}implements`;
 const BKN_RELATIONSHIP = `${BKN}Relationship`;
 const BKN_REL_TYPE = `${BKN}relType`;
@@ -416,7 +416,7 @@ export function sparqlQueryForm(query: string) {
 /**
  * 把本体定义里的类层级与端点契约翻成 RDF 三元组，随发布一起写进图库。
  *
- * - `rdfs:subClassOf`：类层级落到图里，读路径才能用属性路径做类型传播；
+ * - `rdfs:subClassOf`：**接口**落到图里（接口继承接口、对象类型实现接口），读路径才能用属性路径做类型传播；
  * - `rdfs:domain` / `rdfs:range`：关系两端的类，供外部 SPARQL 工具与后续校验使用；
  * - 每个类同时声明 `owl:Class` 与 `urn:bkn:Class`：前者是标准说法，后者是平台的
  *   元模型标记，实例查询靠它把类排除在对象之外。
@@ -447,14 +447,9 @@ export function schemaStatements(definition: GraphDefinitionLike): string[] {
       if (!interfaceName) continue;
       const interfaceIri = `<${BKN_CLASS_PREFIX}${iriSegment(interfaceName)}>`;
       // 接口在 RDF 侧也是类：写 subClassOf，读路径的类型传播（?t rdfs:subClassOf* <接口>）
-      // 于是「按接口筛对象」天然可用；再写一条自家谓词，读骨架时才能把「实现」与「父类」分开画。
+      // 于是「按接口筛对象」天然可用；再写一条自家谓词，读骨架时才能把「实现」与「接口继承」分开画。
       statements.push(`${classIri} <${RDFS_SUBCLASS}> ${interfaceIri} .`);
       statements.push(`${classIri} <${BKN_IMPLEMENTS}> ${interfaceIri} .`);
-    }
-    for (const parentId of entity.parents ?? []) {
-      const parent = nameById.get(parentId);
-      if (!parent) continue;
-      statements.push(`${classIri} <${RDFS_SUBCLASS}> <${BKN_CLASS_PREFIX}${iriSegment(parent)}> .`);
     }
   }
   for (const relationship of definition.relationshipTypes) {
@@ -605,8 +600,8 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     const labels = options.labels ?? [];
     const search = options.search?.trim() || null;
     const limit = Math.min(200000, Math.max(1, Math.floor(options.limit ?? 300)));
-    // 类型传播：?labelType 是实例的直接类，?labelType rdfs:subClassOf* ?labelTarget
-    // 沿层级向上走到被请求的类。所以按父类筛能把子类的对象一并带出来。
+    // 类型传播只服务接口：实例的直接类沿 rdfs:subClassOf* 走到接口，
+    // 所以「按接口筛对象」能把实现者类型的对象一并带出来（类之间已经没有父子关系了）。
     const labelPattern = labels.length
       ? `?s <${RDF_TYPE}> ?labelType . ?labelType <${RDFS_SUBCLASS}>* ?labelTarget FILTER(?labelTarget IN (${labels.map((label) => `<${BKN_CLASS_PREFIX}${iriSegment(label)}>`).join(", ")}))`
       : null;
@@ -733,7 +728,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
       const nodes = new Map<string, GraphNode>();
       const relationships: GraphRelationship[] = [];
       const interfaceNames = new Set(interfaceRows.rows.map((row) => (row.class?.value ? localName(row.class.value) : "")).filter(Boolean));
-      // 「谁实现了哪个接口」：同一条 subClassOf 三元组要画成实现边，而不是父类边。
+      // 「谁实现了哪个接口」：同一条 subClassOf 三元组要画成实现边，而不是接口继承边。
       const implementPairs = new Set(implementsRows.rows
         .filter((row) => row.child?.value && row.parent?.value)
         .map((row) => `${localName(row.child!.value)}|${localName(row.parent!.value)}`));
@@ -749,7 +744,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
         if (interfaceNames.has(localName(iri))) node.properties.isInterface = true;
         if (row.label) node.properties.label = String(termValue(row.label));
       }
-      // 类层级来自定义（发布时写入的 rdfs:subClassOf），不是从实例反推的。
+      // 接口与接口继承来自定义（发布时写入的 rdfs:subClassOf），不是从实例反推的。
       for (const row of subclassRows.rows) {
         const child = row.child?.value;
         const parent = row.parent?.value;
@@ -1008,7 +1003,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
           }
         }
       }
-      // 类层级与端点契约和实例数据一起提交：发布完成后图里就有 rdfs:subClassOf。
+      // 接口与端点契约和实例数据一起提交：发布完成后图里就有 rdfs:subClassOf。
       statements.push(...schemaStatements(snapshot.definition));
       const plan = planReplaceRequests(statements, { namedGraph, singleRequestLimit: replaceSingleRequestLimit(target) });
       try {
