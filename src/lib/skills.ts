@@ -35,7 +35,7 @@ export const SKILL_CATALOG: readonly SkillCatalogEntry[] = [
     stage: 1,
     title: "需求澄清",
     scenario: "访谈纪要、PRD、流程说明或初步想法还没整理，需要先明确业务目标、范围、对象与关系的候选，以及每个候选的数据落地线索。",
-    outputs: "`01-需求澄清.md`：对象类型 / 关系类型 / 接口 / 动作 / 规则的候选清单 + 待确认问题。",
+    outputs: "01-需求澄清.md：对象类型 / 关系类型 / 接口 / 动作 / 规则的候选清单 + 待确认问题。",
     icon: "requirement",
   },
   {
@@ -43,7 +43,7 @@ export const SKILL_CATALOG: readonly SkillCatalogEntry[] = [
     stage: 2,
     title: "本体设计",
     scenario: "已有建模清单或业务材料，需要把粒度、命名、主键、属性类型、关系方向与约束定下来，形成可评审的建模方案。",
-    outputs: "`02-建模方案.md` + `*.ontology.json` 初稿：对象类型、关系类型、接口、动作、规则、数据来源绑定。",
+    outputs: "02-建模方案.md + *.ontology.json 初稿：对象类型、关系类型、接口、动作、规则、数据来源绑定。",
     icon: "builder",
   },
   {
@@ -51,7 +51,7 @@ export const SKILL_CATALOG: readonly SkillCatalogEntry[] = [
     stage: 3,
     title: "出包与交付",
     scenario: "方案已定，需要产出一份能直接导入平台的本体包 JSON，并在交付前做结构自检与语义自检。",
-    outputs: "`<标识>.ontology.json`（`format: ontology.bundle`）+ 导入 / 校验 / 发布步骤与常见报错修法。",
+    outputs: "<标识>.ontology.json（format: ontology.bundle）+ 导入 / 校验 / 发布步骤与常见报错修法。",
     icon: "bundle",
   },
 ];
@@ -140,9 +140,7 @@ export async function listSkills(): Promise<SkillDetail[]> {
   return skills;
 }
 
-export async function getSkill(skillId: string): Promise<SkillDetail | null> {
-  return (await listSkills()).find((skill) => skill.id === skillId) ?? null;
-}
+
 
 export async function readSkillFile(skillId: string, relative: string): Promise<{ path: string; content: string } | null> {
   const target = resolveSkillFile(skillId, relative);
@@ -154,14 +152,19 @@ export async function readSkillFile(skillId: string, relative: string): Promise<
   return { path: relative.replace(/\\/g, "/"), content };
 }
 
-/** 打包用：技能目录下的全部文件（zip 里的路径以技能名开头，解压就是一个可直接安装的目录）。 */
-export async function readSkillArchive(skillId: string): Promise<{ path: string; content: string }[] | null> {
-  const skill = await getSkill(skillId);
-  if (!skill) return null;
+/**
+ * 打包用：**全部技能**装进一个 zip（每条路径以技能名开头，解压出来就是三个可以直接安装的技能目录）。
+ *
+ * 只提供整体下载（2026-09-17 用户要求"不要支持一个一个下载，要只支持整体下载"）——
+ * 别再加 `readSkillArchive(skillId)` 那种按套打包的口子。
+ */
+export async function readSkillsArchive(): Promise<{ path: string; content: string }[]> {
   const files: { path: string; content: string }[] = [];
-  for (const file of skill.files) {
-    const read = await readSkillFile(skillId, file.path);
-    if (read) files.push({ path: `${skillId}/${read.path}`, content: read.content });
+  for (const skill of await listSkills()) {
+    for (const file of skill.files) {
+      const read = await readSkillFile(skill.id, file.path);
+      if (read) files.push({ path: `${skill.id}/${read.path}`, content: read.content });
+    }
   }
   return files;
 }

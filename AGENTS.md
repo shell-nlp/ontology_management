@@ -119,16 +119,22 @@
   并断言 `bundle-format.md` 里出现关键字段名与枚举。**改 `ontology.ts` 的 schema 就要同步改文档与示例**，
   否则测试直接红 —— 这是防止"技能教的格式平台不认"的唯一机制。
 - 服务端 `src/lib/skills.ts`：目录扫描、front-matter 解析（借 `@/lib/markdown`）、
-  `resolveSkillFile` 防目录穿越（`..` / 绝对路径 / 越界一律 null）。接口：
-  `GET /api/skills`（清单）、`GET /api/skills/:id`（正文，含 references 内容）、
-  `GET /api/skills/:id/file?path=`（单文件下载）、`GET /api/skills/:id/archive`（整套 zip）。
+  `resolveSkillFile` 防目录穿越（`..` / 绝对路径 / 越界一律 null）。接口只有两个：
+  `GET /api/skills`（清单 + 文件表）与 `GET /api/skills/archive`（**全部技能**打成一个 zip）。
   `SKILL_CATALOG` 只放界面文案（编号 / 场景 / 产物 / 图标），**正文一律读盘**，别抄进代码。
+  **按套下载已于 2026-09-17 全部删掉**（用户原话："不要支持一个一个下载，要只支持整体下载"）：
+  `GET /api/skills/:id`（正文全文）、`GET /api/skills/:id/file`（单文件）、`GET /api/skills/:id/archive`（单套 zip）
+  都没了，`src/lib/skills.ts` 里也只剩 `readSkillsArchive()` 一个打包入口。
+  要正文就下整包 —— 别再为"按套下载 / 预览原文"把这些口子加回来。
 - 打包用 `src/lib/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
   验证方式是实测：单测比对 CRC32 与 zip 结构，端到端用 `Expand-Archive` 解一次（2026-09-16 验过）。
-- 界面 `src/components/skill-studio.tsx`（侧栏「语义模型 → 本体技能」）：左栏技能卡（编号 / 名称 / 技能名 / 说明 / 文件数），
-  右栏技能原文（Markdown 渲染，**入口文件的 front-matter 要摘掉**，否则第一眼是一堆 YAML），
-  按钮有复制、单文件下载、整套 zip；顶部「获取 Skills」弹窗给安装路径与下载项；
-  底部一块写清交付契约与「导入 → 校验 → 发布」三步。
+- 界面 `src/components/skill-studio.tsx`（侧栏「语义模型 → 本体技能」）：**只给清单，正文不进页面**
+  （2026-09-17 用户要求"太不简洁了…不需要看到细节，想看整体下载下来看就行"）。
+  一行一套技能：编号 + 图标 + 「〈名称〉 Skill：〈技能名〉」+ 两列 `适用场景` / `主要产物`。
+  顶部只有一个「获取 Skills」按钮；弹窗里**只列三套技能做说明**（名称 / 技能名 / 适用场景，行内不带按钮），
+  底部一个「下载全部 Skills (.zip)」；**弹窗里不要出现示例包**（用户明确说"这里不用看示例"）——
+  示例本体包在 `ontology-bundle/references/` 里随整包一起下发。
+  **不要把技能正文、文件页签、复制按钮、按套下载搬回页面或弹窗** —— 要那些就整体下载。
 - **Dockerfile 的 runner 必须 `COPY --from=builder /app/skills ./skills`**（2026-09-16 已加）：
   技能是运行时读盘的数据，不拷进镜像这一页就是空的；`.dockerignore` 也别把 `skills` 挡掉。
 - 顺带抽出来的共用件（别再各写一份）：

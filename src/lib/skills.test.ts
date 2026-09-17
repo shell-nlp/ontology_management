@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { planBundleImport, readOntologyBundle } from "@/lib/ontology-bundle";
-import { isSkillId, listSkills, parseSkillFrontMatter, readSkillArchive, readSkillFile, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills";
+import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills";
 import { validateVersionSnapshot } from "@/lib/version-snapshot";
 
 const root = process.cwd();
@@ -57,11 +57,13 @@ describe("本体技能目录", () => {
     expect(await readSkillFile("ontology-bundle", "does-not-exist.md")).toBeNull();
   });
 
-  it("打包内容以技能名开头，解压即可安装", async () => {
-    const files = await readSkillArchive("ontology-builder");
-    expect(files).not.toBeNull();
-    expect(files!.every((file) => file.path.startsWith("ontology-builder/"))).toBe(true);
-    expect(files!.some((file) => file.path === "ontology-builder/SKILL.md")).toBe(true);
+  it("整体打包：三套技能都在一个 zip 里，每条路径以技能名开头（解压即可安装）", async () => {
+    const files = await readSkillsArchive();
+    const roots = [...new Set(files.map((file) => file.path.split("/")[0]))].sort();
+    expect(roots).toEqual(SKILL_CATALOG.map((entry) => entry.id).sort());
+    for (const entry of SKILL_CATALOG) {
+      expect(files.some((file) => file.path === `${entry.id}/SKILL.md`), `${entry.id} 缺 SKILL.md`).toBe(true);
+    }
   });
 });
 
