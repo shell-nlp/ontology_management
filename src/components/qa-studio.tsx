@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { MarkdownView } from "@/components/markdown-view";
 import { api } from "@/lib/api-client";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
@@ -61,6 +61,8 @@ type Turn = {
   steps: ReasoningStep[];
   run: ReasoningRun | null;
   error: string | null;
+  /** 用户中途点了「停止」：这一轮是**被叫停的**，不是失败的，界面上要标出来。 */
+  stopped?: boolean;
   busy: boolean;
   /** 这一轮有没有开思考。关掉时不显示「思考过程」，否则会挂一个永远空着的块。 */
   thinkingOn: boolean;
@@ -78,6 +80,8 @@ function messageToTurn(message: ConversationMessage): Turn {
     steps: message.run?.steps ?? [],
     run: message.run,
     error: message.error,
+    // 那次是被停的，回看时也要照样标「已停止」（老记录没有这个字段）。
+    stopped: message.run?.stopped ?? false,
     busy: false,
     thinkingOn: message.thinkingOn,
   };
@@ -283,6 +287,8 @@ async function streamRun(
   conversationId: string | null,
   /** 请求体里那几项：三个数字旋钮 + 可选的系统提示词。 */
   settings: Record<string, number | string>,
+  /** 这一轮的取消开关：用户点「停止」时用它掐断请求，服务端收到断开就把整轮运行停掉。 */
+  signal: AbortSignal,
   handlers: {
     onThinking: (text: string) => void;
     onAnswer: (text: string) => void;
@@ -296,6 +302,7 @@ async function streamRun(
   const response = await fetch("/api/reasoning/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal,
     body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}), ...(attachments.length ? { attachments } : {}) }),
   });
   if (!response.ok) {
@@ -455,6 +462,11 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const fileRef = useRef<HTMLInputElement | null>(null);
   // 用户往上翻了就不自动跟随，免得读一半被拽回底部。
   const stickRef = useRef(true);
+  /**
+   * 当前正在跑的那一轮：id 用来就地改这一轮的状态，controller 用来「停止」。
+   * 一次只可能有一轮在跑（busy 挡着），所以一个 ref 就够，不必用 Map。
+   */
+  const runRef = useRef<{ id: string; controller: AbortController } | null>(null);
 
   const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
   const conversationId = session.targetId === targetId ? session.conversationId : null;
@@ -588,12 +600,15 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     if (!targetId) { fail(new Error("请先在左侧选择一个本体。")); return; }
     const id = `${Date.now()}`;
     const asked = trimmed || IMAGE_ONLY_QUESTION;
+    // 「停止」掐断的就是这一次请求：controller 跟着这一轮走，跑完 / 失败 / 被停都要把它摘掉。
+    const controller = new AbortController();
+    runRef.current = { id, controller };
     setQuestion("");
     setBusy(true);
     stickRef.current = true;
     updateTurns((current) => [...current, { id, question: asked, attachments: images, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
     try {
-      await streamRun(targetId, asked, images, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), {
+      await streamRun(targetId, asked, images, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), controller.signal, {
         onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
         onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
         // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
@@ -615,9 +630,16 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         },
       });
     } catch (reason) {
-      patchTurn(id, { error: reason instanceof Error ? reason.message : "推理失败。", busy: false });
-      fail(reason);
+      // 用户叫停不是错误：这一轮回填成「已停止」，不弹报错，也不动已经流出来的内容。
+      if (controller.signal.aborted) {
+        patchTurn(id, { busy: false, stopped: true });
+      } else {
+        patchTurn(id, { error: reason instanceof Error ? reason.message : "推理失败。", busy: false });
+        fail(reason);
+      }
     } finally {
+      // 已经被「停止」接手、或者下一轮已经开跑（ref 换了人）时别去动它。
+      if (runRef.current?.controller === controller) runRef.current = null;
       patchTurn(id, { busy: false });
       setBusy(false);
       // 图片属于刚问完的那一轮，不该黏在下一条问题上。
@@ -625,6 +647,21 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       inputRef.current?.focus();
     }
   }, [attachments, busy, conversationId, fail, notify, patchTurn, refreshConversations, settings, thinkingEnabled, targetId, updateTurns]);
+
+  /**
+   * 停止这一轮：先掐断请求，服务端收到断开就把模型那一轮也停了（连带叫住后面还没开始跑的步骤）。
+   * 停的是"继续往下查"，不是把查到的抹掉 —— 已经流出来的思考、步骤与半截结论都留在画面上。
+   */
+  const stop = useCallback(() => {
+    const active = runRef.current;
+    if (!active) return;
+    runRef.current = null;
+    active.controller.abort();
+    // 立刻收尾这一轮，不等 fetch 的 finally 回来：输入框要马上能用。
+    patchTurn(active.id, { busy: false, stopped: true });
+    setBusy(false);
+    notify("已停止这一轮：已经跑出来的思考和查询留在上面，后面的步骤不再继续。");
+  }, [notify, patchTurn]);
 
   const toggleHistory = useCallback(() => {
     setHistoryOpen((current) => {
@@ -784,6 +821,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
               )}
               {turn.busy && !turn.answer && !turn.thinking && <div className="qa-pending"><Loader2 size={15} className="qa-spin" />{turn.preparing ? "正在整理这段对话的上下文…" : "正在检索本体…"}</div>}
               {!turn.thinkingOn && turn.busy && turn.thinking === "" && <p className="qa-nothink">已关闭思考，直接检索。</p>}
+              {/* 被叫停的一轮：说清"是停了、不是错了"，免得看成模型没答上来。 */}
+              {turn.stopped && <div className="qa-stopped"><Square size={12} fill="currentColor" />已停止 —— 这一轮是手动停的，已经跑完的步骤留在上面的轨迹里，结论可能不完整。</div>}
 
               {turn.run && (
                 <>
@@ -874,10 +913,18 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             图片
             {attachments.length > 0 && <em>{attachments.length}/{MAX_ATTACHMENTS}</em>}
           </button>
-          <button className="action primary" disabled={busy || (!question.trim() && !attachments.length) || !published} onClick={() => void ask(question)}>
-            {busy ? <Loader2 size={15} className="qa-spin" /> : <Send size={15} />}
-            发送
-          </button>
+          {/* 跑的过程中这个主按钮就地变成「停止」：那一格里最该点的就是它，不必再去页头找。 */}
+          {busy ? (
+            <button type="button" className="action stop" onClick={stop} title="停止这一轮：模型立刻收手，已经跑出来的部分留在上面">
+              <Square size={13} fill="currentColor" />
+              停止
+            </button>
+          ) : (
+            <button type="button" className="action primary" disabled={(!question.trim() && !attachments.length) || !published} onClick={() => void ask(question)}>
+              <Send size={15} />
+              发送
+            </button>
+          )}
         </div>
         {dragging && <div className="qa-compose-drop">松手就把它加进这一轮</div>}
       </div>

@@ -115,6 +115,12 @@
   display: flex; align-items: center; gap: 8px; padding: 10px 13px;
   border-left: 3px solid #e06055; border-radius: 3px; background: #fff3f2; color: #a33f38; font-size: 12.5px;
 }
+/* 被用户叫停的一轮：不是失败，所以用"注意"的琥珀色，而不是报错的红色。 */
+.qa-stopped {
+  display: flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 8px 12px; border-radius: 4px; background: var(--qa-caution-bg); color: var(--qa-caution); font-size: 12px;
+}
+.qa-stopped svg { flex: none; }
 
 /* ---------- 签名元素：求证轨迹 ---------- */
 
@@ -246,6 +252,9 @@
 .qa-compose textarea:focus { border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
 .qa-compose textarea:disabled { background: #f1f5f9; }
 .qa-compose .action { height: 44px; padding: 0 20px; }
+/* 跑的过程中那个主按钮是「停止」：用取消色，扫一眼就知道它这会儿不是发送。 */
+.qa-compose .action.stop { border-color: #e6c3b8; background: #fff5f2; color: #b04f3d; }
+.qa-compose .action.stop:hover { border-color: #cf8b78; background: #ffece6; color: #963a29; }
 
 /* ---------- 思考过程 ---------- */
 

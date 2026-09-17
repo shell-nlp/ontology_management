@@ -25,6 +25,27 @@ import type { ReasoningAttachment, ReasoningEvidence, ReasoningRun, ReasoningSte
  */
 const MAX_STEPS_CEILING = 100;
 
+/**
+ * 被叫停、而模型还没写出任何结论时的兜底文案（存进对话历史的就是它）。
+ * 单独拎出来是为了让上层认得出"这句不是结论"：什么都没跑出来的一轮不该占历史的位置。
+ */
+export const STOPPED_ANSWER_FALLBACK = "这一轮被停止了，没有形成结论；已经跑完的步骤留在上面的轨迹里。";
+
+/**
+ * 这一轮值不值得进对话历史（`/api/reasoning/stream` 落库前用）。
+ *
+ * 正常跑完的一律记；跑挂的根本走不到这里（它们不进历史）；
+ * **被用户叫停的按"有没有东西可看"看**：跑出过步骤 / 思考 / 真的结论才记下来
+ * （回看时能看到它查到哪一步被叫停），什么都没跑出来就不记 —— 否则历史里会多一条空条目。
+ */
+export function worthKeepingTurn(run: ReasoningRun): boolean {
+  if (!run.stopped) return true;
+  if (run.steps.length > 0) return true;
+  if (run.reasoning.trim()) return true;
+  // 兜底文案不算结论：它说的就是"这一轮没有结论"。
+  return Boolean(run.answer.trim()) && run.answer !== STOPPED_ANSWER_FALLBACK;
+}
+
 /** 流式事件：SSE 接口把它原样转成帧，前端按 type 分发。 */
 export type AgentEvent =
   | { type: "thinking"; text: string }
@@ -118,92 +139,126 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     abortSignal: options.abortSignal,
   });
 
-  for await (const part of result.fullStream) {
-    switch (part.type) {
-      case "reasoning-delta":
-        reasoning += part.text;
-        emit({ type: "thinking", text: part.text });
-        break;
+  /**
+   * 用户点「停止」时客户端会断开连接，abortSignal 随之触发。
+   * **这不当作失败**：已经跑出来的思考、步骤与半截结论照常收尾成一份运行记录（`stopped: true`），
+   * 上层照常写审计，界面回看时能看到"查到哪一步被叫停"。
+   * 其它异常照旧往上抛，由路由回一条 error 事件。
+   */
+  let stopped = false;
+  /**
+   * 真正跑到底的一轮在流末尾会收到 `finish`；被叫停的那一轮收不到。
+   * 之所以还要这个标志：AI SDK 在 abort 时**不一定抛异常** —— 实测 v7 会先往流里发一个 `abort` 片段，
+   * 然后正常收尾。所以三个信号都要认：abort 片段、被掀掉的异常、以及"没收到 finish 但信号已经触发"。
+   * 只认异常的话，中途停止会被当成"一次正常跑完、只是没给出结论"。
+   */
+  let finished = false;
+  try {
+    for await (const part of result.fullStream) {
+      switch (part.type) {
+        case "reasoning-delta":
+          reasoning += part.text;
+          emit({ type: "thinking", text: part.text });
+          break;
 
-      case "text-delta":
-        stepText += part.text;
-        answer += part.text;
-        emit({ type: "answer", text: part.text });
-        break;
+        case "text-delta":
+          stepText += part.text;
+          answer += part.text;
+          emit({ type: "answer", text: part.text });
+          break;
 
-      case "start-step":
-        stepCount += 1;
-        stepText = "";
-        break;
+        case "start-step":
+          stepCount += 1;
+          stepText = "";
+          break;
 
-      case "tool-call": {
-        // 模型要调工具了：刚流出去的那段文字是过渡语，不算结论。
-        if (stepText.trim()) {
-          emit({ type: "answerReset" });
-          answer = answer.slice(0, answer.length - stepText.length);
+        case "tool-call": {
+          // 模型要调工具了：刚流出去的那段文字是过渡语，不算结论。
+          if (stepText.trim()) {
+            emit({ type: "answerReset" });
+            answer = answer.slice(0, answer.length - stepText.length);
+          }
+          stepText = "";
+          running.set(part.toolCallId, { tool: part.toolName, args: (part.input ?? {}) as Record<string, unknown>, startedAt: Date.now() });
+          break;
         }
-        stepText = "";
-        running.set(part.toolCallId, { tool: part.toolName, args: (part.input ?? {}) as Record<string, unknown>, startedAt: Date.now() });
-        break;
+
+        case "tool-result": {
+          const current = running.get(part.toolCallId);
+          running.delete(part.toolCallId);
+          const index = steps.length + 1;
+          const recorded = (evidenceByCall.get(part.toolCallId) ?? []).map((item) => ({ ...item, step: index }));
+          const step: ReasoningStep = {
+            index,
+            tool: part.toolName,
+            arguments: current?.args ?? {},
+            result: JSON.stringify(part.output, null, 1).slice(0, 8000),
+            ok: true,
+            elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
+            evidence: recorded,
+            // 行上的摘要取"这一步拿到了什么"，与证据数是两回事（查数据类的工具没有证据）。
+            summary: toolResultSummary(part.toolName, part.output),
+          };
+          steps.push(step);
+          evidence.push(...recorded);
+          emit({ type: "step", step });
+          break;
+        }
+
+        case "tool-error": {
+          const current = running.get(part.toolCallId);
+          running.delete(part.toolCallId);
+          const step: ReasoningStep = {
+            index: steps.length + 1,
+            tool: part.toolName,
+            arguments: current?.args ?? {},
+            result: `错误：${part.error instanceof Error ? part.error.message : String(part.error)}`,
+            ok: false,
+            elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
+            evidence: [],
+          };
+          steps.push(step);
+          emit({ type: "step", step });
+          break;
+        }
+
+        case "abort":
+          stopped = true;
+          break;
+
+        case "finish":
+          finished = true;
+          usage = {
+            promptTokens: part.totalUsage.inputTokens ?? 0,
+            completionTokens: part.totalUsage.outputTokens ?? 0,
+            totalTokens: part.totalUsage.totalTokens ?? 0,
+          };
+          break;
+
+        case "error":
+          throw part.error instanceof Error ? part.error : new Error(String(part.error));
+
+        default:
+          break;
       }
-
-      case "tool-result": {
-        const current = running.get(part.toolCallId);
-        running.delete(part.toolCallId);
-        const index = steps.length + 1;
-        const recorded = (evidenceByCall.get(part.toolCallId) ?? []).map((item) => ({ ...item, step: index }));
-        const step: ReasoningStep = {
-          index,
-          tool: part.toolName,
-          arguments: current?.args ?? {},
-          result: JSON.stringify(part.output, null, 1).slice(0, 8000),
-          ok: true,
-          elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
-          evidence: recorded,
-          // 行上的摘要取"这一步拿到了什么"，与证据数是两回事（查数据类的工具没有证据）。
-          summary: toolResultSummary(part.toolName, part.output),
-        };
-        steps.push(step);
-        evidence.push(...recorded);
-        emit({ type: "step", step });
-        break;
-      }
-
-      case "tool-error": {
-        const current = running.get(part.toolCallId);
-        running.delete(part.toolCallId);
-        const step: ReasoningStep = {
-          index: steps.length + 1,
-          tool: part.toolName,
-          arguments: current?.args ?? {},
-          result: `错误：${part.error instanceof Error ? part.error.message : String(part.error)}`,
-          ok: false,
-          elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
-          evidence: [],
-        };
-        steps.push(step);
-        emit({ type: "step", step });
-        break;
-      }
-
-      case "finish":
-        usage = {
-          promptTokens: part.totalUsage.inputTokens ?? 0,
-          completionTokens: part.totalUsage.outputTokens ?? 0,
-          totalTokens: part.totalUsage.totalTokens ?? 0,
-        };
-        break;
-
-      case "error":
-        throw part.error instanceof Error ? part.error : new Error(String(part.error));
-
-      default:
-        break;
     }
+  } catch (error) {
+    // 只有"用户叫停"才落在这里：signal 已经触发说明是客户端主动断开（点「停止」或关掉页面）。
+    if (!options.abortSignal?.aborted) throw error;
+    stopped = true;
   }
+  // 兜底：流既没报错也没发 abort 片段，但信号确实被掀了 —— 那就是跑到一半被叫停。
+  // 一起看 `finished`，是为了不把"跑完之后才断开连接"的正常一轮标成被停。
+  if (!finished && options.abortSignal?.aborted) stopped = true;
 
-  const exhausted = stepCount >= maxSteps;
-  const finalAnswer = answer.trim() || (exhausted ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。" : "模型没有给出结论。");
+  /** 被叫停的一轮不算"步数用满"：那是被上限拦停的，成因与提示文案都不一样。 */
+  const exhausted = !stopped && stepCount >= maxSteps;
+  const finalAnswer = answer.trim()
+    || (stopped
+      ? STOPPED_ANSWER_FALLBACK
+      : exhausted
+        ? "达到步数上限，结论可能不完整。可以缩小问题范围后重试。"
+        : "模型没有给出结论。");
   const deduped = [...new Map(evidence.map((item) => [`${item.kind}\u0000${item.id}`, item])).values()];
   const run: ReasoningRun = {
     question,
@@ -229,6 +284,8 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     stepCount,
     maxSteps,
     truncated: exhausted,
+    // 正常跑完的运行不带这个字段：历史里老记录的形状保持一致。
+    ...(stopped ? { stopped: true } : {}),
   };
   emit({ type: "done", run });
   return run;

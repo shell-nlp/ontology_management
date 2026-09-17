@@ -14,6 +14,10 @@ import type { ReasoningRun } from "@/lib/reasoning/types";
  *
  * 落库时机在「一轮问答真正跑完」之后：失败的一轮不留记录，历史里只出现有结论的问答，
  * 不会出现"点进去只有半句话"的记录。
+ *
+ * **被用户叫停的一轮是例外里的例外**（2026-09-17）：它不算失败 —— 跑出过步骤 / 思考 / 半截结论
+ * 就照常记下来（`run.stopped` 为 true，界面回看时标「已停止」），什么都没跑出来才不记。
+ * 判定在 `/api/reasoning/stream` 里，这里只负责写。
  */
 
 export type ConversationScope = {

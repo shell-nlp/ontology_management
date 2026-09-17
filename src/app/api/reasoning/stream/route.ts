@@ -6,7 +6,7 @@ import { getGraphStore } from "@/lib/graph";
 import { getOntologyByTargetId } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
-import { runReasoning, type AgentEvent } from "@/lib/reasoning/agent";
+import { runReasoning, worthKeepingTurn, type AgentEvent } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { saveTurn } from "@/lib/reasoning/conversations";
@@ -25,6 +25,11 @@ import { getTarget } from "@/lib/targets";
  *   界面得先知道"在整理上下文"，而不是干等
  * - saved：这一轮已经记进对话历史（`conversationId` 为 null 表示没记上）
  * - done / error：收尾
+ *
+ * **"停止" = 客户端断开连接**：用户点停止（或关掉页面）时浏览器会掐掉这个 fetch，Next 把 `request.signal`
+ * 掀掉，编排层也就跟着收手（见下面的 `aborter`）。被停的一轮在编排层是**正常收尾**的：
+ * 已经跑出来的步骤与半截结论照常进对话历史（`run.stopped = true`），审计里也记 `stopped`，
+ * 所以这里不会再回一条 error 事件。
  *
  * 校验与权限必须在**开流之前**做完：一旦开始返回 SSE，就没法再改 HTTP 状态码了。
  */
@@ -94,11 +99,32 @@ export async function POST(request: NextRequest) {
   const ontology = await getOntologyByTargetId(target.id);
   const scope = { ontologyId: ontology?.id ?? null, targetId: target.id };
   const encoder = new TextEncoder();
+  /**
+   * 用户点「停止」、或者关掉页面/换页时，把整轮运行也停掉：
+   * - 浏览器 abort 这个 fetch，Next 会把 `request.signal` 掀掉
+   *   （它挂在 `res.once('close')` 上，且只在响应没写完时才 abort，正常跑完不会误触发）；
+   * - 消费端取消这条响应流时，ReadableStream 的 `cancel()` 也会被叫到。
+   *
+   * 两条都接到同一个 controller，`runReasoning` 拿它去掐模型请求 —— 所以"停止"是真的不再往下跑，
+   * 而不是前端自己把字藏起来。
+   */
+  const aborter = new AbortController();
+  const abort = () => aborter.abort();
+  request.signal.addEventListener("abort", abort);
+  // 极端情况下进到这里时请求已经断了（客户端点完就走）：补一次，别漏掉。
+  if (request.signal.aborted) abort();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // 断了就别再往里塞东西：客户端已经走了，`enqueue` 会抛，日志里全是噪音。
+      let closed = false;
       const send = (event: RouteEvent) => {
-        controller.enqueue(encoder.encode(frame(event)));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(frame(event)));
+        } catch {
+          closed = true;
+        }
       };
       try {
         /*
@@ -126,47 +152,70 @@ export async function POST(request: NextRequest) {
           },
         });
         // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
-    const policy = await loadToolPolicy();
-    const run = await runReasoning({
+        const policy = await loadToolPolicy();
+        const run = await runReasoning({
           question,
           attachments: input.attachments,
           history,
           context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
           maxSteps: input.maxSteps,
-      disabledTools: policy.disabledTools,
+          disabledTools: policy.disabledTools,
           thinking: input.thinking,
           systemPrompt: input.systemPrompt,
+          // 客户端断开 = 用户叫停：模型这一轮立刻收手，已经跑出来的部分照常收尾成运行记录。
+          abortSignal: aborter.signal,
           onEvent: send,
         });
         await writeAuditEntry({
           actorId,
           targetId: target.id,
           action: "REASONING_RUN",
-          details: { question, attachments: input.attachments?.length ?? 0, historyTurns: history.verbatimTurns, historyCompressed: history.compressedTurns, historyContextChars: history.chars, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
+          details: { question, attachments: input.attachments?.length ?? 0, historyTurns: history.verbatimTurns, historyCompressed: history.compressedTurns, historyContextChars: history.chars, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, stopped: run.stopped ?? false, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
         });
-        // 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
-        try {
-          const conversationId = await saveTurn({
-            scope,
-            userId: actorId,
-            conversationId: input.conversationId ?? null,
-            question,
-            answer: run.answer,
-            thinking: run.reasoning,
-            thinkingOn: input.thinking !== false,
-            run,
-            error: null,
-          });
-          send({ type: "saved", conversationId });
-        } catch {
-          // 落库失败不该吞掉已经跑出来的结论：界面照常显示，只是这条不进历史。
-          send({ type: "saved", conversationId: null, warning: "结论已生成，但这次没能记进对话历史。" });
+        /**
+         * 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
+         * 被用户叫停的一轮要不要记，判断在 `worthKeepingTurn` 里（有东西可看才记）。
+         */
+        if (!worthKeepingTurn(run)) {
+          // 不记，也不发 saved 事件：这一轮没有可回看的内容，客户端那边也早就收尾了。
+        } else {
+          try {
+            const conversationId = await saveTurn({
+              scope,
+              userId: actorId,
+              conversationId: input.conversationId ?? null,
+              question,
+              answer: run.answer,
+              thinking: run.reasoning,
+              thinkingOn: input.thinking !== false,
+              run,
+              error: null,
+            });
+            send({ type: "saved", conversationId });
+          } catch {
+            // 落库失败不该吞掉已经跑出来的结论：界面照常显示，只是这条不进历史。
+            send({ type: "saved", conversationId: null, warning: "结论已生成，但这次没能记进对话历史。" });
+          }
         }
       } catch (error) {
-        send({ type: "error", message: error instanceof Error ? error.message : "推理失败。" });
+        // 用户叫停不算失败：客户端那边已经在收尾了，这里不再回一条 error 事件。
+        // （被停的一轮在 runReasoning 里是正常返回的，审计里记着 `stopped: true`。）
+        if (!aborter.signal.aborted) {
+          send({ type: "error", message: error instanceof Error ? error.message : "推理失败。" });
+        }
       } finally {
-        controller.close();
+        request.signal.removeEventListener("abort", abort);
+        // 流已经被 cancel 掉时 close() 会抛：这里只是收尾，抛了就说明已经关了。
+        try {
+          controller.close();
+        } catch {
+          // 忽略：客户端先走一步。
+        }
       }
+    },
+    // 消费端取消这条流（浏览器断开）时也把运行停掉。
+    cancel() {
+      abort();
     },
   });
 

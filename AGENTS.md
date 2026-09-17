@@ -716,6 +716,30 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   且问"我一共问过哪几件事"时模型**按摘要**把前三轮的结论都列了出来；库里 `history_summary` 570 字、
   `history_summary_through` 指向被压的最后一条消息。
 
+**智能问答可以中途停止**（2026-09-17）：用户要求"实现模型回答的中断停止功能"。要点：
+
+- **界面**：跑的过程中，输入条上那个主按钮就地变成「停止」（`.qa-compose .action.stop`，取消色，不再是禁用的发送键），
+  点它 = 掐断这次 fetch。停的是"继续往下查"，不是把查到的抹掉：已经流出来的思考、步骤与半截结论都留在画面上，
+  这一轮末尾挂一条琥珀色的「已停止 —— 这一轮是手动停的，已经跑完的步骤留在上面的轨迹里，结论可能不完整。」，
+  输入框立刻恢复可用（不等 fetch 的 finally 回来），随后可以直接问下一句。
+- **服务端**：`/api/reasoning/stream` 把"客户端断开"接到一个 `AbortController` 上，两条线都要接 ——
+  `request.signal`（Next 挂在 `res.once('close')` 上，且只在响应没写完时才 abort，正常跑完不会误触发）
+  与响应流的 `cancel()`（消费端取消）。信号交给 `runReasoning({ abortSignal })`，AI SDK 直接拿它去掐模型请求，
+  所以"停止"是真的不再往下跑，而不是前端把字藏起来。`send()` 也加了守卫：客户端走了之后 `controller.enqueue` 会抛，
+  别把日志刷满；`controller.close()` 同样包了 try。
+- **被叫停的一轮不是失败**：编排层不抛错，把已经跑出来的部分收尾成一份运行记录（`run.stopped = true`），
+  上层照常写审计（`REASONING_RUN` 的 details 多一个 `stopped`），回看时能看到它查到哪一步被叫停。
+  **AI SDK v7 在 abort 时不一定抛异常** —— 实测它会先往流里发一个 `abort` 片段再正常收尾，
+  所以 `agent.ts` 三个信号都认：`abort` 片段、被掀掉的异常、以及"没收到 `finish` 但信号已经触发"。
+  第三个是兜底，专门用 `finished` 区分"跑完之后才断开连接"的正常一轮，别把它标成被停。
+- **要不要进历史看成色**：`worthKeepingTurn(run)`（`agent.ts` 的纯函数，`agent.test.ts` 钉住）——
+  有步骤 / 有思考 / 有真的结论才记，什么都没跑出来就不记（兜底文案 `STOPPED_ANSWER_FALLBACK` 不算结论），
+  免得历史里多一条点进去什么都没有的条目。
+- **已知边界**：正在跑的 **SQL 拦不住** —— 数据源层没把 signal 传进驱动，那条查询会跑完、结果被丢掉
+  （单条语句本身有超时兜底）。要真叫住它，得给 `DataSourceConnector.runReadOnlyQuery` 加 signal 并一路透传到驱动。
+  另有一条小落差：若在"最后一个字刚流完、服务端还在写审计 / 落库"的那一瞬间点停止，界面会标「已停止」，
+  而库里那条是跑完的正常记录 —— 客户端此刻已经断开，收不到 `done` / `saved`，无从分辨。
+
 **智能问答的对话历史**（2026-09-14，对应原先的待办 L2）：
 
 - 两张表（`platform-db.ts`）：`reasoning_conversations`（id / ontology_id / target_id / title / created_by）
@@ -728,6 +752,8 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 落库时机是**一轮问答真正跑完之后**（`/api/reasoning/stream` 里 `runReasoning` 返回、审计写完之后）。
   失败的一轮不进历史，不会出现"点进去只有半句话"的记录；落库失败只多发一条带 warning 的
   `saved` 事件，不影响已经生成的结论。
+  **被用户叫停的一轮是例外**（2026-09-17）：它不算失败，跑出过步骤 / 思考 / 半截结论就照常记下来
+  （`run.stopped` 为 true，回看时标「已停止」），判定见上面「智能问答可以中途停止」一节。
 - 接口：`GET /api/reasoning/conversations?targetId=`（列表，只回摘要）、
   `GET|DELETE /api/reasoning/conversations/:id?targetId=`（完整内容 / 删除）。
   三个都先按「落点 → 本体 + 当前用户」把范围定死，别人的记录一律当不存在（404），
