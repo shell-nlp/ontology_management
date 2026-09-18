@@ -168,7 +168,9 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
 
   useEffect(() => {
     void api<McpInfo>("/api/mcp/info").then((data) => {
-      setInfo(data);
+      // 地址以**浏览器当前地址**为准，覆盖服务端拼的那份：服务端在 dev / 容器 / 转发后面
+      // 有可能只认得到自己的 localhost，复制出去换台机器就废了（2026-09-18 用户报的）。
+      setInfo({ ...data, absoluteUrl: `${window.location.origin}${data.endpoint}` });
       const first = data.tools.find((tool) => tool.name === "search_schema") ?? data.tools[0];
       if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId), null, 2)); }
     }).catch(fail);

@@ -2,11 +2,13 @@ import { spawnSync } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { planBundleImport, readOntologyBundle } from "@/lib/ontology-bundle";
 import { DUPLICATE_NAME_CODES } from "@/lib/modeling-review";
 import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills";
+import { callSkillMcpTool, findSkillMcpTool, listSkillPrompts, readSkillPrompt, SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills-mcp";
 import { validateVersionSnapshot } from "@/lib/version-snapshot";
 
 const root = process.cwd();
@@ -169,5 +171,107 @@ describe("技能自带的示例本体包", () => {
     expect(validateInterfaceImplementations(bundle.definition)).toEqual([]);
     const implementers = bundle.definition.entityTypes.filter((type) => type.implements.length > 0);
     expect(implementers.map((type) => type.name).sort()).toEqual(["专线产品用户", "固话用户"]);
+  });
+});
+
+describe("本体技能的 MCP 服务端（技能与 MCP 两条路并存）", () => {
+  it("工具固定三个，skill_id 的可选值就是三套技能", () => {
+    expect(SKILL_MCP_TOOLS.map((tool) => tool.name)).toEqual(["list_skills", "get_skill", "get_skill_file"]);
+    expect(SKILLS_MCP_SERVER_NAME).toBe("ontology-skills");
+    for (const tool of SKILL_MCP_TOOLS) {
+      expect(tool.description.length, `${tool.name} 缺说明`).toBeGreaterThan(20);
+      const properties = (tool.inputSchema as { properties?: Record<string, { enum?: string[] }> }).properties;
+      if (properties?.skill_id) expect(properties.skill_id.enum).toEqual(SKILL_CATALOG.map((entry) => entry.id));
+    }
+    expect(findSkillMcpTool("list_skills")?.title).toBe("技能清单");
+    expect(findSkillMcpTool("没有这个工具")).toBeNull();
+  });
+
+  it("list_skills 只给清单（不带正文），get_skill 才给全文与文件表", async () => {
+    const list = await callSkillMcpTool("list_skills", {});
+    const skills = list.skills as { id: string; files: string[]; skill_md?: string }[];
+    expect(skills.map((skill) => skill.id)).toEqual(SKILL_CATALOG.map((entry) => entry.id));
+    for (const skill of skills) {
+      // 清单里不许夹正文：几百 KB 会白占一次往返，正文要用 get_skill 单独取。
+      expect(skill.skill_md).toBeUndefined();
+      expect(skill.files).toContain("SKILL.md");
+    }
+
+    const detail = await callSkillMcpTool("get_skill", { skill_id: "ontology-bundle" });
+    expect(detail.id).toBe("ontology-bundle");
+    expect(detail.skill_md as string).toContain("ontology.bundle");
+    expect(detail.skill_md as string).toContain("导入本体包");
+    expect(detail.files as string[]).toContain("scripts/build-bundle.mjs");
+  });
+
+  it("get_skill_file 取参考文件；取不到时把可选路径列出来", async () => {
+    const file = await callSkillMcpTool("get_skill_file", { skill_id: "ontology-bundle", path: "references/bundle-format.md" });
+    expect(file.path).toBe("references/bundle-format.md");
+    expect(file.content as string).toContain("entityTypes");
+
+    await expect(callSkillMcpTool("get_skill_file", { skill_id: "ontology-bundle", path: "references/没有这个.md" })).rejects.toThrow(/可选：/);
+  });
+
+  it("技能 MCP 也挡住目录穿越、不存在的技能与缺参", async () => {
+    await expect(callSkillMcpTool("get_skill_file", { skill_id: "ontology-bundle", path: "../../package.json" })).rejects.toThrow(/取不到/);
+    await expect(callSkillMcpTool("get_skill", { skill_id: "../etc" })).rejects.toThrow(/没有叫「\.\.\/etc」的技能/);
+    await expect(callSkillMcpTool("get_skill", {})).rejects.toThrow(/缺少 skill_id/);
+    await expect(callSkillMcpTool("没有这个工具", {})).rejects.toThrow(/tools\/list/);
+  });
+
+  it("prompts：一套技能一条，正文就是它的 SKILL.md", async () => {
+    const prompts = await listSkillPrompts();
+    expect(prompts.map((prompt) => prompt.name)).toEqual(SKILL_CATALOG.map((entry) => entry.id));
+    for (const prompt of prompts) expect(prompt.description.length).toBeGreaterThan(20);
+
+    const prompt = await readSkillPrompt("ontology-requirement");
+    expect(prompt).not.toBeNull();
+    expect(prompt!.messages).toHaveLength(1);
+    // 放在 user 消息里是有意的：斜杠命令的语义是"把这段说明当成我这一轮的输入"。
+    expect(prompt!.messages[0].role).toBe("user");
+    expect((prompt!.messages[0].content as { text: string }).text).toContain("本体需求澄清");
+    expect(await readSkillPrompt("没有这个技能")).toBeNull();
+  });
+
+  it("端点不需要任何令牌：initialize / tools/list / tools/call / prompts 都直接可用", async () => {
+    const { POST } = await import("@/app/api/skills/mcp/route");
+    const call = async (payload: unknown) => {
+      const response = await POST(new NextRequest("http://localhost:3000/api/skills/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }));
+      return response.json() as Promise<{ result?: Record<string, never>; error?: { message: string } }>;
+    };
+
+    // 请求里没有 Cookie、也没有 Authorization —— 这正是"免令牌"的验证方式。
+    const init = await call({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    expect((init.result as unknown as { serverInfo: { name: string } }).serverInfo.name).toBe(SKILLS_MCP_SERVER_NAME);
+    expect((init.result as unknown as { capabilities: Record<string, unknown> }).capabilities).toHaveProperty("prompts");
+
+    const list = await call({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    expect((list.result as unknown as { tools: { name: string }[] }).tools.map((tool) => tool.name)).toEqual(["list_skills", "get_skill", "get_skill_file"]);
+
+    const prompts = await call({ jsonrpc: "2.0", id: 3, method: "prompts/list" });
+    expect((prompts.result as unknown as { prompts: unknown[] }).prompts).toHaveLength(3);
+
+    const got = await call({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_skill", arguments: { skill_id: "ontology-builder" } } });
+    const result = got.result as unknown as { isError: boolean; structuredContent: { id: string; skill_md: string } };
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent.id).toBe("ontology-builder");
+    expect(result.structuredContent.skill_md.length).toBeGreaterThan(100);
+  });
+
+  it("工具报错走 result.isError（不是 JSON-RPC error），模型能自己改对", async () => {
+    const { POST } = await import("@/app/api/skills/mcp/route");
+    const response = await POST(new NextRequest("http://localhost:3000/api/skills/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_skill", arguments: { skill_id: "没有这个技能" } } }),
+    }));
+    const body = (await response.json()) as { error?: unknown; result: { isError: boolean; content: { text: string }[] } };
+    expect(body.error).toBeUndefined();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("没有叫「没有这个技能」的技能");
   });
 });

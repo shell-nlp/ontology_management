@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { publicOrigin } from "@/lib/public-origin";
 import { mcpToolCatalog, MCP_PROTOCOL_VERSION, MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 
@@ -7,7 +8,8 @@ import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 export async function GET(request: NextRequest) {
   try {
     await requireRole("VIEWER");
-    const origin = request.nextUrl.origin;
+    // 地址要跟着**用户实际访问的地址**走，不能落回服务端的 localhost（见 `@/lib/public-origin`）。
+    const origin = publicOrigin(request);
     return NextResponse.json({
       endpoint: "/api/mcp",
       absoluteUrl: `${origin}/api/mcp`,

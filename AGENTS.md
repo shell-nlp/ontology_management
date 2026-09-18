@@ -170,6 +170,54 @@
   - `src/lib/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
     （Blob 下载、读 `Content-Disposition` 文件名）—— MCP 页复制、本体导出、技能下载共用同一份。
 
+### 技能同时发布为 MCP（免令牌，2026-09-18）
+
+用户要求：「本体技能这里，现在是让用户下载 skills 自己配置，请继续实现，直接发布为一个 mcp 的方式，
+且这个 mcp 不需要 token 就可以访问」；随后补充口径「就是 skill 和 mcp 都支持的那种」——
+**下载与 MCP 两条路都留**，不是二选一。别把 `/api/skills/archive` 关掉。
+
+**平台里现在有两个 MCP 服务端，职责与鉴权都不同，别混：**
+
+| | `/api/mcp` | `/api/skills/mcp`（本次新增） |
+| --- | --- | --- |
+| 发什么 | 本体数据（对象类型 / 关系类型 / 动作…） | 建模方法（三套技能的 Markdown） |
+| 鉴权 | 平台会话 或 `Bearer <MCP_API_TOKEN>` | **无**（免令牌） |
+| 实现 | `reasoning/mcp.ts` + `reasoning/tools.ts` | `skills-mcp.ts` |
+
+- **免令牌的依据**：技能是随仓库下发的公开文档，读的只是 `skills/` 目录里的文件，不含凭据、不碰数据库。
+  代价是**技能里永远不许出现凭据**（那是这个端点能不鉴权的前提）。
+- 能力：`tools`（`list_skills` / `get_skill` / `get_skill_file`）+ `prompts`（每套技能一条，客户端里就是
+  斜杠命令；正文就是它的 `SKILL.md`，放在 **user 消息**里 —— 斜杠命令的语义是"把这段说明当我这一轮的输入"）。
+  `list_skills` **只给清单不带正文**（正文单独用 `get_skill` 取，别让一次往返背上几百 KB）。
+- 代码分工：`src/lib/skills-mcp.ts` 写"提供什么"（工具与提示词定义 + 执行，纯函数级、可单测）；
+  `src/app/api/skills/mcp/route.ts` 写协议面（`initialize` / `ping` / `tools/*` / `prompts/*`、通知回 202、
+  GET 回 405、CORS `*`）；正文一律走 `@/lib/skills`，这里只写协议文案。
+- **`src/lib/mcp-protocol.ts` 是特意抽出来的**：协议版本两个服务端共用一份。技能 MCP 若 import
+  `@/lib/reasoning/mcp`，会连带把 Jena / oracledb / pg 的驱动拉进一个公开端点；实测不加载时
+  `/api/skills/mcp` 单次调用 ~13ms。改协议版本只改这一个文件（`reasoning/mcp.ts` 原样再导出，路由不用动）。
+- `GET /api/skills` 多返回一段 `mcp`（`absoluteUrl` / `protocolVersion` / `transport` / `tools`），
+  界面据此渲染，不必再开一个 info 接口。
+- 界面 `skill-studio.tsx`：**顶部两档切换器**（`技能清单 N` / `MCP 接入`），照「本体草稿」页的
+  `graph-view-switcher` 做（`aria-pressed` + `active`），页头与副标题常驻、副标题跟着档位走。
+  2026-09-18 用户口径：「放下面不好，页面太长了，直接做成可切换的页面」—— **别再往同一列里堆叠**。
+  MCP 那一档是：地址 + 复制、协议 / 服务名 / 工具数、三个工具说明，以及三段可复制配置 ——
+  **顺序是「通用 mcp.json / Claude Code / Cursor」，且默认选中「通用 mcp.json」**
+  （2026-09-18 用户要求："默认是通用 mcp.json，并且要放到前面"；它是各客户端共用的那一段）。
+  **配置里故意不带 `Authorization` 头** —— 服务端不校验令牌，写上去反而让人以为要申请 token。
+  弹窗改成"两条路"的说明，**「下载全部 Skills (.zip)」保留**。
+- **MCP 地址必须跟着前端 URL 变**（2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
+  两端各一层，缺一层就会在某种部署形态下露出 localhost：
+  1. **服务端**：`@/lib/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
+     （只看第一段），协议认 `x-forwarded-proto` / 请求自己的协议，口径与 `sessionCookieSecure` 一致。
+     **别用 `request.nextUrl.origin`**：它在 dev 与容器里会落回服务端自己认的 `localhost:port`。
+  2. **界面**：拿到数据后再用 `window.location.origin` **覆盖** `absoluteUrl`。端口转发 / 反代会把 Host
+     也改写成 localhost，那种情况只有浏览器自己知道真实地址。
+  `/api/mcp/info` 与 `/api/skills` 都改了，`mcp-studio.tsx` 与 `skill-studio.tsx` 都覆盖 ——
+  **两个 MCP 页别一个对一个错**。单测在 `src/lib/public-origin.test.ts`。
+- 防漂移（`skills.test.ts` 新增 7 条）：工具名与 `skill_id` 枚举、清单不带正文、`get_skill_file` 取参考文件、
+  目录穿越与不存在的技能被挡、prompts 正文来自 SKILL.md；另有两条**直接调 route 的 `POST`**
+  （请求里没有 Cookie、也没有 Authorization），钉住"免令牌"与"工具报错走 `result.isError` 而不是 JSON-RPC error"。
+
 ## 出包改成「清单 → 编译」（2026-09-18）
 
 用户要求：「让模型只输出**结构化清单**，然后最终由脚本编译生成，而且这个脚本要支持 window/linux/mac 的不同系统。」

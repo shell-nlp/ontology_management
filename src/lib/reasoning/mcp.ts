@@ -1,5 +1,6 @@
 import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
+import { MCP_PROTOCOL_VERSION } from "@/lib/mcp-protocol";
 import { getOntology, listOntologies } from "@/lib/ontologies";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
@@ -16,7 +17,8 @@ import { listVersionRecords } from "@/lib/version-snapshot";
 
 export const MCP_SERVER_NAME = "ontology-management";
 export const MCP_SERVER_VERSION = "0.1.0";
-export const MCP_PROTOCOL_VERSION = "2025-06-18";
+/** 协议版本与技能 MCP 共用一份（见 `@/lib/mcp-protocol`），这里原样再导出给路由用。 */
+export { MCP_PROTOCOL_VERSION };
 
 export type McpToolGroup = { key: string; label: string; description: string; disabled?: boolean };
 

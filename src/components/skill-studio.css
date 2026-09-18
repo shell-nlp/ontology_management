@@ -28,3 +28,80 @@
 .sk-install-item code { display: inline-block; }
 .sk-install-item p { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
 .sk-install-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+
+/* ---------- 分档切换器（照「本体草稿」页的 graph-view-switcher 做） ---------- */
+
+.sk-switcher { display: inline-flex; align-self: start; width: fit-content; overflow: hidden; border: 1px solid #c8d9ed; border-radius: 2px; background: #fff; }
+.sk-switcher button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 13px; border: 0; border-right: 1px solid #dce7f4; background: transparent; color: #58769c; font-size: 11px; font-weight: 700; cursor: pointer; }
+.sk-switcher button:last-child { border-right: 0; }
+.sk-switcher button:hover { background: #edf4ff; color: #1d4ed8; }
+.sk-switcher button.active { background: #1e3a8a; color: #fff; }
+.sk-switcher button b { color: inherit; font-size: 11px; font-weight: 700; opacity: .7; }
+
+/* ---------- MCP 接入（免令牌） ---------- */
+
+/*
+ * 这一段和弹窗是两条并列的路：弹窗管"下载整包离线装"，这一档管"填个地址直连"。
+ * 视觉语言跟「MCP 调试」的接入配置一致（浅底代码块 + 右上角复制），差别只有一处：
+ * 这里的配置**没有 Authorization 头** —— 服务端不校验令牌，写上去反而误导。
+ */
+.sk-mcp { display: grid; gap: 12px; }
+.sk-mcp-head { display: flex; align-items: center; gap: 10px; }
+.sk-mcp-badge {
+  margin-left: auto; flex: none; padding: 3px 9px; border: 1px solid #ccece2; border-radius: 3px;
+  background: #ecfdf5; color: #0f766e; font-size: 10.5px; font-weight: 650; white-space: nowrap;
+}
+.sk-mcp code { font-family: ui-monospace, "Cascadia Code", monospace; }
+
+.sk-mcp-addr {
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 11px;
+  border: 1px solid var(--line); border-radius: 4px; background: #f8fafc; color: #64748b;
+}
+.sk-mcp-addr > svg { flex: none; }
+.sk-mcp-addr > code {
+  flex: 1; min-width: 0; overflow: hidden; color: #1e293b; font-size: 12px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+.sk-mcp-meta { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.sk-mcp-meta > span {
+  padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px;
+  background: #fff; color: #64748b; font-size: 10.5px;
+}
+
+.sk-mcp-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+.sk-mcp-tabs > div { display: flex; gap: 2px; }
+.sk-mcp-tab {
+  padding: 6px 11px; border: 0; background: transparent; color: #64748b;
+  font-size: 12px; cursor: pointer; box-shadow: inset 0 -2px 0 transparent;
+}
+.sk-mcp-tab:hover { color: #2563eb; }
+.sk-mcp-tab.active { color: #2563eb; font-weight: 650; box-shadow: inset 0 -2px 0 #2563eb; }
+.sk-mcp-hint { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+
+.sk-mcp-block { border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #f8fafc; }
+.sk-mcp-block-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 5px 8px 5px 11px; border-bottom: 1px solid var(--line); background: #fff;
+}
+.sk-mcp-block-head > span { color: #475569; font-size: 11px; font-weight: 650; }
+.sk-mcp-block pre {
+  margin: 0; padding: 11px 13px; overflow-x: auto;
+  color: #1e293b; font-size: 11.5px; line-height: 1.7; white-space: pre; tab-size: 2;
+}
+.sk-mcp-block-note { margin: 0; padding: 8px 12px 9px; border-top: 1px dashed var(--line); color: #94a3b8; font-size: 11px; line-height: 1.65; }
+
+.sk-mcp-tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.sk-mcp-tool { display: grid; gap: 3px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 4px; background: #f8fafc; }
+.sk-mcp-tool b { color: #14213d; font-size: 12px; }
+.sk-mcp-tool code { color: #2563eb; font-size: 11px; }
+.sk-mcp-tool p { margin: 1px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+
+.sk-copy {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; height: 26px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff; color: #475569;
+  font-size: 11px; cursor: pointer;
+}
+.sk-copy:hover { border-color: #93b4f5; color: #2563eb; }
+.sk-copy.done { border-color: #ccece2; background: #ecfdf5; color: #0f766e; }
+.sk-copy.done:hover { border-color: #ccece2; color: #0f766e; }
