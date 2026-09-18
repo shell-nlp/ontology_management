@@ -186,9 +186,19 @@
 
 - **免令牌的依据**：技能是随仓库下发的公开文档，读的只是 `skills/` 目录里的文件，不含凭据、不碰数据库。
   代价是**技能里永远不许出现凭据**（那是这个端点能不鉴权的前提）。
-- 能力：`tools`（`list_skills` / `get_skill` / `get_skill_file`）+ `prompts`（每套技能一条，客户端里就是
-  斜杠命令；正文就是它的 `SKILL.md`，放在 **user 消息**里 —— 斜杠命令的语义是"把这段说明当我这一轮的输入"）。
-  `list_skills` **只给清单不带正文**（正文单独用 `get_skill` 取，别让一次往返背上几百 KB）。
+- 能力：`tools`（`list_ontology_build_skills` / `get_ontology_build_skill` / `get_ontology_build_skill_file`）
+  + `prompts`（每套技能一条，客户端里就是斜杠命令；正文就是它的 `SKILL.md`，放在 **user 消息**里 ——
+  斜杠命令的语义是"把这段说明当我这一轮的输入"）。`list_ontology_build_skills` **只给清单不带正文**
+  （正文单独用 `get_ontology_build_skill` 取，别让一次往返背上几百 KB）。
+- **工具名与说明怎么定**（2026-09-18 用户口径：「这些 mcp tools 的名字不太好，agent 不知道它们的干什么的，
+  别人配置了都不知道是干什么的」+「mcp 和 skills 要有区别，tools 要让模型一下知道是干什么用的，怎么用，
+  用它的输入是什么，产出是什么」）。客户端会把**两个 MCP 服务端的工具摊在同一张表里**，所以：
+  - **名字必须自带 `ontology_build_skill`**：既说清"这是本体**构建技能**"，又与查本体数据那个服务端的
+    `list_ontologies` / `get_object_type` / `search_schema` 一眼分得开。别退回 `list_skills` / `get_skill`
+    这种光看名字不知道是谁家的短名（`skills.test.ts` 有两条用例钉着这一点）。
+  - **`description` 按「用途：… 输入：… 产出：… 怎么用：…」写**，把"拿到结果之后下一步调谁"也写进去，
+    模型不点开 inputSchema 就知道怎么用。工具名、`title`、说明都改在 `src/lib/skills-mcp.ts` 一处，
+    界面上的工具卡片与 `/api/skills` 返回的 `mcp.tools` 自动跟着变。
 - 代码分工：`src/lib/skills-mcp.ts` 写"提供什么"（工具与提示词定义 + 执行，纯函数级、可单测）；
   `src/app/api/skills/mcp/route.ts` 写协议面（`initialize` / `ping` / `tools/*` / `prompts/*`、通知回 202、
   GET 回 405、CORS `*`）；正文一律走 `@/lib/skills`，这里只写协议文案。
@@ -214,8 +224,9 @@
      也改写成 localhost，那种情况只有浏览器自己知道真实地址。
   `/api/mcp/info` 与 `/api/skills` 都改了，`mcp-studio.tsx` 与 `skill-studio.tsx` 都覆盖 ——
   **两个 MCP 页别一个对一个错**。单测在 `src/lib/public-origin.test.ts`。
-- 防漂移（`skills.test.ts` 新增 7 条）：工具名与 `skill_id` 枚举、清单不带正文、`get_skill_file` 取参考文件、
-  目录穿越与不存在的技能被挡、prompts 正文来自 SKILL.md；另有两条**直接调 route 的 `POST`**
+- 防漂移（`skills.test.ts` 新增 9 条）：工具名与 `skill_id` 枚举、**名字必须带 `ontology_build_skill`
+  且不与 `/api/mcp` 的工具重名**、**说明必须含「用途 / 输入 / 产出」且写出下一步调谁**、清单不带正文、
+  取参考文件、目录穿越与不存在的技能被挡、prompts 正文来自 SKILL.md；另有两条**直接调 route 的 `POST`**
   （请求里没有 Cookie、也没有 Authorization），钉住"免令牌"与"工具报错走 `result.isError` 而不是 JSON-RPC error"。
 
 ## 出包改成「清单 → 编译」（2026-09-18）

@@ -24,7 +24,11 @@ import {
  * 免令牌是有依据的：技能是随仓库下发的公开文档，不含凭据、不含本体数据，读的也只是 `skills/`
  * 目录里的文件。外部 Agent 在 MCP 配置里填一个地址就能用，不用先去下载 zip 再配技能目录。
  *
- * 能力：`tools`（list_skills / get_skill / get_skill_file）与 `prompts`（每套技能一个提示词）。
+ * 能力：`tools`（`list_ontology_build_skills` / `get_ontology_build_skill` / `get_ontology_build_skill_file`）
+ * 与 `prompts`（每套技能一个提示词）。
+ *
+ * 工具名带 `ontology_build_skill` 是刻意的：客户端的工具列表里会同时出现两个服务端的工具，
+ * 名字要能自己说清"这是本体构建技能"，且与 `/api/mcp` 的 `list_ontologies` / `get_object_type` 分得开。
  */
 
 const CORS_HEADERS: Record<string, string> = {

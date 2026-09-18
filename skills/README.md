@@ -30,8 +30,9 @@
 
 **也可以不装，直接连**：平台把这三套技能同时发布成了一个**免令牌的 MCP 服务**（地址在「本体技能」页的
 「MCP 接入」里，形如 `http://<平台地址>/api/skills/mcp`）。把它填进 Agent 的 MCP 配置，Agent 就能自己
-`list_skills` / `get_skill` 取用这三套技能，也能当斜杠命令用 —— 不用下载、不用配技能目录。
-MCP 里提供的是同一份内容，两条路等价，按你的环境挑一条即可。
+`list_ontology_build_skills`（看有哪些技能）→ `get_ontology_build_skill`（取某套的完整说明）→
+`get_ontology_build_skill_file`（取它自带的参考文件与脚本）取用这三套技能，也能当斜杠命令用 ——
+不用下载、不用配技能目录。MCP 里提供的是同一份内容，两条路等价，按你的环境挑一条即可。
 
 ## 出包怎么走：清单 → 编译
 
