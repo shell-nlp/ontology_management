@@ -22,8 +22,10 @@
 - **开工前先 `codegraph sync`**：索引落后于磁盘时会给出过期的调用方。本仓库索引建于 9/17 16:44，
   改过文件之后再 sync 才认得出新代码（2026-09-18 实测：12 个文件变更、+541 个节点，1 秒内完成）。
   2026-09-18 复核：索引健康（168 文件 / 3,155 节点 / 8,160 边 / 10.5 MB），`sync` 返回
-  `Already up to date`。注意 `sync` 会往 `~/.codegraph/telemetry-queue.jsonl` 写匿名遥测，
-  被沙箱拦时会以 exit code 1 结束（**同步本身已经成功**，别误判成失败）；嫌吵就 `codegraph telemetry off`。
+  `Already up to date`。`sync` 会往 `~/.codegraph/telemetry-queue.jsonl` 写匿名遥测，被沙箱拦时会以
+  exit code 1 结束（**同步本身已经成功**，别误判成失败）——**本机已于 2026-09-18 执行
+  `codegraph telemetry off`**（配置在 `~/.codegraph/telemetry.json`），现在 sync 干净返回 exit 0，
+  再看到那个沙箱报错就说明这条被改回来了。
 - 实测省在哪（2026-09-18）：一条 `codegraph explore` 直接拿到 `validateVersionSnapshot`（6 个调用方）、
   `ontologyDefinitionSchema`（17 个调用方），以及哪些文件带测试 —— 省掉了先 grep 再逐个打开文件的往返。
 - **什么时候不用**：只查精确字符串（改文案、排查界面术语）时 `rg` 更快；CodeGraph 是「找代码」用的，
