@@ -265,6 +265,20 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 /* 类清单里的数据来源标记：只有把类绑到表上的时候才出现。 */
 .type-row .type-source { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; color: #1d4ed8; background: #eef4ff; border: 1px solid #d9e4ff; font-size: 10.5px; font-style: normal; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; }
 
+/* ---------- 分档切换器（跨页共用：本体技能 / MCP 调试） ---------- */
+/*
+ * 一个页面里有两档内容、又不想把两档堆在同一列往下接（页面会变很长）时用它。
+ * 口径：**页头与副标题常驻，副标题跟着档位走**；按钮用 `aria-pressed` + `active`。
+ * 以前每个页面各抄一份（`graph-view-switcher` / `sk-switcher`），2026-09-18 收到这里一份 ——
+ * 再加页面就用这个类，别再抄第三份（改一处样式要改 N 处是纯负债）。
+ */
+.view-switcher { display: inline-flex; align-self: start; width: fit-content; overflow: hidden; border: 1px solid #c8d9ed; border-radius: 2px; background: #fff; }
+.view-switcher button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 13px; border: 0; border-right: 1px solid #dce7f4; background: transparent; color: #58769c; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.view-switcher button:last-child { border-right: 0; }
+.view-switcher button:hover { background: #edf4ff; color: #1d4ed8; }
+.view-switcher button.active { background: #1e3a8a; color: #fff; }
+.view-switcher button b { color: inherit; font-size: 11px; font-weight: 700; opacity: .7; }
+
 /* ---------- 建模体检（本体草稿） ---------- */
 /*
  * 和「校验」的差别是这里全是建议：只有「该改」（琥珀）与「可以更好」（蓝）两档，不用报错的红色 ——

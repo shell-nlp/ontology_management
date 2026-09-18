@@ -12,6 +12,12 @@ import "./mcp-studio.css";
  *
  * 页面上跑的是**真实的 MCP 协议**（POST /api/mcp，JSON-RPC 2.0），不是另做一套内部调用 ——
  * 这样调试页里看到什么，外部客户端接进来就是什么。
+ *
+ * 页面分两档（`.view-switcher`，与「本体技能」页同一个类）：
+ * - **工具**（默认）：左边工具清单 + 右边被选中那个的说明 / 参数 / 请求体 / 响应；
+ * - **MCP 接入**：服务地址与各客户端的配置片段（默认选中「通用 mcp.json」）。
+ * 两档分开放是有意的：以前接入配置常驻在工具清单上面，页面太长（2026-09-18 用户口径：
+ * "上面的 MCP 配置的信息也参照本体技能那里一样可以切换，默认看的是工具的页面"）。
  */
 
 type SchemaProperty = { type?: string; description?: string; items?: { type?: string } };
@@ -33,6 +39,14 @@ type Props = {
   ontologies: OntologySummary[];
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
+};
+
+/** 两档：工具（接口台）与 MCP 接入（怎么连）。**默认看工具**（2026-09-18 用户口径）。 */
+type McpView = "tools" | "mcp";
+
+const SUBTITLES: Record<McpView, string> = {
+  tools: "平台把本体的工具按 MCP 协议暴露出去：外部客户端接的是同一个端点、同一套工具，这个页面用来逐个试。",
+  mcp: "外部客户端用 Authorization: Bearer <MCP_API_TOKEN> 连接（令牌在服务端 .env.local 里）；平台内这个页面用登录会话直接调，走的是同一个端点。",
 };
 
 function typeLabel(property: SchemaProperty) {
@@ -97,11 +111,27 @@ type ConnectTab = { key: string; label: string; hint: string; blocks: ConnectBlo
  * 一键复制走的接入配置。写法按各家官方文档来（Claude Code 的 `claude mcp add --transport http`
  * 与 `.mcp.json` 的 `type: "http"`、Cursor 的 `.cursor/mcp.json` 与 `${env:NAME}` 插值）。
  * 地址用你当前访问平台的地址，令牌永远是占位符。
+ *
+ * **顺序与默认值**：通用 mcp.json 排第一且默认选中（2026-09-18 用户口径："MCP 配置那里，默认是
+ * 通用 mcp.json"）。它是各客户端共用的那一段，先给最通用的，别让人先看到某个专有的写法。
+ * 与「本体技能」页的 MCP 接入档口径一致。
  */
 function connectTabs(url: string): ConnectTab[] {
   const config = (entry: Record<string, unknown>) => JSON.stringify({ mcpServers: { [SERVER_NAME]: entry } }, null, 2);
   const withToken = { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } };
   return [
+    {
+      key: "generic",
+      label: "通用 mcp.json",
+      hint: "Claude Desktop、VS Code 这类客户端读的都是这一段，差别只在文件名与存放位置。",
+      blocks: [
+        {
+          label: "mcpServers 片段",
+          note: "有的客户端把 type 写成 streamable-http，含义完全一样。",
+          code: config(withToken),
+        },
+      ],
+    },
     {
       key: "claude",
       label: "Claude Code",
@@ -135,18 +165,6 @@ function connectTabs(url: string): ConnectTab[] {
         },
       ],
     },
-    {
-      key: "generic",
-      label: "通用 mcp.json",
-      hint: "Claude Desktop、VS Code 这类客户端读的都是这一段，差别只在文件名与存放位置。",
-      blocks: [
-        {
-          label: "mcpServers 片段",
-          note: "有的客户端把 type 写成 streamable-http，含义完全一样。",
-          code: config(withToken),
-        },
-      ],
-    },
   ];
 }
 
@@ -158,7 +176,8 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
   const [ok, setOk] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showDoc, setShowDoc] = useState(false);
-  const [connectTab, setConnectTab] = useState("claude");
+  const [view, setView] = useState<McpView>("tools");
+  const [connectTab, setConnectTab] = useState("generic");
   const [dataSourceNames, setDataSourceNames] = useState<string[]>([]);
   const ontologyId = ontologies[0]?.id ?? "";
   const defaultDataSource = dataSourceNames[0] ?? "";
@@ -257,9 +276,32 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
 
   const properties = Object.entries(active?.inputSchema.properties ?? {});
   const required = new Set(active?.inputSchema.required ?? []);
+  /** 真正对外可用的工具数：平台停用的与用户关掉的都不算。 */
+  const availableCount = info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length;
 
   return (
     <section className="mcp-root">
+      <div className="panel functional-panel">
+        <div className="title-row">
+          <div>
+            <span className="eyebrow">MCP</span>
+            <h2>本体 MCP 服务</h2>
+          </div>
+        </div>
+        <p className="subtle">{SUBTITLES[view]}</p>
+      </div>
+
+      {/* 两档切换：默认看工具。以前接入配置压在工具清单上面，页面太长（2026-09-18 用户口径）。 */}
+      <div className="view-switcher" aria-label="MCP 调试视图">
+        <button className={view === "tools" ? "active" : ""} aria-pressed={view === "tools"} onClick={() => setView("tools")}>
+          工具 <b>{availableCount}</b>
+        </button>
+        <button className={view === "mcp" ? "active" : ""} aria-pressed={view === "mcp"} onClick={() => setView("mcp")}>
+          MCP 接入
+        </button>
+      </div>
+
+      {view === "mcp" && (
       <div className="mcp-connect panel functional-panel">
         <div className="mcp-connect-head">
           <span className="mcp-connect-mark"><Terminal size={16} /></span>
@@ -326,13 +368,15 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
           </div>
         </div>
       </div>
+      )}
 
+      {view === "tools" && (
       <div className="mcp-body">
         <aside className="mcp-tools panel functional-panel">
           <div className="mcp-tools-head">
             <span className="eyebrow">工具</span>
             <span className="mcp-tools-count">
-              <b>{info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length} 个可用</b>
+              <b>{availableCount} 个可用</b>
               {/* 关掉的与平台停用的都要单独说清，否则"总数"会被当成"可用数"。 */}
               {info.disabledTools.length > 0 && <em>{info.disabledTools.length} 个已关闭</em>}
               {info.tools.some((tool) => tool.disabled) && <em>{info.tools.filter((tool) => tool.disabled).length} 个暂不使用</em>}
@@ -462,6 +506,7 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
           ) : <p className="mcp-empty">左边选一个工具。</p>}
         </div>
       </div>
+      )}
     </section>
   );
 }

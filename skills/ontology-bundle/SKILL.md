@@ -70,9 +70,8 @@ Windows / Linux / macOS 一样（只要有 Node 18+），路径带空格就加�
 - [ ] 属性 `dataType` 与真实数据一致（金额 `DECIMAL`、时间 `DATETIME`…）。
 - [ ] 表名、列名来自材料；**没有**凭空编造。
 - [ ] 交付说明里写清"导入后先校验再发布"，以及哪些对象类型还需要重新选表。
-- [ ] 手边连着平台（MCP 可用）时，导入后调一次 `review_model` 做**建模体检**：空壳与孤悬的对象类型、
-      主键列没属性接、必填属性没映射列、命名打架、关系端点没选这类问题，它会按「该改 / 可以更好」列出来。
-      它**不挡发布**，是建议层；全部规则码与判据见 `ontology-builder/references/modeling-rules.md` 第 9 节。
+- [ ] 交付说明里提醒一句：导入后平台会做**建模体检**（本体草稿页头「建模体检」，按「该改 / 可以更好」两档列问题，
+      不挡发布）。你这边出包前先照 `ontology-builder/references/modeling-rules.md` 第 9 节的规则码自查一遍。
 
 **环境里没有 Node**（或用户不让跑脚本）时退回手写：按 `references/bundle-format.md` 直接写 `.ontology.json`，
 写完用 `node scripts/check-bundle.mjs <包.json>` 过一遍结构；连 Node 都没有就只能靠平台的导入校验兜底。

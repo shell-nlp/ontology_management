@@ -88,18 +88,8 @@ async function ensurePlatformSchemaOnce() {
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
-      // 内置类型图是平台自带资源，不需要用户登记连接。若升级前已手动登记过
-      // 一条内置根资源，则沿用它，避免列表里凭空多出一份重复资源。
-      await client.query(`
-        INSERT INTO ontology_platform.graph_targets
-          (id, name, kind, uri, database_name, username, credential_secret, options)
-        SELECT $1, '内置类型图（平台自带）', 'EMBEDDED', 'embedded://platform', 'platform', '', '', '{"builtin":true}'::jsonb
-        WHERE NOT EXISTS (
-          SELECT 1 FROM ontology_platform.graph_targets
-          WHERE kind = 'EMBEDDED' AND COALESCE(options->>'namedGraph', '') = ''
-        )
-        ON CONFLICT DO NOTHING
-      `, [BUILTIN_EMBEDDED_TARGET_ID]);
+      // 平台自带的内置存储资源是虚拟选项，不占 graph_targets 行；
+      // 只有用户创建的具体本体才会拥有独立的受管目标记录。
       // 内置后端的已发布视图：平台库负责持久化与原子切换，进程内 RDF/Graphology 图始终可重建。
       // 实例数组仅兼容当前手工样本；未来海量业务对象不进入这张表。
       await client.query(`
@@ -297,10 +287,13 @@ export async function writeAuditEntry(input: {
   action: string;
   details?: Record<string, unknown>;
 }) {
+  // 虚拟入口不在 graph_targets 中；审计表的 FK 只引用真实受管目标。
+  const virtualTarget = input.targetId === BUILTIN_EMBEDDED_TARGET_ID;
   await platformQuery(
     `INSERT INTO ontology_platform.audit_entries (id, actor_id, target_id, action, details)
      VALUES ($1, $2, $3, $4, $5)`,
-    [crypto.randomUUID(), input.actorId ?? null, input.targetId ?? null, input.action, JSON.stringify(input.details ?? {})],
+    [crypto.randomUUID(), input.actorId ?? null, virtualTarget ? null : (input.targetId ?? null), input.action,
+      JSON.stringify(virtualTarget ? { ...input.details, virtualTargetId: input.targetId } : (input.details ?? {}))],
   );
 }
 

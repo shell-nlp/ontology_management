@@ -216,14 +216,23 @@
   `/api/skills/mcp` 单次调用 ~13ms。改协议版本只改这一个文件（`reasoning/mcp.ts` 原样再导出，路由不用动）。
 - `GET /api/skills` 多返回一段 `mcp`（`absoluteUrl` / `protocolVersion` / `transport` / `tools`），
   界面据此渲染，不必再开一个 info 接口。
-- 界面 `skill-studio.tsx`：**顶部两档切换器**（`技能清单 N` / `MCP 接入`），照「本体草稿」页的
-  `graph-view-switcher` 做（`aria-pressed` + `active`），页头与副标题常驻、副标题跟着档位走。
+- 界面 `skill-studio.tsx`：**顶部两档切换器**（`技能清单 N` / `MCP 接入`），用 `globals.css` 的
+  `.view-switcher`（`aria-pressed` + `active`），页头与副标题常驻、副标题跟着档位走。
   2026-09-18 用户口径：「放下面不好，页面太长了，直接做成可切换的页面」—— **别再往同一列里堆叠**。
   MCP 那一档是：地址 + 复制、协议 / 服务名 / 工具数、三个工具说明，以及三段可复制配置 ——
   **顺序是「通用 mcp.json / Claude Code / Cursor」，且默认选中「通用 mcp.json」**
   （2026-09-18 用户要求："默认是通用 mcp.json，并且要放到前面"；它是各客户端共用的那一段）。
   **配置里故意不带 `Authorization` 头** —— 服务端不校验令牌，写上去反而让人以为要申请 token。
   弹窗改成"两条路"的说明，**「下载全部 Skills (.zip)」保留**。
+- **`mcp-studio.tsx`（MCP 调试）也是两档**（2026-09-18 用户口径：「上面的 MCP 配置的信息也参照本体技能那里
+  一样可以切换，默认看的是工具的页面，而且 MCP 配置那里，默认是通用 mcp.json」）：
+  1. **工具（默认）**：左边工具清单 + 右边被选中那个的说明 / 参数 / 请求体 / 响应；
+  2. **MCP 接入**：服务地址 + 三段配置片段，**默认选中「通用 mcp.json」**（与技能页同一口径，
+     `connectTabs` 里它就是第一项，`connectTab` 初始值也是 `generic`）。
+  接入配置原来常驻在工具清单上面，页面太长 —— 别再挪回去。
+- **分档切换器只有一份样式**：`globals.css` 的 `.view-switcher`。以前「本体草稿」用
+  `graph-view-switcher`、技能页抄了一份 `sk-switcher`，2026-09-18 收到一处（`.sk-switcher` 已删）。
+  **再加页面就用 `.view-switcher`，别抄第三份。**
 - **MCP 地址必须跟着前端 URL 变**（2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
   两端各一层，缺一层就会在某种部署形态下露出 localhost：
   1. **服务端**：`@/lib/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
@@ -274,7 +283,7 @@
 先新增 JS/TS 内置后端，**保留 Jena/Fuseki 与旧数据**。充分验证后再讨论清理，不得提前删掉 Jena。
 
 - `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/graph/index.ts` 分发。
-  内置存储资源在平台库建表时自动登记，新建本体默认选它；不能手工创建、编辑或删除该资源，
+  内置存储入口由代码虚拟提供，不在 `graph_targets` 创建根记录；新建本体默认选它，并为该本体持久化独立的受管目标。入口不能手工创建、编辑、删除、清空或重置，
   但本体仍必须由用户显式新建或导入。`ensureDefaultOntologies` 旧逻辑已移除，不能把资源自动变成本体。
   外部 Jena 连接仍可按需新建；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
   需要迁移时先导出本体包、在新存储上导入并核验；目前本体包只含定义，不带实例数据。
@@ -658,9 +667,11 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - `src/lib/reasoning/tools.ts`：**只读**工具 —— `search_schema`（自然语言 → 概念命中，带命中理由）、
   `get_object_type`（属性含映射列、实现的接口、**一跳**的出边/入边、动作、数据来源绑定、所属概念分组）、
   `list_concept_groups`（有哪些概念分组、每组里有哪些对象类型）、
+  `list_interfaces`（有哪些接口、谁实现了它）、
   `traverse_object_types`（**多跳**：沿关系类型走 1~5 跳，默认 3，可按对象类型与关系类型限定）、
   `get_table_ddl`（表 / 视图的结构，返回 DDL）、`run_sql`（对象类型绑定的表上的只读 SQL）、`list_actions`。
   另外两个实例工具留在目录里但标了 `disabled`（见下面「推理范围」）。排序是纯函数（`rankSchemaConcepts`），有单测。
+  2026-09-18 去掉了 `review_model`（建模体检不再是 MCP 工具，见「建模体检」一节），**别再往回加**。
 - `src/lib/reasoning/agent.ts`：编排循环（默认最多 8 步）。模型只负责"下一步查什么"，
   事实全部来自工具；每步记录工具、入参、结果（按上限截断）、耗时、引用的**真实** id。
 - `src/lib/reasoning/provider.ts`：把"OpenAI 兼容端点 + 三个环境变量"翻译成 AI SDK 的模型对象，
@@ -1006,20 +1017,22 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | | 发布前校验 | 建模体检 |
 | --- | --- | --- |
 | 代码 | `validateVersionSnapshot`（`version-snapshot.ts`） | `reviewOntologyModel`（`modeling-review.ts`） |
-| 什么时候跑 | 点「校验」/「发布」 | 点「建模体检」/ 调 `review_model` |
+| 什么时候跑 | 点「校验」/「发布」 | 点「建模体检」 |
 | 档次 | 阻断 + `severity: "WARN"` | `WARN`（该改）/ `INFO`（可以更好），**一条都不挡发布** |
 | 管什么 | 来源绑定、端点契约、必填与唯一、接口实现、动作定义 | 建模层面的自洽：粒度、命名、映射完整度、孤立与空壳 |
 
-- **规则码是稳定标识**（`ENTITY_ORPHAN` / `PROPERTY_TYPE_CONFLICT` …）：界面、MCP 工具、技能文档共用同一份，
+- **规则码是稳定标识**（`ENTITY_ORPHAN` / `PROPERTY_TYPE_CONFLICT` …）：界面与技能文档共用同一份，
   加规则只加码、不改码。规则在 `src/lib/modeling-review.ts` 的 `RULES` 数组里，一条一个纯函数；
   **每加一条就在 `modeling-review.test.ts` 里钉一个用例**，那里还有一条"健康本体零结论"的用例，
   用来防规则越加越吵。
-- **三个出口缺一不可**（少一个就会出现"界面说没问题、模型说有问题"）：
+- **只有两个出口**（2026-09-18 起**没有 MCP 工具**：用户口径"去掉 review_model 这个工具"，
+  外部 Agent 不再能调它，改成照规则码自查）：
   1. 界面：本体草稿 → 页头「建模体检」（按钮上挂"该改"条数的角标）→ `modeling-review-panel.tsx` 的面板；
      每条结论点主体能跳到对应标签页（对象类型 / 关系类型 / 接口 / 概念分组 / 动作）。
-  2. 工具：`review_model` —— 进模型工具集，也进 MCP 的 `tools/list`（`model` 组，标题「建模体检」）。
-  3. 技能：`skills/ontology-builder/references/modeling-rules.md` 第 9 节列出全部规则码，
+  2. 技能：`skills/ontology-builder/references/modeling-rules.md` 第 9 节列出全部规则码，
      外部 Agent 出包前可以照着自查。
+  `reviewOntologyModel` 这一层实现**没有删**（界面还在用）；删的只是 `REASONING_TOOLS` 里的工具定义、
+  执行分支与 `mcp.ts` 的 `model` 组映射。要恢复就把这三处加回去。
 - **刻意不做的事**：不查真实表结构。"绑的那张表里到底有没有这一列"要连库去比，属于「数据资源」那侧的活；
   这一层只保证**定义内部自洽**。
 - 实测（2026-09-18，本体「…备份V4」）：一次体检出 9 条 —— 4 条 `ENTITY_ORPHAN`（调账 / 欠费 / 缴费 / 销账

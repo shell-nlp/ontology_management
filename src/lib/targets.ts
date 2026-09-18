@@ -1,5 +1,20 @@
 import { platformQuery } from "@/lib/platform-db";
-import { graphTargetKindInfo, isGraphTargetKind, type GraphTarget, type GraphTargetKind } from "@/lib/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID, graphTargetKindInfo, isGraphTargetKind, type GraphTarget, type GraphTargetKind } from "@/lib/graph/types";
+
+/** 唯一的内置资源入口，不保存于 graph_targets；具体本体的目标仍由平台库持久化。 */
+function builtInTarget(): GraphTarget {
+  return {
+    id: BUILTIN_EMBEDDED_TARGET_ID,
+    name: "内置类型图（平台自带）",
+    kind: "EMBEDDED",
+    uri: "embedded://platform",
+    database_name: "platform",
+    username: "",
+    credential_secret: "",
+    options: { builtin: true },
+    created_at: new Date(0),
+  };
+}
 
 /**
  * 试连失败的常见原因翻成人话。
@@ -18,6 +33,7 @@ export function describeTargetError(kind: GraphTargetKind, error: unknown) {
 }
 
 export async function getTarget(targetId: string): Promise<GraphTarget | null> {
+  if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return builtInTarget();
   const result = await platformQuery<GraphTarget>(
     `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
      FROM ontology_platform.graph_targets WHERE id = $1`,
@@ -36,15 +52,16 @@ export function parseTargetOptions(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, item]) => item === null || ["string", "number", "boolean"].includes(typeof item)));
 }
 
-/** 已登记的本体存储列表；冲突检查与 GET 接口共用一份读取。 */
+/** 平台虚拟入口 + 数据库里登记的外部连接与受管本体目标。 */
 export async function listTargets(): Promise<GraphTarget[]> {
   const result = await platformQuery<GraphTarget>(
     `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
      FROM ontology_platform.graph_targets ORDER BY kind, name`,
   );
-  return result.rows
-    .filter((row) => isGraphTargetKind(row.kind))
-    .map((row) => ({ ...row, kind: row.kind as GraphTargetKind, options: (row.options ?? {}) as Record<string, unknown> }));
+  return [builtInTarget(), ...result.rows
+    // 旧版手动登记的内置根资源不再供新本体选择；已有本体仍可按 id 读取原目标。
+    .filter((row) => isGraphTargetKind(row.kind) && !(row.kind === "EMBEDDED" && !row.options?.namedGraph))
+    .map((row) => ({ ...row, kind: row.kind as GraphTargetKind, options: (row.options ?? {}) as Record<string, unknown> }))];
 }
 
 /** 端点归一成 host:port，缺端口时用 Fuseki 的默认端口。 */

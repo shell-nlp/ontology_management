@@ -1,5 +1,5 @@
 import { platformQuery } from "@/lib/platform-db";
-import type { GraphTarget } from "@/lib/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
@@ -80,7 +80,8 @@ async function createManagedTarget(storage: GraphTarget, ontologyId: string, nam
   const taken = await platformQuery<{ id: string }>("SELECT id FROM ontology_platform.graph_targets WHERE name = $1", [name]);
   const targetName = taken.rows.length ? `${name} · ${ontologyId.slice(0, 4)}` : name;
   const id = crypto.randomUUID();
-  const options = { ...parseTargetOptions(storage.options), namedGraph: namespace };
+  const options: Record<string, unknown> = { ...parseTargetOptions(storage.options), namedGraph: namespace };
+  delete options.builtin;
   await platformQuery(
     `INSERT INTO ontology_platform.graph_targets (id, name, kind, uri, database_name, username, credential_secret, options)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -118,7 +119,7 @@ export async function createOntology(
       (input.color ?? "").trim(),
       input.tags ?? [],
       targetId,
-      storage.id,
+      storage.id === BUILTIN_EMBEDDED_TARGET_ID ? null : storage.id,
       namespace,
       userId ?? null,
     ],
@@ -159,7 +160,7 @@ export async function updateOntology(
   await platformQuery(`UPDATE ontology_platform.ontologies SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`, values);
 
   // 本体改名时，受管存储记录跟着改（它只是这段隔离空间的载体，名字应该和本体一致）。
-  if (patch.name !== undefined && current.owner_target_id) {
+  if (patch.name !== undefined && await managedTargetId(current)) {
     await platformQuery("UPDATE ontology_platform.graph_targets SET name = $1 WHERE id = $2", [patch.name.trim(), current.target_id]);
   }
   const updated = await getOntology(id);
@@ -173,9 +174,18 @@ export async function updateOntology(
 export async function deleteOntology(id: string): Promise<{ removedTargetId: string | null }> {
   const current = await getOntology(id);
   if (!current) throw new Error("本体不存在。");
+  const managedId = await managedTargetId(current);
   await platformQuery("DELETE FROM ontology_platform.ontologies WHERE id = $1", [id]);
-  if (!current.owner_target_id) return { removedTargetId: null };
-  await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [current.target_id]);
-  await removeTargetSnapshotDirectory(current.target_id);
-  return { removedTargetId: current.target_id };
+  if (!managedId) return { removedTargetId: null };
+  await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [managedId]);
+  await removeTargetSnapshotDirectory(managedId);
+  return { removedTargetId: managedId };
+}
+
+/** 虚拟根资源没有 FK 行；仍通过每个本体专属的 namedGraph 标识识别受管目标。 */
+async function managedTargetId(ontology: Ontology): Promise<string | null> {
+  if (ontology.owner_target_id) return ontology.target_id;
+  if (!ontology.namespace) return null;
+  const target = await getTarget(ontology.target_id);
+  return target?.kind === "EMBEDDED" && target.options?.namedGraph === ontology.namespace ? target.id : null;
 }

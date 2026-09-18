@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
-import type { GraphTargetKind } from "@/lib/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/graph/types";
 import { getObjectIndex } from "@/lib/object-index";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetError, getTarget } from "@/lib/targets";
@@ -15,6 +15,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ targetId:
   try {
     await requireRole("VIEWER");
     const { targetId } = await context.params;
+    if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     kind = target.kind;
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ta
   try {
     const user = await requireRole("ADMIN");
     const { targetId } = await context.params;
+    if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，不能整体清空；请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     kind = target.kind;

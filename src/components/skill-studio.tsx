@@ -187,7 +187,7 @@ export function SkillStudio({ notify, fail }: { notify: (text: string) => void; 
         <p className="subtle">{SUBTITLES[view]}</p>
       </div>
 
-      <div className="sk-switcher" aria-label="本体技能视图">
+      <div className="view-switcher" aria-label="本体技能视图">
         <button className={view === "skills" ? "active" : ""} aria-pressed={view === "skills"} onClick={() => setView("skills")}>
           技能清单 <b>{skills?.length ?? 0}</b>
         </button>

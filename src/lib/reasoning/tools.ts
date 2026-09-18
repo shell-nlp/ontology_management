@@ -9,7 +9,6 @@ import {
 } from "@/lib/interfaces";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
-import { REVIEW_SCOPE_LABELS, reviewOntologyModel, summarizeModelingReview } from "@/lib/modeling-review";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -195,12 +194,6 @@ export const REASONING_TOOLS: ToolSpec[] = [
       type: "object",
       properties: { type_name: { type: "string", description: "可选，只看作用在这个对象类型上的动作" } },
     },
-  },
-  {
-    name: "review_model",
-    description:
-      "给本体做一次建模体检，返回「该改」和「可以更好」两档问题清单：对象类型是空壳 / 孤悬、主键列没属性接、必填属性没映射列、命名打架、属性类型前后不一致、关系端点没选、同一对类型之间关系重复、接口没人实现、概念分组空着、动作标识重复、规则没条件或没提示语等等。问「这个本体建得怎么样」「有什么问题」「怎么优化」时用它。**它不挡发布**（发布前的硬性校验是另一件事），每条结论都带规则码、主体、问题与改法。",
-    parameters: { type: "object", properties: {} },
   },
 ];
 
@@ -934,29 +927,6 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           note: "这些是本体里已定义的动作。本次推理是只读的，不会真的执行动作；要执行请到「动作」页由人确认后运行。",
         },
         evidence: actions.map((action) => ({ kind: "ACTION" as const, id: action.id, label: action.name })),
-      };
-    }
-
-    case "review_model": {
-      const findings = reviewOntologyModel(definition);
-      const summary = summarizeModelingReview(findings);
-      return {
-        payload: {
-          summary: summary.headline,
-          warn_count: summary.warn,
-          info_count: summary.info,
-          // 规则码是稳定标识：模型可以照着念，人也可以拿去和技能文档对照。
-          findings: findings.map((item) => ({
-            code: item.code,
-            level: item.level === "WARN" ? "该改" : "可以更好",
-            scope: REVIEW_SCOPE_LABELS[item.scope],
-            subject: item.subject || undefined,
-            issue: item.message,
-            how_to_fix: item.hint,
-          })),
-          note: "这些都不阻断发布：很多是刻意停下来的中间状态。发布前的硬性校验（来源绑定、端点契约、必填与唯一、接口实现、动作定义）是另一层；要细节就用 get_object_type / list_interfaces 看某一个类型。",
-        },
-        evidence: [],
       };
     }
 

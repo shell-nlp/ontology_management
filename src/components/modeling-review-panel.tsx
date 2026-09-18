@@ -17,7 +17,7 @@ import type { Definition } from "@/lib/ontology-draft";
  * 所以措辞上刻意不说"错误"：只有「该改」和「可以更好」两档，一条都不挡发布 ——
  * 草稿停在半路是常态，体检要能容忍中间状态，只把值得回头看一眼的地方挑出来。
  *
- * 每条结论都带**规则码**：它是稳定标识，界面、MCP 工具（`review_model`）与技能文档共用同一份。
+ * 每条结论都带**规则码**：它是稳定标识，界面与技能文档共用同一份。
  */
 export function ModelingReviewPanel({ definition, onLocate }: {
   definition: Definition;

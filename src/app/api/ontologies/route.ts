@@ -33,7 +33,7 @@ async function withSummary() {
             kind: storage.kind,
             kindLabel: isGraphTargetKind(storage.kind) ? graphTargetKindInfo(storage.kind).label : storage.kind,
             uri: storage.uri,
-            managed: Boolean(ontology.owner_target_id),
+            managed: Boolean(ontology.owner_target_id) || Boolean(ontology.namespace && storage.kind === "EMBEDDED" && storage.options?.namedGraph === ontology.namespace),
           }
         : null,
       versions: {

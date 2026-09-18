@@ -29,14 +29,9 @@
 .sk-install-item p { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
 .sk-install-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
 
-/* ---------- 分档切换器（照「本体草稿」页的 graph-view-switcher 做） ---------- */
+/* ---------- 分档切换器 ---------- */
 
-.sk-switcher { display: inline-flex; align-self: start; width: fit-content; overflow: hidden; border: 1px solid #c8d9ed; border-radius: 2px; background: #fff; }
-.sk-switcher button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 13px; border: 0; border-right: 1px solid #dce7f4; background: transparent; color: #58769c; font-size: 11px; font-weight: 700; cursor: pointer; }
-.sk-switcher button:last-child { border-right: 0; }
-.sk-switcher button:hover { background: #edf4ff; color: #1d4ed8; }
-.sk-switcher button.active { background: #1e3a8a; color: #fff; }
-.sk-switcher button b { color: inherit; font-size: 11px; font-weight: 700; opacity: .7; }
+/* 样式在 `globals.css` 的 `.view-switcher`（本体技能 / MCP 调试共用一份，别在这再抄一遍）。 */
 
 /* ---------- MCP 接入（免令牌） ---------- */
 

@@ -124,7 +124,7 @@ export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
  * 内置类型图与 Apache Jena 并存；已有 Jena 存储不受影响。
  */
 export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS;
-/** 内置资源由平台自动登记，连接向导只创建外部 Jena 连接。 */
+/** 内置资源由代码虚拟提供，连接向导只创建外部 Jena 连接。 */
 export const CREATABLE_GRAPH_TARGET_KINDS = FRONTEND_GRAPH_TARGET_KINDS.filter((item) => item.kind !== "EMBEDDED");
 
 /** 新建本体存储时的默认引擎。 */

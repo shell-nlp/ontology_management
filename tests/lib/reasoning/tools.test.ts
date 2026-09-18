@@ -114,39 +114,8 @@ describe("工具范围", () => {
     const parked = REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name);
     // 这一版只在对象类型 / 关系类型这一层推理：实例工具不进模型、不进 MCP 的 tools/list，
     // 只在「MCP 调试」页灰着显示。要恢复实例推理，就把下面两个名字的 disabled 去掉。
-    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "list_actions", "review_model"]);
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "list_actions"]);
     expect(parked).toEqual(["query_object_instance", "query_instance_subgraph"]);
-  });
-});
-
-describe("review_model", () => {
-  it("把建模问题按两档列出来，每条带规则码、主体与改法", async () => {
-    const base = definition() as unknown as { entityTypes: unknown[] };
-    const broken = {
-      ...definition(),
-      entityTypes: [
-        ...base.entityTypes,
-        { id: "99999999-9999-4999-8999-999999999998", name: "空壳", description: "", displayProperty: "", groupId: "", implements: [], properties: [], sources: [] },
-      ],
-    } as unknown as OntologyDefinition;
-    const outcome = await runReasoningTool("review_model", {}, { store: {} as never, definition: broken, runtimeTypes });
-    const payload = outcome.payload as {
-      summary: string;
-      warn_count: number;
-      info_count: number;
-      findings: { code: string; level: string; scope: string; subject?: string; issue: string; how_to_fix: string }[];
-      note: string;
-    };
-    expect(payload.summary).toContain("建模体检");
-    expect(payload.warn_count + payload.info_count).toBe(payload.findings.length);
-    const empty = payload.findings.find((item) => item.code === "ENTITY_NO_PROPERTIES");
-    expect(empty?.subject).toBe("空壳");
-    expect(empty?.level).toBe("该改");
-    expect(empty?.scope).toBe("对象类型");
-    expect(empty?.issue).toContain("空壳");
-    expect(empty?.how_to_fix).toBeTruthy();
-    // 体检是建议层，不是发布门禁 —— 这句话必须跟着结论一起出去。
-    expect(payload.note).toContain("不阻断发布");
   });
 });
 
