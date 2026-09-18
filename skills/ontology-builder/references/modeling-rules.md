@@ -98,3 +98,39 @@
 | 接口只有一个实现方 | 过度抽象，改一次要动两处 | 先不建接口 |
 | 关系属性挂到对象上 | 同一对对象的多次关系无法区分 | 属性放到关系类型上 |
 | 编造表名 / 列名 | 导入后绑定全空，用户以为系统坏了 | 材料里没有就写"待确认" |
+## 9. 平台会怎么体检你的方案（规则码）
+
+平台有一层**建模体检**（本体草稿页头「建模体检」；外部 Agent 可以调 MCP 工具 `review_model`）。
+它**不挡发布**，只把值得回头看一眼的地方分两档列出来：`该改` / `可以更好`。
+出包前照着这张表自查一遍，能省一轮返工 —— 下面每条都对应体检里的一个规则码。
+
+| 规则码 | 档次 | 说的是什么 |
+| --- | --- | --- |
+| `ENTITY_NO_PROPERTIES` | 该改 | 对象类型一个属性都没有（空壳） |
+| `ENTITY_DISPLAY_PROPERTY_MISSING` | 该改 | 展示属性指向了不存在的属性 |
+| `ENTITY_SOURCE_UNMAPPED` | 该改 | 绑了表，但没有任何属性映射到列 |
+| `ENTITY_PRIMARY_KEY_UNMAPPED` | 该改 | 主键列没有属性接住（对象身份拿不到值） |
+| `ENTITY_REQUIRED_PROPERTY_UNMAPPED` | 该改 | 必填属性没有映射列 |
+| `ENTITY_ORPHAN` | 该改 | 孤悬：没绑数据、不连任何关系类型、也没有动作作用在它身上 |
+| `ENTITY_DUPLICATE_NAME` | 该改 | 同类定义重名（只是大小写或空格不同） |
+| `ENTITY_GROUP_MISSING` | 该改 | 指向了一个不存在的概念分组 |
+| `RELATION_ENDPOINT_MISSING` | 该改 | 关系类型的起点或终点还没选对象类型 |
+| `INTERFACE_EMPTY` | 该改 | 接口既没有属性也没有关系约束（空契约） |
+| `ACTION_DUPLICATE_CODE` | 该改 | 动作标识重复（对外是工具名，调用方会选错） |
+| `RULE_WITHOUT_CONDITION` | 该改 | 规则没有任何条件，对所有对象无条件生效 |
+| `RULE_EMPTY_MESSAGE` | 该改 | 拦人或提示时没给用户看的原因 |
+| `RULE_ACTION_MISSING` | 该改 | 规则绑定的动作已经不在本体里 |
+| `ENTITY_NO_DISPLAY_PROPERTY` | 可以更好 | 没指定展示属性，界面只能用主键值当标题 |
+| `NAMING_MIXED_STYLE` | 可以更好 | 对象类型命名风格混着来（中文 / 下划线 / 驼峰） |
+| `PROPERTY_TYPE_CONFLICT` | 可以更好 | 同名属性在不同对象类型里类型不一致 |
+| `RELATION_SELF_LOOP` | 可以更好 | 起点和终点是同一个对象类型（层级 / 转派语义下是对的） |
+| `RELATION_DUPLICATE_PAIR` | 可以更好 | 同一对对象类型之间有多条关系类型 |
+| `RELATION_NAME_COLLIDES` | 可以更好 | 关系类型和某个对象类型同名 |
+| `RELATION_NO_DESCRIPTION` | 可以更好 | 关系类型没写说明 |
+| `INTERFACE_UNUSED` | 可以更好 | 接口没人实现、也没被继承 |
+| `GROUP_EMPTY` | 可以更好 | 概念分组下面还没有对象类型 |
+| `ACTION_WITHOUT_EDIT` | 可以更好 | 动作没有任何写操作 |
+| `ACTION_NO_DESCRIPTION` | 可以更好 | 动作没写说明 |
+
+体检**不查真实表结构**："绑的那张表里到底有没有这一列"要连库去比，属于「数据资源」那侧的活；
+它只保证**定义内部自洽**。

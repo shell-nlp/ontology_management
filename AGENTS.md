@@ -852,6 +852,37 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | V3 | MCP 的 resources / prompts | 只实现了 tools 能力 | 若要给客户端直接挂"本体说明书"，可以加 `resources/list` 暴露本体概览；先等真实客户端需求 |
 | V4 | MCP 侧的长任务通知 | 平台内的问答已经走 SSE 边跑边显示；MCP 工具仍是同步返回，大子图查询会让客户端干等 | 评估 MCP 的 progress 通知（`notifications/progress`），先看真实客户端是否需要 |
 
+### 建模体检（建模质量自检）
+
+记录时间：2026-09-18。对着 openBKN 的 `bkn-engineering` 比过一轮之后补的第一块过程能力：
+发布前校验只管"能不能发布"，**没人管"建得好不好"** —— 空壳对象类型、孤悬类型、主键列没属性接、
+命名打架、接口没人实现，这些一条都拦不住，但会让本体在应用里不好用。
+
+两层分工（**别混在一起**）：
+
+| | 发布前校验 | 建模体检 |
+| --- | --- | --- |
+| 代码 | `validateVersionSnapshot`（`version-snapshot.ts`） | `reviewOntologyModel`（`modeling-review.ts`） |
+| 什么时候跑 | 点「校验」/「发布」 | 点「建模体检」/ 调 `review_model` |
+| 档次 | 阻断 + `severity: "WARN"` | `WARN`（该改）/ `INFO`（可以更好），**一条都不挡发布** |
+| 管什么 | 来源绑定、端点契约、必填与唯一、接口实现、动作定义 | 建模层面的自洽：粒度、命名、映射完整度、孤立与空壳 |
+
+- **规则码是稳定标识**（`ENTITY_ORPHAN` / `PROPERTY_TYPE_CONFLICT` …）：界面、MCP 工具、技能文档共用同一份，
+  加规则只加码、不改码。规则在 `src/lib/modeling-review.ts` 的 `RULES` 数组里，一条一个纯函数；
+  **每加一条就在 `modeling-review.test.ts` 里钉一个用例**，那里还有一条"健康本体零结论"的用例，
+  用来防规则越加越吵。
+- **三个出口缺一不可**（少一个就会出现"界面说没问题、模型说有问题"）：
+  1. 界面：本体草稿 → 页头「建模体检」（按钮上挂"该改"条数的角标）→ `modeling-review-panel.tsx` 的面板；
+     每条结论点主体能跳到对应标签页（对象类型 / 关系类型 / 接口 / 概念分组 / 动作）。
+  2. 工具：`review_model` —— 进模型工具集，也进 MCP 的 `tools/list`（`model` 组，标题「建模体检」）。
+  3. 技能：`skills/ontology-builder/references/modeling-rules.md` 第 9 节列出全部规则码，
+     外部 Agent 出包前可以照着自查。
+- **刻意不做的事**：不查真实表结构。"绑的那张表里到底有没有这一列"要连库去比，属于「数据资源」那侧的活；
+  这一层只保证**定义内部自洽**。
+- 实测（2026-09-18，本体「…备份V4」）：一次体检出 9 条 —— 4 条 `ENTITY_ORPHAN`（调账 / 欠费 / 缴费 / 销账
+  既不绑数据、不连关系、也没有动作）、2 条 `PROPERTY_TYPE_CONFLICT`（`BOSS_CUST_ID` 一边 TEXT 一边 DECIMAL、
+  `OFFER_ID` 一边 DECIMAL 一边 TEXT）、3 条 `RELATION_NO_DESCRIPTION`。前两类都是真的建模问题。
+
 ### 概念分组（业务域）
 
 记录时间：2026-09-14。**用户方向：像 bkn-studio 的知识网络详情页那样，把对象类型按业务域（客户域 / 账务域 / 字典域…）

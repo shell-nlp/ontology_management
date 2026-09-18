@@ -264,3 +264,33 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .target-dialog { width:min(560px, 100%); }
 /* 类清单里的数据来源标记：只有把类绑到表上的时候才出现。 */
 .type-row .type-source { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; color: #1d4ed8; background: #eef4ff; border: 1px solid #d9e4ff; font-size: 10.5px; font-style: normal; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; }
+
+/* ---------- 建模体检（本体草稿） ---------- */
+/*
+ * 和「校验」的差别是这里全是建议：只有「该改」（琥珀）与「可以更好」（蓝）两档，不用报错的红色 ——
+ * 草稿停在半路是常态，体检要能容忍中间状态。
+ */
+.review-panel { display: grid; gap: 12px; }
+.review-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.review-head h2 { margin: 5px 0 0; font-size: 17px; }
+.review-filters { display: flex; gap: 6px; }
+.review-filters button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #d6e1f0; border-radius: 3px; background: #fff; color: #47606f; font: inherit; font-size: 11.5px; cursor: pointer; }
+.review-filters button:hover { border-color: #93b4f5; color: #1e3a8a; }
+.review-filters button.active { border-color: #cfe0fb; background: #f5f8ff; color: #1e3a8a; }
+.review-filters b { font-weight: 700; }
+.review-clean { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 12px; border-radius: 3px; background: #edf7f0; color: #32644d; font-size: 12.5px; }
+.review-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.review-item { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid #e3e9f2; border-left-width: 3px; border-radius: 3px; background: #fbfcfe; }
+.review-item.warn { border-left-color: #d8a13a; }
+.review-item.info { border-left-color: #93b4f5; }
+.review-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-level { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
+.review-item.warn .review-level { background: #fdf3e2; color: #9a6b12; }
+.review-item.info .review-level { background: #eef2ff; color: #2563eb; }
+.review-item code { color: #8792a2; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px; }
+.review-scope { margin-left: auto; padding: 2px 8px; border: 1px solid #d6e1f0; border-radius: 3px; background: #fff; color: #3d5557; font: inherit; font-size: 11px; cursor: pointer; }
+.review-scope:hover { border-color: #93b4f5; color: #1e3a8a; }
+.review-issue { margin: 0; color: #2f4648; font-size: 12.5px; line-height: 1.6; }
+.review-hint { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: #657476; font-size: 12px; line-height: 1.6; }
+.review-hint svg { margin-top: 3px; flex: none; }
+.review-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; margin-left: 5px; padding: 0 5px; border-radius: 99px; background: #fdf3e2; color: #9a6b12; font-size: 10.5px; font-style: normal; font-weight: 700; }

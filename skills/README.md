@@ -37,6 +37,13 @@
 - 字段级规范与全部枚举见 `ontology-bundle/references/bundle-format.md`；
   一份**能通过校验的完整示例**见 `ontology-bundle/references/example.bundle.json`。
 
+## 平台侧的建模体检
+
+出包之后、发布之前，平台会给草稿做一次**建模体检**（本体草稿页头「建模体检」；外部 Agent 可以调 MCP 工具
+`review_model`）：空壳与孤悬的对象类型、主键列没属性接、必填属性没映射列、命名打架、关系端点没选、
+接口没人实现这类问题，会按「该改 / 可以更好」两档列出来。**它不挡发布**，是建议层；硬性门禁仍然是发布前校验。
+`ontology-builder/references/modeling-rules.md` 第 9 节把全部规则码列出来了，写方案时可以直接对照。
+
 ## 术语（与平台界面一致）
 
 | 平台里的词 | 含义 | 代码里的字段 |
