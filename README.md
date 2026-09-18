@@ -107,8 +107,7 @@ cp .env.example .env.local
 | `TARGET_ENCRYPTION_KEY` | ✅ | 32 字节 Base64 密钥：`openssl rand -base64 32` |
 | `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话 Cookie |
 | `AUTH_COOKIE_SECURE` | 可选 | 会话 Cookie 的 Secure 开关；留空按请求实际协议判断（推荐） |
-| `FUSEKI_IMAGE` / `FUSEKI_DATASET` / `FUSEKI_ADMIN_PASSWORD` / `FUSEKI_PORT` / `FUSEKI_DATA_DIR` | 容器 | Fuseki 服务：镜像、数据集名、管理密码、宿主机端口、数据目录 |
-| `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | 图库端点主机名改写（如 `localhost=fuseki`）；用外面的 Fuseki 时指向它 |
+| `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | Jena 端点主机名改写；容器默认 `localhost=host.docker.internal`，外部服务可覆盖 |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
 | `ONTOLOGY_VERSION_DIR` | 可选 | 快照目录，默认 `<项目>/.data/ontology-versions` |
@@ -142,11 +141,9 @@ pnpm dev
 
 ## Docker Compose 部署
 
-编排里两个服务：**`app`**（本体平台镜像）与 **`fuseki`**（Apache Jena Fuseki，本体存储）。
-PostgreSQL（平台库）与业务数据源（Oracle / PostgreSQL / MySQL）按你现有的方式跑，不进这个编排。
-
-容器之间用**服务名**互相访问：平台连 Fuseki 走 `fuseki:3030`；`3030` 映射到宿主机只是留给
-本机开发服务和浏览器里的 Fuseki 管理界面。
+编排只包含 **`app`**（本体平台）。PostgreSQL（平台库）、业务数据源和可选的
+Apache Jena/Fuseki 图引擎都由你单独部署；不用 Jena 时无需运行 Fuseki。已有 Jena 本体仍可连接
+外部服务，移除编排服务并不删除 Jena 适配器或 `.data/fuseki` 旧数据。
 
 ```bash
 cp .env.docker.example .env.docker    # 填 DATABASE_URL 与密钥（模板里有逐项说明）
@@ -159,14 +156,14 @@ pnpm docker:logs                      # 跟日志
 记得带上这个参数，否则这几个变量取不到值。
 
 不带 `--env-file` 直接 `docker compose up -d` 也能起（Docker Desktop 上点按钮、IDE 里的 compose up
-都走这条路），但那时用的是**默认值**：本体存储用官方镜像、Fuseki 数据仍在 `./.data/fuseki`、
-版本快照落命名卷（等于空目录，界面里会答"还没有发布版本"）、Fuseki 管理密码用 compose 里写死的默认值。
+都走这条路），但那时用的是**默认值**：版本快照使用项目下的 `./.data/ontology-versions`，
+Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.docker` 提供平台库与密钥。
 固定配置请用 `pnpm docker:up`。
 
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm docker:up` | 构建并后台启动（`docker compose up -d --build`） |
-| `pnpm docker:down` | 停止并删除容器（版本快照在命名卷里，不会丢） |
+| `pnpm docker:down` | 停止并删除平台容器（版本快照在绑定目录或命名卷里，不会丢） |
 | `pnpm docker:logs` | 跟踪平台日志 |
 | `pnpm docker:config` | 打印合并后的编排，排查变量问题 |
 
@@ -174,9 +171,9 @@ pnpm docker:logs                      # 跟日志
 
 1. **容器里的 `localhost` 是容器自己。** 连宿主机上的平台库要用 `host.docker.internal`：
    `DATABASE_URL=postgresql://用户:密码@host.docker.internal:5432/库名`（compose 已加
-   `host.docker.internal:host-gateway`，Linux 上也能这么写）。本体存储不用你操心：库里登记的
-   endpoint 如果写的是 `http://localhost:3030/ds`（给宿主机写的），容器里会由
-   `GRAPH_ENDPOINT_HOST_ALIAS=localhost=fuseki` 换成服务名，**登记一个字都不用改**。
+   `host.docker.internal:host-gateway`，Linux 上也能这么写）。如果另行部署的 Jena 在宿主机，库里
+   登记的 endpoint 是 `http://localhost:3030/ds`，容器默认用
+   `GRAPH_ENDPOINT_HOST_ALIAS=localhost=host.docker.internal` 改写；远端 Jena 请直接登记可达地址。
 2. **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据所用的那一把一致**：数据资源的凭据是加密后存进平台库的，
    换一把钥匙就解不开已登记的连接。`AUTH_SECRET` 换掉只会让已登录会话失效，可以重新生成。
 3. **首次登录不必再调初始化接口**：确认环境中已配置管理员邮箱和密码，平台库为空时会自动创建首个管理员；若库里已有用户，这两个变量不会覆盖现有密码。
@@ -184,13 +181,12 @@ pnpm docker:logs                      # 跟日志
 其他细节：
 
 - 端口：宿主机 `3000` 被占用时用 `APP_PORT=3100 docker compose up -d` 换一个。
-- **Fuseki 的数据**在 `.data/fuseki`（容器内 `/fuseki` = `FUSEKI_BASE`，数据集在 `databases/` 下，
-  密码与配置也在这一份里），换机器时整目录带走即可。它的数据集名要与平台登记的一致（默认 `ds`），
-  Fuseki 缺这个数据集会自己建。**管理密码在 `docker-compose.yml` 里写死了一个非空默认值**
-  （`${FUSEKI_ADMIN_PASSWORD:-admin-studio}`）：既不依赖 `.env.docker`、也不会退回空密码或随机密码；
-  换密码就改那一行，或在 `.env.docker` 里设 `FUSEKI_ADMIN_PASSWORD` 并用 `pnpm docker:up` 启动。
-  从别的 Fuseki 搬数据：先停掉那个容器，再 `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`。
-  Linux 服务器上注意属主 —— 镜像里的 fuseki 用户是 `uid 100`，宿主目录要 `chown -R 100:101 .data/fuseki`。
+- **可选 Jena/Fuseki**：自行部署、管理数据集和管理员密码，然后在「设置 → 图引擎配置」中登记
+  可从平台容器访问的地址。升级现有 Compose 配置时，旧 `ontology-fuseki` 容器可能成为孤儿；本次改动
+  不自动停止或删除它，`.data/fuseki` 数据目录也保持原样。旧 `.env.docker` 中的 `FUSEKI_*` 参数
+  不再配置服务，建议手动移除（`env_file` 仍会把它们注入 app 环境）。
+  如果旧连接登记的是 `http://fuseki:3030`，请改成独立服务可达地址，或设置
+  `GRAPH_ENDPOINT_HOST_ALIAS=fuseki=host.docker.internal`（服务仍映射到宿主机 3030 时）。
 - **用机器 IP / 域名走 http 访问时，登录能站住**：会话 cookie 的 `Secure` 按**这次请求实际的协议**决定
   （反向代理后面看 `x-forwarded-proto`），不再只看 `NODE_ENV`。早先只看 `NODE_ENV`，容器里
   `NODE_ENV=production` 恒成立，于是 http 访问发出去的是 Secure cookie，浏览器直接丢掉 ——
@@ -201,7 +197,7 @@ pnpm docker:logs                      # 跟日志
   `docker compose down` 不会删它；也可以把 `VERSION_SNAPSHOT_DIR` 写成卷名改用命名卷，
   Linux 服务器用绑定挂载时要 `chown -R 1000:1000`，容器里的 node 用户是 uid 1000）。
   把部署搬到新机器时，要么把旧机器的 `<项目>/.data/ontology-versions` 带过来并让
-  `VERSION_SNAPSHOT_DIR` 指向它，要么部署完在界面「本体草稿」里重新发布一次 ——
+  `VERSION_SNAPSHOT_DIR` 指向它，要么部署完在界面「本体建模」里重新发布一次 ——
   不带过去的话，模型工具会答"本体还没有发布版本"，图库也跟库里记的版本对不上。
   同一个平台库上同时跑着本机开发服务时，更要把它指到项目里的同一个目录：两边各写各的快照，
   会出现"一边发布、另一边读不到"。
@@ -449,7 +445,7 @@ Jena 的隔离单位是**命名图**，不是「多起一套实例」；内置�
 
 | 做法 | 适用 | 说明 |
 | --- | --- | --- |
-| 命名图（默认做法） | Apache Jena | 一个数据集里一个本体一个命名图。在「本体」页新建本体时**不用选**，平台自动分配 `urn:ontology:<本体 id>`，同一个 Fuseki 上可以并存任意多个本体 |
+| 命名图（默认做法） | Apache Jena | 一个数据集里一个本体一个命名图。在「总览」中新建本体时**不用选**，平台自动分配 `urn:ontology:<本体 id>`，同一个 Fuseki 上可以并存任意多个本体 |
 | 多 dataset | Apache Jena | 需要按环境 / 租户再分一层时，一个 Fuseki 下配多个 dataset，登记存储时选不同数据集 |
 | 独立实例 | Apache Jena | 需要资源或权限硬隔离时才单起一套 Fuseki/TDB2；日常使用不需要 |
 

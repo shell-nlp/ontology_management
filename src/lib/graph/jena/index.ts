@@ -121,7 +121,7 @@ function optionText(target: GraphTarget, key: string) {
 }
 
 /**
- * 解析 `GRAPH_ENDPOINT_HOST_ALIAS`：形如 `localhost=fuseki` 或 `a:3030=b:3030`，
+ * 解析 `GRAPH_ENDPOINT_HOST_ALIAS`：形如 `localhost=host.docker.internal` 或 `a:3030=b:3030`，
  * 多条用逗号分隔。左边是库里登记的主机名（大小写不敏感），右边是要换成的目标。
  */
 export function parseHostAliases(value: string | undefined) {
@@ -143,8 +143,8 @@ export function parseHostAliases(value: string | undefined) {
  * 在宿主机和容器里要两条不同的地址，来回切很别扭。
  *
  * 与其让用户为容器再登记一条，不如在部署侧声明"A 换成 B"：容器里设
- * `GRAPH_ENDPOINT_HOST_ALIAS=localhost=fuseki`（同一个 compose 里的服务名），
- * 别人为部署容器那条登记一个字都不用改。只改主机与端口，协议与路径不动。
+ * `GRAPH_ENDPOINT_HOST_ALIAS=localhost=host.docker.internal`（可选 Jena 服务在宿主机上），
+ * 容器仍能复用原登记；其他地址可按部署环境配置。只改主机与端口，协议与路径不动。
  */
 export function applyEndpointHostAlias(uri: string, alias: string | undefined = process.env.GRAPH_ENDPOINT_HOST_ALIAS) {
   const aliases = parseHostAliases(alias);

@@ -3,49 +3,15 @@
 #   cp .env.docker.example .env.docker   # 填连接信息与密钥（这个文件不要提交）
 #   docker compose up -d --build         # 或 pnpm docker:up
 #
-# 平台之外的两个依赖，这里刻意不管：
-#   - PostgreSQL：平台库（ontology_platform schema、对象检索索引）—— 不进编排
-# Apache Jena Fuseki 在本编排里（见下面的 fuseki 服务）：它是本体存储，容器之间用服务名
-# `fuseki:3030` 访问，不经过宿主机端口。
+# 平台之外的依赖都不进编排：PostgreSQL 是平台库；Jena/Fuseki 是可选的外部图引擎。
 # 业务数据源（Oracle / PostgreSQL / MySQL）同样是被读取的外部系统，在「数据资源」里登记。
 #
 # 容器里访问宿主机上的服务要走 host.docker.internal（下面已经加了 host-gateway 映射）：
 #   DATABASE_URL = postgresql://用户:密码@host.docker.internal:5432/库名
-# 「本体存储」的 endpoint 存在平台库里的，可能是给宿主机写的 `http://localhost:3030/ds`：
-# 容器里 localhost 是容器自己，所以用 GRAPH_ENDPOINT_HOST_ALIAS 把它改写成服务名
-# （见下面 app 服务的 environment），平台库里那条登记一个字都不用改。
+# 已登记的 Jena endpoint 若指向宿主机的 localhost:3030，app 容器会通过
+# GRAPH_ENDPOINT_HOST_ALIAS 改写为 host.docker.internal:3030；远端地址不变。
 
 services:
-  fuseki:
-    image: ${FUSEKI_IMAGE:-stain/jena-fuseki:latest}
-    container_name: ontology-fuseki
-    restart: unless-stopped
-    environment:
-      TZ: Asia/Shanghai
-      # 数据集名要和平台里登记的 endpoint 路径一致（默认 ds）。Fuseki 缺这个数据集时会自己建。
-      FUSEKI_DATASET_1: ${FUSEKI_DATASET:-ds}
-      # Fuseki 管理密码：**在 compose 里显式设死一个非空值**（不依赖 .env.docker，也不用随机生成）。
-      # 原因是 `env_file` 里的变量不参与 compose 的变量替换：写成 `${VAR:?}` 那种必填插值，
-      # 不带 --env-file 跑（Docker Desktop 上点按钮、IDE 里的 compose up）会直接报错；
-      # 而留空又会让 Fuseki 自己随机生成一个（密码就不在你手上了）。
-      # 想换密码：改这一行，或在 .env.docker 里设 FUSEKI_ADMIN_PASSWORD（用 pnpm docker:up 启动）。
-      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin-studio}
-    ports:
-      # 宿主机端口只为「本机开发服务 + 浏览器打开 Fuseki 管理界面」保留；
-      # 平台容器走服务名 fuseki:3030，不依赖这个映射。
-      - "${FUSEKI_PORT:-3030}:3030"
-    volumes:
-      # FUSEKI_BASE 整个挂出来：数据集在 databases/ 下，config.ttl / shiro.ini 也在这里。
-      # 默认落在项目 .data/fuseki（好备份，也方便从旧容器把数据搬过来）；也可以写成命名卷名字。
-      # Linux 服务器上注意属主：镜像里的 fuseki 用户是 uid 100，绑定的宿主目录要 chown 100:101。
-      - ${FUSEKI_DATA_DIR:-./.data/fuseki}:/fuseki
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3030/$/ping"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
   app:
     build:
       context: .
@@ -62,10 +28,6 @@ services:
     image: ontology-management:local
     container_name: ontology-platform
     restart: unless-stopped
-    depends_on:
-      # 只保证启动顺序：Fuseki 起不来时平台仍能起（图库相关的操作会如实报连不上）。
-      fuseki:
-        condition: service_started
     env_file:
       # 平台自己的变量都在这里：DATABASE_URL / AUTH_SECRET / TARGET_ENCRYPTION_KEY / LLM_* …
       - .env.docker
@@ -74,10 +36,8 @@ services:
       PORT: "3000"
       # 版本快照落在卷里，容器重建不丢。
       ONTOLOGY_VERSION_DIR: /data/ontology-versions
-      # 图库端点主机名改写：平台库里登记的是给宿主机写的 `http://localhost:3030/ds`，
-      # 容器里 localhost 是容器自己 —— 换成同一个 compose 里的服务名即可。
-      # 用的不是本编排里的 Fuseki（比如外面另有一台）时，把它设成那台的地址。
-      GRAPH_ENDPOINT_HOST_ALIAS: ${GRAPH_ENDPOINT_HOST_ALIAS:-localhost=fuseki}
+      # 只改写 Jena 连接中登记的 localhost；外部服务若在别的主机，直接登记真实地址即可。
+      GRAPH_ENDPOINT_HOST_ALIAS: ${GRAPH_ENDPOINT_HOST_ALIAS:-localhost=host.docker.internal}
     ports:
       # 左边是宿主机端口：本机 3000 被占用时在 .env.docker 里设 APP_PORT=3100。
       - "${APP_PORT:-3000}:3000"

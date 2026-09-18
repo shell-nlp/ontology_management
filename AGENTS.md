@@ -295,25 +295,24 @@
   大量对象须另做对象服务、按业务主键定位并在 PG/业务源按需读取，不能装进 N3.Store 或版本快照。
 - Jena 的 SPARQL 工作台、类型传播与发布路径保持原样。内置后端只验证当前实际用到的
   SELECT/ASK/CONSTRUCT/DESCRIBE 和接口传递，不声称 OWL/RDFS 完整蕴含、SHACL 强约束已经可用。
-- Docker 目前仍包含 Fuseki，兼容现存 Jena 本体；只有用户明确要求且迁移、回归均通过后才考虑改为可选服务。
+- Docker Compose 只部署平台 `app`；Jena/Fuseki 仍受支持，但作为可选的外部图引擎单独部署。移出编排不删除已有 Jena 本体或 Fuseki 数据。
 
 ## 部署（Docker Compose）
 
-记录时间：2026-09-14。用户要求提供容器化部署：先明确"只部署平台本体"，
-随后又把 `stain/jena-fuseki:latest` 也加进编排（**容器之间走服务名 `fuseki:3030`**）。
-PostgreSQL（平台库）与业务数据源仍不进编排，按各自现有方式跑。
+当前编排只启动本体平台 `app`。PostgreSQL（平台库）、业务数据源以及可选的
+Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena 适配器和旧数据。
 
 - 文件：`Dockerfile`（builder 做 `pnpm build`，runner 只装生产依赖用 `next start` 起）、
-  `docker-compose.yml`（`app` + `fuseki` 两个服务）、`.env.docker.example`（连接信息与密钥模板，
+  `docker-compose.yml`（仅 `app` 服务）、`.env.docker.example`（连接信息与密钥模板，
   真文件 `.env.docker` 已在 `.gitignore` 里）、`.dockerignore`。
 - **不用 `output: "standalone"`**：`next.config.ts` 把 oracledb / typeorm / pg / mysql2 交给运行时加载，
   而 oracledb 是按平台拼文件名 require 预编译二进制的，Nft 追踪容易漏 → 会出现"装得上、连不上 Oracle"。
   宁可镜像大一点，也要保证原生驱动在。
-- 密钥一律运行时注入（`.dockerignore` 把 `.env*` 挡在构建上下文外）；版本快照挂命名卷
+- 密钥一律运行时注入（`.dockerignore` 把 `.env*` 挡在构建上下文外）；版本快照挂持久卷
   （默认改为绑定项目 `.data/ontology-versions`，与本机开发服务共用同一份；写卷名才用命名卷。
   Linux 上绑定挂载要 `chown -R 1000:1000`，容器里的 node 用户是 uid 1000）。
 - **容器里的 `localhost` 是容器自己**：`DATABASE_URL` 要写 `host.docker.internal`
-  （compose 已加 `host-gateway` 映射）。本体存储那条登记不用改 —— 见下面的主机别名一条。
+  （compose 已加 `host-gateway` 映射）。宿主机上的 Jena 端点可用下面的主机别名保留原登记。
 - **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据一致**：数据资源凭据是加密存的，换钥匙就解不开。
 - **版本快照目录是状态，不是缓存**（2026-09-14 实测）：平台库只记"某本体发布了 vN"，
   定义本身在 `ONTOLOGY_VERSION_DIR`（容器内 `/data/ontology-versions`）。空卷 + 有版本的库
@@ -338,20 +337,13 @@ PostgreSQL（平台库）与业务数据源仍不进编排，按各自现有方�
   验证时两种入口都要试。
 - `platform-db.ts` 的连接池挂了 `error` 监听：远端平台库的空闲连接被网络设备掐断时，
   没有监听者就是未捕获的 error 事件（进程可能直接退出，日志还会打出整个连接对象）。
-- **图库端点的主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**（2026-09-14）：平台库里登记的端点是
-  给宿主机写的（`http://localhost:3030/ds`），容器里 `localhost` 是容器自己。与其让人再登记一条
-  或去改库，不如在部署侧声明"A 换成 B" —— compose 里 app 默认 `localhost=fuseki`，
-  于是宿主机与容器共用同一份登记。实现在 `jena.ts` 的 `resolveSparqlEndpoints`（唯一出口，
-  `applyEndpointHostAlias` 有单测）：**别绕过它直接拼端点**。
-- **Fuseki 也在编排里**（只是比 app 后加）：`stain/jena-fuseki:latest`，`FUSEKI_BASE`（`/fuseki`，
-  含 `databases/` 与 `shiro.ini`）整个绑定到 `.data/fuseki`；数据集名必须与平台登记一致（`ds`）；
-  **管理密码在 compose 里写死一个非空默认值**（`ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin-studio}`）——
-  用户明确要求"要有默认值密码、设置在 compose 里"。别改成 `${VAR:?}`（`env_file` 的变量不参与变量替换，
-  不带 `--env-file` 的 `docker compose up` 会直接报错），也别留空（空值会让 Fuseki 自己随机生成一个，
-  密码就不在用户手上了）。镜像里的 fuseki 用户是 **uid 100**，
-  Linux 上绑定的宿主目录要 `chown -R 100:101`。换机器把 `.data/fuseki` 带走，或从旧容器
-  `docker cp <旧容器>:/fuseki/. ./.data/fuseki/`；图库是派生数据，重新发布也能重建。**已验证**：
-  从 app 容器调 `/api/targets/:id/test` 返回 `address=http://fuseki:3030/ds/query、hasTriples=true`。
+- **Jena 端点主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**：平台库里若登记的是宿主机地址
+  `http://localhost:3030/ds`，容器里默认用 `localhost=host.docker.internal` 保持可达。
+  远端 Jena 直接登记真实地址或显式覆盖别名；实现位于 `src/lib/graph/jena/index.ts` 的
+  `resolveSparqlEndpoints`（`applyEndpointHostAlias` 有单测），不要绕过唯一出口。
+- **现存 Fuseki 数据不清理**：旧 `ontology-fuseki` 容器可能在更新 Compose 后成为孤儿，本次只改编排，
+  不自动停止或删除容器，也不删 `.data/fuseki`。旧 `.env.docker` 的 `FUSEKI_*` 不再配置服务，
+  但仍被 `env_file` 注入 app，建议用户自行清除这些旧变量，尤其是管理员密码。
 
 ## 待办计划（Backlog）
 
