@@ -115,11 +115,6 @@
 .cypher-bar-content .cypher-controls { margin-top:10px; }
 .graph-tool-action, .graph-action.primary, .graph-expand { background:#1e3a8a; border-color:#1e3a8a; }
 .graph-tool-action:hover, .graph-action.primary:hover, .graph-expand:hover { background:#142f73; }
-.graph-view-switcher { display: inline-flex; align-self: start; width: fit-content; overflow: hidden; border:1px solid #c8d9ed; border-radius:2px; background:#ffffff; box-shadow:none; }
-.graph-view-switcher button { min-height: 32px; padding: 0 12px; border: 0; border-right:1px solid #dce7f4; color:#58769c; background: transparent; font-size: 11px; font-weight: 700; }
-.graph-view-switcher button:last-child { border-right: 0; }
-.graph-view-switcher button:hover { background:#edf4ff; color:#1d4ed8; }
-.graph-view-switcher button.active { color:#ffffff; background:#1e3a8a; }
 .manager-toolbar { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(120px, 1fr) auto auto; gap: 7px; margin: 4px 0 10px; }
 .manager-toolbar select, .manager-toolbar input { min-height: 32px; border: 1px solid #cdd9d4; border-radius: 4px; color: #26373a; background: #fff; padding: 0 9px; font-size: 12px; }
 .manager-rows { max-height: 560px; overflow: auto; display: grid; align-content: start; }

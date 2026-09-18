@@ -5,17 +5,28 @@
 .ob-canvas { position: relative; min-width: 0; background: #ffffff; background-image: radial-gradient(#d9e5f5 1.15px, transparent 1.15px); background-size: 42px 42px; }
 .ob-inspector { display: grid; align-content: start; gap: 11px; padding: 14px; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); }
 
-.ob-toolbar { position: absolute; z-index: 4; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 6px 9px; background: #fff; border: 1px solid #d7e2f0; border-radius: 2px; box-shadow: 0 1px 3px rgba(30, 58, 138, .08); }
+.ob-toolbar { position: absolute; z-index: 4; top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 9px; background: #fff; border: 1px solid #d7e2f0; border-radius: 2px; box-shadow: 0 1px 3px rgba(30, 58, 138, .08); }
+.ob-search { position: relative; flex: 1 1 270px; min-width: 180px; max-width: 400px; }
+.ob-search-field { display: flex; align-items: center; gap: 8px; min-height: 29px; padding: 0 8px; color: #6e89ab; background: #fff; border: 1px solid #d7e2f0; border-radius: 2px; }
+.ob-search-field:focus-within { border-color: #7ca8ed; box-shadow: 0 0 0 2px rgba(37, 99, 235, .12); }
+.ob-search-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: #1e3a61; background: transparent; font-size: 11px; }
+.ob-search-field input::placeholder { color: #8ba1bf; }
+.ob-search-results { position: absolute; z-index: 8; top: calc(100% + 8px); left: -1px; width: min(360px, calc(100vw - 44px)); max-height: 320px; overflow: auto; padding: 5px; background: #fff; border: 1px solid #c9d9f0; box-shadow: 0 12px 28px rgba(30, 58, 138, .16); }
+.ob-search-results p { margin: 0; padding: 7px 9px; color: #7187a6; font-size: 10px; }
+.ob-search-results button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 4px 8px; border: 0; background: transparent; color: #26456b; text-align: left; cursor: pointer; }
+.ob-search-results button:hover, .ob-search-results button:focus-visible { outline: 0; background: #edf4ff; }
+.ob-search-results button span { color: #5876a1; font-size: 10px; white-space: nowrap; }
+.ob-search-results button b { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: 1; }
+.ob-search-results button small { color: #8296b4; font-size: 10px; white-space: nowrap; }
 .ob-tool-action { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 9px; border: 1px solid #cbd9ed; border-radius: 5px; color: #315b9f; background: #fff; font-size: 10px; font-weight: 700; }
 .ob-tool-action:hover { background: #edf4ff; border-color: #a9c5ef; color: #1d4ed8; }
-.ob-count { padding-left: 10px; border-left: 1px solid #e3ebf5; color: #7187a6; font-size: 11px; white-space: nowrap; }
 .ob-toolbar b { margin-left: -2px; font-weight: 700; opacity: .8; }
 
 .ob-connect-hint { position: absolute; z-index: 4; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 7px 10px; color: #1d4ed8; background: #eef4ff; border: 1px solid #a9c5ef; border-radius: 2px; font-size: 11px; }
 .ob-connect-hint button { border: 0; padding: 0; color: #58769c; background: transparent; font-size: 11px; text-decoration: underline; }
 .ob-connect-hint button:hover { color: #1d4ed8; }
 
-.ob-gaps { position: absolute; z-index: 4; top: 58px; left: 12px; display: grid; justify-items: start; gap: 5px; max-width: 320px; }
+.ob-gaps { position: absolute; z-index: 3; top: 68px; left: 12px; display: grid; justify-items: start; gap: 5px; max-width: 320px; }
 .ob-gaps > b { display: flex; align-items: center; gap: 6px; color: #a1652c; font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
 .ob-gaps button { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 4px 8px; color: #8a5a1f; background: rgba(255, 255, 255, .94); border: 1px solid #f0d3b4; border-radius: 2px; font-size: 10px; }
 .ob-gaps button:hover { background: #fff8ec; border-color: #dfa963; }
@@ -30,6 +41,8 @@
 .ob-facts { display: flex; flex-wrap: wrap; gap: 6px; }
 .ob-facts span { padding: 5px 8px; color: #68809f; background: #f7fafd; border: 1px solid #e3ebf5; border-radius: 3px; font-size: 10px; }
 .ob-facts b { color: #183b72; font-weight: 700; }
+.ob-inspector-match { margin: 0; padding: 6px 8px; background: #eff5ff; border-left: 2px solid #2563eb; color: #315b9f; font-size: 11px; }
+.graph-properties > .ob-property-match { padding-left: 7px; background: #eff5ff; border-left: 2px solid #2563eb; }
 
 /* 右栏的归属选择：选中对象类型后直接挪分组，用的是同一份 groups。 */
 .ob-group-pick { display: grid; gap: 4px; }
@@ -53,10 +66,11 @@
 @media (max-width: 900px) {
   .ob-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(340px, 1fr) auto; height: clamp(520px, calc(100vh - 240px), 780px); }
   .ob-inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 260px; }
-  .ob-toolbar { right: 12px; flex-wrap: wrap; }
-  .ob-count { border-left: 0; padding-left: 0; }
-  .ob-gaps { top: 92px; max-width: calc(100% - 24px); }
+  .ob-toolbar { right: 12px; }
+  .ob-gaps { top: 135px; max-width: calc(100% - 24px); }
 }
+@media (max-width: 1350px) and (min-width: 901px) { .ob-gaps { top: 135px; } }
+@media (max-width: 600px) { .ob-gaps { top: 175px; } }
 
 /* 右栏「实现接口」：每个接口一个虚线小 chip，点一下就地取消实现。 */
 .ob-iface-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }

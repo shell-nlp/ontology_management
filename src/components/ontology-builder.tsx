@@ -2,12 +2,13 @@
 
 import { useCallback, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, LocateFixed, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
+import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, LocateFixed, Pencil, Plus, Search, Trash2, Wand2, X } from "lucide-react";
 import { actionInvolvement } from "@/lib/action-engine";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
+import { searchOntologyDefinition, type OntologySearchHit } from "@/lib/ontology-search";
 import type { ActionType, Definition, EntityType, RelationType } from "@/lib/ontology-draft";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
@@ -84,6 +85,10 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [layoutSeed, setLayoutSeed] = useState(0);
+  const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [matchedProperty, setMatchedProperty] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ id: string; request: number } | null>(null);
   const storageKey = targetId ? `ontology-builder:${targetId}` : null;
   // 布局只记在本机（"我怎么看这张图"），不进草稿定义。
   const [layout, setLayout] = useLayoutMode(storageKey ? `${storageKey}:layout` : null);
@@ -95,6 +100,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
 
   const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
   const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
+  const searchHits = useMemo(() => searchOntologyDefinition(definition, search), [definition, search]);
 
   const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(() => {
     // 拖过的节点记在这里：它是**覆盖**，压在算出来的坐标上面，所以拖完不会弹回去，分组框也跟着它变。
@@ -170,9 +176,20 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   };
 
   const handleNodeClick = (nodeId: string) => {
+    setSearchOpen(false);
+    setMatchedProperty(null);
     if (connectFrom && connectFrom !== nodeId) { openCreateRelation(connectFrom, nodeId); return; }
     if (connectFrom === nodeId) { setConnectFrom(null); return; }
     setSelected({ kind: "entity", id: nodeId });
+  };
+
+  const selectSearchHit = (hit: OntologySearchHit) => {
+    setSearchOpen(false);
+    setMatchedProperty(hit.propertyName ?? null);
+    setConnectFrom(null);
+    setSelected({ kind: hit.kind, id: hit.id });
+    const nodeId = hit.kind === "entity" ? hit.id : relationById.get(hit.id)?.sourceEntityTypeId;
+    if (nodeId && entityById.has(nodeId)) setFocus((current) => ({ id: nodeId, request: (current?.request ?? 0) + 1 }));
   };
 
   const startConnection = (source: string) => {
@@ -191,17 +208,27 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         frames={frames}
         selectedNodeId={selected?.kind === "entity" ? selected.id : null}
         selectedEdgeId={selected?.kind === "relation" ? selected.id : null}
+        focusNodeId={focus?.id ?? null}
+        focusRequest={focus?.request ?? 0}
         connectionSourceId={connectFrom}
         draggable
         layoutRequest={0}
         onNodeClick={handleNodeClick}
-        onEdgeClick={(edgeId) => setSelected({ kind: "relation", id: edgeId })}
-        onStageClick={() => { setSelected(null); setConnectFrom(null); }}
+        onEdgeClick={(edgeId) => { setSearchOpen(false); setMatchedProperty(null); setSelected({ kind: "relation", id: edgeId }); }}
+        onStageClick={() => { setSearchOpen(false); setMatchedProperty(null); setSelected(null); setConnectFrom(null); }}
         onDragEnd={(nodeId, point) => { if (positionKey && canEdit) writeStoredPositions(positionKey, { ...readStoredPositions(positionKey), [nodeId]: point }); }}
         onLayoutEnd={() => undefined}
       />
 
       <div className="ob-toolbar">
+        <div className="ob-search" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
+          <label className="ob-search-field"><Search size={15} aria-hidden="true" /><input type="search" value={search} onFocus={() => setSearchOpen(true)} onChange={(event) => { setSearch(event.target.value); setSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Enter" && searchHits[0]) { event.preventDefault(); selectSearchHit(searchHits[0]); } else if (event.key === "Escape") setSearchOpen(false); }} placeholder="搜索对象类型、属性或关系类型" aria-label="搜索对象类型、属性或关系类型" /></label>
+          {search.trim() && searchOpen && <div className="ob-search-results" aria-label="搜索结果">
+            <p>{searchHits.length ? `找到 ${searchHits.length} 项 · 回车定位第一项` : "没有匹配的对象类型或关系类型"}</p>
+            {searchHits.slice(0, 12).map((hit) => <button type="button" key={`${hit.kind}:${hit.id}`} onClick={() => selectSearchHit(hit)}><span>{hit.kind === "entity" ? "对象类型" : "关系类型"}</span><b>{hit.name}</b><small>{hit.reason}</small></button>)}
+            {searchHits.length > 12 && <p>还有 {searchHits.length - 12} 项，请输入更精确的名称。</p>}
+          </div>}
+        </div>
         <button className="graph-tool-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "create", id: newId() })}>
           <Plus size={14} />对象类型
         </button>
@@ -218,7 +245,6 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         <button className="ob-tool-action" disabled={!onOpenGroups} onClick={() => onOpenGroups?.()} title="概念分组（业务域）：切到同一页的「概念分组」标签建分组、勾成员">
           <Boxes size={14} />概念分组 <b>{definition.groups.length}</b>
         </button>
-        <span className="ob-count">{definition.entityTypes.length} 个对象类型 · {definition.relationshipTypes.length} 关系类型</span>
       </div>
 
 
@@ -265,6 +291,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
             <div className="graph-inspector-body">
               <h3>{selectedEntity.name}</h3>
               <p>{selectedEntity.description || "未填写说明"}</p>
+              {matchedProperty && <p className="ob-inspector-match">匹配属性 · {matchedProperty}</p>}
               <div className="ob-facts">
                 <span>属性 <b>{selectedEntity.properties.length}</b></span>
                 <span>必填 <b>{selectedEntity.properties.filter((item) => item.required).length}</b></span>
@@ -276,7 +303,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   <option value="">未归组</option>
                   {definition.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                 </select>
-                <small>{definition.groups.length ? "选一个业务域，图谱「按逻辑分组」时它会和同组的类型画在一个框里。" : "还没有分组，点工具栏的「概念分组」新建一个。"}</small>
+                <small>{definition.groups.length ? "选一个业务域，画布「按逻辑分组」时它会和同组的类型画在一个框里。" : "还没有分组，点工具栏的「概念分组」新建一个。"}</small>
               </label>
               {selectedInterfaces.length > 0 && (
                 <div className="ob-iface-row">
@@ -291,7 +318,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               {selectedEntity.properties.length > 0 ? (
                 <div className="graph-properties">
                   {selectedEntity.properties.map((property) => (
-                    <div key={property.name}>
+                    <div key={property.name} className={matchedProperty && (property.name === matchedProperty || property.displayName === matchedProperty) ? "ob-property-match" : undefined}>
                       <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
                       <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
                     </div>
@@ -315,12 +342,13 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
             </div>
             <div className="graph-inspector-body">
               <h3>{selectedRelation.name}</h3>
+              {matchedProperty && <p className="ob-inspector-match">匹配属性 · {matchedProperty}</p>}
               <p><span>起点</span> {entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "未指定"}<br /><span>终点</span> {entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "未指定"}</p>
               {(entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "") === "" || (entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "") === "" ? <p className="ob-inspector-warning"><AlertTriangle size={13} />端点未指定，这条关系类型不会出现在画布上，也无法发布。</p> : null}
               {selectedRelation.properties.length > 0 ? (
                 <div className="graph-properties">
                   {selectedRelation.properties.map((property) => (
-                    <div key={property.name}>
+                    <div key={property.name} className={matchedProperty && (property.name === matchedProperty || property.displayName === matchedProperty) ? "ob-property-match" : undefined}>
                       <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
                       <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
                     </div>

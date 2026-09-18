@@ -30,6 +30,9 @@ type Props = {
   frames?: SigmaGroupFrame[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
+  /** 仅在显式检索定位时移动镜头；普通点选不改变用户当前视角。 */
+  focusNodeId?: string | null;
+  focusRequest?: number;
   connectionSourceId: string | null;
   draggable: boolean;
   layoutRequest: number;
@@ -395,10 +398,19 @@ function SigmaGraphLoader({ graph }: { graph: Graph<NodeAttributes, EdgeAttribut
   return null;
 }
 
-function SigmaScene({ selectedNodeId, selectedEdgeId, connectionSourceId, draggable, layoutRequest, nodes, edges, onNodeClick, onEdgeClick, onStageClick, onDragEnd, onLayoutEnd }: Props) {
+function SigmaScene({ selectedNodeId, selectedEdgeId, focusNodeId, focusRequest, connectionSourceId, draggable, layoutRequest, nodes, edges, onNodeClick, onEdgeClick, onStageClick, onDragEnd, onLayoutEnd }: Props) {
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
   const registerEvents = useRegisterEvents<NodeAttributes, EdgeAttributes>();
   const graph = sigma.getGraph();
+  useEffect(() => {
+    if (!focusNodeId || !focusRequest || !graph.hasNode(focusNodeId)) return;
+    const position = sigma.getNodeDisplayData(focusNodeId);
+    if (!position) return;
+    const camera = sigma.getCamera();
+    const next = { x: position.x, y: position.y, ratio: Math.min(camera.getState().ratio, 0.65) };
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) camera.setState(next);
+    else void camera.animate(next, { duration: 360 });
+  }, [focusNodeId, focusRequest, graph, sigma]);
   const draggedNodeRef = useRef<string | null>(null);
   const draggedOriginRef = useRef<{ x: number; y: number } | null>(null);
   const draggedNodeForceLabelRef = useRef(false);
