@@ -112,7 +112,9 @@
 | `ENTITY_PRIMARY_KEY_UNMAPPED` | 该改 | 主键列没有属性接住（对象身份拿不到值） |
 | `ENTITY_REQUIRED_PROPERTY_UNMAPPED` | 该改 | 必填属性没有映射列 |
 | `ENTITY_ORPHAN` | 该改 | 孤悬：没绑数据、不连任何关系类型、也没有动作作用在它身上 |
-| `ENTITY_DUPLICATE_NAME` | 该改 | 同类定义重名（只是大小写或空格不同） |
+| `ENTITY_DUPLICATE_NAME` | 该改 | 对象类型重名（只是大小写或空格不同） |
+| `RELATION_DUPLICATE_NAME` | 该改 | 关系类型重名 |
+| `GROUP_DUPLICATE_NAME` | 该改 | 概念分组重名 |
 | `ENTITY_GROUP_MISSING` | 该改 | 指向了一个不存在的概念分组 |
 | `RELATION_ENDPOINT_MISSING` | 该改 | 关系类型的起点或终点还没选对象类型 |
 | `INTERFACE_EMPTY` | 该改 | 接口既没有属性也没有关系约束（空契约） |

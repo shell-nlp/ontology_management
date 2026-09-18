@@ -173,6 +173,17 @@ function namingStyle(name: string): string | null {
   return null;
 }
 
+/**
+ * 重名的规则码：按主体分类各一个。
+ * 写成显式映射而不是模板拼接，是为了让每个码都是源码里的字面量 ——
+ * `skills.test.ts` 靠它核对"技能文档有没有漏掉某个码"（模板拼出来的码正则抓不到，之前就漏过两个）。
+ */
+export const DUPLICATE_NAME_CODES: Record<"OBJECT_TYPE" | "RELATION_TYPE" | "GROUP", string> = {
+  OBJECT_TYPE: "ENTITY_DUPLICATE_NAME",
+  RELATION_TYPE: "RELATION_DUPLICATE_NAME",
+  GROUP: "GROUP_DUPLICATE_NAME",
+};
+
 /** 同一批名字里有没有"忽略大小写与空白之后撞车"的。 */
 function duplicateNames<T extends { name: string }>(items: readonly T[]) {
   const buckets = new Map<string, T[]>();
@@ -278,7 +289,7 @@ function reviewSourceMapping(model: ReviewableDefinition): ModelingFinding[] {
 /** 对象类型 / 关系类型 / 分组：名称撞车、命名风格混着来。 */
 function reviewNaming(model: ReviewableDefinition): ModelingFinding[] {
   const findings: ModelingFinding[] = [];
-  const scopes: { scope: ReviewScope; label: string; items: readonly { id: string; name: string }[] }[] = [
+  const scopes: { scope: "OBJECT_TYPE" | "RELATION_TYPE" | "GROUP"; label: string; items: readonly { id: string; name: string }[] }[] = [
     { scope: "OBJECT_TYPE", label: "对象类型", items: model.entityTypes },
     { scope: "RELATION_TYPE", label: "关系类型", items: model.relationshipTypes },
     { scope: "GROUP", label: "概念分组", items: model.groups ?? [] },
@@ -287,7 +298,7 @@ function reviewNaming(model: ReviewableDefinition): ModelingFinding[] {
     for (const bucket of duplicateNames(items)) {
       for (const item of bucket) {
         findings.push(finding(
-          `${scope === "OBJECT_TYPE" ? "ENTITY" : scope === "RELATION_TYPE" ? "RELATION" : "GROUP"}_DUPLICATE_NAME`,
+          DUPLICATE_NAME_CODES[scope],
           "WARN", scope, item,
           `${label}「${item.name}」和 ${bucket.length - 1} 个同类定义重名（只是大小写或空格不同）。`,
           "名称是推理与工具调用时的唯一入口，重名会让模型和用户都分不清指的是哪一个，改成一个更有区分度的名字。",

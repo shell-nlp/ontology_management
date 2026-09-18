@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { planBundleImport, readOntologyBundle } from "@/lib/ontology-bundle";
+import { DUPLICATE_NAME_CODES } from "@/lib/modeling-review";
 import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills";
 import { validateVersionSnapshot } from "@/lib/version-snapshot";
 
@@ -45,6 +46,19 @@ describe("本体技能目录", () => {
     }
     expect(format!.content).toContain("TEXT_ARRAY");
     expect(format!.content).toContain("BLOCK");
+  });
+
+  it("建模体检的规则码与技能文档同步（加了规则就得补文档）", async () => {
+    // 规则码是稳定标识，技能文档要照着它自查。这里直接读引擎源码抽码 ——
+    // 断言"引擎里有的，文档里都得有"，免得加完规则忘了改文档（之前就漏过两个）。
+    const source = await readFile(path.join(root, "src", "lib", "modeling-review.ts"), "utf8");
+    const literals = [...source.matchAll(/finding\(\s*"([A-Z][A-Z0-9_]{4,})",\s*"(?:WARN|INFO)"/g)].map((match) => match[1]);
+    const engineCodes = [...new Set([...literals, ...Object.values(DUPLICATE_NAME_CODES)])];
+    expect(engineCodes.length).toBeGreaterThan(20);
+    const rules = await readSkillFile("ontology-builder", "references/modeling-rules.md");
+    for (const code of engineCodes) {
+      expect(rules!.content, `modeling-rules.md 少了规则码 ${code}`).toContain(code);
+    }
   });
 
   it("文件路径不能跑出技能目录", async () => {
