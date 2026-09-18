@@ -43,15 +43,15 @@ export const SKILL_CATALOG: readonly SkillCatalogEntry[] = [
     stage: 2,
     title: "本体设计",
     scenario: "已有建模清单或业务材料，需要把粒度、命名、主键、属性类型、关系方向与约束定下来，形成可评审的建模方案。",
-    outputs: "02-建模方案.md + *.ontology.json 初稿：对象类型、关系类型、接口、动作、规则、数据来源绑定。",
+    outputs: "02-建模方案.md + *.blueprint.json 初稿（结构化清单）：对象类型、关系类型、接口、动作、规则、数据来源绑定。",
     icon: "builder",
   },
   {
     id: "ontology-bundle",
     stage: 3,
     title: "出包与交付",
-    scenario: "方案已定，需要产出一份能直接导入平台的本体包 JSON，并在交付前做结构自检与语义自检。",
-    outputs: "<标识>.ontology.json（format: ontology.bundle）+ 导入 / 校验 / 发布步骤与常见报错修法。",
+    scenario: "方案已定，需要产出一份能直接导入平台的本体包 JSON：先写结构化清单，再用技能自带的脚本编译成包，并在交付前做结构自检与语义自检。",
+    outputs: "<标识>.ontology.json（format: ontology.bundle）：技能自带的编译脚本从清单产出，附导入 / 校验 / 发布步骤与常见报错修法。",
     icon: "bundle",
   },
 ];

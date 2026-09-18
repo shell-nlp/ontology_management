@@ -3,7 +3,7 @@ name: ontology-builder
 description: >-
   本体建模方案设计：把需求澄清清单（或已经比较明确的业务材料）落成平台认识的本体结构 ——
   对象类型与属性、关系类型与方向、接口与实现约束、概念分组、动作与规则、数据来源绑定，
-  并给出 `*.ontology.json` 初稿。当用户说"把这些对象关系设计出来""帮我建个本体模型"
+  并给出 `*.blueprint.json` 初稿（结构化清单）。当用户说"把这些对象关系设计出来""帮我建个本体模型"
   "怎么建对象类型和关系类型"时使用。要最终交付**能导入**的 JSON 时配合 ontology-bundle 收口。
 ---
 
@@ -17,8 +17,9 @@ description: >-
 ## 输出
 
 1. `02-建模方案.md` —— 给人评审：每个对象类型的属性表、关系类型表、接口、动作、规则、以及"为什么这么建"。
-2. `*.ontology.json` —— 本体包初稿（结构见 `ontology-bundle/references/bundle-format.md`）。
-   初稿允许有未定稿的地方（例如还没选表），但**结构必须合法**：id 是 UUID、引用都指得到。
+2. `*.blueprint.json` —— **结构化清单**初稿（格式见 `ontology-bundle/references/blueprint-format.md`）。
+   初稿允许有未定稿的地方（例如还没选表、还没定数据来源），引用一律写**名字**、不写 UUID ——
+   出包那一步由 `ontology-bundle` 的编译脚本把清单变成真正的包。
 
 ## 建模顺序（按依赖走，别跳）
 

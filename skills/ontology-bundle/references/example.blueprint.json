@@ -1,0 +1,184 @@
+{
+  "format": "ontology.blueprint",
+  "formatVersion": 1,
+  "ontology": {
+    "identifier": "telecom-line-service-demo",
+    "name": "专线服务示例本体",
+    "description": "演示用：客户、专线产品用户、固话用户、专线产品，以及「停机」动作与一条拦截规则。",
+    "color": "#2563eb",
+    "tags": ["示例", "专线"]
+  },
+  "dataSources": [
+    {
+      "name": "Oracle 测试",
+      "kind": "ORACLE",
+      "host": "10.0.0.10",
+      "port": 1521,
+      "databaseName": "orcl",
+      "schemaName": "GISTOOLS"
+    }
+  ],
+  "groups": [
+    { "name": "客户域", "color": "#2563eb" },
+    { "name": "产品域", "color": "#16a34a" }
+  ],
+  "interfaces": [
+    {
+      "name": "可服务对象",
+      "description": "客服可以按服务号码定位、并对其执行服务动作的对象。",
+      "properties": [
+        {
+          "name": "SERV_NUMBER",
+          "displayName": "服务号码",
+          "description": "业务上用来定位这个对象的号码，客服按它检索。",
+          "dataType": "TEXT",
+          "required": true
+        }
+      ],
+      "linkConstraints": [
+        {
+          "name": "归属客户",
+          "description": "每个可服务对象都必须归属到一个客户。",
+          "target": "客户",
+          "cardinality": "ONE",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "objectTypes": [
+    {
+      "name": "客户",
+      "description": "订购并使用业务的自然人或单位。",
+      "displayProperty": "CUST_NAME",
+      "group": "客户域",
+      "properties": [
+        { "name": "CUST_ID", "displayName": "客户标识", "description": "客户在本系统中的唯一标识。", "dataType": "TEXT", "required": true, "unique": true },
+        { "name": "CUST_NAME", "displayName": "客户名称", "description": "客户的业务名称，图上展示用。", "dataType": "TEXT", "required": true },
+        { "name": "CUST_LEVEL", "displayName": "客户等级", "description": "客户的信用/服务等级编码。", "dataType": "TEXT" },
+        { "name": "AREA_CODE", "displayName": "归属地市", "description": "客户归属的地市编码，用于按地市筛选。", "dataType": "TEXT", "indexed": true }
+      ]
+    },
+    {
+      "name": "专线产品用户",
+      "description": "开通了专线产品的客户侧使用实例，是服务动作的直接对象。",
+      "displayProperty": "USER_NAME",
+      "group": "客户域",
+      "implements": ["可服务对象"],
+      "properties": [
+        { "name": "USER_ID", "displayName": "用户标识", "description": "专线产品用户的唯一标识。", "dataType": "TEXT", "required": true, "unique": true, "sourceField": "USER_ID" },
+        { "name": "SERV_NUMBER", "displayName": "服务号码", "description": "专线电路编号，客服按它定位用户。", "dataType": "TEXT", "required": true, "unique": true, "indexed": true, "sourceField": "SERV_NUMBER" },
+        { "name": "USER_NAME", "displayName": "用户名称", "description": "用户名称，图上展示用。", "dataType": "TEXT", "sourceField": "CUST_NAME" },
+        { "name": "SERV_STATUS", "displayName": "服务状态", "description": "当前服务状态，取值来自业务系统的状态字典。", "dataType": "TEXT", "indexed": true, "sourceField": "STATUS" }
+      ],
+      "sources": [
+        {
+          "id": "primary",
+          "dataSource": "Oracle 测试",
+          "schema": "GISTOOLS",
+          "view": "TB_MK_GRP_LINE_LIST_DAY",
+          "primaryKey": ["USER_ID"],
+          "titleField": "USER_NAME"
+        }
+      ]
+    },
+    {
+      "name": "专线产品",
+      "description": "可被用户订购的专线产品目录项。",
+      "displayProperty": "OFFER_NAME",
+      "group": "产品域",
+      "properties": [
+        { "name": "OFFER_ID", "displayName": "产品标识", "description": "产品的唯一标识。", "dataType": "TEXT", "required": true, "unique": true },
+        { "name": "OFFER_NAME", "displayName": "产品名称", "description": "产品对外名称。", "dataType": "TEXT", "required": true },
+        { "name": "MONTHLY_FEE", "displayName": "月费", "description": "产品月功能费，单位：元。", "dataType": "DECIMAL" }
+      ]
+    },
+    {
+      "name": "固话用户",
+      "description": "开通了固定电话业务的客户侧使用实例。",
+      "displayProperty": "USER_NAME",
+      "group": "客户域",
+      "implements": ["可服务对象"],
+      "properties": [
+        { "name": "USER_ID", "displayName": "用户标识", "description": "固话用户的唯一标识。", "dataType": "TEXT", "required": true, "unique": true },
+        { "name": "SERV_NUMBER", "displayName": "服务号码", "description": "固话号码，客服按它定位用户。", "dataType": "TEXT", "required": true, "unique": true, "indexed": true },
+        { "name": "USER_NAME", "displayName": "用户名称", "description": "用户名称，图上展示用。", "dataType": "TEXT" }
+      ]
+    }
+  ],
+  "relationTypes": [
+    {
+      "name": "客户拥有专线产品用户",
+      "description": "一个有专线的客户可能对应多个专线产品用户。",
+      "source": "客户",
+      "target": "专线产品用户",
+      "properties": [
+        { "name": "CUST_SINCE", "displayName": "成为客户的日期", "description": "这个用户成为该客户的日期。", "dataType": "DATE" }
+      ]
+    },
+    {
+      "name": "专线产品用户归属客户",
+      "description": "专线产品用户归属的客户，满足接口「可服务对象」的必填关系约束。",
+      "source": "专线产品用户",
+      "target": "客户"
+    },
+    {
+      "name": "客户拥有固话用户",
+      "description": "一个有固话的客户可能对应多个固话用户。",
+      "source": "客户",
+      "target": "固话用户"
+    },
+    {
+      "name": "固话用户归属客户",
+      "description": "固话用户归属的客户，满足接口「可服务对象」的必填关系约束。",
+      "source": "固话用户",
+      "target": "客户"
+    },
+    {
+      "name": "用户订购专线产品",
+      "description": "专线产品用户订购的产品；订购时间挂在这条关系上。",
+      "source": "专线产品用户",
+      "target": "专线产品",
+      "properties": [
+        { "name": "ORDER_TIME", "displayName": "订购时间", "description": "这条订购关系建立的时间。", "dataType": "DATETIME" }
+      ]
+    }
+  ],
+  "actionTypes": [
+    {
+      "name": "停机",
+      "code": "suspend_line_service",
+      "description": "把专线产品用户的服务状态置为已停机。动作定义在「专线产品用户」上。",
+      "scope": "专线产品用户",
+      "params": [
+        { "code": "reason", "name": "停机原因", "kind": "VALUE", "dataType": "TEXT", "required": true }
+      ],
+      "edits": [
+        {
+          "op": "SET_PROPERTY",
+          "entityRef": { "kind": "SUBJECT" },
+          "assignments": [
+            { "property": "SERV_STATUS", "value": { "kind": "CONST", "value": "已停机" } }
+          ]
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "name": "已停机不能重复停机",
+      "effect": "BLOCK",
+      "priority": 10,
+      "action": "停机",
+      "conditions": [
+        {
+          "subject": { "kind": "SUBJECT" },
+          "property": "SERV_STATUS",
+          "operator": "EQUALS",
+          "compareValue": "已停机"
+        }
+      ],
+      "message": "这个用户的专线服务已经是停机状态，不需要重复停机。"
+    }
+  ]
+}

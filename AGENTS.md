@@ -11,11 +11,19 @@
 
 - 本仓库**已建索引**（`.codegraph/`，用 `codegraph status` 看统计）。找代码、定位符号、看调用关系时
   **先用它，再考虑 grep 或逐个读文件**。
-- 本机**没有注册 MCP server**，所以 `codegraph_explore` 那个 MCP 工具不可用；走 shell，输出完全一样：
-  `codegraph explore "<符号名或一句话问题>"`。同一个 CLI 还有 `query`（按名字搜符号）、
+- **走 shell，不要指望 MCP**（2026-09-18 复核）：`codegraph_explore` 这个 MCP 工具在本工作区**用不了**，
+  但原因不是"没注册"——全局 `mcp.json`（`%APPDATA%\Trae CN\User\mcp.json`）里**有**一条 `codegraph`，
+  只是它把路径写死成了 `-p d:/project/shangke-platform`，而**那个项目的索引是坏的**
+  （`codegraph status` 报 `disk I/O error`），所以对本仓库无效。一个 MCP 条目只能钉一个项目，
+  而 `d:/project` 下有 ~20 个项目 —— 这就是选 CLI 的根本原因，别再往 mcp.json 里加死路径。
+  CLI 输出与 MCP 工具完全一样：`codegraph explore "<符号名或一句话问题>"`。同一个 CLI 还有
+  `query`（按名字搜符号）、`node`（单符号源码 + 调用链）、`callers` / `callees` / `impact`（调用关系与影响面）、
   `context`（按任务拼上下文）、`status`（索引统计）、`sync`（增量更新）。
 - **开工前先 `codegraph sync`**：索引落后于磁盘时会给出过期的调用方。本仓库索引建于 9/17 16:44，
   改过文件之后再 sync 才认得出新代码（2026-09-18 实测：12 个文件变更、+541 个节点，1 秒内完成）。
+  2026-09-18 复核：索引健康（168 文件 / 3,155 节点 / 8,160 边 / 10.5 MB），`sync` 返回
+  `Already up to date`。注意 `sync` 会往 `~/.codegraph/telemetry-queue.jsonl` 写匿名遥测，
+  被沙箱拦时会以 exit code 1 结束（**同步本身已经成功**，别误判成失败）；嫌吵就 `codegraph telemetry off`。
 - 实测省在哪（2026-09-18）：一条 `codegraph explore` 直接拿到 `validateVersionSnapshot`（6 个调用方）、
   `ontologyDefinitionSchema`（17 个调用方），以及哪些文件带测试 —— 省掉了先 grep 再逐个打开文件的往返。
 - **什么时候不用**：只查精确字符串（改文案、排查界面术语）时 `rg` 更快；CodeGraph 是「找代码」用的，
@@ -159,6 +167,36 @@
     支持围栏代码块与 `- [ ]` 清单；自研而非引库（只渲染我们自己产出的文本）。
   - `src/lib/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
     （Blob 下载、读 `Content-Disposition` 文件名）—— MCP 页复制、本体导出、技能下载共用同一份。
+
+## 出包改成「清单 → 编译」（2026-09-18）
+
+用户要求：「让模型只输出**结构化清单**，然后最终由脚本编译生成，而且这个脚本要支持 window/linux/mac 的不同系统。」
+
+背景：让模型直接吐 `ontology.bundle` 的 JSON，最容易错的两件事是**手写 UUID 与 id 引用**（对不上就整包报错）
+和**格式漂移**（忘字段、写错枚举）。现在把这两件事从模型手里拿走。
+
+| 谁产出 | 文件 | 内容 |
+| --- | --- | --- |
+| 模型写 | `<标识>.blueprint.json` | **结构化清单**：引用一律写名字（「客户」），不写 id / UUID / format |
+| 脚本编译 | `<标识>.ontology.json` | **本体包**，平台「导入本体包」认的就是它 |
+
+- 脚本在 `skills/ontology-bundle/scripts/`：`build-bundle.mjs`（编译）、`check-bundle.mjs`（手写包的结构自检）。
+  **只用 Node 内置模块**（不装依赖、不联网、不读环境变量）；调用一律 `process.execPath` + 脚本路径、**不经过 shell**，
+  所以 Windows / Linux / macOS 同一套命令：`node scripts/build-bundle.mjs <清单.json> [--out …] [--check] [--stdout]`。
+- 编译器负责：按名字解析引用（解析不了就报错，并**把当前清单里可用的名字列出来**）、生成全部 UUID、
+  补齐默认值与 `format` / `formatVersion` / `exportedAt` / `generator` / `statistics`。
+  它**不判断建模好坏** —— 那仍是 `ontology-builder/references/modeling-rules.md` 与平台「建模体检」的活；
+  它只把几条"到导入才炸"的检查（空壳对象类型、展示属性悬空、主键列没映射、必填属性没映射列、关系端点没选、规则无条件）
+  提前报成 `⚠` 提醒，**用体检的同一套规则码**，不挡编译。
+- 跟着一起下发的参考：`references/blueprint-format.md`（清单格式与全部枚举）、`references/example.blueprint.json`（可编译的例子）、
+  `references/example.bundle.json`（编译产物长什么样，仍是发布前校验零违规的样板）。
+- `ontology-builder` 的初稿也从 `*.ontology.json` 改成 `*.blueprint.json`（`SKILL_CATALOG` 里那句界面文案同步改了）。
+- 防漂移（都在 `skills.test.ts`）：用**真子进程**跑编译脚本编译示例清单，再把产物走
+  `readOntologyBundle → planBundleImport → validateVersionSnapshot` 要求零违规，并断言接口实现也满足契约；
+  另有一条用例断言引用写错时退出码为 1、且把可选名字列出来。同一处还把「SKILL.md 里点名的 `references/…`」
+  扩成「`references/…` 与 `scripts/…` 都必须真的存在」。
+- 边界：平台**只认** `ontology.bundle`；`.blueprint.json` 不是导入格式（拿清单去导入会被 `format` 检查拦下并提示先编译）。
+  环境里没有 Node 时退回手写包 + `check-bundle.mjs`。
 
 ## 部署（Docker Compose）
 

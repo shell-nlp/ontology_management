@@ -4,6 +4,8 @@
 **从业务材料一步一步构建出一个本体**，最后产出一个可以直接导入平台的 JSON —— 本体包
 （`format: "ontology.bundle"`，后缀 `.ontology.json`）。
 
+出包分两步：模型只写**结构化清单**（用名字引用、不写 UUID），再由技能自带的编译脚本编译成包。
+
 平台里对应的入口：**本体技能**（侧栏「语义模型」下），能看技能原文、逐文件下载、整套打包下载。
 
 ## 三条技能
@@ -11,11 +13,11 @@
 | 顺序 | 技能名 | 解决的问题 | 主要产物 |
 | --- | --- | --- | --- |
 | 1 | `ontology-requirement` | 材料还是散的（PRD / 访谈纪要 / 流程说明 / 口述），先明确业务目标、范围、规则与验收 | `01-需求澄清.md`：对象类型 / 关系类型 / 接口 / 动作 / 规则的候选清单 + 落地线索 + 待确认问题 |
-| 2 | `ontology-builder` | 清单要变成可评审的建模方案：粒度、命名、主键、属性类型、方向、约束 | `02-建模方案.md` + `*.ontology.json` 初稿 |
-| 3 | `ontology-bundle` | 出包、自检、交付：产物必须能通过平台的导入与发布前校验 | `<标识>.ontology.json`（可直接导入） |
+| 2 | `ontology-builder` | 清单要变成可评审的建模方案：粒度、命名、主键、属性类型、方向、约束 | `02-建模方案.md` + `*.blueprint.json` 初稿（结构化清单） |
+| 3 | `ontology-bundle` | 出包、自检、交付：产物必须能通过平台的导入与发布前校验 | `<标识>.ontology.json`（技能自带的脚本从清单编译产出，可直接导入） |
 
-三条可以连起来用，也可以单用第 3 条把已有方案落成 JSON。**平台的「导入本体包」只认 JSON**，
-所以无论从哪一步开始，最终交付物都是那个 JSON 文件。
+三条可以连起来用，也可以单用第 3 条把已有方案落成 JSON。**平台的「导入本体包」只认本体包 JSON**，
+所以无论从哪一步开始，最终交付物都是那个 `.ontology.json`。
 
 ## 安装
 
@@ -25,6 +27,23 @@
 - 通用 Agent Skills 目录：`~/.agents/skills/<技能名>/SKILL.md`
 
 在平台的「本体技能」页点「获取 Skills」下载 zip，解压后把三个目录整个放进去，重启会话即可使用。
+
+## 出包怎么走：清单 → 编译
+
+模型**不直接写包**，只写一份**结构化清单**（`*.blueprint.json`：引用写名字，不写 UUID、不写格式字段）；
+再用技能自带的编译脚本把清单编译成平台能导入的**本体包**（`*.ontology.json`）：
+
+```bash
+node scripts/build-bundle.mjs <清单.json> --check   # 只校验：引用能不能解析、结构对不对
+node scripts/build-bundle.mjs <清单.json>           # 产出 <标识>.ontology.json
+```
+
+Windows / Linux / macOS 一样（Node 18+，脚本只用内置模块、不装依赖、不联网）；路径带空格就加引号。
+
+- 为什么这么分：手写 UUID 与 id 引用最容易错（对不上就整包报错），格式字段也容易漂 —— 这两件事交给脚本。
+- 清单格式见 `ontology-bundle/references/blueprint-format.md`；可照抄的例子见 `ontology-bundle/references/example.blueprint.json`
+  （编译出来的结构就是 `ontology-bundle/references/example.bundle.json` 的样子）。
+- 手写包也能交付：按 `ontology-bundle/references/bundle-format.md` 写，再用 `node scripts/check-bundle.mjs <包.json>` 过一遍结构。
 
 ## 交付契约（为什么产物是 JSON）
 

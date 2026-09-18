@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
@@ -27,8 +29,8 @@ describe("本体技能目录", () => {
       expect(front.name).toBe(skill.id);
       expect(front.description.length).toBeGreaterThan(20);
       expect(skill.description.length).toBeGreaterThan(20);
-      // SKILL.md 里点名的参考文件必须真的存在（防止改了文件名忘了改正文）。
-      const referenced = [...markdown!.content.matchAll(/`(references\/[^`]+)`/g)].map((match) => match[1]);
+      // 正文里点名的 `references/…` 与 `scripts/…` 都必须真的存在（防止改了文件名忘了改正文）。
+      const referenced = [...markdown!.content.matchAll(/`((?:references|scripts)\/[^`]+)`/g)].map((match) => match[1]);
       for (const file of referenced) {
         expect(skill.files.map((item) => item.path), `${skill.id} 引用了不存在的 ${file}`).toContain(file);
       }
@@ -77,6 +79,65 @@ describe("本体技能目录", () => {
     expect(roots).toEqual(SKILL_CATALOG.map((entry) => entry.id).sort());
     for (const entry of SKILL_CATALOG) {
       expect(files.some((file) => file.path === `${entry.id}/SKILL.md`), `${entry.id} 缺 SKILL.md`).toBe(true);
+    }
+    // 编译脚本必须随整包下发：技能是自包含的，少一个文件对方就编译不了清单。
+    expect(files.some((file) => file.path === "ontology-bundle/scripts/build-bundle.mjs"), "整包里缺编译脚本").toBe(true);
+    expect(files.some((file) => file.path === "ontology-bundle/scripts/check-bundle.mjs"), "整包里缺结构自检脚本").toBe(true);
+  });
+});
+
+describe("清单 → 本体包的编译脚本", () => {
+  // 走真脚本、真子进程：Windows / Linux / macOS 都是 `process.execPath` + 脚本路径，不经过 shell。
+  const script = () => path.join(root, "skills", "ontology-bundle", "scripts", "build-bundle.mjs");
+  const blueprint = () => path.join(root, "skills", "ontology-bundle", "references", "example.blueprint.json");
+  const tempFile = (name: string) => path.join(os.tmpdir(), `${name}-${process.pid}-${Date.now()}.json`);
+
+  it("把示例清单编译成平台可导入的包，且和手写示例一样零违规", async () => {
+    const out = tempFile("ontology-blueprint");
+    try {
+      const run = spawnSync(process.execPath, [script(), blueprint(), "--out", out], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+      // 编译器自己不该报体检提醒：示例清单是「规矩」的样板。
+      expect(run.stdout).not.toContain("⚠");
+
+      const bundle = readOntologyBundle(JSON.parse(await readFile(out, "utf8")));
+      expect(bundle.format).toBe("ontology.bundle");
+      expect(bundle.formatVersion).toBe(1);
+      expect(bundle.ontology.identifier).toBe("telecom-line-service-demo");
+
+      // 和手写示例同一条链路：解析 → 导入（重发 id）→ 发布前校验，必须零违规。
+      const plan = planBundleImport(bundle, []);
+      expect(plan.definition.entityTypes).toHaveLength(4);
+      expect(plan.definition.relationshipTypes).toHaveLength(5);
+      expect(plan.definition.interfaces).toHaveLength(1);
+      expect(plan.definition.actionTypes).toHaveLength(1);
+      expect(plan.definition.rules).toHaveLength(1);
+      expect(validateVersionSnapshot({ definition: plan.definition, nodes: [], relationships: [] })).toEqual([]);
+      // 接口实现也要满足契约：编译出来的包不能只是「结构合法」。
+      expect(validateInterfaces(plan.definition)).toEqual([]);
+      expect(validateInterfaceImplementations(plan.definition)).toEqual([]);
+    } finally {
+      await rm(out, { force: true });
+    }
+  });
+
+  it("引用解析不了时报错退出，并把可选的名字列出来", async () => {
+    const file = tempFile("ontology-blueprint-broken");
+    const broken = {
+      format: "ontology.blueprint",
+      formatVersion: 1,
+      ontology: { name: "坏清单" },
+      objectTypes: [{ name: "客户", properties: [{ name: "CUST_ID", dataType: "TEXT" }] }],
+      relationTypes: [{ name: "拥有", source: "客户", target: "不存在的类型" }],
+    };
+    try {
+      await writeFile(file, JSON.stringify(broken), "utf8");
+      const run = spawnSync(process.execPath, [script(), file, "--check"], { encoding: "utf8" });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("指向了不存在的对象类型「不存在的类型」");
+      expect(run.stderr).toContain("当前清单里有：客户");
+    } finally {
+      await rm(file, { force: true });
     }
   });
 });
