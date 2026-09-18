@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { DATA_SOURCE_KINDS } from "@/lib/data-source/types";
 import { GRAPH_TARGET_KINDS } from "@/lib/graph/types";
@@ -200,6 +202,22 @@ async function ensurePlatformSchemaOnce() {
         CREATE INDEX IF NOT EXISTS reasoning_messages_conversation_idx
           ON ontology_platform.reasoning_messages (conversation_id, created_at)
       `);
+      // 首次使用新平台库时自动创建管理员。schema advisory lock 覆盖检查与写入，
+      // 多个 Next 进程同时启动也不会各建一个；已有用户的库绝不重设密码。
+      const existing = await client.query<{ exists: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM ontology_platform.users) AS exists",
+      );
+      if (!existing.rows[0]?.exists) {
+        const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+        const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+        if (!email || !password) {
+          throw new Error("平台库还没有用户，请配置 BOOTSTRAP_ADMIN_EMAIL 和 BOOTSTRAP_ADMIN_PASSWORD。");
+        }
+        await client.query(
+          "INSERT INTO ontology_platform.users (id, email, password_hash, role) VALUES ($1, $2, $3, 'ADMIN')",
+          [randomUUID(), email, await bcrypt.hash(password, 12)],
+        );
+      }
     } finally {
       client.release();
     }

@@ -124,11 +124,10 @@ pnpm dev
 
 ### 3. 首次初始化
 
-```bash
-curl -X POST http://localhost:3000/api/bootstrap
-```
-
-创建 `ontology_platform` Schema 与首个管理员。已初始化时返回 `409`。
+无需手动调用接口。首次访问平台时自动创建 `ontology_platform` Schema；若用户表为空，
+平台会用 `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` 创建首个管理员。
+已有用户时不会重新创建，也不会因修改环境变量而重置密码。
+`POST /api/bootstrap` 暂时保留给旧调用方；自动初始化后调用它会返回 `409`。
 
 ### 4. 常用脚本
 
@@ -180,7 +179,7 @@ pnpm docker:logs                      # 跟日志
    `GRAPH_ENDPOINT_HOST_ALIAS=localhost=fuseki` 换成服务名，**登记一个字都不用改**。
 2. **`TARGET_ENCRYPTION_KEY` 必须与库里已有数据所用的那一把一致**：数据资源的凭据是加密后存进平台库的，
    换一把钥匙就解不开已登记的连接。`AUTH_SECRET` 换掉只会让已登录会话失效，可以重新生成。
-3. **首次初始化要再调一次**：`curl -X POST http://localhost:3000/api/bootstrap`（平台库非空时返回 409）。
+3. **首次登录不必再调初始化接口**：确认环境中已配置管理员邮箱和密码，平台库为空时会自动创建首个管理员；若库里已有用户，这两个变量不会覆盖现有密码。
 
 其他细节：
 
