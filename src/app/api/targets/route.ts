@@ -30,15 +30,18 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
     const input = targetInput.parse(await request.json());
+    if (input.kind === "EMBEDDED") {
+      return NextResponse.json({ error: "内置类型图由平台自动提供，请在新建本体时直接选择。" }, { status: 409 });
+    }
     if (input.kind === "JENA" && !input.uri) throw new Error("请填写 Jena 服务地址。");
     const target: GraphTarget = {
       id: crypto.randomUUID(),
       name: input.name,
       kind: input.kind,
-      uri: input.kind === "EMBEDDED" ? "embedded://platform" : input.uri!,
-      database_name: input.kind === "EMBEDDED" ? "platform" : input.databaseName,
-      username: input.kind === "EMBEDDED" ? "" : input.username,
-      credential_secret: encryptSecret(input.kind === "EMBEDDED" ? "" : input.password), created_at: new Date(),
+      uri: input.uri!,
+      database_name: input.databaseName,
+      username: input.username,
+      credential_secret: encryptSecret(input.password), created_at: new Date(),
       options: parseTargetOptions(input.options),
     };
     // 同一个库上再登记一个，两边发布时会互相清空 —— 这里直接拦下来。

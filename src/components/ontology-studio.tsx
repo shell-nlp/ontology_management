@@ -221,7 +221,8 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
   // 受管记录（本体自己开的隔离空间）不该出现在「存储资源」里让用户再选一次。
   const managedIds = useMemo(() => new Set(ontologies.filter((item) => item.storage?.managed).map((item) => item.storage!.id)), [ontologies]);
   // 可选存储：受管记录（本体自己开的命名图）不再让用户选第二次。
-  const choices = targets.filter((target) => !managedIds.has(target.id) && isFrontendGraphTargetKind(target.kind as GraphTargetKind));
+  const choices = useMemo(() => targets.filter((target) => !managedIds.has(target.id) && isFrontendGraphTargetKind(target.kind as GraphTargetKind)), [targets, managedIds]);
+  const selectedStorageTargetId = storageTargetId || choices.find((target) => target.kind === "EMBEDDED")?.id || "";
 
   const readFile = async (file: File | null) => {
     setFileError("");
@@ -266,13 +267,13 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    if (!storageTargetId) return;
+    if (!selectedStorageTargetId) return;
     setBusy(true);
     try {
       if (mode === "import") {
         const result = await api<{ ontology: { id: string; name: string }; warnings: string[] }>("/api/ontologies/import", {
           method: "POST",
-          body: JSON.stringify({ bundle: fileText, storageTargetId, name: name.trim() || undefined }),
+          body: JSON.stringify({ bundle: fileText, storageTargetId: selectedStorageTargetId, name: name.trim() || undefined }),
         });
         setPending({ id: result.ontology.id, name: result.ontology.name });
         setBusy(false);
@@ -289,7 +290,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
           name: name.trim(),
           description: description.trim(),
           tags: tagText.split(/[,，\s]+/).map((tag) => tag.trim()).filter(Boolean),
-          storageTargetId,
+          storageTargetId: selectedStorageTargetId,
         }),
       });
       await finish(created.id, name.trim());
@@ -316,7 +317,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
   }, [pending, onClose]);
 
   const importing = mode === "import";
-  const ready = Boolean(storageTargetId) && (importing ? Boolean(fileText) : Boolean(name.trim()));
+  const ready = Boolean(selectedStorageTargetId) && (importing ? Boolean(fileText) : Boolean(name.trim()));
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -364,7 +365,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         {!importing && <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>}
         {!importing && <label>标签<input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="用逗号或空格分隔，可留空" /></label>}
         <label>存储资源
-          <select value={storageTargetId} onChange={(event) => setStorageTargetId(event.target.value)} required>
+          <select value={selectedStorageTargetId} onChange={(event) => setStorageTargetId(event.target.value)} required>
             <option value="">选择一个存储资源</option>
             {choices.map((target) => <option key={target.id} value={target.id}>{target.name} · {target.kindLabel}</option>)}
           </select>

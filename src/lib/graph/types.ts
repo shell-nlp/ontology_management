@@ -15,6 +15,9 @@ import type { DataType } from "@/lib/instance-property-editor";
  */
 export type GraphTargetKind = "JENA" | "EMBEDDED";
 
+/** 平台自带的内置存储资源；每个本体在其下仍有独立受管目标。 */
+export const BUILTIN_EMBEDDED_TARGET_ID = "00000000-0000-4000-8000-000000000100";
+
 /** 后端原生查询语言。上层只用于展示与“是否允许直接写入”的判断。 */
 export type QueryLanguage = "sparql";
 
@@ -121,6 +124,8 @@ export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
  * 内置类型图与 Apache Jena 并存；已有 Jena 存储不受影响。
  */
 export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS;
+/** 内置资源由平台自动登记，连接向导只创建外部 Jena 连接。 */
+export const CREATABLE_GRAPH_TARGET_KINDS = FRONTEND_GRAPH_TARGET_KINDS.filter((item) => item.kind !== "EMBEDDED");
 
 /** 新建本体存储时的默认引擎。 */
 export const DEFAULT_GRAPH_TARGET_KIND: GraphTargetKind = "JENA";

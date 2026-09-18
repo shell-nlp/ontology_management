@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
 import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/graph/types";
-import { createOntology, ensureOntologyMigration, listOntologies } from "@/lib/ontologies";
+import { createOntology, listOntologies } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { listVersionRecords } from "@/lib/version-snapshot";
@@ -53,8 +53,8 @@ async function withSummary() {
 export async function GET() {
   try {
     await requireRole("VIEWER");
-    // 建表之后给老的存储记录补默认本体：幂等，进程内只跑一次。
-    await ensureOntologyMigration();
+    // 存储资源不是本体：列表只展示用户显式创建或导入的本体。
+    // 旧版「给未关联资源自动补本体」会把平台内置资源也误建成一条本体。
     return NextResponse.json(await withSummary());
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体列表。") }, { status: apiErrorStatus(error, 401) });

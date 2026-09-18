@@ -1,6 +1,6 @@
 import { platformQuery } from "@/lib/platform-db";
 import type { GraphTarget } from "@/lib/graph/types";
-import { getTarget, listTargets, parseTargetOptions } from "@/lib/targets";
+import { getTarget, parseTargetOptions } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
 /**
@@ -178,40 +178,4 @@ export async function deleteOntology(id: string): Promise<{ removedTargetId: str
   await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [current.target_id]);
   await removeTargetSnapshotDirectory(current.target_id);
   return { removedTargetId: current.target_id };
-}
-
-/**
- * 迁移：给还没有本体的存储记录补一个默认本体，名字取原本体存储名。
- * 幂等——每次启动跑一遍，已经有的不动。
- */
-export async function ensureDefaultOntologies(): Promise<number> {
-  const targets = await listTargets();
-  if (!targets.length) return 0;
-  const claimed = await platformQuery<{ target_id: string }>("SELECT target_id FROM ontology_platform.ontologies");
-  const taken = new Set(claimed.rows.map((row) => row.target_id));
-  let created = 0;
-  for (const target of targets) {
-    if (taken.has(target.id)) continue;
-    const identifier = await uniqueIdentifier(slugify(target.name, target.id));
-    const namespace = target.kind === "JENA" ? String(target.options?.namedGraph ?? "") || null : null;
-    await platformQuery(
-      `INSERT INTO ontology_platform.ontologies (id, identifier, name, description, color, tags, target_id, owner_target_id, namespace)
-       VALUES ($1, $2, $3, '', '', '{}'::text[], $4, NULL, $5)
-       ON CONFLICT (target_id) DO NOTHING`,
-      [crypto.randomUUID(), identifier, target.name, target.id, namespace],
-    );
-    created += 1;
-  }
-  return created;
-}
-
-let migration: Promise<number> | undefined;
-
-/** 每个进程跑一次就够；失败的 promise 不留在缓存里，下次请求还能重试。 */
-export function ensureOntologyMigration() {
-  migration ??= ensureDefaultOntologies().catch((error) => {
-    migration = undefined;
-    throw error;
-  });
-  return migration;
 }

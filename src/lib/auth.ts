@@ -43,13 +43,22 @@ export async function createSession(user: Pick<PlatformUser, "id" | "email" | "r
 export async function currentUser() {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  let payload;
   try {
-    const { payload } = await jwtVerify(token, secret());
-    if (!payload.sub || typeof payload.email !== "string" || (payload.role !== "ADMIN" && payload.role !== "VIEWER")) return null;
-    return { id: payload.sub, email: payload.email, role: payload.role as Role };
+    ({ payload } = await jwtVerify(token, secret()));
   } catch {
     return null;
   }
+  if (!payload.sub || typeof payload.email !== "string") return null;
+  // Cookie 签名有效不代表用户仍在当前平台库里：切换 PG、删用户或改权限后，
+  // 旧 subject 不能继续作为审计 actor_id，否则会被 users 外键拦下。
+  const result = await platformQuery<Pick<PlatformUser, "id" | "email" | "role">>(
+    "SELECT id, email, role FROM ontology_platform.users WHERE id = $1",
+    [payload.sub],
+  );
+  const user = result.rows[0];
+  if (!user || user.email !== payload.email) return null;
+  return { id: user.id, email: user.email, role: user.role };
 }
 
 export async function requireRole(role: Role) {

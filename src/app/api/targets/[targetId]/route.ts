@@ -23,6 +23,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
+    if (target.kind === "EMBEDDED") return NextResponse.json({ error: "内置类型图是平台自带资源，无需编辑。" }, { status: 409 });
     const input = targetUpdate.parse(await request.json());
     if (input.kind && input.kind !== target.kind) return NextResponse.json({ error: "不能直接修改存储后端；请新建目标存储并迁移本体。" }, { status: 409 });
     if (Object.keys(input).length === 0) return NextResponse.json({ error: "没有需要更新的字段。" }, { status: 400 });
@@ -67,6 +68,7 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
+    if (target.kind === "EMBEDDED") return NextResponse.json({ error: "内置类型图是平台自带资源，不能删除；如需删除本体，请到本体列表操作。" }, { status: 409 });
     // 审计记录必须先写：graph_targets 删除后审计表的外键就找不到本体存储了。
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
     await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [targetId]);

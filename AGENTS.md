@@ -274,7 +274,9 @@
 先新增 JS/TS 内置后端，**保留 Jena/Fuseki 与旧数据**。充分验证后再讨论清理，不得提前删掉 Jena。
 
 - `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/graph/index.ts` 分发。
-  新建本体存储时可选其一；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
+  内置存储资源在平台库建表时自动登记，新建本体默认选它；不能手工创建、编辑或删除该资源，
+  但本体仍必须由用户显式新建或导入。`ensureDefaultOntologies` 旧逻辑已移除，不能把资源自动变成本体。
+  外部 Jena 连接仍可按需新建；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
   需要迁移时先导出本体包、在新存储上导入并核验；目前本体包只含定义，不带实例数据。
 - 正式定义保留在版本快照 `definition.json`，发布的当前图由平台 PostgreSQL 的
   `ontology_platform.embedded_graphs` 原子保存；Graphology 类型图与 N3.js RDF 数据集按请求从当前版本重建，
