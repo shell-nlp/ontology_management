@@ -139,6 +139,23 @@ body { background:var(--paper); color:var(--ink); font-family:"Segoe UI", "PingF
 .action:hover, .quiet-button:hover { border-color:#9bb9eb; background:#f4f8ff; }
 .version-bar, .metric-strip, .status-grid, .overview-stats { border-color:#dfe7f1; border-radius:0; box-shadow:none; }
 .version-bar { margin-bottom:14px; background:#fff; }
+/* 全局版本操作收进页头：状态与按钮占一行，版本列表向下浮出，不再挤占内容区。 */
+.functional-content > header { gap:16px; }
+.functional-content > header > div:first-child { min-width:0; }
+.functional-content > header h1 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.functional-content > header .header-version-bar { flex:0 0 auto; min-height:0; margin:0; padding:0; border:0; background:transparent; box-shadow:none; gap:16px; }
+.header-version-bar > div:first-child { gap:7px; }
+.header-version-bar .version-status { white-space:nowrap; color:#385476; }
+.header-version-bar .state-dot { flex:none; }
+.header-version-bar .state-dot.is-unpublished { background:#94a3b8; }
+.header-version-bar .version-status b { color:#25406a; font-size:12px; }
+.header-version-bar .version-draft { padding:3px 7px; border:1px solid #d5e2f6; background:#f0f5ff; color:#315b9d; font-size:11px; font-weight:600; }
+.header-version-bar .functional-actions { flex-wrap:nowrap; }
+.header-version-bar .action { min-height:34px; white-space:nowrap; }
+.header-version-bar .version-menu { z-index:10; width:min(520px, calc(100vw - 32px)); }
+@media (max-width:900px) { .functional-content > header { flex-wrap:wrap; } .functional-content > header .header-version-bar { margin-left:auto; } }
+@media (max-width:700px) { .functional-content > header { align-items:flex-start; } .functional-content > header .header-version-bar { width:100%; margin:5px 0 0; flex-direction:row; align-items:center; justify-content:space-between; } .header-version-bar .version-menu { width:100%; } }
+@media (max-width:550px) { .functional-content > header { display:flex; flex-direction:column; } .functional-content > header .header-version-bar { flex-wrap:wrap; } .header-version-bar .functional-actions { flex-wrap:wrap; } }
 .functional-content .notice { border-left-color:#2563eb; background:#eef5ff; color:#1e4f91; }
 .functional-content .notice.error { border-left-color:#dc5b4e; background:#fff3f2; color:#a33f38; }
 .manager-grid { grid-template-columns:minmax(280px, .55fr) minmax(0, 1.45fr); gap:14px; }
