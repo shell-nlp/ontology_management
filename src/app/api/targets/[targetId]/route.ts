@@ -9,7 +9,7 @@ import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
-  kind: z.enum(["JENA"]).optional(),
+  kind: z.enum(["JENA", "EMBEDDED"]).optional(),
   uri: z.string().trim().url().optional(),
   databaseName: z.string().trim().min(1).max(100).optional(),
   username: z.string().trim().max(100).optional(),
@@ -24,6 +24,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const input = targetUpdate.parse(await request.json());
+    if (input.kind && input.kind !== target.kind) return NextResponse.json({ error: "不能直接修改存储后端；请新建目标存储并迁移本体。" }, { status: 409 });
     if (Object.keys(input).length === 0) return NextResponse.json({ error: "没有需要更新的字段。" }, { status: 400 });
 
     const updates: string[] = [];

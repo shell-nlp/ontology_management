@@ -36,16 +36,15 @@ type RelationshipRow = { id: string; type: string; sourceId: string; targetId: s
 type QueryTemplate = { defaultQuery: string; placeholder: string; visualizationHint: string };
 const JENA_QUERY_TEMPLATE: QueryTemplate = { defaultQuery: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", placeholder: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", visualizationHint: "以 ?s / ?p / ?o 为变量名返回三元组即可可视化；也可以用 CONSTRUCT 构造子图。" };
 
-/** 只用 Jena，所以查询模板固定。保留这个函数是为了调用点不必关心引擎。 */
+/** 两个后端都提供相同的只读 SPARQL 工作台模板。 */
 function queryTemplateFor(_kind: GraphTargetKind | undefined): QueryTemplate {
   return JENA_QUERY_TEMPLATE;
 }
 
 /** 只用于前端即时提示；真正的写保护在服务端按后端能力判断。 */
 function isWriteStatement(kind: GraphTargetKind | undefined, statement: string) {
-  return kind === "JENA"
-    ? /\b(insert|delete|load|clear|create|drop|add|move|copy)\b/i.test(statement)
-    : /\b(create|merge|delete|detach|set|remove|drop|alter)\b/i.test(statement);
+  void kind;
+  return /\b(insert|delete|load|clear|create|drop|add|move|copy)\b/i.test(statement);
 }
 
 function graphNoun(target: Target | null | undefined) {
@@ -564,7 +563,7 @@ type TargetFormState = { name: string; kind: GraphTargetKind; uri: string; datab
 
 function defaultTargetForm(kind: GraphTargetKind): TargetFormState {
   const info = graphTargetKindInfo(kind);
-  return { name: "", kind, uri: info.endpoint.example, databaseName: info.dataset?.example ?? "", username: info.credentials.usernameExample, password: "", namedGraph: "" };
+  return { name: "", kind, uri: info.endpoint.example, databaseName: info.dataset?.example ?? "platform", username: info.credentials.usernameExample, password: "", namedGraph: "" };
 }
 
 function formFromTarget(target: Target): TargetFormState {
@@ -582,11 +581,14 @@ function TargetFields({ form, setForm, editing = false }: { form: TargetFormStat
   const credentialRequired = info.credentials.required;
   return <>
     <label>名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：生产知识图谱" required /></label>
+    {form.kind === "EMBEDDED" && <p className="subtle">定义和发布状态保存在平台，类型图按版本在内存中重建；不需要填写地址或凭据。Jena 存储仍可在上一步选择。</p>}
+    {form.kind !== "EMBEDDED" && <>
     <label>{info.endpoint.label}<input value={form.uri} onChange={(event) => setForm({ ...form, uri: event.target.value })} placeholder={info.endpoint.placeholder} required /></label>
     {info.dataset && <label>{info.dataset.label}<input value={form.databaseName} onChange={(event) => setForm({ ...form, databaseName: event.target.value })} placeholder={info.dataset.placeholder} required /></label>}
     {form.kind === "JENA" && <label>命名图（可选）<input value={form.namedGraph} onChange={(event) => setForm({ ...form, namedGraph: event.target.value })} placeholder="留空写入默认图，例如 urn:ontology" /></label>}
     <label>{info.credentials.usernameLabel}<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} placeholder={info.credentials.usernameExample} required={credentialRequired} /></label>
     <label>{info.credentials.passwordLabel}<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={editing ? "留空保持不变" : ""} required={credentialRequired && !editing} /></label>
+    </>}
   </>;
 }
 
@@ -606,7 +608,7 @@ function useTargetProbe(form: TargetFormState, targetId?: string) {
         method: "POST",
         body: JSON.stringify({ kind: form.kind, uri: form.uri, databaseName: form.databaseName, username: form.username, password: form.password, options: targetOptions(form), targetId }),
       });
-      setResult({ ok: true, text: `连上了：${health.agent} · ${health.address}` });
+      setResult({ ok: true, text: form.kind === "EMBEDDED" ? `存储可用：${health.agent}` : `连上了：${health.agent} · ${health.address}` });
     } catch (reason) {
       setResult({ ok: false, text: reason instanceof Error ? reason.message : "连接失败。" });
     } finally {
@@ -618,7 +620,7 @@ function useTargetProbe(form: TargetFormState, targetId?: string) {
 
 function TargetProbeButton({ busy, onRun }: { busy: boolean; onRun: () => void }) {
   return <span className="probe-slot">
-    <button type="button" className="quiet-button" disabled={busy} onClick={onRun}>{busy ? <Loader2 size={14} className="probe-spin" /> : <PlugZap size={14} />}{busy ? "连接中…" : "测试连接"}</button>
+    <button type="button" className="quiet-button" disabled={busy} onClick={onRun}>{busy ? <Loader2 size={14} className="probe-spin" /> : <PlugZap size={14} />}{busy ? "测试中…" : "测试存储"}</button>
   </span>;
 }
 
@@ -630,12 +632,12 @@ function TargetProbeResult({ result }: { result: { ok: boolean; text: string } |
 function TargetManager({ targets, refresh, selectedId, onSelect, onNew, notify, fail }: { targets: Target[]; refresh: () => Promise<void>; selectedId: string; onSelect: (id: string) => void; onNew: () => void; notify: (text: string) => void; fail: (reason: unknown) => void }) {
   const [testing, setTesting] = useState(""); const [editing, setEditing] = useState<Target | null>(null); const [deleting, setDeleting] = useState("");
   const remove = async (target: Target) => { if (!window.confirm(`确定删除本体存储“${target.name}”及其全部本体版本？`)) return; try { setDeleting(target.id); await api(`/api/targets/${target.id}`, { method: "DELETE" }); notify("本体存储已删除。"); await refresh(); } catch (reason) { fail(reason); } finally { setDeleting(""); } };
-  // 按引擎分组展示。现在只有 Jena 一个引擎，分组结构仍留着，多引擎时不用改这里。
+   // 按后端分组展示，内置类型图与 Jena 仍可并存。
   const groups = FRONTEND_GRAPH_TARGET_KINDS.map((info) => ({ info, items: targets.filter((item) => item.kind === info.kind) }));
   const census = groups.filter((group) => group.items.length).map((group) => `${group.info.label} ${group.items.length}`).join(" · ");
   return <section className="stack">
-    <div className="panel functional-panel target-action-bar"><div><span className="eyebrow">本体存储</span><b>{targets.length} 个已登记本体存储</b><p className="subtle">{census ? `按图数据库类型分组：${census}。` : "还没有登记任何图数据库连接。"}凭据以 AES-256-GCM 加密保存在平台库，只有服务端能解密。</p></div><button className="action primary" onClick={onNew}><Plus size={15} />新建本体存储</button></div>
-    <div className="panel functional-panel target-list">{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><GraphKindBadge kind={info.kind} /><small>{info.description}</small></div>{items.map((target) => <div className={target.id === selectedId ? "target-row current" : "target-row"} key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.uri} / {target.databaseName}</small></span>{target.id === selectedId ? <span className="target-current"><Check size={12} />当前本体存储</span> : <button className="action compact" onClick={() => onSelect(target.id)}>打开</button>}<button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`连接成功：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试连接"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <div className="target-empty"><Database size={22} /><b>还没有本体存储</b><span>点右上角「新建本体存储」，填好 Fuseki 的 SPARQL 服务地址与数据集即可。</span></div>}</div>
+    <div className="panel functional-panel target-action-bar"><div><span className="eyebrow">本体存储</span><b>{targets.length} 个已登记本体存储</b><p className="subtle">{census ? `按存储后端分组：${census}。` : "还没有登记本体存储。"}Jena 凭据以 AES-256-GCM 加密保存在平台库，内置类型图无需额外凭据。</p></div><button className="action primary" onClick={onNew}><Plus size={15} />新建本体存储</button></div>
+    <div className="panel functional-panel target-list">{targets.length ? groups.map(({ info, items }) => items.length ? <div className="target-group" key={info.kind}><div className="target-group-head"><GraphKindBadge kind={info.kind} /><small>{info.description}</small></div>{items.map((target) => <div className={target.id === selectedId ? "target-row current" : "target-row"} key={target.id}><Database size={18} /><span><b>{target.name}</b><small>{target.kind === "EMBEDDED" ? "平台内置 · 无需外部服务" : `${target.uri} / ${target.databaseName}`}</small></span>{target.id === selectedId ? <span className="target-current"><Check size={12} />当前本体存储</span> : <button className="action compact" onClick={() => onSelect(target.id)}>打开</button>}<button className="action compact" disabled={testing === target.id} onClick={async () => { try { setTesting(target.id); const health = await api<{ connected: boolean; agent: string }>(`/api/targets/${target.id}/test`, { method: "POST" }); notify(`存储可用：${health.agent}`); } catch (reason) { fail(reason); } finally { setTesting(""); } }}>{testing === target.id ? "测试中" : "测试存储"}</button><button className="action compact" onClick={() => setEditing(target)}><Pencil size={13} />编辑</button><button className="action compact danger" disabled={deleting === target.id} onClick={() => void remove(target)}><Trash2 size={13} />{deleting === target.id ? "删除中" : "删除"}</button></div>)}</div> : null) : <div className="target-empty"><Database size={22} /><b>还没有本体存储</b><span>点右上角「新建本体存储」，选择内置类型图或 Apache Jena。</span></div>}</div>
     {editing && <TargetEditDialog target={editing} onClose={() => setEditing(null)} onSaved={async () => { await refresh(); notify("本体存储已更新。"); }} fail={fail} />}
   </section>;
 }
@@ -665,7 +667,7 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
     try {
       setBusy(true);
       const target = await api<Target>("/api/targets", { method: "POST", body: JSON.stringify({ ...form, options: targetOptions(form) }) });
-      notify(`${graphTargetKindInfo(target.kind).label} 本体存储已登记，凭据已加密保存。`);
+      notify(`${graphTargetKindInfo(target.kind).label} 本体存储已登记。${target.kind === "JENA" ? "凭据已加密保存。" : "无需外部图服务。"}`);
       await onCreated(target);
     } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
@@ -674,11 +676,11 @@ function NewTargetDialog({ onClose, onCreated, notify, fail }: { onClose: () => 
     <form className="dialog graph-dialog new-target-dialog" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
       <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
       <span className="eyebrow">新建本体存储{multipleKinds ? ` · 步骤 ${step} / 2` : ""}</span>
-      <h2>{step === 1 ? "选择图数据库类型" : `连接 ${info.label}`}</h2>
-      <p>{step === 1 ? "类型决定这个本体存储用什么查询语言、按什么模型存图。" : info.description}</p>
+      <h2>{step === 1 ? "选择存储后端" : kind === "EMBEDDED" ? "配置内置类型图" : `连接 ${info.label}`}</h2>
+      <p>{step === 1 ? "内置类型图无需部署外部服务；Apache Jena 保持可用。" : info.description}</p>
       {multipleKinds && <ol className="wizard-steps">
         <li className={step === 1 ? "active" : "done"}><span>{step === 1 ? "1" : <Check size={12} />}</span>选择类型<em>{info.label}</em></li>
-        <li className={step === 2 ? "active" : ""}><span>2</span>填写连接信息</li>
+        <li className={step === 2 ? "active" : ""}><span>2</span>{kind === "EMBEDDED" ? "确认存储" : "填写连接信息"}</li>
       </ol>}
       {step === 1
         ? <GraphKindChoice value={kind} onChange={pickKind} />
@@ -702,7 +704,7 @@ function TargetEditDialog({ target, onClose, onSaved, fail }: { target: Target; 
   const [busy, setBusy] = useState(false);
   const probe = useTargetProbe(form, target.id);
   const save = async (event: FormEvent) => { event.preventDefault(); try { setBusy(true); const payload: Record<string, unknown> = { name: form.name, kind: form.kind, uri: form.uri, databaseName: form.databaseName, username: form.username, options: targetOptions(form) }; if (form.password) payload.password = form.password; await api<Target>(`/api/targets/${target.id}`, { method: "PATCH", body: JSON.stringify(payload) }); await onSaved(); onClose(); } catch (reason) { fail(reason); } finally { setBusy(false); } };
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog target-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑本体存储</span><h2>{target.name}</h2><p>修改连接信息；密码留空表示保持原密码不变。</p><TargetFields form={form} setForm={setForm} editing /><TargetProbeResult result={probe.result} /><div className="dialog-actions"><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog graph-dialog target-dialog" onSubmit={save}><button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button><div className="dialog-icon"><Database size={22} /></div><span className="eyebrow">编辑本体存储</span><h2>{target.name}</h2><p>{target.kind === "EMBEDDED" ? "内置存储无需维护外部连接。" : "修改连接信息；密码留空表示保持原密码不变。"}</p><TargetFields form={form} setForm={setForm} editing /><TargetProbeResult result={probe.result} /><div className="dialog-actions"><TargetProbeButton busy={probe.busy} onRun={() => void probe.run()} /><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存修改"}</button></div></form></div>;
 }
 
 function OntologyManager({ definition, draft, targetId, user, runtimeTypes, refreshRuntimeTypes, save, validate, publish, notify, onOpenActions, fail }: { definition: Definition; draft: Version | null; targetId?: string; user: User; runtimeTypes: RuntimeTypeSet | null; refreshRuntimeTypes: () => void; save: (definition: Definition) => Promise<void>; validate: () => Promise<void>; publish: () => Promise<void>; notify: (text: string) => void; onOpenActions: () => void; fail: (reason: unknown) => void }) {
@@ -982,8 +984,8 @@ function GraphManager({ target, user, version, draft, runtimeTypes, mode, onMode
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
     </> : <>
-      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">本体骨架</span><h2>查看当前 {graphNoun(target)} 运行结构</h2><p className="subtle">骨架从已发布生效的数据推导：Apache Jena 侧读取实例的 <code>rdf:type</code> 与对象属性，再叠上草稿里声明的对象类型与 <code>rdfs:subClassOf</code>。草稿类型和实例要到发布后才会出现在这里。</p></div><button className="action" disabled={loading} onClick={() => void loadOntology()}><Network size={15} />{loading ? "加载中…" : "刷新本体骨架"}</button></div></div>
-      {ontologyGraph ? <GraphCanvas graph={ontologyGraph} targetId={target?.id} user={user} editable={false} definition={version?.definition ?? null} viewMode="ontology" notify={notify} fail={fail} /> : <div className="graph-empty"><Network size={27} /><b>正在读取本体骨架</b><span>将从图数据库加载实际存在的对象类型和关系类型。</span></div>}
+      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">本体骨架</span><h2>查看当前 {graphNoun(target)} 运行结构</h2><p className="subtle">{target?.kind === "EMBEDDED" ? "骨架按当前发布版本的对象类型、关系类型与接口定义重建；无需外部图服务。" : <>骨架从已发布数据推导：Jena 读取实例的 <code>rdf:type</code>，再叠加已声明的对象类型与接口。草稿修改须发布后才会在这里生效。</>}</p></div><button className="action" disabled={loading} onClick={() => void loadOntology()}><Network size={15} />{loading ? "加载中…" : "刷新本体骨架"}</button></div></div>
+      {ontologyGraph ? <GraphCanvas graph={ontologyGraph} targetId={target?.id} user={user} editable={false} definition={version?.definition ?? null} viewMode="ontology" notify={notify} fail={fail} /> : <div className="graph-empty"><Network size={27} /><b>正在读取本体骨架</b><span>将从当前本体存储读取已发布的对象类型和关系类型。</span></div>}
     </>}
   </section>;
 }

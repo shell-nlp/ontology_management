@@ -8,8 +8,8 @@ import { graphTargetKindInfo, type GraphTarget } from "@/lib/graph/types";
 
 const targetInput = z.object({
   name: z.string().trim().min(2).max(100),
-  kind: z.enum(["JENA"]).default("JENA"),
-  uri: z.string().trim().url(),
+  kind: z.enum(["JENA", "EMBEDDED"]).default("JENA"),
+  uri: z.string().trim().url().optional(),
   databaseName: z.string().trim().min(1).max(100).default("ds"),
   username: z.string().trim().max(100).default(""),
   password: z.string().max(500).default(""),
@@ -30,14 +30,15 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
     const input = targetInput.parse(await request.json());
+    if (input.kind === "JENA" && !input.uri) throw new Error("请填写 Jena 服务地址。");
     const target: GraphTarget = {
       id: crypto.randomUUID(),
       name: input.name,
       kind: input.kind,
-      uri: input.uri,
-      database_name: input.databaseName,
-      username: input.username,
-      credential_secret: encryptSecret(input.password), created_at: new Date(),
+      uri: input.kind === "EMBEDDED" ? "embedded://platform" : input.uri!,
+      database_name: input.kind === "EMBEDDED" ? "platform" : input.databaseName,
+      username: input.kind === "EMBEDDED" ? "" : input.username,
+      credential_secret: encryptSecret(input.kind === "EMBEDDED" ? "" : input.password), created_at: new Date(),
       options: parseTargetOptions(input.options),
     };
     // 同一个库上再登记一个，两边发布时会互相清空 —— 这里直接拦下来。

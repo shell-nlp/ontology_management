@@ -86,6 +86,15 @@ async function ensurePlatformSchemaOnce() {
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
       await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
+      // 内置后端的已发布视图：平台库负责持久化与原子切换，进程内 RDF/Graphology 图始终可重建。
+      // 实例数组仅兼容当前手工样本；未来海量业务对象不进入这张表。
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ontology_platform.embedded_graphs (
+          target_id TEXT PRIMARY KEY REFERENCES ontology_platform.graph_targets(id) ON DELETE CASCADE,
+          snapshot JSONB NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
       // 数据资源：外部业务数据的来源（关系库等）。与本体存储 graph_targets 是两件事：
       // 前者是数据从哪来，后者是本体存在哪。这里只存连接信息，取数一律按需连、用完断开。
       const sourceKinds = DATA_SOURCE_KINDS.map((item) => `'${item.kind}'`).join(", ");

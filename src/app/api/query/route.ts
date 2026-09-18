@@ -7,7 +7,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 
 /**
  * 后端无关的只读查询入口。
- * Apache Jena 本体存储执行 SPARQL（只读）；
+ * Jena 与内置本体存储都执行 SPARQL（只读）；
  * 写入一律走草稿快照 + 发布流程，这里不接受任何写语句。
  */
 const requestInput = z.object({

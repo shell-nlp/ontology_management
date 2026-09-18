@@ -464,6 +464,45 @@ export function schemaStatements(definition: GraphDefinitionLike): string[] {
   return statements;
 }
 
+/** RDF 投影的唯一出口。Jena 与内置后端共用相同的 IRI、字面量与关系具体化规则。 */
+export function snapshotStatements(snapshot: GraphWriteSnapshot): string[] {
+  const statements: string[] = [];
+  for (const node of snapshot.nodes) {
+    const subject = `<${BKN_NODE_PREFIX}${iriSegment(node.id)}>`;
+    for (const label of node.labels) statements.push(`${subject} <${RDF_TYPE}> <${BKN_CLASS_PREFIX}${iriSegment(label)}> .`);
+    const entityType = snapshot.definition.entityTypes.find((type) => node.labels.includes(type.name));
+    for (const [key, value] of Object.entries(node.properties)) {
+      const dataType = entityType?.properties.find((property) => property.name === key)?.dataType ?? "TEXT";
+      const values = dataType === "JSON" || !Array.isArray(value) ? [value] : value;
+      for (const item of values) {
+        const literal = sparqlLiteral(item, dataType);
+        if (literal !== null) statements.push(`${subject} <${BKN_PROPERTY_PREFIX}${iriSegment(key)}> ${literal} .`);
+      }
+    }
+  }
+  for (const relationship of snapshot.relationships) {
+    const source = `<${BKN_NODE_PREFIX}${iriSegment(relationship.sourceId)}>`;
+    const target = `<${BKN_NODE_PREFIX}${iriSegment(relationship.targetId)}>`;
+    const reified = `<${BKN_RELATIONSHIP_PREFIX}${iriSegment(relationship.id)}>`;
+    statements.push(`${source} <${BKN_REL_TYPE_PREFIX}${iriSegment(relationship.type)}> ${target} .`);
+    statements.push(`${reified} <${RDF_TYPE}> <${BKN_RELATIONSHIP}> .`);
+    statements.push(`${reified} <${BKN_REL_TYPE}> ${sparqlString(relationship.type)} .`);
+    statements.push(`${reified} <${BKN_SOURCE}> ${source} .`);
+    statements.push(`${reified} <${BKN_TARGET}> ${target} .`);
+    const relationshipType = snapshot.definition.relationshipTypes.find((type) => type.name === relationship.type);
+    for (const [key, value] of Object.entries(relationship.properties)) {
+      const dataType = relationshipType?.properties.find((property) => property.name === key)?.dataType ?? "TEXT";
+      const values = dataType === "JSON" || !Array.isArray(value) ? [value] : value;
+      for (const item of values) {
+        const literal = sparqlLiteral(item, dataType);
+        if (literal !== null) statements.push(`${reified} <${BKN_PROPERTY_PREFIX}${iriSegment(key)}> ${literal} .`);
+      }
+    }
+  }
+  statements.push(...schemaStatements(snapshot.definition));
+  return statements;
+}
+
 export function createJenaStore(target: GraphTarget): GraphStore {
   const endpoints = resolveSparqlEndpoints(target);
   const auth = authorizationHeader(target);
@@ -968,43 +1007,7 @@ export function createJenaStore(target: GraphTarget): GraphStore {
     },
 
     async replaceGraph(snapshot: GraphWriteSnapshot) {
-      const statements: string[] = [];
-      for (const node of snapshot.nodes) {
-        const subject = `<${BKN_NODE_PREFIX}${iriSegment(node.id)}>`;
-        for (const label of node.labels) statements.push(`${subject} <${RDF_TYPE}> <${BKN_CLASS_PREFIX}${iriSegment(label)}> .`);
-        const entityType = snapshot.definition.entityTypes.find((type) => node.labels.includes(type.name));
-        for (const [key, value] of Object.entries(node.properties)) {
-          const dataType = entityType?.properties.find((property) => property.name === key)?.dataType ?? "TEXT";
-          const values = dataType === "JSON" || !Array.isArray(value) ? [value] : value;
-          for (const item of values) {
-            const literal = sparqlLiteral(item, dataType);
-            if (literal === null) continue;
-            statements.push(`${subject} <${BKN_PROPERTY_PREFIX}${iriSegment(key)}> ${literal} .`);
-          }
-        }
-      }
-      for (const relationship of snapshot.relationships) {
-        const source = `<${BKN_NODE_PREFIX}${iriSegment(relationship.sourceId)}>`;
-        const target = `<${BKN_NODE_PREFIX}${iriSegment(relationship.targetId)}>`;
-        const reified = `<${BKN_RELATIONSHIP_PREFIX}${iriSegment(relationship.id)}>`;
-        statements.push(`${source} <${BKN_REL_TYPE_PREFIX}${iriSegment(relationship.type)}> ${target} .`);
-        statements.push(`${reified} <${RDF_TYPE}> <${BKN_RELATIONSHIP}> .`);
-        statements.push(`${reified} <${BKN_REL_TYPE}> ${sparqlString(relationship.type)} .`);
-        statements.push(`${reified} <${BKN_SOURCE}> ${source} .`);
-        statements.push(`${reified} <${BKN_TARGET}> ${target} .`);
-        const relationshipType = snapshot.definition.relationshipTypes.find((type) => type.name === relationship.type);
-        for (const [key, value] of Object.entries(relationship.properties)) {
-          const dataType = relationshipType?.properties.find((property) => property.name === key)?.dataType ?? "TEXT";
-          const values = dataType === "JSON" || !Array.isArray(value) ? [value] : value;
-          for (const item of values) {
-            const literal = sparqlLiteral(item, dataType);
-            if (literal === null) continue;
-            statements.push(`${reified} <${BKN_PROPERTY_PREFIX}${iriSegment(key)}> ${literal} .`);
-          }
-        }
-      }
-      // 接口与端点契约和实例数据一起提交：发布完成后图里就有 rdfs:subClassOf。
-      statements.push(...schemaStatements(snapshot.definition));
+      const statements = snapshotStatements(snapshot);
       const plan = planReplaceRequests(statements, { namedGraph, singleRequestLimit: replaceSingleRequestLimit(target) });
       try {
         for (const request of plan.requests) await update(request);
@@ -1160,7 +1163,7 @@ function extractTripleRows(vars: string[], rows: Record<string, SparqlTerm>[]) {
     .map((row) => ({ subject: row[subject].value, predicate: row[predicate].value, object: row[object] }));
 }
 
-function graphFromTriples(
+export function graphFromTriples(
   triples: { subject: string; predicate: string; object: SparqlTerm }[],
   options: { hydrate?: (term: string) => GraphNode | undefined; exclude?: (term: string) => boolean } = {},
 ) {

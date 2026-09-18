@@ -4,7 +4,7 @@ import type { DataType } from "@/lib/instance-property-editor";
  * 图数据库抽象层的公共契约。
  *
  * 这里只描述“任何图后端都成立”的概念：本体存储、图数据、运行时类型、查询结果。
- * 目前只有 Apache Jena 一个后端（Neo4j 已于 2026-09-14 移除），
+ * 内置类型图与 Apache Jena 两个后端并存（Neo4j 已于 2026-09-14 移除），
  * 它实现 GraphStore，由 @/lib/graph 的注册表按 target.kind 分派。
  * 上层 API 路由与 React 组件只依赖这里的类型，不直接依赖 SPARQL 客户端。
  *
@@ -13,7 +13,7 @@ import type { DataType } from "@/lib/instance-property-editor";
  * 2. 在 GRAPH_TARGET_KINDS 中补充连接表单元数据；
  * 3. 新增一个实现 GraphStore 的适配器并在 registry 中注册。
  */
-export type GraphTargetKind = "JENA";
+export type GraphTargetKind = "JENA" | "EMBEDDED";
 
 /** 后端原生查询语言。上层只用于展示与“是否允许直接写入”的判断。 */
 export type QueryLanguage = "sparql";
@@ -63,6 +63,21 @@ export type GraphTargetKindInfo = {
 
 export const GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = [
   {
+    kind: "EMBEDDED",
+    label: "内置类型图",
+    shortLabel: "内置",
+    description: "类型定义保存在平台，按版本重建内存图，无需部署独立图服务。",
+    modelLabel: "内存 RDF 图",
+    accent: "#0d8b83",
+    mark: "mesh",
+    queryLanguage: "sparql",
+    queryLanguageLabel: "SPARQL",
+    capabilities: { schemaVisualization: true, strongRules: false, atomicReplace: true },
+    endpoint: { label: "存储位置", placeholder: "平台数据库", example: "embedded://platform" },
+    dataset: null,
+    credentials: { usernameLabel: "用户名", usernameExample: "", passwordLabel: "密码", required: false },
+  },
+  {
     kind: "JENA",
     label: "Apache Jena",
     shortLabel: "Jena",
@@ -103,15 +118,14 @@ export const PLANNED_GRAPH_TARGETS: PlannedGraphTarget[] = [
  * 前端对外提供的引擎。
  *
  * 2026-09-14：**Neo4j 已整体移除** —— 适配器、驱动依赖、类型枚举、界面入口一并删掉。
- * 原因是它的能力撑不起这里的模型：社区版一个库只能装一个本体（没有多库隔离）、
- * 强约束弱，也没有类层级与推理。现在前后端都只有 Apache Jena 一个后端。
+ * 内置类型图与 Apache Jena 并存；已有 Jena 存储不受影响。
  */
 export const FRONTEND_GRAPH_TARGET_KINDS: GraphTargetKindInfo[] = GRAPH_TARGET_KINDS;
 
 /** 新建本体存储时的默认引擎。 */
 export const DEFAULT_GRAPH_TARGET_KIND: GraphTargetKind = "JENA";
 
-/** 这个引擎是否还在前端提供。现在只有 Jena，恒为 true。 */
+/** 这个引擎是否在前端提供。 */
 export function isFrontendGraphTargetKind(kind: GraphTargetKind): boolean {
   return GRAPH_TARGET_KINDS.some((item) => item.kind === kind);
 }
@@ -129,9 +143,9 @@ export type GraphTarget = {
   id: string;
   name: string;
   kind: GraphTargetKind;
-  /** Fuseki 的 SPARQL 服务地址。 */
+  /** Jena 的 SPARQL 服务地址；内置后端使用 embedded://platform 标识。 */
   uri: string;
-  /** Fuseki 的数据集名。 */
+  /** Jena 的数据集名；内置后端固定为 platform。 */
   database_name: string;
   username: string;
   credential_secret: string;

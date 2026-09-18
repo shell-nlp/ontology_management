@@ -45,7 +45,7 @@ const PAGE_SIZE = 12;
  * 本体列表：平台的隔离单位在这里被建立和管理。
  *
  * 用户只需要填名字、挑一个「存储资源」，剩下的落点分配由后端完成
- * （Jena 会自动开一份命名图，所以同一个 Fuseki 里能放多个本体）。
+ * （Jena 用命名图隔离，内置后端用受管目标 ID 隔离）。
  */
 export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refresh, onOpen, notify, fail }: Props) {
   const [keyword, setKeyword] = useState("");
@@ -106,7 +106,7 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
             <button className="action primary" disabled={!canEdit} onClick={() => setDialog("create")}><Plus size={16} />新建本体</button>
           </div>
         </div>
-        <p className="subtle">每个本体是一份互相隔离的图数据。新建时只需要挑一个存储资源——Jena 会自动分配一份命名图，所以同一个 Fuseki 里能放多个本体。</p>
+        <p className="subtle">每个本体都有独立的存储空间。选择内置类型图无需外部服务；选择 Jena 时平台自动分配命名图。</p>
       </div>
 
       {rows.length === 0 ? (
@@ -328,7 +328,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         <p>
           {importing
             ? "选一个 .ontology.json 本体包，或 bkn-foundry 导出的知识网络 JSON。它的结构会作为新本体的草稿导入，不会立刻改图库——确认无误后再发布。"
-            : "本体是一份互相隔离的图数据。落点由存储资源决定：Jena 会自动分配一份命名图，同一个 Fuseki 里可以放多个本体。"}
+            : "本体按存储资源隔离：内置类型图使用平台存储，Jena 自动分配独立命名图。"}
         </p>
 
         {importing && (

@@ -31,7 +31,7 @@
 
 ---
 
-使用 Next.js 管理图数据库（当前支持 Apache Jena / Fuseki）；在已有 PostgreSQL 的 `ontology_platform` Schema 中保存账号、加密的本体存储凭据、版本索引与审计记录。
+使用 Next.js 管理本体存储（Apache Jena / Fuseki 与内置类型图并存）；在 PostgreSQL 的 `ontology_platform` Schema 中保存账号、连接、审计与内置后端的当前发布视图。
 
 图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知底层查询语言与存储模型的差异。接入新的图后端只需新增一个适配器。
 
@@ -76,8 +76,8 @@
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON；每个属性可带**显示名**与**说明**（外部本体的中文名与口径原文能原样带进来） |
 | 👁 | **双视图** | 本体视图看已发布类型；运行时 Schema 由图库侧推导（RDF `rdf:type`）。两种视图的节点都可拖拽摆放：有草稿的实例位置写入图快照，只读浏览与本体骨架的摆放只记在本机浏览器 |
 | ⌨️ | **查询工作台** | SPARQL 只读查询与可视化；禁止绕过发布直接写入 |
-| 🗄 | **本体存储管理** | 按图数据库类型分组；凭据 AES-256-GCM 加密入库，主密钥仅在服务端 |
-| 🔌 | **图数据库抽象** | `GraphStore` 接口 + 适配器注册表，当前实现 Apache Jena |
+| 🗄 | **本体存储管理** | 可选内置类型图或 Apache Jena；Jena 凭据 AES-256-GCM 加密入库 |
+| 🔌 | **存储抽象** | `GraphStore` 接口 + Jena / 内置两个适配器，业务 API 不直接依赖具体引擎 |
 | 🧱 | **数据资源** | 外部关系库的只读连接（PostgreSQL / MySQL / Oracle）：列结构、字段与数据预览，再把类绑到表上（一个类可挂多份来源，按主键合并属性） |
 | 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
 | 📤 | **本体包** | 一个 `.ontology.json` 带走整份**结构**（类 / 关系类型 / 动作 / 规则 + 数据资源坐标），导入停在草稿。不含实例数据，也不含凭据 |
@@ -87,7 +87,7 @@
 | 层级 | 选型 |
 | --- | --- |
 | 前端 / API | Next.js（App Router）、React 19 |
-| 图数据库 | Apache Jena / Fuseki · SPARQL 1.1（Neo4j 已于 2026-09-14 移除） |
+| 本体存储 | 内置类型图（PG + Graphology + N3.js + Comunica）或 Apache Jena / Fuseki；Neo4j 已移除 |
 | 平台元数据 | PostgreSQL · Schema `ontology_platform` |
 | 图可视化 | Sigma / Graphology、React Flow |
 | 校验 | Zod |
@@ -229,7 +229,7 @@ pnpm docker:logs                      # 跟日志
 | `relationships.csv` | 关系稳定 ID、起止对象 ID、类型、属性 JSON |
 | `manifest.json` | 格式版本、本体存储、版本号、数量、时间、SHA-256 |
 
-版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是实例数据与版本状态的唯一事实来源**。PostgreSQL 只保存账号、本体存储与审计记录；`ONTOLOGY_VERSION_DIR` 因此是所有实例共享的持久卷。
+版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是版本状态与草稿的事实来源**。Jena 发布后写入命名图；内置后端把当前发布视图原子保存在 PG 的 `embedded_graphs` 表，运行时从中重建小型类型图。`ONTOLOGY_VERSION_DIR` 仍是所有平台实例共享的持久卷。
 
 ### 生命周期
 
@@ -253,6 +253,7 @@ pnpm docker:logs                      # 跟日志
 | 后端 | 原子替换的实现 |
 | --- | --- |
 | Apache Jena | 单个 SPARQL Update 请求完成「清空 + 插入」（TDB2 上单请求即事务）；超过 5000 条三元组时先写入影子命名图，再用一个请求 `CLEAR + ADD + DROP` 原子切换 |
+| 内置类型图 | PostgreSQL 单行 UPSERT 原子替换发布视图，查询只见旧版本或新版本；Graphology/N3.js 视图按需重建 |
 
 发布过程写三条审计：`VERSION_PUBLISH_STARTED`（含后端类型与 `atomicReplace`）、`VERSION_PUBLISHED` / `VERSION_ACTIVATED`、失败时的 `VERSION_PUBLISH_FAILED`（含 `graphReplaced`，用于判断图是否已被改动）。同一个本体存储的发布在进程内队列与 PostgreSQL advisory lock 两层串行，多实例部署也不会并发替换同一个本体存储。
 
@@ -417,12 +418,13 @@ pnpm docker:logs                      # 跟日志
 
 ## 图数据库抽象
 
-`src/lib/graph` 是唯一的图数据库访问入口：
+`src/lib/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
 
 | 文件 | 职责 |
 | --- | --- |
 | `types.ts` | `GraphTarget`、`GraphData`、`RuntimeTypeSet`、`GraphStore` 契约与连接元数据 |
-| `jena.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
+| `jena/index.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
+| `embedded/index.ts` | 内置适配器：平台 PG 持久化，Graphology 类型图与 N3.js / Comunica 只读 SPARQL |
 | `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
 
 ### 本体存储配置字段
@@ -436,13 +438,15 @@ pnpm docker:logs                      # 跟日志
 
 RDF 与属性图的映射：`?s rdf:type ?t` → 节点标签，字面量三元组 → 节点属性，资源三元组 → 关系；关系自身属性用 `urn:bkn:Relationship` 具体化表达，同时保留一条直接三元组，外部 SPARQL 工具照常可查。
 
+内置类型图不需要配置地址、数据集或凭据。新建本体存储时选择「内置类型图」，再在「本体」里选该存储新建本体。类型图只包含定义；为了兼容现有手工对象页面，当前发布视图可以暂存少量实例，但**海量业务对象不能进入这份 JSONB 视图或进程内 RDF Store**。Jena 保留且继续可选，现有 Jena 本体不会自动改变后端；若要迁移定义，可导出本体包，在新存储上导入并核验。当前本体包不携带实例数据。
+
 ### 多个本体放在哪（隔离）
 
 平台的「发布」是**整图替换**：Jena 侧清掉目标命名图（没配命名图时是默认图）后重写。
 因此**同一个「数据集 + 命名图」上不能登记两个本体存储**——两边会互相看见数据，发布时互相清空。
 新建 / 编辑本体存储时平台会拦下这种情况（HTTP 409），并说明怎么改。
 
-隔离单位是**命名图**，不是「多起一套实例」：
+Jena 的隔离单位是**命名图**，不是「多起一套实例」；内置后端由受管目标 ID 隔离，SPARQL 只看当前目标的 RDF 数据集：
 
 | 做法 | 适用 | 说明 |
 | --- | --- | --- |
@@ -460,7 +464,7 @@ API 路由、版本发布流程与界面组件无需改动。
 
 ## 数据资源
 
-数据资源是**外部数据来源**，和本体存储不是一回事：本体存储（Apache Jena）是本体自己的落库位置，数据资源是「类下面那些对象从哪来」。
+数据资源是**外部业务数据来源**，和本体存储不是一回事：本体存储（内置或 Jena）管理本体发布视图，数据资源回答「对象类型对应的业务数据从哪来」。
 
 `src/lib/data-source` 是唯一的数据来源访问入口：
 

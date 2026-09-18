@@ -34,6 +34,15 @@
 ## 依赖与实现原则
 - 优先直接使用知名、成熟的库或现成组件，非必要不重复造轮子。只有现有库/组件确实不满足业务需求时，才自行实现，并在代码中说明理由。
 
+## 代码与测试目录（2026-09-18）
+
+- 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如
+  `src/lib/graph/embedded/index.ts` 对应 `tests/lib/graph/embedded.test.ts`）。
+  `vitest.config.mts` 只收集 `tests/**/*.test.ts`，不要再在源码目录新增测试文件。
+- 本体存储各实现用自己的目录：`src/lib/graph/jena/`、`src/lib/graph/embedded/`；
+  `graph/` 根目录只放公共接口、注册表与跨实现共享模块。新增多文件后端也按此结构隔离，
+  不把不同后端的实现平铺在 `graph/` 根目录。
+
 ## 术语约定
 
 **界面文本用 Palantir 的全称，两层结构各一套词，不混用。**
@@ -223,7 +232,7 @@
   2. **界面**：拿到数据后再用 `window.location.origin` **覆盖** `absoluteUrl`。端口转发 / 反代会把 Host
      也改写成 localhost，那种情况只有浏览器自己知道真实地址。
   `/api/mcp/info` 与 `/api/skills` 都改了，`mcp-studio.tsx` 与 `skill-studio.tsx` 都覆盖 ——
-  **两个 MCP 页别一个对一个错**。单测在 `src/lib/public-origin.test.ts`。
+  **两个 MCP 页别一个对一个错**。单测在 `tests/lib/public-origin.test.ts`。
 - 防漂移（`skills.test.ts` 新增 9 条）：工具名与 `skill_id` 枚举、**名字必须带 `ontology_build_skill`
   且不与 `/api/mcp` 的工具重名**、**说明必须含「用途 / 输入 / 产出」且写出下一步调谁**、清单不带正文、
   取参考文件、目录穿越与不存在的技能被挡、prompts 正文来自 SKILL.md；另有两条**直接调 route 的 `POST`**
@@ -252,12 +261,29 @@
 - 跟着一起下发的参考：`references/blueprint-format.md`（清单格式与全部枚举）、`references/example.blueprint.json`（可编译的例子）、
   `references/example.bundle.json`（编译产物长什么样，仍是发布前校验零违规的样板）。
 - `ontology-builder` 的初稿也从 `*.ontology.json` 改成 `*.blueprint.json`（`SKILL_CATALOG` 里那句界面文案同步改了）。
-- 防漂移（都在 `skills.test.ts`）：用**真子进程**跑编译脚本编译示例清单，再把产物走
+- 防漂移（都在 `tests/lib/skills.test.ts`）：用**真子进程**跑编译脚本编译示例清单，再把产物走
   `readOntologyBundle → planBundleImport → validateVersionSnapshot` 要求零违规，并断言接口实现也满足契约；
   另有一条用例断言引用写错时退出码为 1、且把可选名字列出来。同一处还把「SKILL.md 里点名的 `references/…`」
   扩成「`references/…` 与 `scripts/…` 都必须真的存在」。
 - 边界：平台**只认** `ontology.bundle`；`.blueprint.json` 不是导入格式（拿清单去导入会被 `format` 检查拦下并提示先编译）。
   环境里没有 Node 时退回手写包 + `check-bundle.mjs`。
+
+## 内置类型图与 Jena 并存（2026-09-18）
+
+用户确认：类型图只包含对象类型、关系类型、接口等定义，不把将来海量对象放入内存图；
+先新增 JS/TS 内置后端，**保留 Jena/Fuseki 与旧数据**。充分验证后再讨论清理，不得提前删掉 Jena。
+
+- `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/graph/index.ts` 分发。
+  新建本体存储时可选其一；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
+  需要迁移时先导出本体包、在新存储上导入并核验；目前本体包只含定义，不带实例数据。
+- 正式定义保留在版本快照 `definition.json`，发布的当前图由平台 PostgreSQL 的
+  `ontology_platform.embedded_graphs` 原子保存；Graphology 类型图与 N3.js RDF 数据集按请求从当前版本重建，
+  Comunica 仅提供只读 SPARQL 查询。内存视图不是第二份事实来源，服务重启后也无需恢复内存状态。
+- 为兼容现有手工实例页面，当前发布视图仍可带少量快照节点和关系。这条 JSONB 整行存储**不是**未来海量业务对象方案；
+  大量对象须另做对象服务、按业务主键定位并在 PG/业务源按需读取，不能装进 N3.Store 或版本快照。
+- Jena 的 SPARQL 工作台、类型传播与发布路径保持原样。内置后端只验证当前实际用到的
+  SELECT/ASK/CONSTRUCT/DESCRIBE 和接口传递，不声称 OWL/RDFS 完整蕴含、SHACL 强约束已经可用。
+- Docker 目前仍包含 Fuseki，兼容现存 Jena 本体；只有用户明确要求且迁移、回归均通过后才考虑改为可选服务。
 
 ## 部署（Docker Compose）
 
@@ -403,7 +429,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
    与界面提示都走它；校验返回的 message 是**给用户看的界面文案**，按术语约定写「对象类型」。
    **2026-09-16 补**：`validateVersionSnapshot` 里原先只 import 了这两个校验函数却没调用（只有接口页在客户端提示），
    于是"接口页写着还差 2 项"的草稿照样能发布 —— 现在这两条接进了发布前校验，
-   `version-snapshot.test.ts` 有「缺必填属性 / 缺必填关系会被拦」的用例。
+   `tests/lib/version-snapshot.test.ts` 有「缺必填属性 / 缺必填关系会被拦」的用例。
 3. **实现了子接口 = 实现了父接口**：`implementersOf` 把"实现了子接口的对象类型"也算成父接口的实现者；
    图库侧靠 `rdfs:subClassOf` 的类型传播天然成立（按接口筛对象能筛到实现者）。实现同时写 `urn:bkn:implements`，
    读骨架时才能把「实现」与「接口继承」分成两种边（`readSchemaGraph` 的 `implementPairs`）。
@@ -490,7 +516,7 @@ SSPL / ELv2 / AGPLv3 三选一对闭源产品分发都有风险（详见 `docs/a
 `default-graph-uri` + `named-graph-uri` 把命名图设成这次查询的默认图（也登记成命名图，
 所以 `GRAPH <自己的图>` / `GRAPH ?g` 仍可用，但数据集里只有这一个图）。
 没配命名图的存储原样执行 —— 那类存储就住在默认图里，而且它是「看整个数据集」的排查入口。
-`jena.test.ts` 有 `scopedQueryUrl` 的单测，改这块别把限定去掉。
+`tests/lib/graph/jena.test.ts` 有 `scopedQueryUrl` 的单测，改这块别把限定去掉。
 
 历史（已作废）：2026-09-12 曾按 Neo4j Community「一个库一个本体」的限制选了"N 个实例各自登记"的方案
 （`scripts/neo4j-instance.ps1`，已在 2026-09-14 随 Neo4j 一并删除）。下表的 N1/N3/N4 都是 Neo4j 专属路径，
@@ -1065,5 +1091,5 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 | 编号 | 事项 | 说明 |
 | --- | --- | --- |
-| C1 | `src/lib/version-store.test.ts` 命名过时 | 用例实际测试 `version-snapshot.ts`，文件应与被测模块同名 |
+| C1 | `tests/lib/version-store.test.ts` 命名过时 | 用例实际测试 `version-snapshot.ts`，文件应与被测模块同名 |
 | C2 | 端到端用例覆盖不足 | `e2e/` 目前只有一个版本工作区 smoke；本体存储创建向导、发布失败提示、SPARQL 工作台、数据资源浏览与类绑定都还没有 e2e |

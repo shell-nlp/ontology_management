@@ -11,8 +11,8 @@ import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/target
  * 只做一次连接探测，不落库、不改图数据。
  */
 const testInput = z.object({
-  kind: z.enum(["JENA"]).default("JENA"),
-  uri: z.string().trim().url(),
+  kind: z.enum(["JENA", "EMBEDDED"]).default("JENA"),
+  uri: z.string().trim().url().optional(),
   databaseName: z.string().trim().min(1).max(100).default("ds"),
   username: z.string().trim().max(100).default(""),
   password: z.string().max(500).default(""),
@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     await requireRole("ADMIN");
     const input = testInput.parse(await request.json());
     kind = input.kind;
+    if (kind === "JENA" && !input.uri) throw new Error("请填写 Jena 服务地址。");
     let password = input.password;
     if (!password && input.targetId) {
       const stored = await getTarget(input.targetId);
@@ -37,8 +38,8 @@ export async function POST(request: NextRequest) {
       id: input.targetId ?? "unsaved",
       name: "连接测试",
       kind,
-      uri: input.uri,
-      database_name: input.databaseName,
+      uri: kind === "EMBEDDED" ? "embedded://platform" : input.uri!,
+      database_name: kind === "EMBEDDED" ? "platform" : input.databaseName,
       username: input.username,
       // 图库适配器拿到的是密文，这里保持同样的形态：先加密再交给它。
       credential_secret: password ? encryptSecret(password) : "",
