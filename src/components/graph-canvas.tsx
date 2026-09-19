@@ -566,7 +566,7 @@ export function GraphCanvas({
     setLayoutSeed((seed) => seed + 1);
   };
 
-  if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>画布上没有可绘制的节点</b><span>运行返回节点、关系或路径的 SPARQL 后即可切换图谱视图；在“图谱”页可管理现有图数据。</span></div>;
+  if (!graph.nodes.length) return <div className="graph-empty"><Network size={27} /><b>画布上没有可绘制的节点</b><span>运行返回节点、关系或路径的 SPARQL 后即可切换图谱视图；在“实例图谱”页可管理现有图数据。</span></div>;
 
   return (
     <div className="graph-canvas">
