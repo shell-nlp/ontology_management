@@ -647,6 +647,39 @@ D2 当初只接了「从数据源加载」与 AI 子图，留下两处对不上�
    正确做法是 `getQueryAndParameters()` 拿位置化 SQL + 值数组，再转成数字键对象。
 4. 取数失败时错误信息里会附上语句（截断 800 字符）：排障靠这一段就能判断是列名、分页还是绑定。
 
+## 检索索引的后端边界收口（2026-09-19）
+
+用户问「未来切换其它存储，比如 es/opensearch，好切换吗」。结论：**接口这一层是干净的**（所有调用方都走
+`getObjectIndex()`，没人碰表或 `pg`），真正要花时间的是 ES 缺的两件事 —— **原子整表替换**（PG 有事务，ES 得靠
+alias 切换）与 **按缺失键 prune 的增量同步**（PG 一条 `DELETE … WHERE NOT IN`，ES 要 sync token + delete_by_query）。
+顺手做了三件收口，把切换成本固定在这个水平：
+
+- **PG 专用件不再从公共 barrel 转出**：`escapeLike` / `normalizeSearchQuery` / `planObjectSearch`
+  是 PostgreSQL 的查询规划与 LIKE 转义，留在 `@/lib/object-index/sql`（要单测就直接引它）。
+  以前从 `@/lib/object-index` 转出去，等于把"索引后端 = PostgreSQL"写进公共契约。
+- **实例改成注册表 + 按 kind 缓存**：`src/lib/object-index/index.ts` 的 `factories` 是唯一的扩展点
+  —— **加后端 = 实现 `ObjectIndex` + 扩 `ObjectIndexKind` + 加一行**；没登记的 kind 会报
+  「还没有 X 的检索索引实现…」。缓存挂 `globalThis`（`__ontologyObjectIndexes`）：dev 下模块被反复求值不会漏实例
+  （和 D3 的连接池一个教训）。
+- **新增后端契约测试**（换后端时先跑它，别靠人肉比对）：
+  - `tests/lib/object-index/contract.ts` 的 `runObjectIndexContract()` 是**后端无关**的：upsert 不新增、
+    prune 只留这一批 / 只增不删、按对象键读、`deleteObjects` 计数、`replaceTargetObjects` 整体替换、
+    按标签过滤与精确总数、分页不重不漏、`EQ / IN / CONTAINS / EXISTS`、关键字命中（**没有全文能力时如实报
+    `textMode: "none"`**）、`deleteTargetObjects` 与 `stats`。
+  - `tests/lib/object-index/postgres.contract.test.ts` 拿真 PostgreSQL 跑这一组：**默认跳过**
+    （`pnpm test` 不依赖数据库；vitest 不会把 `.env.local` 灌进 `process.env`，实测确认过）。
+    要跑用 `pnpm test:object-index`（= `node --env-file=.env.local vitest run <那个文件>`）。
+    用例只写随机 `contract-<uuid>` target 的索引行（`object_entries` 对该列没有外键），跑完自己清干净 ——
+    实测 **15 passed / 848ms**，跑完库里 `contract-%` 为 0 行；平台库连接由该文件自己 `initialize()`
+    （应用里是启动流程 `ensurePlatformSchema()` 做的，测试不该顺带跑迁移）。
+
+**当前事实**（同一轮实测）：对象检索索引只有 PostgreSQL 一个后端，表 `ontology_platform.object_entries`，
+和平台库同库；扩展 `pg_trgm` + `vector` 已装，索引有 GIN(labels/search_doc/properties)、
+GIN(search_text gin_trgm_ops)、HNSW(embedding)、唯一键 `(target_id, object_key)`。
+表结构由 `postgres.ts` 在运行期自建（**不在 migrations 里**），所以新后端有自己的建表位置。
+索引里目前只有 2 行历史遗留（target `5446bc14-…`，该 target 已不在 `graph_targets`），当前本体 0 行
+—— 这正好说明 S4 要补的是"谁进索引"。
+
 ## 数据资源的连接池与并发闸门（D3，2026-09-19）
 
 动的只有 `src/lib/data-source/sql.ts` 的 `withConnection()`：以前是**每次操作连一次、断开一次**

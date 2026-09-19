@@ -9,6 +9,7 @@
     "build": "node scripts/openapi-fresh.mjs --force && next build",
     "openapi": "node scripts/openapi-fresh.mjs --force",
     "test": "vitest run",
+    "test:object-index": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/object-index/postgres.contract.test.ts",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
