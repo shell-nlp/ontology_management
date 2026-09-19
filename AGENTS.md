@@ -176,6 +176,12 @@
 **裸主机名（`http://<计算机名>:<port>`）仍会被拦** —— 它不在白名单里，要测就临时把机器名加进去。
 生产构建（`next build` / Docker 里的 `next start`）不读这一项，不受影响。
 
+**浏览器扩展注进来的属性不算我们的 bug**（2026-09-19）。用户报的 hydration 报错是
+`<html>` 上多出 `data-immersive-translate-page-theme="light"`，来源是**沉浸式翻译**扩展在客户端改 DOM，
+不是 SSR/CSR 分支写错。处理办法就是在 `src/app/layout.tsx` 的 `<html>` 上加 `suppressHydrationWarning`
+（React 专用 prop，**不会渲染成 HTML 属性**，所以看服务端返回的 HTML 是看不出区别的）。
+再见到 html/body 上被扩展加属性的报错，先看属性名认不认得出扩展，别去翻组件。
+
 ## 本体技能（AI Skills 构建）
 
 记录时间：2026-09-16。用户要求「参考 bkn-foundry（后端）与 bkn-studio（前端），实现一套构建本体的 skill
