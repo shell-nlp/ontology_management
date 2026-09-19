@@ -117,6 +117,35 @@ rules[].actionId                     → actionTypes[].id
 | `sourceEntityTypeId` | 起点对象类型 id |
 | `targetEntityTypeId` | 终点对象类型 id（起点=终点表示自环） |
 | `properties[]` | **这条关系自己的事实**（订购时间、角色…），结构同 2.3 的属性 |
+| `sourceKeyMappings[]` | 起点侧的键映射（见下），空数组 = 还没配 |
+| `targetKeyMappings[]` | 终点侧的键映射（见下），空数组 = 还没配 |
+
+#### 键映射（`sourceKeyMappings` / `targetKeyMappings`）
+
+这条关系类型在**数据上**怎么把两个对象类型接起来。一行 = 一个字段对：
+
+| 字段 | 说明 |
+| --- | --- |
+| `linkProperty` | 关系类型这一侧的连接属性 / 连接表的列名；**留空**表示这一侧的连接键长在对象类型自己身上（外键式） |
+| `entityProperty` | 这一侧对象类型上的属性名 |
+
+```json
+{ "name": "客户拥有专线产品用户", "source": "客户", "target": "专线产品用户",
+  "sourceKeyMappings": [{ "linkProperty": "CUST_ID", "entityProperty": "CUST_ID" }],
+  "targetKeyMappings": [{ "linkProperty": "USER_ID", "entityProperty": "USER_ID" }] }
+```
+
+**写多行就是复合键**，两端各写各的（多对多的连接表就是"每一列对上哪一端的主键"）：
+
+```json
+{ "sourceKeyMappings": [{ "linkProperty": "A_ID", "entityProperty": "A_ID" }, { "linkProperty": "A_SEQ", "entityProperty": "SEQ" }],
+  "targetKeyMappings": [{ "linkProperty": "B_ID", "entityProperty": "B_ID" }] }
+```
+
+两条规则：
+
+- **不配也能发布** —— 键映射是给实例层、数据绑定和推理用的声明，纯类型层建模可以不填。
+- **填了就要对得上**：`entityProperty` 指到对象类型上没有的属性会**被发布校验拦住**；指向的不是主键只是**提醒**（Palantir 的 Key 要求落在主键上）。外键式（两侧 `linkProperty` 都留空）两侧条数不一致也只是提醒，那种写法按顺序一一对应。
 
 对象类型之间**没有继承**：不要写 `parents`、`rdfs:subClassOf` 这类字段（写了会被忽略，也会误导读者）。
 

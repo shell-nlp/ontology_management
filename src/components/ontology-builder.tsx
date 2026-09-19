@@ -10,6 +10,7 @@ import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterf
 import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import { searchOntologyDefinition, type OntologySearchHit } from "@/lib/ontology-search";
+import { keyMappingRows, keyMappingLabel } from "@/lib/relationship-keys";
 import { entitySources, type ActionType, type Definition, type EntityType, type RelationType } from "@/lib/ontology-draft";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
@@ -22,7 +23,7 @@ const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module
 
 export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 /** 关系类型：一条定义、两个端点；它是双向的，不用再建反向的那一条。 */
-export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
+export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; sourceKeyMappings?: RelationType["sourceKeyMappings"]; targetKeyMappings?: RelationType["targetKeyMappings"]; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "interface"; id: string } | { kind: "relation"; id: string } | null;
 /** 接口的编辑走对话框（和「编辑对象类型」同一个壳），所以单独一个状态。 */
@@ -125,6 +126,13 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
     ? definition.interfaces
       .filter((item) => item.promotedFromEntityTypeId === selectedRelation.sourceEntityTypeId || item.promotedFromEntityTypeId === selectedRelation.targetEntityTypeId)
       .map((item) => ({ ...item, implementers: definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(item.id)).map((entity) => entity.name) }))
+    : [];
+  /** 选中关系类型时右栏要展示的键映射（连接属性 → 该端对象类型的属性）。 */
+  const selectedRelationKeys = selectedRelation
+    ? [
+      ...keyMappingRows(selectedRelation.sourceKeyMappings).map((row) => ({ label: "起始端", text: keyMappingLabel(row) })),
+      ...keyMappingRows(selectedRelation.targetKeyMappings).map((row) => ({ label: "终止端", text: keyMappingLabel(row) })),
+    ]
     : [];
   const organize = useCallback(() => {
     // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
@@ -450,6 +458,12 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   ))}
                 </div>
               ) : <p className="ob-inspector-note">这条关系类型没有额外属性。</p>}
+              {selectedRelationKeys.length ? (
+                <div className="ob-key-mappings">
+                  <b>键映射</b>
+                  {selectedRelationKeys.map((item, index) => <p key={`${item.label}-${index}`}><span>{item.label}</span>{item.text}</p>)}
+                </div>
+              ) : null}
               <InvolvedActions definition={definition} relationTypeId={selectedRelation.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
                 <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>
@@ -488,11 +502,11 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         <TypeEditDialog
           kind="relation"
           mode={dialog.mode}
-          relation={dialog.mode === "edit" ? relationById.get(dialog.id) ?? null : { id: dialog.id, name: "", sourceEntityTypeId: dialog.source, targetEntityTypeId: dialog.target, properties: [] }}
+          relation={dialog.mode === "edit" ? relationById.get(dialog.id) ?? null : { id: dialog.id, name: "", sourceEntityTypeId: dialog.source, targetEntityTypeId: dialog.target, sourceKeyMappings: [], targetKeyMappings: [], properties: [] }}
           entityTypes={definition.entityTypes}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: RelationPayload = { name: payload.name, description: payload.description, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", properties: payload.properties };
+            const body: RelationPayload = { name: payload.name, description: payload.description, sourceEntityTypeId: payload.sourceEntityTypeId ?? "", targetEntityTypeId: payload.targetEntityTypeId ?? "", sourceKeyMappings: payload.sourceKeyMappings ?? [], targetKeyMappings: payload.targetKeyMappings ?? [], properties: payload.properties };
             if (dialog.mode === "create") { await onCreateRelation(dialog.id, body); setSelected({ kind: "relation", id: dialog.id }); }
             else await onUpdateRelation(dialog.id, body);
           }}

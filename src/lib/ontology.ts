@@ -131,6 +131,25 @@ export const conceptGroupSchema = z.object({
 });
 
 /**
+ * 关系类型的键映射：这条关系类型靠哪些属性（列）接到某一个对象类型上。
+ *
+ * 一行 = 关系类型这一侧的连接属性（连接表的列名）→ 对象类型这一侧的属性。
+ * 写多行就是复合键。对齐 Palantir 的 link type Key：
+ * - 多对多（有一张连接表）：连接表的列 → 两端对象类型的主键属性；
+ * - 一对一 / 多对一（外键长在对象类型上）：`linkProperty` 留空，直接写那个外键属性。
+ * 空数组 = 只声明了业务语义，没说数据上怎么连 —— 纯类型层建模可以不填，发布前不会因此被拦。
+ */
+export const relationshipKeyMappingSchema = z.object({
+  /**
+   * 关系类型这一侧的连接属性 / 连接列名。
+   * 留空表示这一侧的连接键长在对象类型自己身上（外键式关系类型），两侧按顺序一一对应。
+   */
+  linkProperty: z.string().trim().max(200).default(""),
+  /** 这一侧对象类型上的属性名。 */
+  entityProperty: z.string().trim().max(200).default(""),
+});
+
+/**
  * 一个类的数据来源清单，也就是 Palantir 的多来源对象类型（column-wise MDO）。
  *
  * `sources[0]` 是主来源：对象的身份（主键）和标题由它决定；
@@ -293,6 +312,13 @@ export const ontologyDefinitionSchema = z.object({
     sourceEntityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
     targetEntityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
     properties: z.array(propertySchema).default([]),
+    /**
+     * 起点侧的键映射：连接属性 → 起点对象类型的属性。空数组 = 还没配（不是错误）。
+     * 加这一项之前的老快照读出来是空数组。
+     */
+    sourceKeyMappings: z.array(relationshipKeyMappingSchema).default([]),
+    /** 终点侧的键映射：连接属性 → 终点对象类型的属性。 */
+    targetKeyMappings: z.array(relationshipKeyMappingSchema).default([]),
   })).default([]),
   actionTypes: z.array(actionTypeSchema).default([]),
   rules: z.array(ontologyRuleSchema).default([]),
@@ -305,3 +331,4 @@ export type ConceptGroup = z.infer<typeof conceptGroupSchema>;
 export type InterfaceType = z.infer<typeof interfaceTypeSchema>;
 export type InterfaceLinkConstraint = z.infer<typeof interfaceLinkConstraintSchema>;
 export type InterfaceActionConstraint = z.infer<typeof interfaceActionConstraintSchema>;
+export type RelationshipKeyMapping = z.infer<typeof relationshipKeyMappingSchema>;

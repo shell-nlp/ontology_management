@@ -65,6 +65,26 @@ describe("version snapshot", () => {
     expect(match!.rule).toBe("客户.名称");
     expect(match!.count).toBe(1);
   });
+
+  it("关系类型的键映射指到不存在的属性时挡发布，指到主键上则放行", () => {
+    const ok = validSnapshot();
+    ok.definition.relationshipTypes[0] = {
+      ...ok.definition.relationshipTypes[0],
+      sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "名称" }],
+      targetKeyMappings: [{ linkProperty: "ORDER_NO", entityProperty: "编号" }],
+    };
+    expect(validateVersionSnapshot(ok)).toEqual([]);
+
+    const broken = validSnapshot();
+    broken.definition.relationshipTypes[0] = {
+      ...broken.definition.relationshipTypes[0],
+      sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "没有这个属性" }],
+    };
+    const violations = validateVersionSnapshot(broken);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain("不存在的属性「没有这个属性」");
+    expect(violations[0].severity).toBeUndefined();
+  });
 });
 
 describe("按对象类型筛：字面匹配（类之间没有继承）", () => {

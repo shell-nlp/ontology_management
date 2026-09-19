@@ -42,7 +42,7 @@
 | `groups` | 否 | 概念分组：`name` / `color` |
 | `interfaces` | 否 | 接口：`name` / `description` / `properties` / `extends` / `linkConstraints` |
 | `objectTypes` | 否 | 对象类型：`name` / `description` / `displayProperty` / `group` / `implements` / `properties` / `sources` |
-| `relationTypes` | 否 | 关系类型：`name` / `description` / `source` / `target` / `properties`。关系类型是**双向**的：只写一条，反向不用再建 |
+| `relationTypes` | 否 | 关系类型：`name` / `description` / `source` / `target` / `properties` / `sourceKeyMappings` / `targetKeyMappings`。关系类型是**双向**的：只写一条，反向不用再建 |
 | `actionTypes` | 否 | 动作：`name` / `code` / `description` / `scope` / `params` / `edits` |
 | `rules` | 否 | 规则：`name` / `effect` / `priority` / `enabled` / `action` / `conditions` / `message` |
 

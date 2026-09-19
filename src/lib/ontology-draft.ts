@@ -1,5 +1,6 @@
 import type { ConceptGroup as ConceptGroupDefinition, EntitySource as EntitySourceDefinition, InterfaceType as InterfaceTypeDefinition, OntologyDefinition } from "@/lib/ontology";
 import type { LegacyEntitySource } from "@/lib/ontology-sources";
+import type { KeyMapping } from "@/lib/relationship-keys";
 
 /**
  * 草稿定义在前端的形态：与 `@/lib/ontology` 的 zod 结果结构一致，
@@ -39,7 +40,17 @@ export function emptyEntitySource(id = "primary"): EntitySource {
 /** 来源清单的读写与自检都在 @/lib/ontology-sources，这里转出去，界面只认这一个入口。 */
 export { LEGACY_PRIMARY_SOURCE_ID, entitySources, newEntitySourceId, sourceFieldsKey, sourceName, sourceRoleLabel, validateEntitySources, type SourceViolation } from "@/lib/ontology-sources";
 /** 关系类型（草稿态）：一条关系类型只有一份定义、两个端点，两个方向都能走，不用再建反向的那一条。 */
-export type RelationType = { id: string; name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
+export type RelationType = {
+  id: string;
+  name: string;
+  description?: string;
+  sourceEntityTypeId: string;
+  targetEntityTypeId: string;
+  /** 这条关系在数据上怎么把两端接起来：连接属性 → 该端对象类型的属性。多条就是复合键；不配也能发布。 */
+  sourceKeyMappings?: KeyMapping[];
+  targetKeyMappings?: KeyMapping[];
+  properties: Property[];
+};
 export type ActionParameter = OntologyDefinition["actionTypes"][number]["params"][number];
 export type ActionValueSource = OntologyDefinition["actionTypes"][number]["edits"][number]["assignments"][number]["value"];
 export type ActionEdit = OntologyDefinition["actionTypes"][number]["edits"][number];

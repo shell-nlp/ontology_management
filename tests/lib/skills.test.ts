@@ -45,7 +45,7 @@ describe("本体技能目录", () => {
     expect(bundleSkill!.content).toContain("导入本体包");
     const format = await readSkillFile("ontology-bundle", "references/bundle-format.md");
     // 字段名与枚举是契约的一部分：改了定义就要改文档，这里挡住"只改代码不改文档"。
-    for (const token of ["entityTypes", "relationshipTypes", "interfaces", "actionTypes", "rules", "formatVersion", "scopeEntityTypeId", "dataType"]) {
+    for (const token of ["entityTypes", "relationshipTypes", "interfaces", "actionTypes", "rules", "formatVersion", "scopeEntityTypeId", "dataType", "sourceKeyMappings", "targetKeyMappings", "linkProperty"]) {
       expect(format!.content, `bundle-format.md 少了 ${token}`).toContain(token);
     }
     expect(format!.content).toContain("TEXT_ARRAY");
@@ -115,6 +115,10 @@ describe("清单 → 本体包的编译脚本", () => {
       expect(plan.definition.interfaces).toHaveLength(1);
       expect(plan.definition.actionTypes).toHaveLength(1);
       expect(plan.definition.rules).toHaveLength(1);
+      // 键映射也要活着走完「清单 → 编译 → 导入」：这是它唯一的交付路径，掉了就等于没做。
+      const 关系 = plan.definition.relationshipTypes.find((item) => item.name === "客户拥有专线产品用户");
+      expect(关系?.sourceKeyMappings).toEqual([{ linkProperty: "CUST_ID", entityProperty: "CUST_ID" }]);
+      expect(关系?.targetKeyMappings).toEqual([{ linkProperty: "USER_ID", entityProperty: "USER_ID" }]);
       expect(validateVersionSnapshot({ definition: plan.definition, nodes: [], relationships: [] })).toEqual([]);
       // 接口实现也要满足契约：编译出来的包不能只是「结构合法」。
       expect(validateInterfaces(plan.definition)).toEqual([]);

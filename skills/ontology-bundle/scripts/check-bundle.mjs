@@ -72,6 +72,17 @@ function main() {
   (d.relationshipTypes ?? []).forEach((relation) => {
     need(relation.sourceEntityTypeId, `${relation.name} 起点`);
     need(relation.targetEntityTypeId, `${relation.name} 终点`);
+    // 键映射写的是"连接列 → 对象类型的属性"，属性按名字指；指到不存在的属性时发布校验会拦，这里先提醒。
+    for (const [side, entityId, mappings] of [
+      ["起点", relation.sourceEntityTypeId, relation.sourceKeyMappings],
+      ["终点", relation.targetEntityTypeId, relation.targetKeyMappings],
+    ]) {
+      const entity = (d.entityTypes ?? []).find((item) => item.id === entityId);
+      const known = new Set((entity?.properties ?? []).map((property) => property.name));
+      (mappings ?? []).forEach((mapping) => {
+        if (mapping?.entityProperty && known.size && !known.has(mapping.entityProperty)) fail.push(`${relation.name} 的${side}键映射指向了 ${entity?.name} 上不存在的属性 ${mapping.entityProperty}`);
+      });
+    }
   });
   (d.interfaces ?? []).forEach((item) => {
     (item.extends ?? []).forEach((id) => need(id, `${item.name}.extends`));

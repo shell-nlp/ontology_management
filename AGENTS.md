@@ -351,6 +351,31 @@
 - **改连接信息要作废缓存**（`[sourceId]/route.ts` 的 PATCH 比对 kind/host/port/库/模式/账号/密码后才清）；删资源时随行删除。
 - 单测：`tests/lib/data-source/structure-cache.test.ts`（命中不回源、未命中回源并写回、refresh 覆盖、两个桶互不干扰、失败不写）。
 
+## 关系类型的键映射（2026-09-19）
+
+用户要求：「关系类型的设置起和始的属性的映射，可以是多映射」。对齐 Palantir 的 link type **Key**
+（一条 link type 要说明两个对象类型的哪些键对得上），所以在关系类型上加了两份映射。
+
+- 数据：`relationshipTypes[].sourceKeyMappings / targetKeyMappings`，每行 `{ linkProperty, entityProperty }` ——
+  前者是**关系类型这一侧**的连接属性（连接表的列名，可留空 = 外键长在对象类型上，两侧按顺序一一对应），
+  后者是**这一侧对象类型**的属性名。多行就是复合键。schema 在 `src/lib/ontology.ts`
+  （`relationshipKeyMappingSchema`），纯函数与校验在 `src/lib/relationship-keys.ts`。
+- **默认空、空不算错**：平台只在类型层建模，键映射是给实例层、数据绑定与模型推理用的声明，
+  老快照读出来就是空数组（`.default([])`），发布校验不会因为"没配"报任何东西。
+- **发布前校验**（`validateVersionSnapshot` 调用 `relationshipKeyViolations`）：
+  `entityProperty` 指到对象类型上**不存在的属性**是**挡发布**的（换台机器导入就是悬空引用）；
+  指到的属性**不是主键**、同一侧**重复映射**、外键式**两侧条数对不齐**只是 WARN。
+  主键怎么认：优先按 `sources[].primaryKey` 的列反查属性（属性用 `sourceField` 指回列），
+  没绑来源的对象类型退回"必填 + 唯一"（导入外部本体就是这么记主键的）。
+- 界面：`type-edit-dialog.tsx` 的关系类型分支里新增「两端的键映射」一节（起始端 / 终止端两栏并排，
+  左边是连接属性的输入框带 datalist 候选，右边是该侧对象类型属性的下拉，主键带「· 主键」标记）；
+  画布右栏（`ontology-builder.tsx`）只读展示 `CUST_ID → 客户标识` 这样的摘要。
+  **两个入口共用同一个 `TypeEditDialog`**，别再各写一份。
+- 工具：`get_object_type` 的 `one_hop` 每条边上带 `key_mapping: { source, target }`（只在配过时才带）。
+- 出包/导入：本体包与 blueprint 里字段同名（`sourceKeyMappings` / `targetKeyMappings`），
+  `build-bundle.mjs` 原样编译并顺手报"指到不存在的属性"；`check-bundle.mjs` 也会查一遍。
+- 单测：`tests/lib/relationship-keys.test.ts`（10 条）+ `tests/lib/version-snapshot.test.ts` 的发布门禁用例。
+
 ## 部署（Docker Compose）
 
 当前编排只启动本体平台 `app`。PostgreSQL（平台库）、业务数据源以及可选的

@@ -10,6 +10,7 @@ import {
 } from "@/lib/interfaces";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
+import { keyMappingLabel, keyMappingRows } from "@/lib/relationship-keys";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -687,12 +688,23 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       };
       const touching = definition.relationshipTypes.filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id);
       /*
+       * 关系类型的键映射：这条关系在数据上按哪几个字段把两端接起来。
+       * 模型答"这两类对象怎么对上"（能不能按客户编号连过去、要不要走连接表）要靠它；
+       * 没配的关系类型就不带这一项，免得每条边都挂一串空数组。
+       */
+      const keyMappingsOf = (relation: (typeof touching)[number]) => {
+        const source = keyMappingRows(relation.sourceKeyMappings).map(keyMappingLabel);
+        const target = keyMappingRows(relation.targetKeyMappings).map(keyMappingLabel);
+        if (!source.length && !target.length) return null;
+        return { source, target };
+      };
+      /*
        * 一跳关系：出边、入边分开列。模型问"A 一圈都连着谁"是最常见的追问，
        * 提前给到就省掉一次遍历；要多跳再走 traverse_object_types（最多 5 跳）。
        */
       const oneHop = {
-        outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.targetEntityTypeId) })),
-        incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.sourceEntityTypeId) })),
+        outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.targetEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}) }; }),
+        incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.sourceEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}) }; }),
         /*
          * 接口带来的关系：实现接口就承接接口的关系约束（Palantir 语义），
          * 所以"实现方一跳能到谁"必须把它算进来 —— 否则实现方看着像孤立的类型。
@@ -700,7 +712,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         via_interfaces: interfaceDerivedLinks(definition)
           .filter((link) => link.fromId === type.id || link.toId === type.id)
           .map((link) => ({ relation: link.name, via_interface: link.viaInterface, ...neighbor(link.fromId === type.id ? link.toId : link.fromId) })),
-        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
+        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。key_mapping 是这条关系类型声明过的键映射（连接属性 → 该端对象类型的属性，`外键 X` 表示连接键长在对象类型上），它说明两类对象在数据上按哪几个字段对得上；没配的关系类型不带这一项，那只是还没填，不代表连不上。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
       };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)

@@ -138,6 +138,12 @@
         "description": "一个有专线的客户可能对应多个专线产品用户。",
         "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000001",
         "targetEntityTypeId": "b1000000-0000-4000-8000-000000000002",
+        "sourceKeyMappings": [
+          { "linkProperty": "CUST_ID", "entityProperty": "CUST_ID" }
+        ],
+        "targetKeyMappings": [
+          { "linkProperty": "USER_ID", "entityProperty": "USER_ID" }
+        ],
         "properties": [
           { "name": "CUST_SINCE", "displayName": "成为客户的日期", "description": "这个用户成为该客户的日期。", "dataType": "DATE", "required": false, "unique": false, "indexed": false }
         ]
@@ -156,6 +162,12 @@
         "description": "专线产品用户订购的产品；订购时间挂在这条关系上。",
         "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000002",
         "targetEntityTypeId": "b1000000-0000-4000-8000-000000000003",
+        "sourceKeyMappings": [
+          { "linkProperty": "USER_ID", "entityProperty": "USER_ID" }
+        ],
+        "targetKeyMappings": [
+          { "linkProperty": "OFFER_ID", "entityProperty": "OFFER_ID" }
+        ],
         "properties": [
           { "name": "ORDER_TIME", "displayName": "订购时间", "description": "这条订购关系建立的时间。", "dataType": "DATETIME", "required": false, "unique": false, "indexed": false }
         ]

@@ -60,6 +60,16 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/**
+ * 关系类型的键映射：一行 = 连接属性（关系类型这一侧的列名）→ 该端对象类型的属性。
+ * 清单里只写这两个字段，其余（id、顺序）由编译器负责；空行（两边都没写）直接丢掉。
+ */
+function compileKeyMappings(value) {
+  return asArray(value)
+    .map((row) => ({ linkProperty: text(row?.linkProperty), entityProperty: text(row?.entityProperty) }))
+    .filter((row) => row.linkProperty || row.entityProperty);
+}
+
 /** 名字归一：解析引用时忽略大小写与空白（「专线产品用户」与「专线产品用户 」是同一个）。 */
 function key(name) {
   return text(name).toLowerCase().replace(/\s+/g, "");
@@ -158,6 +168,7 @@ function compile(blueprint) {
   const relationTypes = asArray(blueprint.relationTypes ?? blueprint.relationshipTypes).map((item) => ({
     id: "", name: text(item?.name), description: text(item?.description),
     source: text(item?.source), target: text(item?.target), properties: asArray(item?.properties),
+    sourceKeyMappings: compileKeyMappings(item?.sourceKeyMappings), targetKeyMappings: compileKeyMappings(item?.targetKeyMappings),
   }));
   const actionTypes = asArray(blueprint.actionTypes).map((item) => ({
     id: "", name: text(item?.name), code: text(item?.code), description: text(item?.description),
@@ -314,12 +325,22 @@ function compile(blueprint) {
     const source = resolve(objectTypeByName, item.source, "对象类型", `${where}的 source`);
     const target = resolve(objectTypeByName, item.target, "对象类型", `${where}的 target`);
     if (!source || !target) warn(`RELATION_ENDPOINT_MISSING：${where}的起点或终点没解析出来。`);
+    // 键映射指到对象类型上不存在的属性：本体包能导进去，但那行映射是悬空的，提前提醒。
+    for (const [side, mappings] of [["起始端", item.sourceKeyMappings], ["终止端", item.targetKeyMappings]]) {
+      const entity = objectTypes.find((candidate) => candidate.id === (side === "起始端" ? source : target));
+      const known = new Set(asArray(entity?.properties).map((property) => text(property?.name)).filter(Boolean));
+      for (const mapping of mappings) {
+        if (mapping.entityProperty && known.size && !known.has(mapping.entityProperty)) warn(`RELATION_KEY_UNKNOWN_PROPERTY：${where}的${side}键映射指向了「${entity?.name ?? "?"}」上不存在的属性「${mapping.entityProperty}」。`);
+      }
+    }
     return {
       id: item.id,
       name: item.name,
       description: item.description,
       sourceEntityTypeId: source,
       targetEntityTypeId: target,
+      sourceKeyMappings: item.sourceKeyMappings,
+      targetKeyMappings: item.targetKeyMappings,
       properties: compileProperties(item.properties, where),
     };
   });

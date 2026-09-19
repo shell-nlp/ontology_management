@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { effectiveInterfaceProperties } from "@/lib/interfaces";
+import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/relationship-keys";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import {
@@ -35,6 +36,9 @@ export type TypeEditPayload = {
   implements?: string[];
   sourceEntityTypeId?: string;
   targetEntityTypeId?: string;
+  /** 起点 / 终点两侧的键映射（连接属性 → 对象类型属性）；只有关系类型带这一项。 */
+  sourceKeyMappings?: KeyMapping[];
+  targetKeyMappings?: KeyMapping[];
   properties: Property[];
   /** 类的数据来源清单，第 0 份是主来源；关系类型不带这一项。 */
   sources?: EntitySource[];
@@ -69,6 +73,9 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [implementsList, setImplementsList] = useState<string[]>(kind === "entity" ? entity?.implements ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
   const [target, setTarget] = useState(relation?.targetEntityTypeId ?? "");
+  // 两端的键映射：关系类型这一侧的连接属性 → 该侧对象类型的属性。多条就是复合键。
+  const [sourceKeys, setSourceKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).source : []));
+  const [targetKeys, setTargetKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).target : []));
   const [properties, setProperties] = useState<Property[]>(kind === "entity" ? entity?.properties ?? [] : relation?.properties ?? []);
   const [propName, setPropName] = useState("");
   const [dataType, setDataType] = useState<Property["dataType"]>("TEXT");
@@ -82,6 +89,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [sourceDrafts, setSourceDrafts] = useState<EntitySource[]>(() => (kind === "entity" ? entitySources(entity) : []));
   const [fieldsBySource, setFieldsBySource] = useState<Record<string, { key: string; fields: DataViewField[] }>>({});
   const reportedFields = useRef<Record<string, { key: string; fields: DataViewField[] }>>({});
+  // 连接属性的候选列表用 datalist，id 每个弹窗一份，免得同页两个弹窗互相串。
+  const linkPropertyListId = useId();
 
   /** 每份来源各读各的结构，读到的字段按来源 id 汇总到这里，属性映射才有列可选。 */
   const rememberFields = useCallback((sourceId: string, key: string, fields: DataViewField[]) => {
@@ -253,6 +262,33 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     setProperties((current) => current.map((item) => (item.name === propertyName ? { ...item, sourceId, sourceField: "" } : item)));
   };
 
+  /*
+   * 键映射的增删改：起点与终点只差一份数据，用一张表驱动，免得两段 JSX 各写一遍。
+   * 新加的一行默认落在"主键对主键"上 —— 多数关系类型点一下「添加映射」就够，不用两个框都手填。
+   */
+  const keyMappingCount = keyMappingRows(sourceKeys).length + keyMappingRows(targetKeys).length;
+  const keySides = [
+    { side: "source" as const, label: "起始端", entity: sourceEntity, rows: sourceKeys, setRows: setSourceKeys },
+    { side: "target" as const, label: "终止端", entity: targetEntity, rows: targetKeys, setRows: setTargetKeys },
+  ];
+  const addKeyMapping = (side: "source" | "target") => {
+    const entity = side === "source" ? sourceEntity : targetEntity;
+    const setRows = side === "source" ? setSourceKeys : setTargetKeys;
+    const property = primaryKeyPropertyNames(entity)[0] ?? "";
+    // 连接列优先取来源里的第一个主键列；对象类型还没绑表（纯建模）时退回属性名，
+    // 这样"点一下添加映射"拿到的是一条完整的 `A → A`，不用两个框都手填。
+    const column = entity?.sources?.[0]?.primaryKey?.filter(Boolean)[0] || property;
+    setRows((current) => [...current, { linkProperty: column, entityProperty: property }]);
+  };
+  const patchKeyMapping = (side: "source" | "target", index: number, patch: KeyMapping) => {
+    const setRows = side === "source" ? setSourceKeys : setTargetKeys;
+    setRows((current) => current.map((row, position) => (position === index ? { ...row, ...patch } : row)));
+  };
+  const removeKeyMapping = (side: "source" | "target", index: number) => {
+    const setRows = side === "source" ? setSourceKeys : setTargetKeys;
+    setRows((current) => current.filter((_, position) => position !== index));
+  };
+
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     if (busy || !name.trim()) return;
@@ -262,7 +298,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     try {
       await onSave(kind === "entity"
         ? { name, description, displayProperty, groupName, implements: implementsList, properties, sources: normalizedSources }
-        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties });
+        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys) });
       onClose();
     } finally {
       setBusy(false);
@@ -403,6 +439,51 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     </select>
                   </label>
                 </div>
+                <section className="ted-section ted-key">
+                  <div className="ted-section-head">
+                    <h3><KeyRound size={13} />两端的键映射</h3>
+                    <em>{keyMappingCount ? `${keyMappingCount} 条` : "空"}</em>
+                  </div>
+                  <p className="ted-key-hint">这条关系类型在数据上怎么把两个对象类型接起来：左边写关系类型这一侧的连接属性（连接表的列名），右边挑该侧对象类型上的属性。写多条就是复合键。留空只表示还没配，不影响发布。</p>
+                  <div className="ted-key-cols">
+                    {keySides.map(({ side, label, entity: sideEntity, rows }) => {
+                      const sideKeyProperties = new Set(primaryKeyPropertyNames(sideEntity));
+                      const sidePropertyNames = sideEntity?.properties.map((property) => property.name) ?? [];
+                      return (
+                        <div className="ted-key-col" key={side}>
+                          <div className="ted-key-head">
+                            <span>{label}</span>
+                            <b>{sideEntity ? sideEntity.name : "未选对象类型"}</b>
+                            <button type="button" className="action compact" disabled={!sideEntity} onClick={() => addKeyMapping(side)}><Plus size={12} />添加映射</button>
+                          </div>
+                          {rows.length ? rows.map((row, index) => (
+                            <div className="ted-key-row" key={`${side}-${index}`}>
+                              <input
+                                className="ted-input"
+                                list={linkPropertyListId}
+                                value={row.linkProperty ?? ""}
+                                onChange={(event) => patchKeyMapping(side, index, { linkProperty: event.target.value })}
+                                placeholder={sideEntity?.sources?.[0]?.primaryKey?.filter(Boolean)[0] || "连接属性 / 列名"}
+                                aria-label={`${label}的连接属性`}
+                              />
+                              <span className="ted-key-arrow">→</span>
+                              <select className="ted-select" value={row.entityProperty ?? ""} onChange={(event) => patchKeyMapping(side, index, { entityProperty: event.target.value })} aria-label={`${label}的对象类型属性`}>
+                                <option value="">选择属性</option>
+                                {sidePropertyNames.map((name) => <option key={name} value={name}>{name}{sideKeyProperties.has(name) ? " · 主键" : ""}</option>)}
+                                {row.entityProperty && !sidePropertyNames.includes(row.entityProperty) ? <option value={row.entityProperty}>{row.entityProperty}（已不在对象类型上）</option> : null}
+                              </select>
+                              <button type="button" className="ted-key-remove" onClick={() => removeKeyMapping(side, index)} aria-label={`删除${label}的这一条映射`}><Trash2 size={13} /></button>
+                            </div>
+                          )) : <p className="ted-props-empty">还没有映射。两端都绑了表、又想让模型知道它们按哪几个字段对得上时再配。</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <datalist id={linkPropertyListId}>
+                    {properties.map((property) => <option key={property.name} value={property.name} />)}
+                  </datalist>
+                  <small>连接属性可以填关系类型自己的属性，也可以填连接表里的列名；外键长在对象类型上时把左边留空，两侧按顺序一一对应。</small>
+                </section>
               </>
             )}
 
