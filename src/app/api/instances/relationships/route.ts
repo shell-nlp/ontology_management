@@ -6,7 +6,7 @@ import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/version-snapshot";
 
-const inputSchema = z.object({
+const relationshipCreateInput = z.object({
   targetId: z.string().uuid(),
   versionId: z.string().uuid(),
   relationshipType: z.string().min(1),
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
-    const input = inputSchema.parse(await request.json());
+    const input = relationshipCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(input.versionId, target);

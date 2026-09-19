@@ -5,7 +5,7 @@ import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { ensureVersionSnapshot, updateSnapshotPositions } from "@/lib/version-snapshot";
 
-const inputSchema = z.object({
+const positionUpdateInput = z.object({
   targetId: z.string().uuid(),
   versionId: z.string().uuid(),
   items: z.array(z.object({ elementId: z.string().min(1), x: z.number(), y: z.number() })).max(500),
@@ -14,7 +14,7 @@ const inputSchema = z.object({
 export async function PUT(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
-    const input = inputSchema.parse(await request.json());
+    const input = positionUpdateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(input.versionId, target);

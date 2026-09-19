@@ -6,7 +6,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { createVersionRecord, deleteVersionRecord, ensureVersionSnapshot, initializeVersionSnapshot, listVersionRecords, withTargetLock } from "@/lib/version-snapshot";
 
-const createInput = z.object({ targetId: z.string().uuid(), baseVersionId: z.string().uuid().optional(), definition: ontologyDefinitionSchema.optional() });
+const draftCreateInput = z.object({ targetId: z.string().uuid(), baseVersionId: z.string().uuid().optional(), definition: ontologyDefinitionSchema.optional() });
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
-    const input = createInput.parse(await request.json());
+    const input = draftCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     return withTargetLock(input.targetId, async () => {

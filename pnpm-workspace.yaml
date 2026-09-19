@@ -4,4 +4,6 @@
 #   Thin 模式与 Instant Client 的 Thick 模式都用它，不需要再跑一遍安装脚本。
 allowBuilds:
   oracledb: false
+  # swagger-ui-dist 带的匿名统计脚本，不跑：文档页面只用它的静态资源（js/css/图标）。
+  '@scarf/scarf': false
   sharp: true

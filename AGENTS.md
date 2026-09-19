@@ -351,6 +351,45 @@
 - **改连接信息要作废缓存**（`[sourceId]/route.ts` 的 PATCH 比对 kind/host/port/库/模式/账号/密码后才清）；删资源时随行删除。
 - 单测：`tests/lib/data-source/structure-cache.test.ts`（命中不回源、未命中回源并写回、refresh 覆盖、两个桶互不干扰、失败不写）。
 
+## 接口文档（OpenAPI / Swagger UI）（2026-09-19）
+
+用户要求：「现在没有实现自动生成 openapi docs 的功能，类似于 fastapi 的 docs，next.js/ts 有吗」。选了
+**next-openapi-gen**（扫代码型：扫 `src/app/api` 下每个 `route.ts`，从路由里的 zod schema 推断请求体），
+UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，不连 CDN）。
+
+- **怎么跑**：`pnpm openapi`。`pnpm dev` 与 `pnpm build` 前面都会先跑它，所以文档不会和代码脱节；
+  只想快速起服务用 `pnpm dev:only`。生成产物是 `public/openapi.json` 与 `public/swagger-ui/`，
+  两个都在 `.gitignore` 里（构建产物，不入库）。
+- **文件分工**：
+  - `openapi-gen.config.ts`：标题、描述、`servers`（**相对路径 `/api`**，本机 3001 / 容器 3000 / 内网 IP 都跟着走）、
+    扫描范围、失败响应形状（我们的路由统一是 `{ error }`）。能在这里表达的别写进脚本。
+  - `scripts/openapi-build.mjs`：生成之后的本地化 —— 英文分组换中文（`TAG_RENAME` / `TAG_ORDER` / `TAG_DESCRIPTION`）、
+    声明两套鉴权、给每个接口补通用成功响应、清掉空 schema、把 Swagger UI 资源从 devDependency 拷进 `public/`。
+    只用 Node 内置模块，不联网。**幂等**：重复跑不会重复叠加。
+  - `src/app/docs/route.ts`：文档页面（手写 HTML + Swagger UI），访问路径 **`/docs`**。**不要**改用生成器自带的 UI 脚手架，
+    那套默认从 jsDelivr CDN 拉前端 bundle，内网/容器里会白屏。
+- **鉴权**：文档页 `/docs` 与契约 `/openapi.json` 都是**公开**的（只是一份"有哪些接口"的说明书，不含业务数据）；
+  接口本身照旧要会话 Cookie。schema 里声明了 `SessionCookie`（`ontology_session`）与 `McpToken` 两套，
+  全局默认要会话；`/auth/*`、`/bootstrap`、`/skills/mcp` 标成公开，`/mcp`、`/mcp/info` 是「会话或令牌」。
+  要收口就改 `scripts/openapi-build.mjs` 的 `PUBLIC_PATHS`，并给那个 route 加 `requireRole`。
+- **命名约定（最容易踩的坑）**：生成器**按变量名合并 schema**，两个路由里都叫 `inputSchema` 就会互相覆盖、
+  文档里张冠李戴。2026-09-19 已经改掉 7 个 `inputSchema`、2 个 `patchSchema`、2 个 `createInput`
+  （改成语义化名字：`entityCreateInput` / `relationshipPatchInput` / `reasoningRunInput` / `draftCreateInput` …）。
+  **写新路由时 zod schema 别再叫 `inputSchema`、`patchSchema`、`createInput` 这类泛用名**，
+  按「对象 + 动作 + Input」起名；`@/lib` 里共享的 schema（如 `dataSourceInput`）本来就只有一份，不用动。
+- **已知缺口**（想在文档里补齐就按需给路由加 JSDoc，标签表见包内 README）：
+  1. 响应体没有 schema —— 路由返回的是手写对象，页面上给的是通用 200；要精确就写 `@response`；
+  2. 请求体没有 `required`、路径参数类型都是 `string`、部分查询参数是推断无类型 —— 分别用 `@requestBody required` / `@path` / `@query`；
+  3. 分组名是从路径首段推的，`@tag` 可以逐个覆盖（现在统一在 `openapi-build.mjs` 里映射）。
+- **部署**：Dockerfile 的 runner 必须 `COPY --from=builder /app/public ./public`（2026-09-19 已加）——
+  少了它容器里 `/docs` 打不开、`/openapi.json` 404。生成发生在 builder 阶段的 `pnpm build` 里。
+- **依赖与版本**：`next-openapi-gen` 与 `swagger-ui-dist` 都是 **devDependency**（运行时只有静态资源，不进 node_modules）；
+  它要求 Node >= 24（Docker 基镜像已经是 `node:24-bookworm-slim`）；peer 上写着 TypeScript >= 5.9，
+  本项目是 5.8，实测能跑（它自带 TS6 兼容编译器兜底），哪天出问题先升 TS。
+  `pnpm-workspace.yaml` 里给 `@scarf/scarf` 显式写了 `false`（swagger-ui-dist 带的匿名统计脚本，不跑）。
+- **入口**：左侧导航「平台」分组下多了一个 **API 文档** 链接（`functional-workbench.tsx` 的 `NAV_SECTIONS` 里，
+  挂在 `section.label === "平台"` 后面，`target="_blank"` 打开 `/docs`）—— 它不是 `view` 之一，别把它塞进 `NAV_ITEMS`。
+
 ## 关系类型的键映射（2026-09-19）
 
 用户要求：「关系类型的设置起和始的属性的映射，可以是多映射」。对齐 Palantir 的 link type **Key**

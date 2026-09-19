@@ -34,7 +34,7 @@ import { getTarget } from "@/lib/targets";
  * 校验与权限必须在**开流之前**做完：一旦开始返回 SSE，就没法再改 HTTP 状态码了。
  */
 
-const inputSchema = z.object({
+const reasoningStreamInput = z.object({
   targetId: z.string().uuid(),
   // 问题可以为空：只带图片提问时由 effectiveQuestion 补一句默认的（见 attachments.ts）。
   question: z.string().trim().max(500),
@@ -66,12 +66,12 @@ function frame(event: RouteEvent) {
 }
 
 export async function POST(request: NextRequest) {
-  let input: z.infer<typeof inputSchema>;
+  let input: z.infer<typeof reasoningStreamInput>;
   let actorId: string;
   try {
     const user = await requireRole("VIEWER");
     actorId = user.id;
-    input = inputSchema.parse(await request.json());
+    input = reasoningStreamInput.parse(await request.json());
   } catch (error) {
     const status = apiErrorStatus(error, 400);
     return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status });

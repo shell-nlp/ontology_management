@@ -7,7 +7,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { listVersionRecords } from "@/lib/version-snapshot";
 
-const createInput = z.object({
+const ontologyCreateInput = z.object({
   name: z.string().trim().min(1).max(100),
   description: z.string().max(500).default(""),
   color: z.string().max(32).default(""),
@@ -64,7 +64,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
-    const input = createInput.parse(await request.json());
+    const input = ontologyCreateInput.parse(await request.json());
     const ontology = await createOntology(input, user.id);
     await writeAuditEntry({
       actorId: user.id,

@@ -5,7 +5,7 @@ import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot, getVersionRecord, runSnapshotAction, visibleSnapshotActions } from "@/lib/version-snapshot";
 
-const inputSchema = z.object({
+const actionRunInput = z.object({
   actionId: z.string().uuid(),
   /** 动作作用在哪个对象上；动作配了作用的类时必填。 */
   subjectEntityId: z.string().uuid().optional(),
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ve
   try {
     const user = await requireRole("ADMIN");
     const { versionId } = await context.params;
-    const input = inputSchema.parse(await request.json());
+    const input = actionRunInput.parse(await request.json());
     const version = await getVersionRecord(versionId);
     if (!version) return NextResponse.json({ error: "本体草稿不存在。" }, { status: 404 });
     const target = await getTarget(version.target_id);

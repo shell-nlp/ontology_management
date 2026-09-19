@@ -22,3 +22,8 @@ docker/oracle/*.zip
 .data/
 test-results/
 playwright-report/
+
+# OpenAPI 文档产物（`pnpm openapi` 生成，见 openapi-gen.config.ts）
+public/openapi.json
+public/swagger-ui/
+.openapi-gen/

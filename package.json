@@ -4,8 +4,10 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "pnpm openapi && next dev",
+    "dev:only": "next dev",
+    "build": "pnpm openapi && next build",
+    "openapi": "openapi-gen generate && node scripts/openapi-build.mjs",
     "test": "vitest run",
     "start": "next start",
     "lint": "eslint .",
@@ -52,6 +54,8 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.2.12",
+    "next-openapi-gen": "1.8.2",
+    "swagger-ui-dist": "5.33.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.10"
   },

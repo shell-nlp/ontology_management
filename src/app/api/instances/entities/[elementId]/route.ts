@@ -6,7 +6,7 @@ import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/version-snapshot";
 
-const patchSchema = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
+const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
 
 function targetIdOf(request: NextRequest) {
   return request.nextUrl.searchParams.get("targetId") ?? "";
@@ -41,7 +41,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   try {
     const user = await requireRole("ADMIN");
     const { elementId } = await context.params;
-    const input = patchSchema.parse(await request.json());
+    const input = entityPatchInput.parse(await request.json());
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);

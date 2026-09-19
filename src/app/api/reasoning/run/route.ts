@@ -11,7 +11,7 @@ import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { getTarget } from "@/lib/targets";
 
-const inputSchema = z.object({
+const reasoningRunInput = z.object({
   targetId: z.string().uuid(),
   // 问题可以为空：只带图片提问时由 effectiveQuestion 补一句默认的（见 attachments.ts）。
   question: z.string().trim().max(500),
@@ -34,7 +34,7 @@ const inputSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("VIEWER");
-    const input = inputSchema.parse(await request.json());
+    const input = reasoningRunInput.parse(await request.json());
     const question = effectiveQuestion(input.question, input.attachments ?? []);
     if (!question) return NextResponse.json({ error: "问题不能为空。" }, { status: 400 });
     const target = await getTarget(input.targetId);

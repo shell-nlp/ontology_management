@@ -10,7 +10,7 @@ import { loadToolPolicy, saveToolPolicy, togglableToolNames } from "@/lib/reason
  * 关掉的工具会同时从**平台内智能问答**与**外部 MCP 客户端**的工具清单里消失 ——
  * 只关界面不关服务端等于没关。
  */
-const inputSchema = z.object({ disabledTools: z.array(z.string().trim().min(1).max(80)).max(50) });
+const reasoningToolsInput = z.object({ disabledTools: z.array(z.string().trim().min(1).max(80)).max(50) });
 
 export async function GET() {
   try {
@@ -26,7 +26,7 @@ export async function PUT(request: NextRequest) {
   try {
     const user = await currentUser();
     await requireRole("ADMIN");
-    const input = inputSchema.parse(await request.json());
+    const input = reasoningToolsInput.parse(await request.json());
     const policy = await saveToolPolicy({ disabledTools: input.disabledTools }, user?.id ?? undefined);
     await writeAuditEntry({ actorId: user?.id, action: "REASONING_TOOL_POLICY_UPDATED", details: { disabledTools: policy.disabledTools } });
     return NextResponse.json({ ...policy, togglable: togglableToolNames() });

@@ -7,7 +7,7 @@ import { getPublishedOntology } from "@/lib/published-ontology";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { createSnapshotEntity, ensureVersionSnapshot, listSnapshotEntities } from "@/lib/version-snapshot";
 
-const inputSchema = z.object({
+const entityCreateInput = z.object({
   targetId: z.string().uuid(),
   versionId: z.string().uuid(),
   entityType: z.string().min(1),
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
-    const input = inputSchema.parse(await request.json());
+    const input = entityCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await ensureVersionSnapshot(input.versionId, target);
