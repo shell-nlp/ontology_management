@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Boxes, Diamond, Plus, Trash2, X } from "lucide-react";
+import { Boxes, CornerDownRight, Diamond, Plus, Trash2, X } from "lucide-react";
 import { newId } from "@/lib/ids";
+import { resolveInterfacePropertyMappings } from "@/lib/interfaces";
 import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, type InterfaceType, type Property, type PropertyDataType } from "@/lib/ontology-draft";
 import "./type-edit-dialog.css";
 import "./interface-edit-dialog.css";
@@ -38,12 +39,28 @@ function cloneInterface(item: InterfaceType): InterfaceType {
 export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNotify, onFail, onClose }: Props) {
   const [draft, setDraft] = useState<InterfaceType>(() => cloneInterface(value));
   const [implementerIds, setImplementerIds] = useState<string[]>(() => definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(value.id)).map((entity) => entity.id));
+  /*
+   * 接口属性 → 实现方属性 的映射（Palantir 的 "map local properties"）。
+   * 只放"显式写过"的那几条：没写的按同名兜底（见 resolveInterfacePropertyMappings），
+   * 所以老数据读进来是空表，行为和以前完全一样。
+   */
+  const [mappings, setMappings] = useState<Record<string, Record<string, string>>>(() => Object.fromEntries(
+    definition.entityTypes
+      .filter((entity) => (entity.implements ?? []).includes(value.id))
+      .map((entity) => [entity.id, { ...(entity.interfaceMappings?.find((item) => item.interfaceId === value.id)?.properties ?? {}) }]),
+  ));
   const [busy, setBusy] = useState(false);
 
   const patch = (next: Partial<InterfaceType>) => setDraft((state) => ({ ...state, ...next }));
   const patchProperty = (index: number, next: Partial<Property>) => setDraft((state) => ({ ...state, properties: state.properties.map((item, position) => (position === index ? { ...item, ...next } : item)) }));
   const patchConstraint = (id: string, next: Partial<InterfaceLinkConstraint>) => setDraft((state) => ({ ...state, linkConstraints: state.linkConstraints.map((item) => (item.id === id ? { ...item, ...next } : item)) }));
   const toggleImplementer = (entityId: string) => setImplementerIds((list) => (list.includes(entityId) ? list.filter((item) => item !== entityId) : [...list, entityId]));
+  const patchMapping = (entityId: string, propertyName: string, entityProperty: string) => setMappings((state) => {
+    const current = { ...(state[entityId] ?? {}) };
+    if (entityProperty) current[propertyName] = entityProperty;
+    else delete current[propertyName];
+    return { ...state, [entityId]: current };
+  });
 
   const constraintTargets = (constraint: InterfaceLinkConstraint) => constraint.targetKind === "INTERFACE"
     ? definition.interfaces.filter((item) => item.id !== value.id).map((item) => ({ id: item.id, name: item.name }))
@@ -70,9 +87,17 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
       await onSave({
         ...definition,
         interfaces: definition.interfaces.map((item) => (item.id === value.id ? { ...draft, name } : item)),
-        entityTypes: definition.entityTypes.map((entity) => (implementerIds.includes(entity.id)
-          ? { ...entity, implements: [...new Set([...(entity.implements ?? []), value.id])] }
-          : { ...entity, implements: (entity.implements ?? []).filter((id) => id !== value.id) })),
+        entityTypes: definition.entityTypes.map((entity) => {
+          if (!implementerIds.includes(entity.id)) {
+            // 取消实现：把这一份映射也带走，别留下指向不存在的实现的残留。
+            return { ...entity, implements: (entity.implements ?? []).filter((id) => id !== value.id), interfaceMappings: (entity.interfaceMappings ?? []).filter((item) => item.interfaceId !== value.id) };
+          }
+          // 只留非空映射：空对象等于"全部按同名"，不必往定义里塞噪音。
+          const properties = mappings[entity.id] ?? {};
+          const kept = (entity.interfaceMappings ?? []).filter((item) => item.interfaceId !== value.id);
+          const next = Object.keys(properties).length ? [...kept, { interfaceId: value.id, properties }] : kept;
+          return { ...entity, implements: [...new Set([...(entity.implements ?? []), value.id])], interfaceMappings: next };
+        }),
       });
       onNotify?.(`接口「${name}」已保存到草稿。`);
       onClose();
@@ -200,7 +225,42 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
                   ))}
                 </div>
               ) : <p className="ted-props-empty">本体里还没有对象类型。</p>}
-              <small>实现方写在对象类型那一侧的「实现接口」上；保存后画布会连一条紫色虚线过去。</small>
+              {/*
+                接口属性 → 实现方属性 的映射：Palantir 实现接口时要"声明一份映射"，
+                接口属性 name 可以落到实现方的 CUST_NAME 上，不要求同名。没选的按同名兜底。
+              */}
+              {implementerIds.length > 0 && (
+                <div className="ted-map">
+                  <span className="ted-map-head">接口属性怎么落到实现方身上<em>没选的按同名匹配</em></span>
+                  {implementerIds.map((entityId) => {
+                    const entity = definition.entityTypes.find((item) => item.id === entityId);
+                    if (!entity) return null;
+                    const rows = resolveInterfacePropertyMappings(definition.interfaces, entity, value.id);
+                    if (!rows.length) return null;
+                    return (
+                      <div className="ted-map-block" key={entityId}>
+                        <b>{entity.name}</b>
+                        {rows.map((row) => (
+                          <label key={row.name} className="ted-map-row" data-state={row.entityProperty ? "ok" : row.required ? "missing" : "optional"}>
+                            <span className="ted-map-iface">{row.name}{row.required ? "" : "（可选）"}</span>
+                            <CornerDownRight size={12} />
+                            <select
+                              value={mappings[entityId]?.[row.name] ?? ""}
+                              disabled={!canEdit}
+                              onChange={(event) => patchMapping(entityId, row.name, event.target.value)}
+                            >
+                              <option value="">{row.source === "same-name" ? `同名属性 · ${row.name}` : "未映射"}</option>
+                              {entity.properties.map((property) => <option key={property.name} value={property.name}>{property.name}</option>)}
+                            </select>
+                            {!row.entityProperty && row.required && <i className="ted-map-warn">必填，还没对上</i>}
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <small>实现方写在对象类型那一侧的「实现接口」上；保存后画布会连一条紫色虚线过去。属性对不上时发布校验会拦下来。</small>
             </div>
           </div>
 

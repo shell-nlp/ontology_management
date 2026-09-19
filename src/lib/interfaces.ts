@@ -37,6 +37,8 @@ export type ImplementerLike = {
   name: string;
   properties?: readonly InterfacePropertyLike[];
   implements?: readonly string[];
+  /** 接口属性的显式映射（接口属性名 → 本对象类型属性名）。没写就按同名匹配。 */
+  interfaceMappings?: readonly { interfaceId: string; properties?: Readonly<Record<string, string>> }[];
 };
 
 /** 一条接口层面的问题；`severity: "WARN"` 是提示，不带的是会挡住发布的矛盾。 */
@@ -44,6 +46,43 @@ export type InterfaceViolation = { rule: string; message: string; count: number;
 
 export function implementsIdsOf(entity: Pick<ImplementerLike, "implements"> | null | undefined): string[] {
   return [...new Set((entity?.implements ?? []).filter((id) => typeof id === "string" && id.trim()))];
+}
+
+/** 一个接口属性在实现方身上落到了哪：`explicit` 是显式映射，`same-name` 是按同名兜的。 */
+export type InterfacePropertyMapping = {
+  /** 接口属性名。 */
+  name: string;
+  /** 接口自己要求不要求这个属性。 */
+  required: boolean;
+  /** 实现方身上的属性名；空串 = 没对上（没映射也没同名）。 */
+  entityProperty: string;
+  /** 这份对应关系是怎么来的。 */
+  source: "explicit" | "same-name" | "missing";
+};
+
+/**
+ * 接口属性 → 实现方属性 的最终对应关系（对齐 Palantir 的 "map local properties"）。
+ *
+ * 顺序：先看显式映射（`interfaceMappings`），显式映射写了一个实现方没有的属性就算**没对上**
+ * （不悄悄退回同名 —— 那是建模错误，得让人看见）；没写显式映射的接口属性再按同名匹配。
+ */
+export function resolveInterfacePropertyMappings(
+  interfaces: readonly InterfaceLike[],
+  entity: ImplementerLike,
+  interfaceId: string,
+): InterfacePropertyMapping[] {
+  const own = new Set((entity.properties ?? []).map((property) => property.name));
+  const explicit = entity.interfaceMappings?.find((item) => item.interfaceId === interfaceId)?.properties ?? {};
+  return effectiveInterfaceProperties(interfaces, interfaceId).map((property) => {
+    const required = property.required !== false;
+    const mapped = explicit[property.name];
+    if (mapped) {
+      const hit = own.has(mapped);
+      return { name: property.name, required, entityProperty: hit ? mapped : "", source: hit ? "explicit" as const : "missing" as const };
+    }
+    if (own.has(property.name)) return { name: property.name, required, entityProperty: property.name, source: "same-name" as const };
+    return { name: property.name, required, entityProperty: "", source: "missing" as const };
+  });
 }
 
 export function extendedIdsOf(node: Pick<InterfaceLike, "extends"> | null | undefined): string[] {
@@ -199,6 +238,8 @@ export type ImplementationCheck = {
   missingProperties: string[];
   /** 对上了的接口属性（按同名映射）。 */
   mappedProperties: string[];
+  /** 每个接口属性最终落到实现方哪个属性上（显式映射 / 同名 / 没对上）。 */
+  propertyMappings: InterfacePropertyMapping[];
   /** 必填但还没有具体关系类型满足的关系约束。 */
   missingLinks: InterfaceLinkConstraintLike[];
   /** 已经满足的关系约束，以及是哪个关系类型满足的。 */
@@ -210,9 +251,8 @@ export type ImplementationCheck = {
 /**
  * 对象类型实现接口的完整检查：每个已实现的接口一条结果。
  *
- * - 属性：接口里 `required` 的属性，对象类型必须有**同名**属性。
- *   Palantir 允许把现有属性映射到接口属性上；平台这一版按同名映射 —— 足够表达，
- *   也不必再维护第二张映射表；缺的同名属性在界面上可以一键补齐。
+ * - 属性：接口里 `required` 的属性必须落到实现方的一个属性上。按 Palantir 的"map local properties"来：
+ *   先看对象类型的显式映射（`interfaceMappings`），没写就按**同名**兜底；optional 的属性可以不对上。
  * - 关系：`required` 的关系约束必须有一条具体关系类型满足它。
  */
 export function checkImplementations(
@@ -221,16 +261,12 @@ export function checkImplementations(
   relationshipTypes: readonly { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string }[],
   entities: readonly ImplementerLike[] = [],
 ): ImplementationCheck[] {
-  // 类的属性就是它自己写的那些（没有继承可言）。
-  const ownProperties = new Set((entity.properties ?? []).map((property) => property.name));
   return implementsIdsOf(entity).map((interfaceId) => {
     const node = interfaces.find((item) => item.id === interfaceId);
-    const missingProperties: string[] = [];
-    const mappedProperties: string[] = [];
-    for (const property of effectiveInterfaceProperties(interfaces, interfaceId)) {
-      if (ownProperties.has(property.name)) mappedProperties.push(property.name);
-      else if (property.required !== false) missingProperties.push(property.name);
-    }
+    // 属性这一侧按「显式映射优先、没写就同名」算；类之间没有继承，实现方只有它自己写的属性。
+    const mappings = resolveInterfacePropertyMappings(interfaces, entity, interfaceId);
+    const mappedProperties = mappings.filter((item) => item.entityProperty).map((item) => item.name);
+    const missingProperties = mappings.filter((item) => !item.entityProperty && item.required).map((item) => item.name);
     const missingLinks: InterfaceLinkConstraintLike[] = [];
     const satisfiedLinks: { constraint: InterfaceLinkConstraintLike; relationshipName: string }[] = [];
     for (const constraint of effectiveInterfaceLinkConstraints(interfaces, interfaceId)) {
@@ -243,6 +279,7 @@ export function checkImplementations(
       interfaceName: node?.name ?? "",
       missingProperties: [...new Set(missingProperties)],
       mappedProperties: [...new Set(mappedProperties)],
+      propertyMappings: mappings,
       missingLinks,
       satisfiedLinks,
       direct: true,

@@ -249,6 +249,17 @@ export const ontologyDefinitionSchema = z.object({
      * 分别服务不同的应用场景。声明实现之后必须满足接口的属性与关系约束（发布前校验会查）。
      */
     implements: z.array(z.string().uuid()).default([]),
+    /**
+     * 接口属性的**显式映射**（对齐 Palantir）：接口属性名 → 本对象类型自己的属性名。
+     *
+     * 为什么需要它：Palantir 实现接口时要"声明一份映射"，接口属性 `name` 可以落到实现方的
+     * `CUST_NAME` 上，**不要求同名**。我们原来只会同名匹配，业务表里列名对不上就没法实现。
+     * 没写映射的接口属性仍按同名匹配 —— 老数据零迁移，`properties: {}` 等于"全走同名"。
+     */
+    interfaceMappings: z.array(z.object({
+      interfaceId: z.string().uuid(),
+      properties: z.record(z.string(), z.string()).default({}),
+    })).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */

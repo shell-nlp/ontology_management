@@ -5,6 +5,7 @@ import {
   effectiveInterfaceProperties,
   implementersOf,
   interfaceLineage,
+  resolveInterfacePropertyMappings,
   validateInterfaceImplementations,
   validateInterfaces,
 } from "@/lib/interfaces";
@@ -32,6 +33,45 @@ const interfaces = [
 ];
 
 describe("interface inheritance", () => {
+  it("接口属性可以显式映射到实现方不同名的属性（Palantir 的 map local properties）", () => {
+    const implementer = {
+      id: flightAlert,
+      name: "航班告警",
+      properties: [{ name: "CUST_NAME" }, { name: "LEVEL" }],
+      implements: [facility],
+    };
+    // 没写映射：按同名兜底 —— 设施名称 / 位置 都没同名属性，required 的报 missing。
+    const byName = checkImplementations(implementer, interfaces, [], [implementer])[0];
+    expect(byName.missingProperties).toEqual(["设施名称", "资产编号"]);
+    expect(byName.mappedProperties).toEqual([]);
+    // 显式映射：接口属性 设施名称 / 位置 / 资产编号 分别落到实现方的 CUST_NAME / LEVEL / CUST_NAME。
+    const mapped = {
+      ...implementer,
+      interfaceMappings: [{ interfaceId: facility, properties: { 设施名称: "CUST_NAME", 位置: "LEVEL", 资产编号: "CUST_NAME" } }],
+    };
+    const check = checkImplementations(mapped, interfaces, [], [mapped])[0];
+    expect(check.missingProperties).toEqual([]);
+    expect(check.mappedProperties.sort()).toEqual(["位置", "资产编号", "设施名称"].sort());
+    expect(resolveInterfacePropertyMappings(interfaces, mapped, facility)).toEqual([
+      { name: "设施名称", required: true, entityProperty: "CUST_NAME", source: "explicit" },
+      { name: "位置", required: false, entityProperty: "LEVEL", source: "explicit" },
+      { name: "资产编号", required: true, entityProperty: "CUST_NAME", source: "explicit" },
+    ]);
+  });
+
+  it("显式映射指到一个不存在的属性：算没对上，不悄悄退回同名", () => {
+    const implementer = {
+      id: flightAlert,
+      name: "航班告警",
+      properties: [{ name: "设施名称" }],
+      implements: [facility],
+      interfaceMappings: [{ interfaceId: facility, properties: { 设施名称: "没有这个属性" } }],
+    };
+    const check = checkImplementations(implementer, interfaces, [], [implementer])[0];
+    expect(check.missingProperties).toContain("设施名称");
+    expect(resolveInterfacePropertyMappings(interfaces, implementer, facility)[0]).toMatchObject({ name: "设施名称", entityProperty: "", source: "missing" });
+  });
+
   it("血缘是自身 + 祖先，近的在前", () => {
     expect(interfaceLineage(interfaces, facility)).toEqual([facility, asset]);
     expect(interfaceLineage(interfaces, asset)).toEqual([asset]);

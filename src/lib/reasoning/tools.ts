@@ -750,6 +750,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
                   data_type: property.dataType,
                   required: property.required !== false,
                   mapped: !(check?.missingProperties ?? []).includes(property.name),
+                  // 落到了实现方的哪个属性上：显式映射优先，没写就是同名。
+                  mapped_from: check?.propertyMappings.find((item) => item.name === property.name)?.entityProperty ?? "",
                 }))
                 : [],
               missing_properties: check?.missingProperties ?? [],
