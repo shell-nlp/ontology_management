@@ -6,48 +6,27 @@ import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, Loca
 import { actionInvolvement } from "@/lib/action-engine";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
+import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterfaceNodeId } from "@/lib/ontology-canvas";
 import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import { searchOntologyDefinition, type OntologySearchHit } from "@/lib/ontology-search";
-import type { ActionType, Definition, EntityType, RelationType } from "@/lib/ontology-draft";
+import { entitySources, type ActionType, type Definition, type EntityType, type RelationType } from "@/lib/ontology-draft";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
+import { InterfaceEditDialog } from "@/components/interface-edit-dialog";
 // 画布上的浮层沿用「图谱」页的样式（graph-canvas.css 已随 GraphCanvas 进入同一份页面样式）。
 import "./ontology-builder.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 
-/**
- * 没被手动摆放过的对象类型：度数最高的那个居中，其余绕成一圈。
- * 换一个 seed 就是绕轴转一圈，所以「自动整理」看得见变化，布局本身仍是确定的。
- */
-function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) {
-  const positions = new Map<string, { x: number; y: number }>();
-  if (!entities.length) return positions;
-  const degree = new Map<string, number>();
-  for (const edge of edges) {
-    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
-    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
-  }
-  let hub = entities[0];
-  for (const entity of entities) if ((degree.get(entity.id) ?? 0) > (degree.get(hub.id) ?? 0)) hub = entity;
-  positions.set(hub.id, { x: 0, y: 0 });
-  const rest = entities.filter((entity) => entity.id !== hub.id);
-  const radius = Math.max(150, 58 * Math.ceil(Math.sqrt(rest.length)));
-  rest.forEach((entity, index) => {
-    // 从 0° 起绕圈：两个端点会左右分列，正好铺满宽画布；seed 让「自动整理」看得见变化。
-    const angle = seed * 0.7 + (index / rest.length) * Math.PI * 2;
-    positions.set(entity.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
-  });
-  return positions;
-}
-
 export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 /** 关系类型：一条定义、两个端点；它是双向的，不用再建反向的那一条。 */
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
-type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
+type Selection = { kind: "entity"; id: string } | { kind: "interface"; id: string } | { kind: "relation"; id: string } | null;
+/** 接口的编辑走对话框（和「编辑对象类型」同一个壳），所以单独一个状态。 */
+type InterfaceDialogState = { id: string } | null;
 type DialogState =
   | { kind: "entity"; mode: "create"; id: string }
   | { kind: "entity"; mode: "edit"; id: string }
@@ -72,6 +51,10 @@ type Props = {
   onOpenActions?: () => void;
   /** 跳去「概念分组」页：画布这边只看效果，配置在那边做。 */
   onOpenGroups?: () => void;
+  /** 跳去同页的「接口」标签并选中这个接口：画布上点接口节点后要能接着改它。 */
+  onOpenInterface?: (id: string) => void;
+  /** 保存成功后的提示（接口就地编辑用）。 */
+  onNotify?: (text: string) => void;
   onFail: (reason: unknown) => void;
 };
 
@@ -81,7 +64,7 @@ type Props = {
  * 画布上做的每一次改动都会立刻写回草稿（和「对象类型 / 关系类型」两个列表标签同一套保存路径），
  * 摆放位置只记在本机浏览器，不属于草稿定义。
  */
-export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onSaveDefinition, onExtract, onOpenActions, onOpenGroups, onFail }: Props) {
+export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, onCreateEntity, onUpdateEntity, onDeleteEntity, onCreateRelation, onUpdateRelation, onDeleteRelation, onSaveDefinition, onExtract, onOpenActions, onOpenGroups, onOpenInterface, onNotify, onFail }: Props) {
   const [selected, setSelected] = useState<Selection>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -89,6 +72,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [matchedProperty, setMatchedProperty] = useState<string | null>(null);
+  const [showInterfaceLinks, setShowInterfaceLinks] = useState(false);
+  const [editingInterface, setEditingInterface] = useState<InterfaceDialogState>(null);
   const [focus, setFocus] = useState<{ id: string; request: number } | null>(null);
   const storageKey = targetId ? `ontology-builder:${targetId}` : null;
   // 布局只记在本机（"我怎么看这张图"），不进草稿定义。
@@ -102,56 +87,35 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const entityById = useMemo(() => new Map(definition.entityTypes.map((item) => [item.id, item])), [definition.entityTypes]);
   const relationById = useMemo(() => new Map(definition.relationshipTypes.map((item) => [item.id, item])), [definition.relationshipTypes]);
   const searchHits = useMemo(() => searchOntologyDefinition(definition, search), [definition, search]);
-
-  const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(() => {
-    // 拖过的节点记在这里：它是**覆盖**，压在算出来的坐标上面，所以拖完不会弹回去，分组框也跟着它变。
-    const positions = positionKey ? readStoredPositions(positionKey) : {};
-    const connected = new Set<string>();
-    const degree = new Map<string, number>();
-    const drawnEdges: SigmaEdge[] = [];
-    const unresolved: RelationType[] = [];
-    for (const relation of definition.relationshipTypes) {
-      if (!entityById.has(relation.sourceEntityTypeId) || !entityById.has(relation.targetEntityTypeId)) { unresolved.push(relation); continue; }
-      connected.add(relation.sourceEntityTypeId);
-      connected.add(relation.targetEntityTypeId);
-      degree.set(relation.sourceEntityTypeId, (degree.get(relation.sourceEntityTypeId) ?? 0) + 1);
-      degree.set(relation.targetEntityTypeId, (degree.get(relation.targetEntityTypeId) ?? 0) + 1);
-      drawnEdges.push({ id: relation.id, type: relation.name, source: relation.sourceEntityTypeId, target: relation.targetEntityTypeId });
-    }
-    let hubId: string | null = null;
-    let hubDegree = -1;
-    for (const entity of definition.entityTypes) {
-      const value = degree.get(entity.id) ?? 0;
-      if (value > hubDegree) { hubDegree = value; hubId = entity.id; }
-    }
-    const fallback = radialLayout(definition.entityTypes, drawnEdges, layoutSeed);
-    // 概念分组的框与坐标只在「按逻辑分组」下算：另外两种布局不看分组，也不画框。
-    const frames = buildGroupFrames(definition.groups, definition.entityTypes, definition.entityTypes.map((entity) => ({ id: entity.id, name: entity.name })));
-    const described = layout === "grouped"
-      ? groupedLayoutPositions(frames, definition.entityTypes.filter((entity) => !frames.some((frame) => frame.nodeIds.includes(entity.id))).map((entity) => entity.id), drawnEdges, layoutSeed)
-      : layout === "circle" ? circleLayout(definition.entityTypes.map((entity) => entity.id), layoutSeed) : null;
-    const arranged = (id: string) => described?.get(id);
-    const drawnNodes: SigmaNode[] = definition.entityTypes.map((entity) => ({
-      id: entity.id,
-      label: compactGraphLabel(entity.name),
-      color: graphColor(entity.name),
-      isHub: entity.id === hubId,
-      x: positions[entity.id]?.x ?? arranged(entity.id)?.x ?? fallback.get(entity.id)?.x,
-      y: positions[entity.id]?.y ?? arranged(entity.id)?.y ?? fallback.get(entity.id)?.y,
-    }));
-    return {
-      nodes: drawnNodes,
-      edges: drawnEdges,
-      frames: layout === "grouped" ? frames : [],
-      orphanEntities: definition.entityTypes.filter((entity) => !connected.has(entity.id)),
-      unresolvedRelations: unresolved,
-    };
-  }, [definition.entityTypes, definition.groups, definition.relationshipTypes, entityById, layout, layoutSeed, positionKey]);
-
-  const selectedEntity = selected?.kind === "entity" ? entityById.get(selected.id) ?? null : null;
-  // 实现接口：这里留接口对象而不是名字——右栏的「实现接口」要能就地取消实现。
+  const selectedEntityId = selected?.kind === "entity" ? selected.id : null;
+  const selectedInterfaceId = selected?.kind === "interface" ? selected.id : null;
+  const selectedEntity = selectedEntityId ? entityById.get(selectedEntityId) ?? null : null;
   const selectedInterfaces = (selectedEntity?.implements ?? []).map((id) => definition.interfaces.find((item) => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const promotedByEntityId = useMemo(() => new Map(definition.interfaces.filter((item) => item.promotedFromEntityTypeId).map((item) => [item.promotedFromEntityTypeId!, item])), [definition.interfaces]);
+
+  /**
+   * 画布投影（纯函数在 `@/lib/ontology-canvas`）：算节点、连线、分组框与"待补全"清单。
+   * 拖过的坐标从本机读出来当覆盖层，压在上面，所以拖完不会弹回去、分组框也跟着它变。
+   */
+  const { nodes, edges, frames, orphanEntities, unresolvedRelations } = useMemo(
+    () => buildCanvasProjection({
+      definition,
+      layout,
+      layoutSeed,
+      positions: positionKey ? readStoredPositions(positionKey) : {},
+      selectedEntityId,
+      selectedInterfaceId,
+      showInterfaceLinks,
+    }),
+    [definition, layout, layoutSeed, positionKey, selectedEntityId, selectedInterfaceId, showInterfaceLinks],
+  );
+
+
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
+  const selectedInterface = selected?.kind === "interface" ? definition.interfaces.find((item) => item.id === selected.id) ?? null : null;
+  const interfaceDialogTarget = editingInterface ? definition.interfaces.find((item) => item.id === editingInterface.id) ?? null : null;
+  /** 实现了这个接口的对象类型（画布上从它连紫色虚线的那些）。 */
+  const interfaceImplementers = selectedInterface ? definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(selectedInterface.id)) : [];
   const organize = useCallback(() => {
     // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
     if (positionKey) writeStoredPositions(positionKey, {});
@@ -175,9 +139,56 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
     setConnectFrom(null);
   };
 
+  /**
+   * 把一个没有数据来源的概念型对象类型提取为接口。
+   * 原对象类型与关系不删除，只作为底层兼容影子保留；画布改用接口节点显示。
+   * 原关系转成接口关系约束，但不擅自把关系另一端判定为接口实现方。
+   */
+  const promoteEntityToInterface = async () => {
+    if (!selectedEntity) return;
+    if (entitySources(selectedEntity).length) { onFail(new Error("已经绑定数据来源的对象类型不能直接转为接口。先解除数据来源绑定，或在接口页新建接口。")); return; }
+    const existing = definition.interfaces.find((item) => item.promotedFromEntityTypeId === selectedEntity.id);
+    if (existing) { setSelected({ kind: "interface", id: existing.id }); setShowInterfaceLinks(true); return; }
+    const interfaceId = newId();
+    const touching = definition.relationshipTypes.filter((relation) => relation.sourceEntityTypeId === selectedEntity.id || relation.targetEntityTypeId === selectedEntity.id);
+    const constraints = touching.map((relation) => ({
+      id: newId(),
+      name: relation.name,
+      description: relation.description ?? "",
+      targetKind: "OBJECT_TYPE" as const,
+      targetId: relation.sourceEntityTypeId === selectedEntity.id ? relation.targetEntityTypeId : relation.sourceEntityTypeId,
+      cardinality: "MANY" as const,
+      required: false,
+    })).filter((constraint) => Boolean(constraint.targetId));
+    const created = {
+      id: interfaceId,
+      name: selectedEntity.name,
+      description: selectedEntity.description,
+      promotedFromEntityTypeId: selectedEntity.id,
+      properties: selectedEntity.properties.map((property) => ({ ...property, displayName: property.displayName ?? "", description: property.description ?? "", sourceField: undefined, sourceId: undefined })),
+      extends: [],
+      linkConstraints: constraints,
+    };
+    const next = {
+      ...definition,
+      interfaces: [...definition.interfaces, created],
+    };
+    try {
+      await onSaveDefinition(next);
+      setSelected({ kind: "interface", id: interfaceId });
+      setShowInterfaceLinks(false);
+    } catch (reason) { onFail(reason); }
+  };
+
   const handleNodeClick = (nodeId: string) => {
     setSearchOpen(false);
     setMatchedProperty(null);
+    if (isInterfaceNodeId(nodeId)) {
+      setConnectFrom(null);
+      setShowInterfaceLinks(true);
+      setSelected({ kind: "interface", id: interfaceIdFromNodeId(nodeId) });
+      return;
+    }
     if (connectFrom && connectFrom !== nodeId) { openCreateRelation(connectFrom, nodeId); return; }
     if (connectFrom === nodeId) { setConnectFrom(null); return; }
     setSelected({ kind: "entity", id: nodeId });
@@ -206,7 +217,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         nodes={nodes}
         edges={edges}
         frames={frames}
-        selectedNodeId={selected?.kind === "entity" ? selected.id : null}
+        selectedNodeId={selected?.kind === "entity" ? selected.id : selected?.kind === "interface" ? interfaceNodeId(selected.id) : null}
         selectedEdgeId={selected?.kind === "relation" ? selected.id : null}
         focusNodeId={focus?.id ?? null}
         focusRequest={focus?.request ?? 0}
@@ -242,6 +253,9 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         </button>
         <button className="ob-tool-action" onClick={organize} title="按现有关系重新铺开，恢复默认摆放"><Wand2 size={14} />自动整理</button>
         <LayoutSwitcher value={layout} onChange={setLayout} />
+        <button className={showInterfaceLinks ? "ob-tool-action active" : "ob-tool-action"} aria-pressed={showInterfaceLinks} onClick={() => setShowInterfaceLinks((value) => !value)} title="显示或隐藏接口承接的关系约束；点击接口或实现对象也会自动展开">
+          <Boxes size={14} />接口连接 {showInterfaceLinks ? "已显示" : "已收起"}
+        </button>
         <button className="ob-tool-action" disabled={!onOpenGroups} onClick={() => onOpenGroups?.()} title="概念分组（业务域）：切到同一页的「概念分组」标签建分组、勾成员">
           <Boxes size={14} />概念分组 <b>{definition.groups.length}</b>
         </button>
@@ -330,8 +344,47 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               <div className="graph-inspector-actions">
                 <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action" disabled={!canEdit || definition.entityTypes.length < 2} onClick={() => startConnection(selectedEntity.id)}><Link2 size={13} />新建关系类型</button>
+                {!entitySources(selectedEntity).length && !promotedByEntityId.has(selectedEntity.id) && <button className="graph-action" disabled={!canEdit} onClick={() => void promoteEntityToInterface()} title="保留原对象类型与底层关系，提取一个接口并生成关系约束；不会自动判定实现方"><Boxes size={13} />提取为接口</button>}
               </div>
               <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteEntity(selectedEntity.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除对象类型</button>
+            </div>
+          </>
+        ) : selectedInterface ? (
+          <>
+            <div className="graph-inspector-head">
+              <div><span style={{ background: "#7c3aed" }} />接口</div>
+              <button aria-label="关闭详情" onClick={() => setSelected(null)}><X size={15} /></button>
+            </div>
+            <div className="graph-inspector-body">
+              <h3>◇ {selectedInterface.name}</h3>
+              <p>{selectedInterface.description || "这个接口还没有填写说明。"}</p>
+              <div className="ob-facts">
+                <span>属性 <b>{selectedInterface.properties.length}</b></span>
+                <span>关系约束 <b>{selectedInterface.linkConstraints.length}</b></span>
+                <span>实现 <b>{interfaceImplementers.length}</b></span>
+              </div>
+              {selectedInterface.promotedFromEntityTypeId && <p className="ob-inspector-note">这个接口由无数据源对象类型「{entityById.get(selectedInterface.promotedFromEntityTypeId)?.name ?? selectedInterface.name}」提取而来。原对象类型与它的关系仍保留在底层，画布上用接口节点与虚线/实线表示。</p>}
+              {interfaceImplementers.length > 0
+                ? <p className="ob-inspector-note">实现它的对象类型：{interfaceImplementers.map((entity) => entity.name).join("、")}（画布上紫色虚线连过来的那些）。</p>
+                : <p className="ob-inspector-note">还没有对象类型实现它。点「编辑」勾一下就行。</p>}
+              {selectedInterface.properties.length > 0
+                ? <div className="graph-properties">{selectedInterface.properties.map((property) => <div key={property.name}><div><b>{property.name}</b>{property.required !== false && <em>必填</em>}</div><span>{property.dataType}</span></div>)}</div>
+                : <p className="ob-inspector-note">这个接口还没有属性。</p>}
+              {selectedInterface.linkConstraints.length > 0 && (
+                <div className="graph-properties">
+                  {selectedInterface.linkConstraints.map((constraint) => {
+                    const target = constraint.targetKind === "INTERFACE"
+                      ? definition.interfaces.find((item) => item.id === constraint.targetId)?.name ?? "未选"
+                      : entityById.get(constraint.targetId)?.name ?? "未选";
+                    return <div key={constraint.id}><div><b>{constraint.name || "未命名约束"}</b>{constraint.required && <em>必填</em>}</div><span>{constraint.targetKind === "INTERFACE" ? "连到接口" : "连到对象类型"} · {target}</span></div>;
+                  })}
+                </div>
+              )}
+              <div className="graph-inspector-actions">
+                <button className="graph-action primary" disabled={!canEdit} onClick={() => setEditingInterface(selectedInterface)}><Pencil size={13} />编辑</button>
+                <button className={showInterfaceLinks ? "graph-action primary" : "graph-action"} onClick={() => setShowInterfaceLinks((value) => !value)}><Boxes size={13} />{showInterfaceLinks ? "收起接口连接" : "展开接口连接"}</button>
+              </div>
+              <button className="graph-action" disabled={!onOpenInterface} onClick={() => onOpenInterface?.(selectedInterface.id)} title="这个接口的继承、实现缺口等完整视图在「接口」标签里"><Boxes size={13} />在「接口」标签里看</button>
             </div>
           </>
         ) : selectedRelation ? (
@@ -402,6 +455,17 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
             if (dialog.mode === "create") { await onCreateRelation(dialog.id, body); setSelected({ kind: "relation", id: dialog.id }); }
             else await onUpdateRelation(dialog.id, body);
           }}
+        />
+      )}
+      {interfaceDialogTarget && (
+        <InterfaceEditDialog
+          definition={definition}
+          value={interfaceDialogTarget}
+          canEdit={canEdit}
+          onSave={onSaveDefinition}
+          onNotify={onNotify}
+          onFail={onFail}
+          onClose={() => setEditingInterface(null)}
         />
       )}
     </div>

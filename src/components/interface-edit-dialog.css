@@ -1,0 +1,11 @@
+/* 「编辑接口」对话框里几处 `ted-*` 覆盖不到的小东西。 */
+.ifx-mark { background: #f3edff; color: #7c3aed; }
+
+/* 预览里的接口节点：紫色 + 虚线圈，和画布上的画法一致。 */
+.ifx-node { display: grid; place-items: center; width: 92px; height: 92px; border-radius: 50%; background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700; box-shadow: 0 0 0 7px #f3edff, 0 0 0 9px #c7b2ff; }
+.ifx-node[data-empty="true"] { background: #c9d2e3; color: #f7f9fd; box-shadow: 0 0 0 7px #f1f4fa, 0 0 0 9px #dbe2ee; }
+.ifx-node span { max-width: 74px; text-align: center; overflow-wrap: anywhere; }
+
+/* 一条关系约束在左栏是一行网格：约束名 / 目标类型 / 目标 / 必填 / 删除。 */
+.ted-constraint { display: grid; grid-template-columns: minmax(0, 1.2fr) 118px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+@media (max-width: 1080px) { .ted-constraint { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }

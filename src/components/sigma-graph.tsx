@@ -14,11 +14,12 @@ export type SigmaNode = {
   label: string;
   color: string;
   isHub: boolean;
+  kind?: "entity" | "interface";
   x?: number;
   y?: number;
 };
 
-export type SigmaEdge = { id: string; type: string; source: string; target: string };
+export type SigmaEdge = { id: string; type: string; source: string; target: string; kind?: "relationship" | "implementation" | "interface-link" };
 
 /** 概念分组的框：一组一个，框里是这一组的节点。 */
 export type SigmaGroupFrame = { id: string; name: string; color: string; nodeIds: string[] };
@@ -43,8 +44,8 @@ type Props = {
   onLayoutEnd: (positions: Record<string, { x: number; y: number }>) => void;
 };
 
-type NodeAttributes = { x: number; y: number; size: number; label: string; color: string; textColor?: string; selected?: boolean; dimmed?: boolean; forceLabel: boolean; zIndex: number; type: "internal" };
-type EdgeAttributes = { label: string; relationshipType: string; color: string; size: number; type: "arrow"; hidden: boolean };
+type NodeAttributes = { x: number; y: number; size: number; label: string; color: string; textColor?: string; selected?: boolean; dimmed?: boolean; forceLabel: boolean; zIndex: number; type: "internal"; kind?: "entity" | "interface" };
+type EdgeAttributes = { label: string; relationshipType: string; color: string; size: number; type: "arrow"; hidden: boolean; kind?: SigmaEdge["kind"] };
 
 function initialPoint(index: number, total: number) {
   const ordinal = index + 1;
@@ -181,6 +182,7 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
       label: node.label,
       color: node.color,
       type: "internal",
+      kind: node.kind ?? "entity",
       forceLabel: nodes.length <= 300,
       zIndex: node.isHub ? 2 : 1,
     });
@@ -198,7 +200,7 @@ function buildGraph(nodes: SigmaNode[], edges: SigmaEdge[]) {
   edges.forEach((edge) => {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
       const hidden = true;
-      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: hidden ? "" : edge.type, relationshipType: edge.type, color: "#c3ccda", size: 0.8, type: "arrow", hidden });
+      graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, { label: hidden ? "" : edge.type, relationshipType: edge.type, color: edge.kind === "implementation" ? "#7c3aed" : edge.kind === "interface-link" ? "#0f8f8c" : "#c3ccda", size: edge.kind ? 1.1 : 0.8, type: "arrow", hidden, kind: edge.kind });
     }
   });
   return graph;
@@ -351,22 +353,49 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
         const endY = targetPoint.y - uy * (targetRadius + 3);
         const offset = offsets.get(edge);
         const isRelated = selectedNodeId !== null && (source === selectedNodeId || target === selectedNodeId);
-        const color = edge === selectedEdgeId ? "#1677ff" : selectedNodeId !== null && !isRelated ? "#e5eaf2" : selectedNodeId !== null ? "#1677ff" : "#c3ccda";
-        const strokeWidth = edge === selectedEdgeId ? "1.8" : selectedNodeId !== null && !isRelated ? "0.7" : selectedNodeId !== null && isRelated ? "1.4" : "1";
+        const edgeKind = (data as EdgeAttributes).kind;
+        const baseColor = edgeKind === "implementation" ? "#7c3aed" : edgeKind === "interface-link" ? "#0f8f8c" : "#c3ccda";
+        const color = edge === selectedEdgeId ? "#1677ff" : selectedNodeId !== null && !isRelated ? "#e5eaf2" : selectedNodeId !== null ? "#1677ff" : baseColor;
+        const strokeWidth = edge === selectedEdgeId ? "1.8" : selectedNodeId !== null && !isRelated ? "0.7" : selectedNodeId !== null && isRelated ? "1.4" : edgeKind ? "1.2" : "1";
+        // 只有「实现接口」那条是虚线（接口是契约，实现是虚线连接）；
+        // 接口承接的关系沿用实线，靠青绿色区分它是由接口带出来的。
+        const dash = edgeKind === "implementation" ? "6 5" : undefined;
         const group = append(layer, "g", { color });
         let labelX = (startX + endX) / 2;
         let labelY = (startY + endY) / 2 - 5;
         if (offset !== undefined) {
           const controlX = (sourcePoint.x + targetPoint.x) / 2 - uy * offset;
           const controlY = (sourcePoint.y + targetPoint.y) / 2 + ux * offset;
-          append(group, "path", { d: `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, "marker-end": `url(#${markerFor(color)})` });
+          append(group, "path", { d: `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, ...(dash ? { "stroke-dasharray": dash } : {}), "marker-end": `url(#${markerFor(color)})` });
           labelX = (sourcePoint.x + 2 * controlX + targetPoint.x) / 4;
           labelY = (sourcePoint.y + 2 * controlY + targetPoint.y) / 4 - 5;
         } else {
-          append(group, "path", { d: `M ${startX} ${startY} L ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, "marker-end": `url(#${markerFor(color)})` });
+          append(group, "path", { d: `M ${startX} ${startY} L ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, ...(dash ? { "stroke-dasharray": dash } : {}), "marker-end": `url(#${markerFor(color)})` });
         }
         const labelText = showAllRelationshipLabels || edge === selectedEdgeId || isRelated ? (data as EdgeAttributes).relationshipType : "";
         if (labelText) appendEdgeLabel(group, labelX, labelY, labelText, color);
+      });
+
+      /*
+       * 接口节点的虚线圈：接口是**契约**，不是实体，画成虚线圈和「接口」页的虚线框同一套视觉语言。
+       * 用节点当前显示色（选中的是蓝色、变灰的是浅灰），所以选中与变灰逻辑跟节点本身一致。
+       */
+      graph.forEachNode((node, attributes) => {
+        if (attributes.kind !== "interface") return;
+        const display = sigma.getNodeDisplayData(node);
+        if (!display) return;
+        const point = sigma.graphToViewport(attributes);
+        const radius = Math.max(14, sigma.scaleSize(display.size) + 4.5);
+        append(layer, "circle", {
+          cx: String(point.x),
+          cy: String(point.y),
+          r: String(radius),
+          fill: "none",
+          stroke: display.color ?? "#7c3aed",
+          "stroke-width": "1.2",
+          "stroke-dasharray": "3 4",
+          opacity: "0.85",
+        });
       });
     };
     update();

@@ -20,6 +20,7 @@
 .ob-search-results button small { color: #8296b4; font-size: 10px; white-space: nowrap; }
 .ob-tool-action { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 9px; border: 1px solid #cbd9ed; border-radius: 5px; color: #315b9f; background: #fff; font-size: 10px; font-weight: 700; }
 .ob-tool-action:hover { background: #edf4ff; border-color: #a9c5ef; color: #1d4ed8; }
+.ob-tool-action.active { color: #6d28d9; background: #f3edff; border-color: #c7b2ff; box-shadow: inset 0 0 0 1px #e4d8ff; }
 .ob-toolbar b { margin-left: -2px; font-weight: 700; opacity: .8; }
 
 .ob-connect-hint { position: absolute; z-index: 4; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 7px 10px; color: #1d4ed8; background: #eef4ff; border: 1px solid #a9c5ef; border-radius: 2px; font-size: 11px; }

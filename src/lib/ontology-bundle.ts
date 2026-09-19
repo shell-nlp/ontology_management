@@ -263,6 +263,7 @@ export function relinkDefinitionIds(
     interfaces: definition.interfaces.map((item) => ({
       ...item,
       id: id(item.id),
+      promotedFromEntityTypeId: item.promotedFromEntityTypeId ? id(item.promotedFromEntityTypeId) : item.promotedFromEntityTypeId,
       extends: item.extends.map(id),
       linkConstraints: item.linkConstraints.map((constraint) => ({ ...constraint, targetId: id(constraint.targetId) })),
     })),

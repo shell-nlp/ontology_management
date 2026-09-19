@@ -101,6 +101,8 @@ export const interfaceTypeSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1).max(100),
   description: z.string().max(500).default(""),
+  /** 从无数据源的对象类型提取出来的接口；保留原对象类型作为底层关系兼容影子。 */
+  promotedFromEntityTypeId: z.union([z.string().uuid(), z.literal("")]).optional(),
   /** 本接口自己声明的属性（不含继承来的）。required = 实现方必须提供同名属性。 */
   properties: z.array(propertySchema).default([]),
   /** 继承的接口：本接口继承谁；空数组表示没有父接口。可以写多个。 */

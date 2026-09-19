@@ -33,6 +33,8 @@ type Props = {
   save: (next: Definition) => Promise<void>;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
+  /** 从画布点「编辑接口」进来时要选中的那一个（同一页的「可视化建模」标签跳过来）。 */
+  focusId?: string;
 };
 
 function cloneInterface(item: InterfaceType): InterfaceType {
@@ -47,11 +49,21 @@ function cloneInterface(item: InterfaceType): InterfaceType {
   return definition.interfaces.find((item) => item.id === id)?.name ?? "";
 }
 
-export function InterfaceManager({ definition, canEdit, save, notify, fail }: Props) {
-  const [selectedId, setSelectedId] = useState("");
+export function InterfaceManager({ definition, canEdit, save, notify, fail, focusId = "" }: Props) {
+  const [selectedId, setSelectedId] = useState(focusId);
   const [draft, setDraft] = useState<InterfaceType | null>(null);
   const [busy, setBusy] = useState(false);
   const interfaces = definition.interfaces;
+
+  /*
+   * 画布上的「编辑接口」会带着 id 切到这一档：渲染期直接换选中项（和下面重装草稿一个套路），
+   * 用 effect 会多一帧、也会把用户刚打的字冲掉。同一个 id 只认领一次，之后用户自己点列表不再被拉回。
+   */
+  const [claimedFocus, setClaimedFocus] = useState(focusId);
+  if (focusId && claimedFocus !== focusId) {
+    setClaimedFocus(focusId);
+    if (interfaces.some((item) => item.id === focusId)) setSelectedId(focusId);
+  }
   const selected = interfaces.find((item) => item.id === selectedId) ?? null;
 
   // 选中的接口换了（第一次点开、或刚新建）就在渲染期重装一份右栏草稿：
@@ -345,4 +357,3 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail }: Pr
     </div>
   </section>;
 }
-
