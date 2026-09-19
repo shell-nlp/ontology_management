@@ -150,6 +150,32 @@ export const relationshipKeyMappingSchema = z.object({
 });
 
 /**
+ * 关系类型的**数据来源**（Palantir 的 link type backing datasource，backlog D2）：
+ * 关系实例（边）从哪儿读出来。
+ *
+ * 三种支撑方式里平台先做两种（第三种"由对象自己支撑"用不到额外配置，先不做）：
+ * - `JOIN_TABLE`：多对多，有一张中间表。两端的键映射写「连接表的列 → 对象类型的主键属性」；
+ * - `FOREIGN_KEY`：外键长在某一端对象类型的表上。两端的键映射都不写连接列（`linkProperty` 留空），
+ *   外键那一端填外键属性，另一端填被引用的属性；`view` 留空就用外键所在端的主来源表。
+ *
+ * 没配这一项 = 这条关系类型只在类型层声明了业务语义，读不出实例。**不配不算错**。
+ */
+export const relationshipSourceSchema = z.object({
+  mode: z.enum(["JOIN_TABLE", "FOREIGN_KEY"]).default("JOIN_TABLE"),
+  /** 关系实例存在哪个数据资源里。 */
+  dataSourceId: z.union([z.string().uuid(), z.literal("")]).default(""),
+  /** 表/视图所在的容器（Oracle / PG 的模式）；MySQL 留空。 */
+  schema: z.string().trim().max(200).default(""),
+  /** 连接表（JOIN_TABLE）或持有外键的那张表（FOREIGN_KEY 留空 = 用外键端对象类型自己的主来源）。 */
+  view: z.string().trim().max(200).default(""),
+  /** FOREIGN_KEY：外键长在哪一端。 */
+  foreignKeySide: z.enum(["SOURCE", "TARGET"]).default("SOURCE"),
+});
+
+/** 「还没配数据来源」的那一份。zod 的 `.default()` 不会回头再解析内层默认值，所以这里写全。 */
+export const EMPTY_LINK_SOURCE: RelationshipSource = { mode: "JOIN_TABLE", dataSourceId: "", schema: "", view: "", foreignKeySide: "SOURCE" };
+
+/**
  * 一个类的数据来源清单，也就是 Palantir 的多来源对象类型（column-wise MDO）。
  *
  * `sources[0]` 是主来源：对象的身份（主键）和标题由它决定；
@@ -319,6 +345,8 @@ export const ontologyDefinitionSchema = z.object({
     sourceKeyMappings: z.array(relationshipKeyMappingSchema).default([]),
     /** 终点侧的键映射：连接属性 → 终点对象类型的属性。 */
     targetKeyMappings: z.array(relationshipKeyMappingSchema).default([]),
+    /** 关系实例的数据来源；没配就是"只建模、不取实例"。 */
+    linkSource: relationshipSourceSchema.default(EMPTY_LINK_SOURCE),
   })).default([]),
   actionTypes: z.array(actionTypeSchema).default([]),
   rules: z.array(ontologyRuleSchema).default([]),
@@ -332,3 +360,4 @@ export type InterfaceType = z.infer<typeof interfaceTypeSchema>;
 export type InterfaceLinkConstraint = z.infer<typeof interfaceLinkConstraintSchema>;
 export type InterfaceActionConstraint = z.infer<typeof interfaceActionConstraintSchema>;
 export type RelationshipKeyMapping = z.infer<typeof relationshipKeyMappingSchema>;
+export type RelationshipSource = z.infer<typeof relationshipSourceSchema>;

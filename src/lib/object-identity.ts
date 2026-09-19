@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import type { OntologyDefinition } from "@/lib/ontology";
+import { columnForProperty, propertyForColumn } from "@/lib/ontology-fields";
+
+// 属性 ↔ 列的换算住在 `@/lib/ontology-fields`（客户端也要用，这里只是转出去，不再另写一份）。
+export { columnForProperty, propertyForColumn } from "@/lib/ontology-fields";
 
 /**
  * 对象身份 = (对象类型, 主键)。**这是平台里唯一一处定义「一个对象是谁」的地方**（S1）。
@@ -51,16 +55,6 @@ function normalizeKeyValue(value: unknown): string | null {
 export function primaryKeyColumns(entityType: IdentityEntityType): string[] {
   const columns = entityType.sources?.[0]?.primaryKey ?? [];
   return columns.map((column) => column?.trim() ?? "").filter(Boolean);
-}
-
-/**
- * 一列对应对象类型上的哪个属性：属性自己声明了 `sourceField` 就用它，
- * 否则退回同名（导入外部本体时列名与属性名往往一致）。
- */
-export function propertyForColumn(entityType: IdentityEntityType, column: string): string {
-  const matched = entityType.properties.find((property) =>
-    (property.sourceField ?? "").trim() === column || property.name === column);
-  return matched?.name ?? "";
 }
 
 /**

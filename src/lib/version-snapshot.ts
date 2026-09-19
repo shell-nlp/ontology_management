@@ -9,6 +9,7 @@ import { withAdvisoryLock } from "@/lib/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology-sources";
 import { relationshipKeyViolations } from "@/lib/relationship-keys";
+import { linkSourceViolations } from "@/lib/link-source";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
@@ -618,6 +619,8 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
   // 关系类型的键映射同理：它是定义层的声明，指向不存在的属性时换台机器导入就是悬空引用。
   for (const item of relationshipKeyViolations(snapshot.definition)) violations.push(item);
+  // 关系类型的数据来源（D2）：配了但取不出实例的话，图上看不到边，这里提醒一句（不挡发布）。
+  for (const item of linkSourceViolations(snapshot.definition)) violations.push(item);
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));

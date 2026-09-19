@@ -358,8 +358,12 @@ export function GraphCanvas({
     for (const relationship of displayGraph.relationships) if (!types.has(relationship.type)) types.set(relationship.type, 0);
     return [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
   }, [displayGraph.relationships, runtimeTypes?.relationshipTypes]);
-  const totalNodeCount = runtimeTypes ? runtimeTypes.labels.reduce((total, item) => total + item.count, 0) : graph.nodes.length;
-  const totalRelationshipCount = runtimeTypes ? runtimeTypes.relationshipTypes.reduce((total, item) => total + item.count, 0) : graph.relationships.length;
+  /*
+   * 分母是"全图有多少"。快照总数只算已发布快照里的对象，而从数据资源实时加载的节点/边不在其中
+   * （D2 之后会更多），所以取两者的大者 —— 否则会出现「30/0 个节点」这种读不通的计数。
+   */
+  const totalNodeCount = Math.max(runtimeTypes ? runtimeTypes.labels.reduce((total, item) => total + item.count, 0) : 0, graph.nodes.length);
+  const totalRelationshipCount = Math.max(runtimeTypes ? runtimeTypes.relationshipTypes.reduce((total, item) => total + item.count, 0) : 0, graph.relationships.length);
   const displayProps = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of definition?.entityTypes ?? []) {

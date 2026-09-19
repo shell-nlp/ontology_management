@@ -49,6 +49,8 @@ export type RelationType = {
   /** 这条关系在数据上怎么把两端接起来：连接属性 → 该端对象类型的属性。多条就是复合键；不配也能发布。 */
   sourceKeyMappings?: KeyMapping[];
   targetKeyMappings?: KeyMapping[];
+  /** 关系实例（边）从哪儿读（D2）：连接表式或外键式；不配就是只建模、不取实例。 */
+  linkSource?: OntologyDefinition["relationshipTypes"][number]["linkSource"];
   properties: Property[];
 };
 export type ActionParameter = OntologyDefinition["actionTypes"][number]["params"][number];

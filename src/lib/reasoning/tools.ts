@@ -15,6 +15,7 @@ import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
 import { getObject, queryObjects } from "@/lib/object-service";
+import { queryLinks } from "@/lib/object-service/links";
 import type { ObjectContext, ObjectRecord } from "@/lib/object-service/types";
 import type { ToolOutcome, ToolSpec } from "@/lib/reasoning/types";
 
@@ -1069,7 +1070,32 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const records = collected.slice(0, nodeLimit);
       const nodeIds = new Set(records.map((record) => record.objectId));
       const graph = await store.readGraph({ labels: typeNames, relationshipTypes, search, nodeLimit: nodeLimit * 3 });
-      const relationships = graph.relationships.filter((item) => nodeIds.has(item.source) && nodeIds.has(item.target)).slice(0, nodeLimit * 2);
+      const graphRelationships = graph.relationships.filter((item) => nodeIds.has(item.source) && nodeIds.has(item.target));
+      /*
+       * 关系类型配了数据来源（D2）就按对象主键回业务库取边 —— 否则"数据源来的节点没有连线"
+       * 会让模型以为 AB 之间没关系。按对象类型分组问，一个类型一次查询。
+       */
+      const liveLinks: { id: string; type: string; source: string; target: string }[] = [];
+      const seedByType = new Map<string, Record<string, string>[]>();
+      for (const record of records) {
+        if (!Object.keys(record.primaryKey).length) continue;
+        seedByType.set(record.entityType, [...(seedByType.get(record.entityType) ?? []), record.primaryKey]);
+      }
+      for (const [entityType, keys] of seedByType) {
+        try {
+          const result = await queryLinks(objectContext, { seed: { entityType, keys }, relationshipType: relationshipTypes[0], limit: nodeLimit });
+          for (const link of result.links) {
+            if (!nodeIds.has(link.source.objectId) || !nodeIds.has(link.target.objectId)) continue;
+            liveLinks.push({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId });
+          }
+        } catch (error) {
+          warnings.push(`${entityType} 的关系实例读取失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+      }
+      const seenRelationship = new Set<string>();
+      const relationships = [...graphRelationships.map((item) => ({ id: item.id, type: item.type, source: item.source, target: item.target })), ...liveLinks]
+        .filter((item) => (seenRelationship.has(item.id) ? false : (seenRelationship.add(item.id), true)))
+        .slice(0, nodeLimit * 2);
       // 图库里还有、但对象服务没取到的节点（例如没绑来源也没进索引的旧对象）也一并带上，别凭空丢信息。
       for (const node of graph.nodes) {
         if (records.length >= nodeLimit) break;
@@ -1097,7 +1123,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             source_id: relationship.source,
             target_id: relationship.target,
           })),
-          note: "节点可能来自数据源（_origin=source，实时读取、本体里没有副本）也可能来自本体索引；关系只包含本体里已存在的关系实例，所以数据源来的节点通常没有连线 —— 需要先把关系类型也绑上数据来源（平台尚未支持）。",
+          note: "节点可能来自数据源（_origin=source，实时读取、本体里没有副本）也可能来自本体索引；关系来自两处：本体索引里已存在的关系实例，以及**配了数据来源的关系类型**按对象主键回业务库取到的边。只有端点对象也在结果里的边才会带上。",
           warnings,
         },
         evidence: [

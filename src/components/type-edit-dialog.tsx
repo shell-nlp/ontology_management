@@ -5,6 +5,7 @@ import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyR
 import { api } from "@/lib/api-client";
 import { effectiveInterfaceProperties } from "@/lib/interfaces";
 import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/relationship-keys";
+import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
 import {
@@ -39,6 +40,8 @@ export type TypeEditPayload = {
   /** 起点 / 终点两侧的键映射（连接属性 → 对象类型属性）；只有关系类型带这一项。 */
   sourceKeyMappings?: KeyMapping[];
   targetKeyMappings?: KeyMapping[];
+  /** 关系实例从哪儿读（D2）；只有关系类型带这一项。 */
+  linkSource?: RelationshipSource;
   properties: Property[];
   /** 类的数据来源清单，第 0 份是主来源；关系类型不带这一项。 */
   sources?: EntitySource[];
@@ -76,6 +79,20 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   // 两端的键映射：关系类型这一侧的连接属性 → 该侧对象类型的属性。多条就是复合键。
   const [sourceKeys, setSourceKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).source : []));
   const [targetKeys, setTargetKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).target : []));
+  // 关系类型的数据来源：关系实例（边）从哪儿读。不配就是"只建模、不取实例"。
+  const [linkSource, setLinkSource] = useState<RelationshipSource>(() => ({
+    mode: relation?.linkSource?.mode === "FOREIGN_KEY" ? "FOREIGN_KEY" : "JOIN_TABLE",
+    dataSourceId: relation?.linkSource?.dataSourceId ?? "",
+    schema: relation?.linkSource?.schema ?? "",
+    view: relation?.linkSource?.view ?? "",
+    foreignKeySide: relation?.linkSource?.foreignKeySide === "TARGET" ? "TARGET" : "SOURCE",
+  }));
+  const [linkViewsState, setLinkViewsState] = useState<{ dataSourceId: string; rows: DataViewSummary[] }>({ dataSourceId: "", rows: [] });
+  const [linkFieldsState, setLinkFieldsState] = useState<{ key: string; rows: DataViewField[] }>({ key: "", rows: [] });
+  const linkViewListId = useId();
+  const linkFieldsKey = sourceFieldsKey({ dataSourceId: linkSource.dataSourceId, view: linkSource.view });
+  const linkViewRows = linkViewsState.dataSourceId === linkSource.dataSourceId ? linkViewsState.rows : [];
+  const linkFieldRows = linkFieldsState.key === linkFieldsKey ? linkFieldsState.rows : [];
   const [properties, setProperties] = useState<Property[]>(kind === "entity" ? entity?.properties ?? [] : relation?.properties ?? []);
   const [propName, setPropName] = useState("");
   const [dataType, setDataType] = useState<Property["dataType"]>("TEXT");
@@ -154,13 +171,33 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
 
   // 已登记的数据资源：只取一次，用来填下拉。
   useEffect(() => {
-    if (kind !== "entity") return;
     let cancelled = false;
     void api<PublicDataSource[]>("/api/data-sources")
       .then((rows) => { if (!cancelled) setDataSources(rows); })
       .catch(() => { if (!cancelled) setDataSources([]); });
     return () => { cancelled = true; };
   }, [kind]);
+
+  // 关系类型的数据来源：选完资源拉它的表清单，选完表拉字段（连接属性要有列可选）。
+  useEffect(() => {
+    if (kind !== "relation" || !linkSource.dataSourceId) return;
+    let cancelled = false;
+    void api<{ views: DataViewSummary[] }>(`/api/data-sources/${linkSource.dataSourceId}/views?limit=5000`)
+      .then((data) => { if (!cancelled) setLinkViewsState({ dataSourceId: linkSource.dataSourceId, rows: data.views }); })
+      .catch(() => { if (!cancelled) setLinkViewsState({ dataSourceId: linkSource.dataSourceId, rows: [] }); });
+    return () => { cancelled = true; };
+  }, [kind, linkSource.dataSourceId]);
+
+  useEffect(() => {
+    if (kind !== "relation" || !linkSource.dataSourceId || !linkSource.view) return;
+    const key = linkFieldsKey;
+    const query = linkSource.schema ? `limit=1&schema=${encodeURIComponent(linkSource.schema)}` : "limit=1";
+    let cancelled = false;
+    void api<{ fields: DataViewField[] }>(`/api/data-sources/${linkSource.dataSourceId}/views/${encodeURIComponent(linkSource.view)}?${query}`)
+      .then((data) => { if (!cancelled) setLinkFieldsState({ key, rows: data.fields }); })
+      .catch(() => { if (!cancelled) setLinkFieldsState({ key, rows: [] }); });
+    return () => { cancelled = true; };
+  }, [kind, linkSource.dataSourceId, linkSource.view, linkSource.schema, linkFieldsKey]);
 
   // ESC 关闭：用 ref 存回调，避免调用方每次渲染都重新订阅键盘事件。
   const onCloseRef = useRef(onClose);
@@ -278,7 +315,9 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     // 连接列优先取来源里的第一个主键列；对象类型还没绑表（纯建模）时退回属性名，
     // 这样"点一下添加映射"拿到的是一条完整的 `A → A`，不用两个框都手填。
     const column = entity?.sources?.[0]?.primaryKey?.filter(Boolean)[0] || property;
-    setRows((current) => [...current, { linkProperty: column, entityProperty: property }]);
+    // 外键式的连接列长在对象类型自己身上，左框要留空（填了反而会被校验当成"中间表式"）。
+    const linkProperty = linkSource.mode === "FOREIGN_KEY" ? "" : column;
+    setRows((current) => [...current, { linkProperty, entityProperty: property }]);
   };
   const patchKeyMapping = (side: "source" | "target", index: number, patch: KeyMapping) => {
     const setRows = side === "source" ? setSourceKeys : setTargetKeys;
@@ -298,7 +337,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     try {
       await onSave(kind === "entity"
         ? { name, description, displayProperty, groupName, implements: implementsList, properties, sources: normalizedSources }
-        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys) });
+        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys), linkSource });
       onClose();
     } finally {
       setBusy(false);
@@ -439,6 +478,54 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     </select>
                   </label>
                 </div>
+                <section className="ted-section">
+                  <div className="ted-section-head">
+                    <h3><Database size={13} />关系的数据来源</h3>
+                    <em>{linkSource.dataSourceId ? (linkSource.mode === "JOIN_TABLE" ? "连接表式" : "外键式") : "未配"}</em>
+                  </div>
+                  <p className="ted-key-hint">关系实例（边）从哪儿读：多对多就指一张连接表，多对一就写清外键长在哪一端。**不配也合法** —— 那条关系类型只在类型层存在，图上看不到它的边。</p>
+                  <div className="ted-grid-2">
+                    <label className="ted-field">
+                      <span>怎么连</span>
+                      <select className="ted-select" value={linkSource.mode} onChange={(event) => setLinkSource({ ...linkSource, mode: event.target.value as RelationshipSource["mode"] })}>
+                        <option value="JOIN_TABLE">连接表（多对多）</option>
+                        <option value="FOREIGN_KEY">外键（多对一 / 一对一）</option>
+                      </select>
+                    </label>
+                    <label className="ted-field">
+                      <span>数据资源</span>
+                      <select className="ted-select" value={linkSource.dataSourceId} onChange={(event) => setLinkSource({ ...linkSource, dataSourceId: event.target.value, schema: "", view: "" })}>
+                        <option value="">不配（只做建模）</option>
+                        {linkSource.dataSourceId && !dataSources.some((item) => item.id === linkSource.dataSourceId) && <option value={linkSource.dataSourceId}>这个数据资源已不在清单里</option>}
+                        {dataSources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kindLabel}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="ted-grid-2">
+                    <label className="ted-field">
+                      <span><Table2 size={12} />{linkSource.mode === "JOIN_TABLE" ? "连接表" : "外键表（留空 = 用外键端对象类型的主来源表）"}</span>
+                      <input
+                        className="ted-input"
+                        list={linkViewListId}
+                        value={linkSource.view}
+                        disabled={!linkSource.dataSourceId}
+                        onChange={(event) => setLinkSource({ ...linkSource, view: event.target.value, schema: linkViewRows.find((item) => item.name === event.target.value)?.schema ?? linkSource.schema })}
+                        placeholder={linkSource.dataSourceId ? (linkSource.mode === "JOIN_TABLE" ? "输入或从下拉里选连接表" : "留空就用外键端的表") : "先选数据资源"}
+                      />
+                      <datalist id={linkViewListId}>{linkViewRows.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
+                    </label>
+                    {linkSource.mode === "FOREIGN_KEY" && (
+                      <label className="ted-field">
+                        <span>外键长在哪一端</span>
+                        <select className="ted-select" value={linkSource.foreignKeySide} onChange={(event) => setLinkSource({ ...linkSource, foreignKeySide: event.target.value as RelationshipSource["foreignKeySide"] })}>
+                          <option value="SOURCE">起始端（{sourceEntity?.name ?? "未选"}）</option>
+                          <option value="TARGET">终止端（{targetEntity?.name ?? "未选"}）</option>
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                  {linkFieldRows.length > 0 && <small>{linkSource.view} 读到 {linkFieldRows.length} 个字段；下面「连接属性」的输入框可以直接从下拉里挑。</small>}
+                </section>
                 <section className="ted-section ted-key">
                   <div className="ted-section-head">
                     <h3><KeyRound size={13} />两端的键映射</h3>
@@ -481,6 +568,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   </div>
                   <datalist id={linkPropertyListId}>
                     {properties.map((property) => <option key={property.name} value={property.name} />)}
+                    {linkFieldRows.map((field) => <option key={`link-${field.name}`} value={field.name} />)}
                   </datalist>
                   <small>连接属性可以填关系类型自己的属性，也可以填连接表里的列名；外键长在对象类型上时把左边留空，两侧按顺序一一对应。</small>
                 </section>

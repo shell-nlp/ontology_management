@@ -1,5 +1,5 @@
 import { buildOntologyBundle, type OntologyBundle } from "@/lib/ontology-bundle";
-import type { OntologyDefinition } from "@/lib/ontology";
+import { EMPTY_LINK_SOURCE, type OntologyDefinition } from "@/lib/ontology";
 
 /**
  * bkn-foundry 导出的「知识网络」→ 平台的本体包。
@@ -151,7 +151,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
     if (!from || !to) warnings.push(`关系类型「${name}」的端点找不到对应对象类型，导入后请手动补选起点与终点。`);
     const rules = Array.isArray(item.mapping_rules) ? item.mapping_rules.length : 0;
     droppedMappings += rules;
-    return { id: crypto.randomUUID(), name, description: text(item.comment), sourceEntityTypeId: from, targetEntityTypeId: to, sourceKeyMappings: [], targetKeyMappings: [], properties: [] } as OntologyDefinition["relationshipTypes"][number];
+    return { id: crypto.randomUUID(), name, description: text(item.comment), sourceEntityTypeId: from, targetEntityTypeId: to, sourceKeyMappings: [], targetKeyMappings: [], properties: [], linkSource: EMPTY_LINK_SOURCE } as OntologyDefinition["relationshipTypes"][number];
   });
 
   if (droppedMappings > 0) warnings.push(`bkn 里的 ${droppedMappings} 条关系连接规则（mapping_rules，靠两边哪些字段相等来连边）平台还没有对应的模型，本次没有导入。`);
