@@ -66,6 +66,31 @@ export function interfaceIdFromNodeId(nodeId: string) {
 }
 
 /**
+ * 画布上还有两类"不是草稿里的关系类型"的连线，各有自己的 id 规则：
+ * 紫色虚线 = 对象类型实现接口，青绿实线 = 接口承接的关系。
+ * 点中它们也必须落到一个能编辑的东西上（接口 / 那条关系类型），不能点了没反应。
+ */
+export function implementationEdgeId(entityId: string, interfaceId: string) {
+  return `implements:${entityId}:${interfaceId}`;
+}
+
+export function parseImplementationEdgeId(edgeId: string): { entityId: string; interfaceId: string } | null {
+  if (!edgeId.startsWith("implements:")) return null;
+  const [, entityId, interfaceId] = edgeId.split(":");
+  return entityId && interfaceId ? { entityId, interfaceId } : null;
+}
+
+export function interfaceLinkEdgeId(interfaceId: string, relationId: string) {
+  return `interface-link:${interfaceId}:${relationId}`;
+}
+
+export function parseInterfaceLinkEdgeId(edgeId: string): { interfaceId: string; relationId: string } | null {
+  if (!edgeId.startsWith("interface-link:")) return null;
+  const [, interfaceId, relationId] = edgeId.split(":");
+  return interfaceId && relationId ? { interfaceId, relationId } : null;
+}
+
+/**
  * 没被手动摆放过的对象类型：度数最高的那个居中，其余绕成一圈。
  * 换一个 seed 就是绕轴转一圈，所以「自动整理」看得见变化，布局本身仍是确定的。
  */
@@ -125,7 +150,7 @@ export function buildCanvasProjection(input: CanvasProjectionInput): CanvasProje
     for (const interfaceId of entity.implements ?? []) {
       if (!definition.interfaces.some((item) => item.id === interfaceId)) continue;
       connected.add(entity.id);
-      drawnEdges.push({ id: `implements:${entity.id}:${interfaceId}`, type: "实现接口", source: entity.id, target: interfaceNodeId(interfaceId), kind: "implementation" });
+      drawnEdges.push({ id: implementationEdgeId(entity.id, interfaceId), type: "实现接口", source: entity.id, target: interfaceNodeId(interfaceId), kind: "implementation" });
     }
   }
 
@@ -137,7 +162,7 @@ export function buildCanvasProjection(input: CanvasProjectionInput): CanvasProje
     for (const relation of definition.relationshipTypes) {
       const counterpart = relation.sourceEntityTypeId === shadowId ? relation.targetEntityTypeId : relation.targetEntityTypeId === shadowId ? relation.sourceEntityTypeId : "";
       if (!counterpart || !visibleEntityIds.has(counterpart)) continue;
-      drawnEdges.push({ id: `interface-link:${iface.id}:${relation.id}`, type: relation.name, source: interfaceNodeId(iface.id), target: counterpart, kind: "interface-link" });
+      drawnEdges.push({ id: interfaceLinkEdgeId(iface.id, relation.id), type: relation.name, source: interfaceNodeId(iface.id), target: counterpart, kind: "interface-link" });
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCanvasProjection, interfaceNodeId, isInterfaceNodeId } from "@/lib/ontology-canvas";
+import { buildCanvasProjection, interfaceLinkEdgeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
 import type { Definition } from "@/lib/ontology-draft";
 
 const 客户 = "11111111-1111-4111-8111-111111111111";
@@ -100,6 +100,11 @@ describe("buildCanvasProjection", () => {
     const projection = buildCanvasProjection({ ...base, definition: withImplementation });
     expect(projection.nodes.find((node) => node.id === interfaceNodeId(接口))?.kind).toBe("interface");
     expect(projection.edges).toContainEqual({ id: `implements:${客户}:${接口}`, type: "实现接口", source: 客户, target: interfaceNodeId(接口), kind: "implementation" });
+    // 画布算出来的连线 id 要能翻回"能编辑的东西"：点在紫色虚线上落到接口，不用绕去别的标签页。
+    expect(parseImplementationEdgeId(`implements:${客户}:${接口}`)).toEqual({ entityId: 客户, interfaceId: 接口 });
+    expect(parseImplementationEdgeId(关系)).toBeNull();
+    expect(parseInterfaceLinkEdgeId(interfaceLinkEdgeId(接口, 关系))).toEqual({ interfaceId: 接口, relationId: 关系 });
+    expect(parseInterfaceLinkEdgeId(接口)).toBeNull();
   });
 
   it("端点没落定的关系类型照旧进「待补全」，孤悬对象类型也算出来", () => {

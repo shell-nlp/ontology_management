@@ -6,7 +6,7 @@ import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, Loca
 import { actionInvolvement } from "@/lib/action-engine";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
-import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterfaceNodeId } from "@/lib/ontology-canvas";
+import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
 import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import { searchOntologyDefinition, type OntologySearchHit } from "@/lib/ontology-search";
@@ -116,6 +116,10 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const interfaceDialogTarget = editingInterface ? definition.interfaces.find((item) => item.id === editingInterface.id) ?? null : null;
   /** 实现了这个接口的对象类型（画布上从它连紫色虚线的那些）。 */
   const interfaceImplementers = selectedInterface ? definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(selectedInterface.id)) : [];
+  /** 选中关系类型时：若有端点落在某个接口的影子上，就说明这条关系是由那个接口承接出来的。 */
+  const selectedRelationInterfaces = selectedRelation
+    ? definition.interfaces.filter((item) => item.promotedFromEntityTypeId === selectedRelation.sourceEntityTypeId || item.promotedFromEntityTypeId === selectedRelation.targetEntityTypeId)
+    : [];
   const organize = useCallback(() => {
     // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
     if (positionKey) writeStoredPositions(positionKey, {});
@@ -208,6 +212,28 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
     setSelected({ kind: "entity", id: source });
   };
 
+  /**
+   * 画布上的连线有三类 id：草稿里的关系类型、紫色虚线（对象类型实现接口）、青绿实线（接口承接的关系）。
+   * 后两类是画布算出来的，草稿里没有对应记录，所以要先翻译成"能编辑的那个东西"，
+   * 否则点上去会在右侧看到一片空白，只能绕去别的标签页改。
+   */
+  const selectEdge = (edgeId: string) => {
+    setSearchOpen(false);
+    setMatchedProperty(null);
+    const implementation = parseImplementationEdgeId(edgeId);
+    if (implementation) {
+      setShowInterfaceLinks(true);
+      setSelected({ kind: "interface", id: implementation.interfaceId });
+      return;
+    }
+    const link = parseInterfaceLinkEdgeId(edgeId);
+    if (link && relationById.has(link.relationId)) {
+      setSelected({ kind: "relation", id: link.relationId });
+      return;
+    }
+    setSelected({ kind: "relation", id: edgeId });
+  };
+
   const gapCount = orphanEntities.length + unresolvedRelations.length;
 
   return (
@@ -225,7 +251,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
         draggable
         layoutRequest={0}
         onNodeClick={handleNodeClick}
-        onEdgeClick={(edgeId) => { setSearchOpen(false); setMatchedProperty(null); setSelected({ kind: "relation", id: edgeId }); }}
+        onEdgeClick={selectEdge}
         onStageClick={() => { setSearchOpen(false); setMatchedProperty(null); setSelected(null); setConnectFrom(null); }}
         onDragEnd={(nodeId, point) => { if (positionKey && canEdit) writeStoredPositions(positionKey, { ...readStoredPositions(positionKey), [nodeId]: point }); }}
         onLayoutEnd={() => undefined}
@@ -342,7 +368,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               ) : <p className="ob-inspector-note">还没有属性。点「编辑」补上业务属性与必填约束。</p>}
               <InvolvedActions definition={definition} entityTypeId={selectedEntity.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
-                <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
+                <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "entity", mode: "edit", id: selectedEntity.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action" disabled={!canEdit || definition.entityTypes.length < 2} onClick={() => startConnection(selectedEntity.id)}><Link2 size={13} />新建关系类型</button>
                 {!entitySources(selectedEntity).length && !promotedByEntityId.has(selectedEntity.id) && <button className="graph-action" disabled={!canEdit} onClick={() => void promoteEntityToInterface()} title="保留原对象类型与底层关系，提取一个接口并生成关系约束；不会自动判定实现方"><Boxes size={13} />提取为接口</button>}
               </div>
@@ -398,6 +424,12 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               {matchedProperty && <p className="ob-inspector-match">匹配属性 · {matchedProperty}</p>}
               <p><span>起点</span> {entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "未指定"}<br /><span>终点</span> {entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "未指定"}</p>
               <p><span>方向</span> 双向：起点与终点两个方向都能走，不用再建反向的那一条。</p>
+              {selectedRelationInterfaces.map((item) => (
+                <p className="ob-inspector-note" key={item.id}>
+                  这条关系类型由接口「{item.name}」承接：画布上从接口连出去的那条青绿色连线就是它，边界约束在接口里维护。
+                  <button className="graph-action" disabled={!canEdit} onClick={() => setEditingInterface({ id: item.id })}><Boxes size={13} />编辑接口「{item.name}」</button>
+                </p>
+              ))}
               {(entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "") === "" || (entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "") === "" ? <p className="ob-inspector-warning"><AlertTriangle size={13} />端点未指定，这条关系类型不会出现在画布上，也无法发布。</p> : null}
               {selectedRelation.properties.length > 0 ? (
                 <div className="graph-properties">
@@ -411,7 +443,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               ) : <p className="ob-inspector-note">这条关系类型没有额外属性。</p>}
               <InvolvedActions definition={definition} relationTypeId={selectedRelation.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
-                <button className="graph-action" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>
+                <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>
                 <button className="graph-action danger" disabled={!canEdit} onClick={() => { onDeleteRelation(selectedRelation.id).then(() => setSelected(null)).catch(onFail); }}><Trash2 size={13} />删除</button>
               </div>
             </div>

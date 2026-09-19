@@ -276,7 +276,7 @@ function GroupFrameLayer({ frames }: { frames: SigmaGroupFrame[] }) {
   return null;
 }
 
-function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeId: string | null; selectedNodeId: string | null }) {
+function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId, onEdgeClick }: { selectedEdgeId: string | null; selectedNodeId: string | null; onEdgeClick?: (edgeId: string) => void }) {
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
 
   useEffect(() => {
@@ -297,11 +297,22 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
       const marker = append(defs, "marker", { id, viewBox: "0 0 8 8", refX: "6.2", refY: "4", markerWidth: "6", markerHeight: "6", orient: "auto" });
       append(marker, "path", { d: "M 0 0 L 8 4 L 0 8 z", fill });
     };
-    const appendEdgeLabel = (parent: SVGElement, x: number, y: number, text: string, color: string) => {
+    /*
+     * 标签画在上层的 SVG 里，Sigma 只认落在自己画布上的事件 —— 点在标签上，clickEdge / clickStage
+     * 都不会触发，用户看到的就是"点关系类型没反应"。所以标签自己接一次点击，转成选中那条连线。
+     */
+    const appendEdgeLabel = (parent: SVGElement, x: number, y: number, text: string, color: string, edgeId: string) => {
       const width = Math.max(36, text.length * 12 + 14);
-      append(parent, "rect", { x: String(x - width / 2), y: String(y - 9), width: String(width), height: "18", rx: "9", fill: "#ffffff", stroke: color === "#1677ff" ? "#bfd2ff" : "#e2e8f0", "stroke-width": "1" });
-      const label = append(parent, "text", { x: String(x), y: String(y + 4), fill: color === "#1677ff" ? "#1677ff" : "#526175", "text-anchor": "middle", "font-size": "11", "font-weight": "600" });
+      // 整层 SVG 是 pointer-events:none（剩下的点击归 Sigma 的像素命中），标签自己开回 auto 才收得到点击。
+      const group = append(parent, "g", { "data-edge": edgeId, style: "cursor:pointer", "pointer-events": "auto" });
+      append(group, "rect", { x: String(x - width / 2), y: String(y - 9), width: String(width), height: "18", rx: "9", fill: "#ffffff", stroke: color === "#1677ff" ? "#bfd2ff" : "#e2e8f0", "stroke-width": "1" });
+      const label = append(group, "text", { x: String(x), y: String(y + 4), fill: color === "#1677ff" ? "#1677ff" : "#526175", "text-anchor": "middle", "font-size": "11", "font-weight": "600" });
       label.textContent = text;
+      group.addEventListener("pointerdown", (event) => event.stopPropagation());
+      group.addEventListener("click", (event) => {
+        event.stopPropagation();
+        onEdgeClick?.(edgeId);
+      });
     };
 
     const update = () => {
@@ -335,7 +346,7 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
           const group = append(layer, "g", { color });
           append(group, "path", { d: `M ${point.x - radius * 0.54} ${point.y - radius * 0.48} C ${point.x - radius * 1.55} ${topY}, ${point.x + radius * 0.05} ${topY}, ${point.x - radius * 0.08} ${point.y - radius * 0.76}`, fill: "none", stroke: color, "stroke-width": "1", "marker-end": `url(#${markerFor(color)})` });
           const labelText = showAllRelationshipLabels || edge === selectedEdgeId || isRelated ? (data as EdgeAttributes).relationshipType : "";
-          if (labelText) appendEdgeLabel(group, point.x - radius * 0.9, topY - 4, labelText, color);
+          if (labelText) appendEdgeLabel(group, point.x - radius * 0.9, topY - 4, labelText, color, edge);
           return;
         }
         const sourcePoint = sigma.graphToViewport(graph.getNodeAttributes(source));
@@ -373,7 +384,7 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
           append(group, "path", { d: `M ${startX} ${startY} L ${endX} ${endY}`, fill: "none", stroke: color, "stroke-width": strokeWidth, ...(dash ? { "stroke-dasharray": dash } : {}), "marker-end": `url(#${markerFor(color)})` });
         }
         const labelText = showAllRelationshipLabels || edge === selectedEdgeId || isRelated ? (data as EdgeAttributes).relationshipType : "";
-        if (labelText) appendEdgeLabel(group, labelX, labelY, labelText, color);
+        if (labelText) appendEdgeLabel(group, labelX, labelY, labelText, color, edge);
       });
 
       /*
@@ -408,7 +419,7 @@ function EdgeDecorationLayer({ selectedEdgeId, selectedNodeId }: { selectedEdgeI
       sigma.getCamera().off("updated", update);
       layer.remove();
     };
-  }, [selectedEdgeId, selectedNodeId, sigma]);
+  }, [onEdgeClick, selectedEdgeId, selectedNodeId, sigma]);
   return null;
 }
 
@@ -683,7 +694,7 @@ export function SigmaGraph(props: Props) {
       <SigmaGraphLoader graph={loadedGraph} />
       <SigmaScene {...props} />
       {props.frames && props.frames.length > 0 && <GroupFrameLayer frames={props.frames} />}
-      <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} selectedNodeId={props.selectedNodeId} />
+      <EdgeDecorationLayer selectedEdgeId={props.selectedEdgeId} selectedNodeId={props.selectedNodeId} onEdgeClick={props.onEdgeClick} />
     </SigmaContainer>
   );
 }

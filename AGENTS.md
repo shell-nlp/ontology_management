@@ -73,6 +73,18 @@
 - **虚线只给"实现接口"**（2026-09-19 用户口径：接口的联系不是全都虚线，实现了它的对象类型才是虚线）。接口节点自己画虚线圈；`entity → interface` 的实现边是紫色虚线；接口承接的关系（`interface-link`）用**青绿色实线**，只在展开时出现。
 - **接口按对象类型那套方式编辑**（2026-09-19 用户口径：「我说的意思是形如这样」，指的就是「编辑对象类型」那个对话框）：画布右栏只放详情与「编辑」按钮，点开 `src/components/interface-edit-dialog.tsx` —— 和 `TypeEditDialog` 同一个壳（`ted-*` 样式、左栏表单 + 右栏画布预览 + 底部「取消 / 保存修改」），里面改名称、说明、继承的接口、属性、关系约束，并勾选"谁实现了它"（写回 `entityTypes[].implements`）。**不要改成"跳到接口标签去改"，也不要在右栏塞一套独立的行内编辑器**。「在『接口』标签里看」只作为完整视图（继承、实现缺口）的次要入口保留。
 - 全局版本操作放页头右侧，不另占一整行：始终显示「当前版本 vN」（未发布时显示「尚未发布」），有草稿时再并列显示草稿版本；「创建草稿」「版本记录」及历史版本激活入口仍可用。
+- **画布上每一条线都要能点开编辑，不允许"点了没反应"的连线**（2026-09-19 用户口径：「点击关系类型，可以实现编辑，不用跳转的那种」）：
+  - 关系标签画在 `sigma-graph.tsx` 的 `EdgeDecorationLayer`（叠在 Sigma 画布上的 SVG）里，而 `.graph-sigma-canvas .sigma-self-loops` 是 `pointer-events:none`：
+    Sigma 的 `clickEdge` 与"离边 9px 内算点中"的兜底都收不到落在标签上的点击，用户点标签等于点空。
+    所以标签的 `<g>` 必须自己 `pointer-events:auto` + `cursor:pointer`，并在 `pointerdown` / `click` 上 `stopPropagation()`
+    —— 不拦的话 Sigma 会在同一手势里再判一次，把刚选中的东西清掉。
+  - 画布上有三类连线 id：草稿里的关系类型（UUID）、`implements:<entityId>:<interfaceId>`（紫色虚线 = 实现接口）、
+    `interface-link:<interfaceId>:<relationId>`（青绿色实线 = 接口承接的关系）。后两类是画布算出来的，草稿里没有对应记录，
+    用 `src/lib/ontology-canvas.ts` 的 `parseImplementationEdgeId` / `parseInterfaceLinkEdgeId` 翻回"能编辑的东西"：
+    虚线选中接口、青绿线选中它承接的那条关系类型。**不许直接把这种合成 id 当关系类型 id 塞进选中态**（右栏会一片空白）。
+  - 关系类型右栏里，若端点落在某个接口的影子上（`promotedFromEntityTypeId`），要写清"这条关系类型由接口「X」承接"并给一个
+    「编辑接口」按钮（`setEditingInterface`），就地弹出接口对话框；**不要只留一句"去接口标签里改"**。
+  - 单测：`tests/lib/ontology-canvas.test.ts`（id 解析）。改画布连线渲染时跑它，并在 `pnpm dev` 上把三类线各点一遍。
 - **「界面」包括会显示给用户的消息**：校验结果、发布拦截原因、导入提醒、`notify()` / `throw new Error()` 里的文案。
   这些和按钮、标题一样按界面算，一律写「对象类型」。代码注释、测试名、内部变量名不受此限。
 - 自查办法（提交前跑一遍，只应剩下"这类问题""这几类关系"这种普通汉语）：
