@@ -1,4 +1,4 @@
-import type { OntologyDefinition } from "@/lib/ontology";
+import type { EntitySource, OntologyDefinition } from "@/lib/ontology";
 
 /**
  * 导入本体时的**数据资源绑定**。
@@ -53,11 +53,17 @@ function normalize(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+/**
+ * 判断只用到「对象类型 → 来源」这一层，所以不把入参钉死成 `OntologyDefinition`：
+ * 界面上的草稿定义（`@/lib/ontology-draft` 的 `Definition`）字段更松，但来源是同一个 `EntitySource`。
+ */
+export type SourceHolder = { entityTypes: readonly { id: string; name: string; sources?: readonly EntitySource[] }[] };
+
 /** 找出定义里所有"有表名、没资源"的来源。 */
-export function unboundSourcesOf(definition: OntologyDefinition): UnboundSource[] {
+export function unboundSourcesOf(definition: SourceHolder): UnboundSource[] {
   const unbound: UnboundSource[] = [];
   for (const type of definition.entityTypes) {
-    for (const source of type.sources) {
+    for (const source of type.sources ?? []) {
       const view = (source.view ?? "").trim();
       if (!view || (source.dataSourceId ?? "").trim()) continue;
       const schema = (source.schema ?? "").trim();
@@ -114,4 +120,46 @@ export function applySourceBindings(definition: OntologyDefinition, bindings: Re
       }),
     })),
   };
+}
+
+/** 界面要展示的一条「待补绑定」：来源 + 可选的候选资源。 */
+export type PendingSource = {
+  entityTypeId: string;
+  entityTypeName: string;
+  sourceId: string;
+  label: string;
+  candidates: { id: string; name: string; exact: boolean }[];
+};
+
+/** 绑定表/接口回传用的 key：`对象类型id/sourceId`。 */
+export const bindingKey = (item: Pick<PendingSource, "entityTypeId" | "sourceId">) => `${item.entityTypeId}/${item.sourceId}`;
+
+/**
+ * 需要补绑的来源：**没绑的**（`dataSourceId` 为空）加上**绑飞了的**
+ * （`dataSourceId` 指向本机已经不存在的资源 —— 换平台库、删数据资源之后就是这样）。
+ *
+ * `unboundSourcesOf` 只管第一种（导入时用）；修绑定要用这个，否则"引用了一个不存在的资源"
+ * 会被当成绑好了，界面上一路显示 0 条，谁也不知道为什么。
+ */
+export function brokenSourcesOf(definition: SourceHolder, knownSourceIds: readonly string[]): UnboundSource[] {
+  const known = new Set(knownSourceIds.filter(Boolean));
+  const broken: UnboundSource[] = [];
+  for (const type of definition.entityTypes) {
+    for (const source of type.sources ?? []) {
+      const view = (source.view ?? "").trim();
+      if (!view) continue;
+      const dataSourceId = (source.dataSourceId ?? "").trim();
+      if (dataSourceId && known.has(dataSourceId)) continue;
+      const schema = (source.schema ?? "").trim();
+      broken.push({
+        entityTypeId: type.id,
+        entityTypeName: type.name,
+        sourceId: source.id,
+        schema,
+        view,
+        label: schema ? `${schema}.${view}` : view,
+      });
+    }
+  }
+  return broken;
 }

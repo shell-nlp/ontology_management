@@ -4,6 +4,7 @@ import { Children, FormEvent, KeyboardEvent, type ReactNode, useCallback, useEff
 import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Sparkles, Stethoscope, Table2, Terminal, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
 import { ConceptGroupManager } from "@/components/concept-group-manager";
+import { BindSourcesDialog } from "@/components/bind-sources-dialog";
 import { InterfaceManager } from "@/components/interface-manager";
 import { useSplitPane } from "@/components/split-pane";
 import type { KeyMapping } from "@/lib/relationship-keys";
@@ -25,6 +26,7 @@ import { DataResourceStudio } from "@/components/data-resource-studio";
 import { api } from "@/lib/api-client";
 import { CREATABLE_GRAPH_TARGET_KINDS, DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 import { entitySources, propertyTypeOptions, sourceName, type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
+import { brokenSourcesOf } from "@/lib/source-binding";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
@@ -410,7 +412,7 @@ export function FunctionalWorkbench() {
       />}
       {view === "mcp" && <McpStudio ontologies={ontologies} notify={notify} fail={fail} />}
       {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
-      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
+      {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
       {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button><button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button></div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}</section>}
     </section>
   </main>;
@@ -973,6 +975,8 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
     setSourceLoading(true);
     try {
       const params = new URLSearchParams({ targetId: target.id, entityType: sourceType, origin: "source", limit: String(sourceLimit) });
+      // 和对象页同一个口径：带上正在看的那一版，草稿里刚补的来源绑定要当场生效。
+      if (version?.id) params.set("versionId", version.id);
       const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown> }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
       const nodes = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
       setGraph((current) => ({
@@ -1041,7 +1045,7 @@ function ScopedActions({ definition, versionId, subjectId, labels, disabled, onR
   );
 }
 
-function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
+function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { ontologyId: string; target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
@@ -1054,12 +1058,29 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
   const [total, setTotal] = useState<number | null>(null);
   const [keyById, setKeyById] = useState<Record<string, Record<string, string>>>({});
   const [originById, setOriginById] = useState<Record<string, "index" | "source">>({});
-  const objectServiceView = !draft;
+  /*
+   * 对象服务的读路径和"有没有草稿"无关：回业务库取数是只读的，草稿只决定能不能**编辑**行。
+   * 以前这里写 `!draft`，结果是"补齐数据资源绑定"（要建草稿）一做完，对象页就再也读不出业务数据，
+   * 得先发布才看得到 —— 顺序全反了。
+   */
+  const objectServiceView = Boolean(target);
   // 推理页点证据跳过来时，直接把光标落在那个对象上（组件是切视图时重新挂载的，初值就够）。
   const [selectedId, setSelectedId] = useState<string | null>(focusEntityId ?? null);
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * 还差数据资源绑定的来源（没绑的 + 指向已删资源的）。
+   * 不补的表现是"对象页一条都读不出来"，所以这里要主动提示，并给一个能改的入口。
+   */
+  const [sourceIds, setSourceIds] = useState<string[]>([]);
+  const [bindOpen, setBindOpen] = useState(false);
+
+  useEffect(() => {
+    void api<{ id: string }[]>("/api/data-sources").then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds([]));
+  }, [version?.id]);
+
+  const brokenSources = version ? brokenSourcesOf(version.definition, sourceIds) : [];
 
   const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
     if (!target) return [];
@@ -1068,12 +1089,25 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       if (objectServiceView && nextLabel) {
         const params = new URLSearchParams({ targetId: target.id, entityType: nextLabel, limit: String(entityLimit), origin });
         if (nextSearch) params.set("text", nextSearch);
+        // 带上正在看的那一版：草稿里刚补好的来源绑定要当场生效，不用发布才认。
+        if (versionId) params.set("versionId", versionId);
         const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown>; primaryKey: Record<string, string>; origin: "index" | "source" }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
         const mapped: EntityRow[] = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
         setRows(mapped);
         setTotal(data.total);
         setKeyById(Object.fromEntries(data.rows.map((row) => [row.objectId, row.primaryKey])));
-        setOriginById(Object.fromEntries(data.rows.map((row) => [row.objectId, row.origin])));
+        /*
+         * `origin` 说的是"这一行**从哪读的**"，不是"本体里有没有副本"。
+         * 用户按「业务库」看时，刚取进草稿的那条**仍然读自业务库**，于是详情里还挂着「取进草稿」按钮 ——
+         * 明明副本已经在草稿里、该让他编辑了。所以再对一次草稿快照：这一版里有这个对象才算"已物化"。
+         */
+        const localIds = new Set<string>();
+        if (versionId) {
+          const query = new URLSearchParams({ targetId: target.id, versionId, label: nextLabel, limit: String(entityLimit) });
+          const local = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${query.toString()}`).catch(() => ({ rows: [] as EntityRow[] }));
+          for (const row of local.rows) localIds.add(row.id);
+        }
+        setOriginById(Object.fromEntries(data.rows.map((row) => [row.objectId, localIds.has(row.objectId) ? "index" : row.origin])));
         if (data.warnings?.length) notify(data.warnings[0]);
         return mapped;
       }
@@ -1119,7 +1153,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
   const remove = async () => {
     if (!target || !selected) return;
     if (!window.confirm("删除该节点及其所有关系？")) return;
-    try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); setRows((rows) => rows.filter((row) => row.id !== selected.id)); await onSnapshotChange(); notify("对象及其关联关系已从草稿快照删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
+    try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); await onSnapshotChange(); notify("对象及其关联关系已从草稿快照删除。"); await load(label, search, current.id); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
   /**
@@ -1134,12 +1168,14 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       const current = await ensureDraft();
       const key = Object.entries(keyById[row.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&");
       if (!key) throw new Error("这条对象没有主键，没法按主键取进草稿；请先给它配主键。");
-      const result = await api<{ record: EntityRow; created: boolean }>("/api/objects/materialize", {
+      // 返回的是对象服务里的 `ObjectRecord`（主键叫 `objectId`），不是图库行 —— 类型写错过一次，
+      // 取进草稿之后选中项被 `undefined` 顶掉，详情直接回到"选择一条对象"。
+      const result = await api<{ record: { objectId: string; properties: Record<string, unknown> }; created: boolean }>("/api/objects/materialize", {
         method: "POST",
         body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: row.labels[0], key }),
       });
       notify(result.created ? "对象已取进草稿快照，现在可以编辑或对它执行动作。" : "这个对象已经在草稿快照里了。");
-      setSelectedId(result.record.id);
+      setSelectedId(result.record.objectId);
       setDraftProps(Object.fromEntries(Object.entries(result.record.properties).filter(([key2]) => key2 !== "fx" && key2 !== "fy")));
       await onSnapshotChange();
       await load(label, search, current.id);
@@ -1151,6 +1187,11 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       <span className="eyebrow">对象</span>
       <h2>{rows.length} 条{total !== null && total !== rows.length ? ` · 共 ${total} 条` : ""}</h2>
       <p className="subtle">{objectServiceView ? "选中一个对象类型后可以切换数据来源：已物化的对象（本体里有的）或业务库实时取数（表里有多少就能看多少）。" : "草稿视图读的是正在编辑的那一版快照；数据源里的对象要先「取进草稿」才能编辑。"}</p>
+      {brokenSources.length > 0 && <div className="notice error">
+        <AlertCircle size={15} />
+        <span>{brokenSources.length} 个来源还没绑到数据资源（{brokenSources.slice(0, 2).map((item) => `${item.entityTypeName} · ${item.label}`).join("、")}{brokenSources.length > 2 ? " 等" : ""}），这些对象类型读不出数据。</span>
+        <button className="action compact" style={{ marginLeft: "auto" }} onClick={() => { void ensureDraft().then(() => setBindOpen(true)).catch(fail); }}>补齐数据资源绑定</button>
+      </div>}
       <div className="manager-toolbar">
         <select value={label} onChange={(event) => { setLabel(event.target.value); void load(event.target.value, search); }}><option value="">全部标签</option>{[...new Set([...(version?.definition.entityTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.labels.map((item) => item.name) ?? [])])].map((name) => <option key={name} value={name}>{name}</option>)}</select>
         {objectServiceView && label ? <select value={origin} onChange={(event) => { const next = event.target.value as "auto" | "index" | "source"; setOrigin(next); void load(label, search); }} title="对象从哪来"><option value="auto">来源：自动</option><option value="index">来源：已物化</option><option value="source">来源：业务库</option></select> : null}
@@ -1164,6 +1205,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       {selected ? <><span className="eyebrow">选中对象</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div><ScopedActions definition={version?.definition ?? null} versionId={version?.id} subjectId={selected.id} labels={selected.labels} disabled={user.role !== "ADMIN"} onRun={(actionId) => onRunAction(actionId, { ...selected, objectRef: originById[selected.id] === "source" ? `${selected.labels[0]}/${Object.entries(keyById[selected.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&")}` : undefined })} />{originById[selected.id] === "source" ? <p className="subtle">这条对象来自业务库（实时读取，本体里还没有副本）：要编辑或对它执行动作，先「取进草稿」。</p> : null}{user.role === "ADMIN" && originById[selected.id] === "source" ? <div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void materialize(selected)}><Plus size={15} />取进草稿</button></div> : null}{user.role === "ADMIN" && originById[selected.id] !== "source" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条对象</b><span>点击左侧列表中的对象查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <EntityCreateDialog published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择本体存储。"); const current = await ensureDraft(); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: label, properties }) }); notify("对象已加入草稿快照。"); setCreateOpen(false); await load(label, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
+    {bindOpen && <BindSourcesDialog ontologyId={ontologyId} onClose={() => setBindOpen(false)} onSaved={async (count) => { setBindOpen(false); notify(`已补齐 ${count} 个数据来源绑定。`); await onSnapshotChange(); await load(label, search); }} fail={fail} />}
   </ResizableManagerGrid>;
 }
 

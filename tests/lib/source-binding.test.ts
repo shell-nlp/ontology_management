@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { applySourceBindings, matchSourceCandidates, planSourceBindings, unboundSourcesOf, type SourceHint } from "@/lib/source-binding";
+import { applySourceBindings, brokenSourcesOf, matchSourceCandidates, planSourceBindings, unboundSourcesOf, type SourceHint } from "@/lib/source-binding";
 
 const TYPE_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -69,6 +69,15 @@ describe("matchSourceCandidates", () => {
 });
 
 describe("planSourceBindings / applySourceBindings", () => {
+  it("brokenSourcesOf 把「指向已删资源的悬空引用」也算成待补：换过平台库的本体不能再假装绑好了", () => {
+    const known = [oracle.id];
+    const broken = brokenSourcesOf(definition, known);
+    // 没绑的（primary）+ 绑到 f1… 这个本机不存在资源的（bound），两条都要出现。
+    expect(broken.map((item) => item.sourceId)).toEqual(["primary", "bound"]);
+    // 资源真的在本机时就不再报它。
+    expect(brokenSourcesOf(definition, [...known, "f1000000-0000-4000-8000-000000000001"]).map((item) => item.sourceId)).toEqual(["primary"]);
+  });
+
   it("自动绑的进 bindings，不确定的进 pending", () => {
     const plan = planSourceBindings(definition, [oracle]);
     expect(plan.bindings.get(`${TYPE_ID}/primary`)).toBe(oracle.id);

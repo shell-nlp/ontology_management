@@ -199,6 +199,16 @@ export async function ensureObjectInDraft(
   }
   const source = await getObject(context, entityTypeName, primaryKey, { origin: "source" });
   if (!source) throw new Error(`数据资源里没有找到「${objectRefOf(entityTypeName, primaryKey)}」这个对象。`);
+  /*
+   * 必填属性在来源里有列、只是这行是空值 -> 照常报错（数据问题）。
+   * 必填属性**根本没映射来源列** -> 取进来也永远填不上，这里直接说清楚去哪修，
+   * 否则用户只会看到一句"缺少必填属性：customer_id"，不知道该改哪里（体检里这条是 WARN，不挡发布）。
+   */
+  const unmappedRequired = (context.definition.entityTypes.find((item) => item.name === entityTypeName)?.properties ?? [])
+    .filter((property) => property.required && !(property.sourceField ?? "").trim() && !(property.name in source.properties));
+  if (unmappedRequired.length) {
+    throw new Error(`对象类型「${entityTypeName}」的必填属性「${unmappedRequired.map((property) => property.name).join("、")}」没有映射来源列，取进草稿也填不上值：请到「本体建模」给它选一列，或取消必填。`);
+  }
   const created = await createSnapshotEntity(draftVersionId, entityTypeName, source.properties);
   return {
     record: { ...source, objectId: created.id, properties: created.properties, origin: "index" },

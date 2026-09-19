@@ -64,7 +64,7 @@ export async function listConversations(scope: ConversationScope, userId: string
   const ids = rows.map((row) => row.id);
   const turns = new Map<string, number>();
   if (ids.length) {
-    const messages = await repo.manager.find(ConversationMessageEntity, {
+    const messages = await repoIn(repo.manager, ConversationMessageEntity).find({
       where: { conversationId: In(ids) },
       select: { id: true, conversationId: true },
     });
@@ -87,7 +87,7 @@ export async function getConversation(scope: ConversationScope, userId: string, 
   if (!conversation) return null;
 
   // 一轮问答可能同时落进来，所以排序要带上 id，保证两次读到同一个顺序。
-  const messages = await repo.manager.find(ConversationMessageEntity, {
+  const messages = await repoIn(repo.manager, ConversationMessageEntity).find({
     where: { conversationId },
     order: { createdAt: "ASC", id: "ASC" },
   });
@@ -143,7 +143,7 @@ export async function loadConversationContext(scope: ConversationScope, userId: 
     .andWhere("c.id = :conversationId", { conversationId })
     .getOne();
   if (!head) return null;
-  const rows = await repo.manager.find(ConversationMessageEntity, {
+  const rows = await repoIn(repo.manager, ConversationMessageEntity).find({
     where: { conversationId },
     order: { createdAt: "ASC", id: "ASC" },
   });

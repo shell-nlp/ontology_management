@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { In } from "typeorm";
 import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/db";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
 
@@ -95,10 +96,8 @@ export async function listAuditEntries(input: { targetId: string; actions?: stri
   const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 50)));
   const repo = await platformRepo(AuditEntryEntity);
   const query = repo.createQueryBuilder("a")
-    .leftJoin(PlatformUserEntity, "u", "u.id = a.actorId")
     .select("a.id", "id")
     .addSelect("a.actor_id", "actorId")
-    .addSelect("u.email", "actorEmail")
     .addSelect("a.target_id", "targetId")
     .addSelect("a.action", "action")
     .addSelect("a.details", "details")
@@ -111,16 +110,26 @@ export async function listAuditEntries(input: { targetId: string; actions?: stri
   const rows = await query.getRawMany<{
     id: string;
     actorId: string | null;
-    actorEmail: string | null;
     targetId: string | null;
     action: string;
     details: Record<string, unknown> | null;
     createdAt: Date | string;
   }>();
+  /*
+   * 操作人邮箱**单独查一次**，不联表。
+   *
+   * `leftJoin(PlatformUserEntity, "u", …)` 在 TypeORM 1.x 上会走到"把目标类当关系实例化"那条路，
+   * 实测直接报 `Class constructor PlatformUserEntity cannot be invoked without 'new'`（审计与决策
+   * 列表整页 400）；改传表名字符串则被当成别名，报 `"ontology_platform" alias was not found`。
+   * 审计一页最多 200 行、操作人就那么几个，一次 `In(ids)` 查询比联表更省心。
+   */
+  const actorIds = [...new Set(rows.map((row) => row.actorId).filter((id): id is string => Boolean(id)))];
+  const actors = actorIds.length ? await (await platformRepo(PlatformUserEntity)).find({ where: { id: In(actorIds) } }) : [];
+  const emailOf = new Map(actors.map((actor) => [actor.id, actor.email]));
   return rows.map((row) => ({
     id: row.id,
     actorId: row.actorId,
-    actorEmail: row.actorEmail,
+    actorEmail: row.actorId ? emailOf.get(row.actorId) ?? null : null,
     targetId: row.targetId,
     action: row.action,
     details: row.details ?? {},

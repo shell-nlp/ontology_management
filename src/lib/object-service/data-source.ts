@@ -97,7 +97,7 @@ function recordOf(entityTypeName: string, entityType: EntityType, properties: Re
 
 async function connectorFor(dataSourceId: string) {
   const record = await getDataSource(dataSourceId);
-  if (!record) throw new Error("对象类型绑定的数据资源不存在，请到数据资源里检查。");
+  if (!record) throw new Error("这个对象类型的数据来源还没绑到数据资源（或绑的资源已被删除）：请在「对象」页点「补齐数据资源绑定」。");
   if (!record.enabled) throw new Error(`数据资源「${record.name}」已停用，无法按主键取对象。`);
   return { connector: await openDataSource(record), label: record.name };
 }

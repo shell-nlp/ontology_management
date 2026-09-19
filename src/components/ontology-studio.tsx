@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Boxes, Clock3, Database, Download, FileJson, Layers, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { bindingKey, type PendingSource } from "@/lib/source-binding";
 import { api } from "@/lib/api-client";
 import { downloadResponse } from "@/lib/clipboard";
 import { graphColor } from "@/lib/graph-palette";
@@ -9,17 +10,6 @@ import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/graph/typ
 /** 存储资源选项：只用到这几项，调用方传完整的 Target 也能满足。 */
 type StorageOption = { id: string; name: string; kind: string; kindLabel: string };
 import "./ontology-studio.css";
-
-/** 导入后还没定下数据来源的对象类型（表名没唯一命中本机资源）。 */
-type PendingSource = {
-  entityTypeId: string;
-  entityTypeName: string;
-  sourceId: string;
-  label: string;
-  candidates: { id: string; name: string; exact: boolean }[];
-};
-
-const bindingKey = (item: Pick<PendingSource, "entityTypeId" | "sourceId">) => `${item.entityTypeId}/${item.sourceId}`;
 
 /** 列表里的一条本体：本体本身 + 落点 + 版本状态 + 数量统计。 */
 export type OntologySummary = {
@@ -409,7 +399,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
               <li key={bindingKey(item)}>
                 <span>{item.entityTypeName} · <code>{item.label}</code></span>
                 <select value={bindings[bindingKey(item)] ?? ""} onChange={(event) => setBindings((current) => ({ ...current, [bindingKey(item)]: event.target.value }))}>
-                  <option value="">先不绑（导入后可在对象类型里改）</option>
+                  <option value="">先不绑（导入后在「对象」页补齐）</option>
                   {(item.candidates.length ? item.candidates : sourceOptions.map((source) => ({ id: source.id, name: source.name, exact: false }))).map((candidate) => (
                     <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.exact ? "（表名命中）" : ""}</option>
                   ))}
