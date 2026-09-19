@@ -5,9 +5,10 @@ describe("tool policy", () => {
   it("只接受可开关的工具名：平台停用的、编造的名字都进不来", () => {
     const names = togglableToolNames();
     expect(names).toContain("list_interfaces");
-    expect(names).not.toContain("query_object_instance");
+    // 实例工具已开放（走对象服务），所以它也是一个可开关的工具。
+    expect(names).toContain("query_object_instance");
     const policy = normalizeToolPolicy({ disabledTools: ["list_interfaces", "query_object_instance", "  ", "nope", "list_interfaces"] });
-    expect(policy.disabledTools).toEqual(["list_interfaces"]);
+    expect(policy.disabledTools).toEqual(["list_interfaces", "query_object_instance"]);
   });
 
   it("脏数据一律当'全开'，不会把工具误关", () => {
@@ -21,7 +22,7 @@ describe("tool policy", () => {
     expect(toolIsEnabled(policy, "run_sql")).toBe(false);
     expect(toolIsEnabled(policy, "get_table_ddl")).toBe(true);
     expect(enabledToolNames(policy)).not.toContain("run_sql");
-    // 平台自己停用的工具，谁也别想开
-    expect(toolIsEnabled(emptyToolPolicy(), "query_object_instance", true)).toBe(false);
+    // 平台自己停用的工具，谁也别想开；已经不存在的名字同样进不来。
+    expect(toolIsEnabled(emptyToolPolicy(), "nope", true)).toBe(false);
   });
 });

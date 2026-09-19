@@ -410,7 +410,7 @@ export function FunctionalWorkbench() {
       />}
       {view === "mcp" && <McpStudio ontologies={ontologies} notify={notify} fail={fail} />}
       {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
-      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0 } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
+      {view === "entities" && <EntityManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
       {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button><button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button></div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}</section>}
     </section>
   </main>;
@@ -916,6 +916,10 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
   const setCypher = (next: string) => setQueryDraft({ kind: target?.kind, text: next });
   const cypherIsWrite = isWriteStatement(target?.kind, cypher);
   const [cypherMeta, setCypherMeta] = useState<{ labels: string[]; relationshipTypes: string[]; propertyKeys: string[] }>({ labels: [], relationshipTypes: [], propertyKeys: [] });
+  /** 「从数据源加载」：按对象类型从业务库实时取一批对象作为节点（本体里不落副本）。 */
+  const [sourceType, setSourceType] = useState("");
+  const [sourceLimit, setSourceLimit] = useState(50);
+  const [sourceLoading, setSourceLoading] = useState(false);
 
   useEffect(() => {
     if (!target) return;
@@ -958,6 +962,27 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
     setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
   }, [target, settings.maxNeighbors]);
 
+  /**
+   * 从数据源加载一批业务对象作为节点。
+   *
+   * 这些节点是**实时读业务库**拿到的：本体里没有副本，也还没有关系类型的数据来源，
+   * 所以它们只以孤立点的形式出现 —— 界面上要如实说明，别让人以为"关系丢了"。
+   */
+  const loadBusinessObjects = async () => {
+    if (!target || !sourceType) return;
+    setSourceLoading(true);
+    try {
+      const params = new URLSearchParams({ targetId: target.id, entityType: sourceType, origin: "source", limit: String(sourceLimit) });
+      const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown> }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
+      const nodes = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
+      setGraph((current) => ({
+        nodes: [...new Map([...current.nodes, ...nodes].map((node) => [node.id, node])).values()],
+        relationships: current.relationships,
+      }));
+      notify(`已从数据源加载 ${nodes.length} 个「${sourceType}」对象${data.total !== null ? `（表里共 ${data.total} 条）` : ""}。这些节点来自业务库，本体里没有副本，也还没有关系连线。`);
+    } catch (reason) { fail(reason); } finally { setSourceLoading(false); }
+  };
+
   const runCypher = useCallback(async () => {
     if (!target) return;
     try {
@@ -969,7 +994,7 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
   }, [target, cypher, cypherIsWrite, settings.recordLimit, fail]);
 
   return <section className="stack">
-      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? `节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 ${graphNoun(target)}。` : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
+      <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><label className="graph-head-filter">业务对象<select value={sourceType} onChange={(event) => setSourceType(event.target.value)}><option value="">选择对象类型</option>{(version?.definition.entityTypes ?? []).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><input className="ted-input" style={{ maxWidth: 90 }} type="number" min={1} max={200} value={sourceLimit} onChange={(event) => setSourceLimit(Math.max(1, Math.min(200, Number(event.target.value) || 1)))} /><button className="action" disabled={!target || !sourceType || sourceLoading} onClick={() => void loadBusinessObjects()}>{sourceLoading ? "取数中…" : "从数据源加载"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? `节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 ${graphNoun(target)}。` : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
       {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">{graphTargetKindInfo(target?.kind ?? DEFAULT_GRAPH_TARGET_KIND).queryLanguageLabel} 只读查询</span><b>查询当前 {graphNoun(target)} 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} language="sparql" labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder={queryTemplate.placeholder} /><p className="cypher-hint">{queryTemplate.visualizationHint}</p><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />
       {settingsOpen && <GraphSettingsDialog settings={settings} onSave={update} onReset={reset} onClose={() => setSettingsOpen(false)} />}
@@ -1016,10 +1041,20 @@ function ScopedActions({ definition, versionId, subjectId, labels, disabled, onR
   );
 }
 
-function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown> }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
+function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
+  /**
+   * 对象从哪来：`index` = 本体里已物化的对象（＝原来的快照节点），
+   * `source` = 按对象类型绑定的数据资源实时读业务库，`auto` = 索引里有这个类型就用索引，否则回源。
+   * 只在**已发布视图**下可选；草稿视图读的是正在编辑的那一版快照，没有回源这回事。
+   */
+  const [origin, setOrigin] = useState<"auto" | "index" | "source">("auto");
+  const [total, setTotal] = useState<number | null>(null);
+  const [keyById, setKeyById] = useState<Record<string, Record<string, string>>>({});
+  const [originById, setOriginById] = useState<Record<string, "index" | "source">>({});
+  const objectServiceView = !draft;
   // 推理页点证据跳过来时，直接把光标落在那个对象上（组件是切视图时重新挂载的，初值就够）。
   const [selectedId, setSelectedId] = useState<string | null>(focusEntityId ?? null);
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
@@ -1029,6 +1064,19 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
   const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
     if (!target) return [];
     try {
+      // 已发布视图 + 选了具体对象类型：走对象服务（索引/回源），于是业务数据也能出现在对象页。
+      if (objectServiceView && nextLabel) {
+        const params = new URLSearchParams({ targetId: target.id, entityType: nextLabel, limit: String(entityLimit), origin });
+        if (nextSearch) params.set("text", nextSearch);
+        const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown>; primaryKey: Record<string, string>; origin: "index" | "source" }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
+        const mapped: EntityRow[] = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
+        setRows(mapped);
+        setTotal(data.total);
+        setKeyById(Object.fromEntries(data.rows.map((row) => [row.objectId, row.primaryKey])));
+        setOriginById(Object.fromEntries(data.rows.map((row) => [row.objectId, row.origin])));
+        if (data.warnings?.length) notify(data.warnings[0]);
+        return mapped;
+      }
       const params = new URLSearchParams({ targetId: target.id });
       if (versionId) params.set("versionId", versionId);
       if (nextLabel) params.set("label", nextLabel);
@@ -1036,9 +1084,12 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       params.set("limit", String(entityLimit));
       const rows = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows);
       setRows(rows);
+      setTotal(null);
+      setKeyById({});
+      setOriginById({});
       return rows;
     } catch (reason) { fail(reason); return []; }
-  }, [target, version?.id, fail, entityLimit]);
+  }, [target, version?.id, fail, entityLimit, objectServiceView, origin, notify]);
 
   useEffect(() => {
     if (!target) return;
@@ -1071,13 +1122,38 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
     try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); setRows((rows) => rows.filter((row) => row.id !== selected.id)); await onSnapshotChange(); notify("对象及其关联关系已从草稿快照删除。"); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
+  /**
+   * 把数据资源里的对象取进草稿快照。
+   * 动作与属性编辑都作用在草稿快照上，而数据源里的对象本体里没有副本 —— 先按主键取进来
+   * （身份是确定性的，重复取不会造出第二份），之后就能像普通对象一样编辑 / 跑动作。
+   */
+  const materialize = async (row: EntityRow) => {
+    if (!target) return;
+    try {
+      setBusy(true);
+      const current = await ensureDraft();
+      const key = Object.entries(keyById[row.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&");
+      if (!key) throw new Error("这条对象没有主键，没法按主键取进草稿；请先给它配主键。");
+      const result = await api<{ record: EntityRow; created: boolean }>("/api/objects/materialize", {
+        method: "POST",
+        body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: row.labels[0], key }),
+      });
+      notify(result.created ? "对象已取进草稿快照，现在可以编辑或对它执行动作。" : "这个对象已经在草稿快照里了。");
+      setSelectedId(result.record.id);
+      setDraftProps(Object.fromEntries(Object.entries(result.record.properties).filter(([key2]) => key2 !== "fx" && key2 !== "fy")));
+      await onSnapshotChange();
+      await load(label, search, current.id);
+    } catch (reason) { fail(reason); } finally { setBusy(false); }
+  };
+
   return <ResizableManagerGrid storageKey="ontology.manager-split.entities">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">对象</span>
-      <h2>{rows.length} 条</h2>
-      <p className="subtle">默认按对象类型上设置的显示名称搜索；未配置显示属性时按其他属性匹配。</p>
+      <h2>{rows.length} 条{total !== null && total !== rows.length ? ` · 共 ${total} 条` : ""}</h2>
+      <p className="subtle">{objectServiceView ? "选中一个对象类型后可以切换数据来源：已物化的对象（本体里有的）或业务库实时取数（表里有多少就能看多少）。" : "草稿视图读的是正在编辑的那一版快照；数据源里的对象要先「取进草稿」才能编辑。"}</p>
       <div className="manager-toolbar">
         <select value={label} onChange={(event) => { setLabel(event.target.value); void load(event.target.value, search); }}><option value="">全部标签</option>{[...new Set([...(version?.definition.entityTypes.map((item) => item.name) ?? []), ...(runtimeTypes?.labels.map((item) => item.name) ?? [])])].map((name) => <option key={name} value={name}>{name}</option>)}</select>
+        {objectServiceView && label ? <select value={origin} onChange={(event) => { const next = event.target.value as "auto" | "index" | "source"; setOrigin(next); void load(label, search); }} title="对象从哪来"><option value="auto">来源：自动</option><option value="index">来源：已物化</option><option value="source">来源：业务库</option></select> : null}
         <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(label, search); }} placeholder="按显示名称搜索…" />
         <button className="action compact" onClick={() => void load(label, search)}><Search size={14} /></button>
         <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
@@ -1085,7 +1161,7 @@ function EntityManager({ target, user, version, draft, runtimeTypes, ensureDraft
       <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(Object.fromEntries(Object.entries(row.properties).filter(([key]) => key !== "fx" && key !== "fy"))); }}><CircleDot size={15} /><span><b>{entityTitle(row, version?.definition ?? null)}</b><small>{row.labels.join(", ")} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的对象。</p>}</div>
     </div>
     <div className="panel functional-panel detail-panel">
-      {selected ? <><span className="eyebrow">选中对象</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div><ScopedActions definition={version?.definition ?? null} versionId={version?.id} subjectId={selected.id} labels={selected.labels} disabled={user.role !== "ADMIN"} onRun={(actionId) => onRunAction(actionId, selected)} />{user.role === "ADMIN" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条对象</b><span>点击左侧列表中的对象查看与编辑属性。</span></div>}
+      {selected ? <><span className="eyebrow">选中对象</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div><ScopedActions definition={version?.definition ?? null} versionId={version?.id} subjectId={selected.id} labels={selected.labels} disabled={user.role !== "ADMIN"} onRun={(actionId) => onRunAction(actionId, { ...selected, objectRef: originById[selected.id] === "source" ? `${selected.labels[0]}/${Object.entries(keyById[selected.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&")}` : undefined })} />{originById[selected.id] === "source" ? <p className="subtle">这条对象来自业务库（实时读取，本体里还没有副本）：要编辑或对它执行动作，先「取进草稿」。</p> : null}{user.role === "ADMIN" && originById[selected.id] === "source" ? <div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void materialize(selected)}><Plus size={15} />取进草稿</button></div> : null}{user.role === "ADMIN" && originById[selected.id] !== "source" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条对象</b><span>点击左侧列表中的对象查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <EntityCreateDialog published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择本体存储。"); const current = await ensureDraft(); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: label, properties }) }); notify("对象已加入草稿快照。"); setCreateOpen(false); await load(label, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
   </ResizableManagerGrid>;

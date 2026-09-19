@@ -110,13 +110,11 @@ describe("rankSchemaConcepts", () => {
 const 数据资源 = "99999999-9999-4999-8999-999999999999";
 
 describe("工具范围", () => {
-  it("给模型的是定义层工具，实例工具留在目录里但标成 disabled", () => {
+  it("定义层与实例工具都给模型用（实例工具走对象服务）", () => {
     const active = REASONING_TOOLS.filter((tool) => !tool.disabled).map((tool) => tool.name);
-    const parked = REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name);
-    // 这一版只在对象类型 / 关系类型这一层推理：实例工具不进模型、不进 MCP 的 tools/list，
-    // 只在「MCP 调试」页灰着显示。要恢复实例推理，就把下面两个名字的 disabled 去掉。
-    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "list_actions"]);
-    expect(parked).toEqual(["query_object_instance", "query_instance_subgraph"]);
+    // 2026-09-19：对象服务落地后实例工具重新开放（索引优先、没有就按主键回源）。
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "query_object_instance", "query_instance_subgraph", "list_actions"]);
+    expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual([]);
   });
 });
 

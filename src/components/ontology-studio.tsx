@@ -10,6 +10,17 @@ import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/graph/typ
 type StorageOption = { id: string; name: string; kind: string; kindLabel: string };
 import "./ontology-studio.css";
 
+/** 导入后还没定下数据来源的对象类型（表名没唯一命中本机资源）。 */
+type PendingSource = {
+  entityTypeId: string;
+  entityTypeName: string;
+  sourceId: string;
+  label: string;
+  candidates: { id: string; name: string; exact: boolean }[];
+};
+
+const bindingKey = (item: Pick<PendingSource, "entityTypeId" | "sourceId">) => `${item.entityTypeId}/${item.sourceId}`;
+
 /** 列表里的一条本体：本体本身 + 落点 + 版本状态 + 数量统计。 */
 export type OntologySummary = {
   id: string;
@@ -217,6 +228,16 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
   const [warnings, setWarnings] = useState<string[] | null>(null);
   /** 导入已经落库，等着走收尾（关弹窗 + 打开）。有提醒时中间会停一下。 */
   const [pending, setPending] = useState<{ id: string; name: string } | null>(null);
+  /** 导入落的草稿 id（补绑定时要用）。 */
+  const [pendingVersionId, setPendingVersionId] = useState("");
+  /** 表名没唯一命中的数据来源：列在这儿让人选一次。 */
+  const [pendingSources, setPendingSources] = useState<PendingSource[] | null>(null);
+  const [bindings, setBindings] = useState<Record<string, string>>({});
+  const [sourceOptions, setSourceOptions] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (mode !== "import") return;
+    void api<{ id: string; name: string }[]>("/api/data-sources").then(setSourceOptions).catch(() => setSourceOptions([]));
+  }, [mode]);
 
   // 受管记录（本体自己开的隔离空间）不该出现在「存储资源」里让用户再选一次。
   const managedIds = useMemo(() => new Set(ontologies.filter((item) => item.storage?.managed).map((item) => item.storage!.id)), [ontologies]);
@@ -271,13 +292,21 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
     setBusy(true);
     try {
       if (mode === "import") {
-        const result = await api<{ ontology: { id: string; name: string }; warnings: string[] }>("/api/ontologies/import", {
+        const result = await api<{ ontology: { id: string; name: string }; versionId: string; warnings: string[]; pendingSources?: PendingSource[] }>("/api/ontologies/import", {
           method: "POST",
           body: JSON.stringify({ bundle: fileText, storageTargetId: selectedStorageTargetId, name: name.trim() || undefined }),
         });
         setPending({ id: result.ontology.id, name: result.ontology.name });
+        setPendingVersionId(result.versionId);
         setBusy(false);
         await onImported();
+        // 表名没唯一命中的数据来源：停下来让人选一次（选完写进草稿，不必重新导入）。
+        if (result.pendingSources?.length) {
+          setPendingSources(result.pendingSources);
+          setBindings(Object.fromEntries(result.pendingSources.map((item) => [bindingKey(item), item.candidates[0]?.id ?? ""])));
+          if (result.warnings.length) setWarnings(result.warnings);
+          return;
+        }
         // 有提醒就停在这里让人读完，等「完成」再收尾；没有就直接收尾。
         if (result.warnings.length) { setWarnings(result.warnings); return; }
         await finish(result.ontology.id, result.ontology.name);
@@ -302,6 +331,19 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
 
   const finish = async (ontologyId: string, name: string) => {
     await onFinished(ontologyId, name, { imported: mode === "import" });
+  };
+
+  /** 把这一步选的绑定写回草稿，然后收尾。 */
+  const saveBindings = async () => {
+    if (!pending || !pendingVersionId) return;
+    const chosen = Object.fromEntries(Object.entries(bindings).filter(([, dataSourceId]) => dataSourceId));
+    try {
+      setBusy(true);
+      if (Object.keys(chosen).length) {
+        await api(`/api/ontologies/${pending.id}/bind-sources`, { method: "POST", body: JSON.stringify({ versionId: pendingVersionId, bindings: chosen }) });
+      }
+      await finish(pending.id, pending.name);
+    } catch (reason) { fail(reason); setBusy(false); }
   };
 
   // 和「新建本体存储」弹窗一个规矩：Escape 关闭。已经导入过、正停在提醒页时，等于点「完成」。
@@ -360,6 +402,22 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
             <ul>{warnings.map((text) => <li key={text}>{text}</li>)}</ul>
           </div>
         )}
+        {pendingSources && pendingSources.length > 0 && (
+          <div className="os-warnings">
+            <b><Database size={14} />还有 {pendingSources.length} 个对象类型的来源没定下来</b>
+            <ul>{pendingSources.map((item) => (
+              <li key={bindingKey(item)}>
+                <span>{item.entityTypeName} · <code>{item.label}</code></span>
+                <select value={bindings[bindingKey(item)] ?? ""} onChange={(event) => setBindings((current) => ({ ...current, [bindingKey(item)]: event.target.value }))}>
+                  <option value="">先不绑（导入后可在对象类型里改）</option>
+                  {(item.candidates.length ? item.candidates : sourceOptions.map((source) => ({ id: source.id, name: source.name, exact: false }))).map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.exact ? "（表名命中）" : ""}</option>
+                  ))}
+                </select>
+              </li>
+            ))}</ul>
+          </div>
+        )}
 
         <label>{importing ? "本体名称（可改）" : "名称"}<input autoFocus={!importing} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：专线业务本体" required={!importing} /></label>
         {!importing && <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>}
@@ -372,7 +430,9 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         </label>
 
         <div className="dialog-actions">
-          {warnings
+          {pendingSources && pendingSources.length > 0
+            ? <><button type="button" className="quiet-button" disabled={busy} onClick={() => void finish(pending!.id, pending!.name)}>跳过</button><button type="button" className="primary-button" disabled={busy || !pending} onClick={() => void saveBindings()}>{busy ? "保存中…" : "保存绑定并完成"}</button></>
+            : warnings
             ? <button type="button" className="primary-button" onClick={() => pending && void finish(pending.id, pending.name)}>完成</button>
             : <>
                 <button type="button" className="quiet-button" onClick={onClose}>取消</button>

@@ -14,6 +14,8 @@ import { keyMappingLabel, keyMappingRows } from "@/lib/relationship-keys";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
+import { getObject, queryObjects } from "@/lib/object-service";
+import type { ObjectContext, ObjectRecord } from "@/lib/object-service/types";
 import type { ToolOutcome, ToolSpec } from "@/lib/reasoning/types";
 
 /**
@@ -163,9 +165,8 @@ export const REASONING_TOOLS: ToolSpec[] = [
    */
   {
     name: "query_object_instance",
-    disabled: true,
     description:
-      "按对象类型查询真实实例。传接口名时，实现了该接口的类型的实例也会一起返回（接口的类型传播）。返回的 _instance_identity.object_id 是真实标识，后续只能用返回过的 id。",
+      "按对象类型查询真实对象（实例）：先查本体的物化索引，索引里没有就按对象类型绑定的数据资源回源取数（回源这一批不落库）。传接口名时，实现了该接口的类型的实例也会一起返回。返回的 _instance_identity.object_id 与 _primary_key 是真标识，后续只能用返回过的 id。",
     parameters: {
       type: "object",
       properties: {
@@ -178,8 +179,8 @@ export const REASONING_TOOLS: ToolSpec[] = [
   },
   {
     name: "query_instance_subgraph",
-    disabled: true,
-    description: "按对象类型与关系类型取一张子图，返回节点与关系。用于回答「A 和 B 之间怎么连」这类问题。",
+    description:
+      "按对象类型与关系类型取一张子图，返回节点与关系：节点来自对象服务（索引或数据源），关系来自本体图里已存在的关系实例。用于回答「A 和 B 之间怎么连」这类问题；节点可能来自数据源而没有任何关系，这时如实说明。",
     parameters: {
       type: "object",
       properties: {
@@ -379,6 +380,27 @@ function titleOf(definition: OntologyDefinition, node: EntityRecord) {
 function identityOf(definition: OntologyDefinition, node: EntityRecord) {
   const objectType = node.labels.find((label) => definition.entityTypes.some((item) => item.name === label)) ?? node.labels[0] ?? "";
   return { object_type: objectType, object_id: node.id, title: titleOf(definition, node) };
+}
+
+/**
+ * 实例工具的上下文：目标本体存储 + 已发布定义。
+ *
+ * `versionId` 留空是有意的 —— 读路径（索引 / 回源）不需要它，只有往索引里写才用得上，
+ * 而工具是只读的。所以这里不必再去查一次版本记录。
+ */
+function objectContextOf(context: ToolContext): ObjectContext {
+  return { targetId: context.store.target.id, definition: context.definition, versionId: null };
+}
+
+/** 对象服务返回的对象 -> 工具的实例形状（与图库那条路径保持同一个形状）。 */
+function instanceOf(record: ObjectRecord) {
+  return {
+    _instance_identity: { object_type: record.entityType, object_id: record.objectId, title: record.title },
+    labels: [record.entityType],
+    properties: record.properties,
+    _origin: record.origin,
+    _primary_key: record.primaryKey,
+  };
 }
 
 /** 属性里的布局信息（fx/fy）对推理没有意义，去掉能省不少 token。 */
@@ -970,9 +992,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
     }
 
     /*
-     * 下面两个分支是**实例工具**的实现。它们在 REASONING_TOOLS 里被标成 disabled
-     * （这一版只在对象类型 / 关系类型这一层推理），所以现在走不到 —— 模型看不到、
-     * MCP 那边也会先被 findMcpTool 挡掉。留着是为了将来放回来时不用重写。
+     * 实例工具：走**对象服务**（索引优先，没有就按数据来源回源），
+     * 于是模型看到的对象与对象页/对象服务接口是同一批、同一套身份。
      */
     case "query_object_instance": {
       const typeName = String(args.type_name ?? "");
@@ -980,17 +1001,48 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!definition.entityTypes.some((item) => item.name === typeName)) throw new Error(`本体里没有对象类型「${typeName}」。`);
       const limit = clamp(args.limit, 20, 50);
       const search = typeof args.search === "string" && args.search.trim() ? args.search.trim() : null;
-      // 传接口名时，实现它的对象类型的实例也会回来：发布时把「实现」写成 rdfs:subClassOf，读路径沿它做类型传播。
-      const nodes = await store.listEntities({ label: typeName, search, limit });
-      const instances = nodes.slice(0, limit).map((node) => ({ _instance_identity: identityOf(definition, node), labels: node.labels, properties: businessProperties(node) }));
+      let result: { rows: ObjectRecord[]; origin: string; total: number | null; warnings: string[] } = {
+        rows: [],
+        origin: "none",
+        total: null,
+        warnings: [],
+      };
+      try {
+        result = await queryObjects(objectContextOf(context), { entityType: typeName, text: search ?? undefined, limit });
+      } catch (error) {
+        result.warnings = [error instanceof Error ? error.message : "对象服务读取失败。"];
+      }
+      // 对象服务没有这条数据来源、索引里也没有时，退回图库里已发布的那份对象，别让工具整个失败。
+      if (!result.rows.length && result.origin === "none") {
+        const nodes = await store.listEntities({ label: typeName, search, limit });
+        result = {
+          rows: nodes.slice(0, limit).map((node) => ({
+            objectId: node.id,
+            entityType: node.labels[0] ?? typeName,
+            primaryKey: {},
+            title: "",
+            properties: node.properties,
+            origin: "index" as const,
+            objectRef: node.id,
+            warnings: [],
+          })),
+          origin: nodes.length ? "index" : "none",
+          total: nodes.length,
+          warnings: result.warnings,
+        };
+      }
+      const instances = result.rows.slice(0, limit).map(instanceOf);
       return {
         payload: {
           object_type: typeName,
           returned: instances.length,
           instances,
-          note: "实现该接口的对象类型的实例也会出现在结果里，看 labels 区分具体类型。回答时只引用上面出现过的 object_id。",
+          source: result.origin === "source" ? "数据资源（按主键回源，未落库）" : result.origin === "index" ? "本体索引" : "无",
+          total_matched: result.total,
+          note: "回答时只引用上面出现过的 object_id；_origin 为 source 的对象是实时读业务库拿到的，本体里没有它的副本。",
+          warnings: result.warnings,
         },
-        evidence: instances.map((item) => ({ kind: "OBJECT" as const, id: item._instance_identity.object_id, label: item._instance_identity.title })),
+        evidence: instances.map((item) => ({ kind: "OBJECT" as const, id: item._instance_identity.object_id, label: item._instance_identity.title || item._instance_identity.object_type })),
       };
     }
 
@@ -999,22 +1051,58 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const relationshipTypes = Array.isArray(args.relationship_types) ? args.relationship_types.map(String) : [];
       const nodeLimit = clamp(args.node_limit, 60, 200);
       const search = typeof args.search === "string" && args.search.trim() ? args.search.trim() : null;
-      const graph = await store.readGraph({ labels: typeNames, relationshipTypes, search, nodeLimit });
-      const nodes = graph.nodes.slice(0, nodeLimit).map((node) => ({ _instance_identity: identityOf(definition, node), labels: node.labels, properties: businessProperties(node) }));
+      const warnings: string[] = [];
+      // 节点走对象服务（索引 / 数据源），关系仍来自本体图里已有的关系实例。
+      const scopeTypes = (typeNames.length ? typeNames : definition.entityTypes.map((item) => item.name)).slice(0, 12);
+      const perType = Math.max(5, Math.ceil(nodeLimit / Math.max(1, scopeTypes.length)));
+      const objectContext = objectContextOf(context);
+      const collected: ObjectRecord[] = [];
+      for (const typeName of scopeTypes) {
+        try {
+          const result = await queryObjects(objectContext, { entityType: typeName, text: search ?? undefined, limit: perType });
+          collected.push(...result.rows);
+          warnings.push(...result.warnings);
+        } catch (error) {
+          warnings.push(`${typeName}：${error instanceof Error ? error.message : "读取失败。"}`);
+        }
+      }
+      const records = collected.slice(0, nodeLimit);
+      const nodeIds = new Set(records.map((record) => record.objectId));
+      const graph = await store.readGraph({ labels: typeNames, relationshipTypes, search, nodeLimit: nodeLimit * 3 });
+      const relationships = graph.relationships.filter((item) => nodeIds.has(item.source) && nodeIds.has(item.target)).slice(0, nodeLimit * 2);
+      // 图库里还有、但对象服务没取到的节点（例如没绑来源也没进索引的旧对象）也一并带上，别凭空丢信息。
+      for (const node of graph.nodes) {
+        if (records.length >= nodeLimit) break;
+        if (nodeIds.has(node.id)) continue;
+        nodeIds.add(node.id);
+        records.push({
+          objectId: node.id,
+          entityType: node.labels[0] ?? "",
+          primaryKey: {},
+          title: "",
+          properties: node.properties,
+          origin: "index",
+          objectRef: node.id,
+          warnings: [],
+        });
+      }
+      const nodes = records.map(instanceOf);
       return {
         payload: {
           node_count: nodes.length,
-          relationship_count: graph.relationships.length,
+          relationship_count: relationships.length,
           nodes,
-          relationships: graph.relationships.map((relationship) => ({
+          relationships: relationships.map((relationship) => ({
             _instance_identity: { relationship_id: relationship.id, type: relationship.type },
             source_id: relationship.source,
             target_id: relationship.target,
           })),
+          note: "节点可能来自数据源（_origin=source，实时读取、本体里没有副本）也可能来自本体索引；关系只包含本体里已存在的关系实例，所以数据源来的节点通常没有连线 —— 需要先把关系类型也绑上数据来源（平台尚未支持）。",
+          warnings,
         },
         evidence: [
           ...nodes.map((node) => ({ kind: "OBJECT" as const, id: node._instance_identity.object_id, label: node._instance_identity.title })),
-          ...graph.relationships.map((relationship) => ({ kind: "RELATIONSHIP" as const, id: relationship.id, label: relationship.type })),
+          ...relationships.map((relationship) => ({ kind: "RELATIONSHIP" as const, id: relationship.id, label: relationship.type })),
         ],
       };
     }

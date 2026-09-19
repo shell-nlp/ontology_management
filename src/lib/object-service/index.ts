@@ -1,7 +1,7 @@
 import { getObjectIndex } from "@/lib/object-index";
 import { buildIndexEntry } from "@/lib/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/object-index/types";
-import { objectKeyOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/object-identity";
+import { objectIdOf, objectKeyOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/object-identity";
 import { createDataSourceObjectSource } from "@/lib/object-service/data-source";
 import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/object-service/types";
 import { getTarget } from "@/lib/targets";
@@ -161,4 +161,48 @@ export async function syncObjectsToIndex(
 
   const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, { versionId: context.versionId, prune: false });
   return { upserted: synced.upserted, total: synced.total, warnings };
+}
+
+/**
+ * 把数据源里的一个对象**取进草稿快照**（动作页 / 对象页的「取进草稿」用它）。
+ *
+ * 为什么要这一步：动作引擎、对象编辑都作用在草稿快照上，而数据源里的对象本体里并没有副本。
+ * 因为身份是 (对象类型, 主键) 推出来的确定性 id，这一步天然幂等 —— 同一个对象取两次还是同一条，
+ * 不会造出两份。返回值是草稿里的对象行（可以直接拿去编辑或当动作主对象）。
+ */
+export async function ensureObjectInDraft(
+  context: ObjectContext,
+  draftVersionId: string,
+  entityTypeName: string,
+  primaryKey: ObjectPrimaryKey,
+): Promise<{ record: ObjectRecord; created: boolean; warnings: string[] }> {
+  const { createSnapshotEntity, readVersionSnapshot } = await import("@/lib/version-snapshot");
+  // 身份是 (对象类型, 主键) 推出来的确定性 id：草稿里有没有它，比 id 就够了，不必再比一遍属性。
+  const objectId = objectIdOf(entityTypeName, primaryKey);
+  const snapshot = await readVersionSnapshot(draftVersionId).catch(() => null);
+  const existing = objectId ? snapshot?.nodes.find((node) => node.id === objectId) : undefined;
+  if (existing) {
+    return {
+      record: {
+        objectId: existing.id,
+        entityType: entityTypeName,
+        primaryKey,
+        title: "",
+        properties: existing.properties,
+        origin: "index",
+        objectRef: objectRefOf(entityTypeName, primaryKey),
+        warnings: [],
+      },
+      created: false,
+      warnings: [],
+    };
+  }
+  const source = await getObject(context, entityTypeName, primaryKey, { origin: "source" });
+  if (!source) throw new Error(`数据资源里没有找到「${objectRefOf(entityTypeName, primaryKey)}」这个对象。`);
+  const created = await createSnapshotEntity(draftVersionId, entityTypeName, source.properties);
+  return {
+    record: { ...source, objectId: created.id, properties: created.properties, origin: "index" },
+    created: true,
+    warnings: source.warnings,
+  };
 }

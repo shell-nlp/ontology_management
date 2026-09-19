@@ -257,9 +257,10 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
     setBusy(true);
     try {
       const inputs = selected.params.map((parameter) => parameter.kind === "ENTITY_REF"
-        ? { code: parameter.code, entityId: values[parameter.code]?.entity?.id ?? "" }
+        // entityRef 让服务端在"这个对象只存在于数据源"时先按主键把它取进草稿，再执行。
+        ? { code: parameter.code, entityId: values[parameter.code]?.entity?.id ?? "", entityRef: values[parameter.code]?.entity?.objectRef }
         : { code: parameter.code, value: values[parameter.code]?.text ?? "" });
-      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, dryRun, inputs }) });
+      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, subjectRef: subject?.objectRef, dryRun, inputs }) });
       setOutcome(result);
       if (result.applied) { notify(`动作「${result.actionName}」已写入草稿快照。`); onRan(); }
       else if (result.verdict === "BLOCKED") notify(`动作「${result.actionName}」被规则拦截，没有写入任何数据。`);
