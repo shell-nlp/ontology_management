@@ -404,8 +404,50 @@ export type TypeGraphNode = {
   bound_tables: string[];
 };
 
-/** 一条边（关系类型）。`from` / `to` 是定义里的起点与终点；两个方向都能走，所以它同时表示反向那条。 */
-export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number };
+/**
+ * 一条边（关系类型）。`from` / `to` 是定义里的起点与终点；两个方向都能走，所以它同时表示反向那条。
+ * `via_interface` 只在"这条关系是接口带出来的"时出现 —— 见 `interfaceDerivedLinks`。
+ */
+export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number; via_interface?: string };
+
+/**
+ * 接口带来的关系（Palantir 的 interface link type 语义）：对象类型实现了接口，
+ * 接口的每条关系约束就由它落地 —— 实现方必须能走到约束里的对端。
+ *
+ * 为什么工具也要算这一层：接口的关系约束落在**影子对象类型**身上（提取为接口时原样保留），
+ * 实现方自己在 `relationshipTypes` 里一条边都没有。不补这一层，工具会如实回答
+ * "集团客户一跳内没有任何关系类型"，模型就只能答"走不到"，而画布上明明连着。
+ *
+ * 对端写的是"另一个接口"时，取那个接口的实现方（含实现它子接口的对象类型）。
+ */
+export function interfaceDerivedLinks(definition: OntologyDefinition): { name: string; fromId: string; toId: string; viaInterface: string }[] {
+  const interfaces = definition.interfaces ?? [];
+  if (!interfaces.length) return [];
+  const interfaceNameById = new Map(interfaces.map((item) => [item.id, item.name]));
+  const knownEntityIds = new Set(definition.entityTypes.map((item) => item.id));
+  const links: { name: string; fromId: string; toId: string; viaInterface: string }[] = [];
+  const seen = new Set<string>();
+  for (const entity of definition.entityTypes) {
+    for (const interfaceId of implementsIdsOf(entity)) {
+      // effectiveInterfaceLinkConstraints 已经把继承来的父接口约束算进去了，这里只看这个接口。
+      const viaInterface = interfaceNameById.get(interfaceId) ?? "";
+      for (const constraint of effectiveInterfaceLinkConstraints(interfaces, interfaceId)) {
+        if (!constraint.name) continue;
+        const targets = constraint.targetKind === "INTERFACE"
+          ? implementersOf(interfaces, definition.entityTypes, constraint.targetId).map((item) => item.id)
+          : [constraint.targetId];
+        for (const targetId of targets) {
+          if (!targetId || targetId === entity.id || !knownEntityIds.has(targetId)) continue;
+          const key = `${entity.id}|${constraint.name}|${targetId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          links.push({ name: constraint.name, fromId: entity.id, toId: targetId, viaInterface });
+        }
+      }
+    }
+  }
+  return links;
+}
 
 /** 遍历方向：`both` 两个方向都走（默认），`forward` 只沿"起点→终点"，`backward` 只沿"终点→起点"。 */
 export type TraverseDirection = "both" | "forward" | "backward";
@@ -454,7 +496,15 @@ export function traverseTypeGraph(
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
   const typeByName = new Map(definition.entityTypes.map((item) => [item.name, item]));
   const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
-  const relationNames = new Set(definition.relationshipTypes.map((item) => item.name));
+  /*
+   * 图上能走的"关系"有两个来源：定义里的关系类型，以及**实现接口**带来的那些。
+   * 只认前者的话，实现了接口的对象类型会显得孤立 —— 恰好是模型最容易答错的地方。
+   */
+  const links = [
+    ...definition.relationshipTypes.map((item) => ({ name: item.name, fromId: item.sourceEntityTypeId, toId: item.targetEntityTypeId, viaInterface: "" })),
+    ...interfaceDerivedLinks(definition),
+  ];
+  const relationNames = new Set(links.map((item) => item.name));
   const wantedTypes = [...new Set(options.objectTypes ?? [])].filter(Boolean);
   const wantedRelations = [...new Set(options.relationshipTypes ?? [])].filter(Boolean);
   const allowedTypes = new Set(wantedTypes);
@@ -477,15 +527,15 @@ export function traverseTypeGraph(
     for (const fromName of frontier) {
       const from = typeByName.get(fromName);
       if (!from) continue;
-      for (const relation of definition.relationshipTypes) {
-        if (allowedRelations.size && !allowedRelations.has(relation.name)) continue;
-        const outgoing = relation.sourceEntityTypeId === from.id;
-        const incoming = relation.targetEntityTypeId === from.id;
+      for (const link of links) {
+        if (allowedRelations.size && !allowedRelations.has(link.name)) continue;
+        const outgoing = link.fromId === from.id;
+        const incoming = link.toId === from.id;
         if (!outgoing && !incoming) continue;
         // 方向开关：关系类型双向，默认两个方向都走；只沿"起点→终点"或只沿"终点→起点"时在这里收窄。
         if (direction === "forward" && !outgoing) continue;
         if (direction === "backward" && !incoming) continue;
-        const otherName = typeNameById.get(outgoing ? relation.targetEntityTypeId : relation.sourceEntityTypeId);
+        const otherName = typeNameById.get(outgoing ? link.toId : link.fromId);
         // 端点未定义的关系类型不进结果（发布前校验会拦，这里不猜）。
         if (!otherName || hopOf.has(otherName)) continue;
         // 白名单限定的是"能落到哪里"：范围外的类型整支都不展开。
@@ -506,16 +556,16 @@ export function traverseTypeGraph(
       description: describeBriefly(item.description ?? ""),
       bound_tables: entitySources(item).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean),
     }));
-  const edges: TypeGraphEdge[] = definition.relationshipTypes
-    .map((relation) => {
-      const from = typeNameById.get(relation.sourceEntityTypeId);
-      const to = typeNameById.get(relation.targetEntityTypeId);
+  const edges: TypeGraphEdge[] = links
+    .map((link) => {
+      const from = typeNameById.get(link.fromId);
+      const to = typeNameById.get(link.toId);
       if (!from || !to) return null;
       const fromHop = hopOf.get(from);
       const toHop = hopOf.get(to);
       if (fromHop === undefined || toHop === undefined) return null;
-      if (allowedRelations.size && !allowedRelations.has(relation.name)) return null;
-      return { relation: relation.name, from, to, hop: Math.max(fromHop, toHop) };
+      if (allowedRelations.size && !allowedRelations.has(link.name)) return null;
+      return { relation: link.name, from, to, hop: Math.max(fromHop, toHop), ...(link.viaInterface ? { via_interface: link.viaInterface } : {}) };
     })
     .filter((edge): edge is TypeGraphEdge => edge !== null);
 
@@ -642,11 +692,23 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const oneHop = {
         outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.targetEntityTypeId) })),
         incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.sourceEntityTypeId) })),
-        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
+        /*
+         * 接口带来的关系：实现接口就承接接口的关系约束（Palantir 语义），
+         * 所以"实现方一跳能到谁"必须把它算进来 —— 否则实现方看着像孤立的类型。
+         */
+        via_interfaces: interfaceDerivedLinks(definition)
+          .filter((link) => link.fromId === type.id || link.toId === type.id)
+          .map((link) => ({ relation: link.name, via_interface: link.viaInterface, ...neighbor(link.fromId === type.id ? link.toId : link.fromId) })),
+        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
       };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
         .map((item) => ({ name: item.name, code: item.code, params: item.params.map((param) => `${param.name}:${param.dataType}`) }));
+      /*
+       * 被提取成接口的对象类型仍然留在定义里（影子），名字和接口**同名**。
+       * 不点破这一点，模型会把"对象类型客户"和"接口客户"当成两个不相干的同名概念。
+       */
+      const promotedInterface = (definition.interfaces ?? []).find((item) => item.promotedFromEntityTypeId === type.id) ?? null;
       return {
         payload: {
           name: type.name,
@@ -698,6 +760,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             ? "interfaces 是这个对象类型实现的接口（抽象契约）：接口属性按同名映射到对象类型自己的属性上，mapped=false 表示还没对上，缺失会挡住发布。"
             : "这个对象类型没有实现任何接口。接口是抽象契约，用来让不同的对象类型被同一套应用按同一个形状消费。",
           display_property: type.displayProperty ?? "",
+          ...(promotedInterface
+            ? { promoted_interface: promotedInterface.name, promoted_interface_note: `这个对象类型已经被提取为接口「${promotedInterface.name}」：画布上它以接口节点出现，接口的关系约束与实现方见 list_interfaces。它自己仍然是这几条关系类型（one_hop）的实际端点，名字和那个接口一样，别当成两个不同的东西。` }
+            : {}),
         },
         evidence: [{ kind: "OBJECT_TYPE", id: type.name, label: type.name }],
       };
@@ -782,6 +847,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       });
       if (traversal.unknown_start) throw new Error(`本体里没有对象类型「${traversal.unknown_start}」。先用 search_schema 确认名字。`);
       const relationNames = [...new Set(traversal.edges.map((edge) => edge.relation))];
+      const interfaceLinks = traversal.edges.filter((edge) => edge.via_interface);
       return {
         payload: {
           hops: traversal.hops,
@@ -792,6 +858,12 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           edge_count: traversal.edges.length,
           nodes: traversal.nodes,
           edges: traversal.edges,
+          // 实现接口带来的那些边单独点一句：模型要能解释"这条路是接口契约给的"。
+          ...(interfaceLinks.length
+            ? {
+              interface_note: `标了 via_interface 的边不是直接建在对象类型上的关系类型，而是它**实现接口**拿到的：接口「X」的关系约束由实现方落地，所以实现方能沿这个关系走到对端。${interfaceLinks.length} 条这样的边（例如 ${interfaceLinks.slice(0, 3).map((edge) => `${edge.from}—${edge.relation}—${edge.to}（经接口「${edge.via_interface}」）`).join("；")}）。回答"A 能不能到 B"时，这类路径要算在内。`,
+            }
+            : {}),
           // 名字对不上就照实说，别让模型以为"限定生效了"。
           ...(traversal.unknown_names.length
             ? { unknown_names: traversal.unknown_names, unknown_note: "这些名字本体里没有，已忽略；先用 search_schema 确认真实名字。" }

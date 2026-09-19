@@ -6,7 +6,7 @@ import { AlertTriangle, Boxes, CircleDot, CornerDownRight, Database, Link2, Loca
 import { actionInvolvement } from "@/lib/action-engine";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
-import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
+import { buildCanvasProjection, interfaceIdFromNodeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInheritedLinkEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
 import { newId } from "@/lib/ids";
 import { readStoredPositions, writeStoredPositions } from "@/lib/local-layout";
 import { searchOntologyDefinition, type OntologySearchHit } from "@/lib/ontology-search";
@@ -72,7 +72,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [matchedProperty, setMatchedProperty] = useState<string | null>(null);
-  const [showInterfaceLinks, setShowInterfaceLinks] = useState(false);
+  //  首次进画布就展开：收起时接口节点看着像"和谁都没连线"，用户会以为模型断了（2026-09-19 报的）。
+  const [showInterfaceLinks, setShowInterfaceLinks] = useState(true);
   const [editingInterface, setEditingInterface] = useState<InterfaceDialogState>(null);
   const [focus, setFocus] = useState<{ id: string; request: number } | null>(null);
   const storageKey = targetId ? `ontology-builder:${targetId}` : null;
@@ -116,9 +117,14 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   const interfaceDialogTarget = editingInterface ? definition.interfaces.find((item) => item.id === editingInterface.id) ?? null : null;
   /** 实现了这个接口的对象类型（画布上从它连紫色虚线的那些）。 */
   const interfaceImplementers = selectedInterface ? definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(selectedInterface.id)) : [];
-  /** 选中关系类型时：若有端点落在某个接口的影子上，就说明这条关系是由那个接口承接出来的。 */
+  /**
+   * 选中关系类型时：若有端点落在某个接口的影子上，就说明这条关系是由那个接口承接出来的。
+   * 顺带把"谁实现了它"列出来 —— 实现接口的对象类型同样拥有这条关系类型。
+   */
   const selectedRelationInterfaces = selectedRelation
-    ? definition.interfaces.filter((item) => item.promotedFromEntityTypeId === selectedRelation.sourceEntityTypeId || item.promotedFromEntityTypeId === selectedRelation.targetEntityTypeId)
+    ? definition.interfaces
+      .filter((item) => item.promotedFromEntityTypeId === selectedRelation.sourceEntityTypeId || item.promotedFromEntityTypeId === selectedRelation.targetEntityTypeId)
+      .map((item) => ({ ...item, implementers: definition.entityTypes.filter((entity) => (entity.implements ?? []).includes(item.id)).map((entity) => entity.name) }))
     : [];
   const organize = useCallback(() => {
     // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
@@ -226,7 +232,8 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       setSelected({ kind: "interface", id: implementation.interfaceId });
       return;
     }
-    const link = parseInterfaceLinkEdgeId(edgeId);
+    // 挂在接口节点上的、和点开实现方时挂在实现方身上的，是同一批关系类型，都要能点开。
+    const link = parseInterfaceLinkEdgeId(edgeId) ?? parseInheritedLinkEdgeId(edgeId);
     if (link && relationById.has(link.relationId)) {
       setSelected({ kind: "relation", id: link.relationId });
       return;
@@ -427,6 +434,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               {selectedRelationInterfaces.map((item) => (
                 <p className="ob-inspector-note" key={item.id}>
                   这条关系类型由接口「{item.name}」承接：画布上从接口连出去的那条青绿色连线就是它，边界约束在接口里维护。
+                  {item.implementers.length ? <>实现这个接口的对象类型（{item.implementers.join("、")}）同样拥有这条关系类型，点开它就能看到挂在自己身上的那几条。</> : null}
                   <button className="graph-action" disabled={!canEdit} onClick={() => setEditingInterface({ id: item.id })}><Boxes size={13} />编辑接口「{item.name}」</button>
                 </p>
               ))}

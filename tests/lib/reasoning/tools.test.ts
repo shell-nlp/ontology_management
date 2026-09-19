@@ -329,6 +329,33 @@ function chainDefinition(): OntologyDefinition {
 }
 
 describe("traverseTypeGraph", () => {
+  it("实现接口带来的关系也算一条边：账户 1 跳能到实现了接口的集团客户", () => {
+    const 账户id = "aaaaaaa5-5555-4555-8555-555555555555";
+    const 集团客户id = "aaaaaaa6-6666-4666-8666-666666666666";
+    const 接口id = "aaaaaaa7-7777-4777-8777-777777777777";
+    const 特征约束 = { id: "ccccccc1-1111-4111-8111-111111111111", name: "客户拥有账户", targetKind: "OBJECT_TYPE" as const, targetId: 账户id, cardinality: "MANY" as const };
+    const definition = {
+      groups: [],
+      entityTypes: [
+        { id: 客户id, name: "客户", description: "", properties: [], sources: [] },
+        { id: 集团客户id, name: "集团客户", description: "", properties: [], sources: [], implements: [接口id] },
+        { id: 账户id, name: "账户", description: "", properties: [], sources: [] },
+      ],
+      interfaces: [{ id: 接口id, name: "客户", description: "", promotedFromEntityTypeId: 客户id, extends: [], properties: [], linkConstraints: [特征约束] }],
+      relationshipTypes: [{ id: "rrrrrrr9-9999-4999-8999-999999999999", name: "客户拥有账户", sourceEntityTypeId: 客户id, targetEntityTypeId: 账户id, properties: [] }],
+      actionTypes: [],
+      rules: [],
+    } as unknown as OntologyDefinition;
+
+    // 集团客户 一条直接关系都没有，但实现了接口「客户」，所以 账户 1 跳就能走到它。
+    const result = traverseTypeGraph(definition, { start: "账户", hops: 1 });
+    expect(result.nodes.map((node) => `${node.name}@${node.hop}`)).toContain("集团客户@1");
+    const derived = result.edges.find((edge) => edge.from === "集团客户" && edge.to === "账户")!;
+    expect(derived.via_interface).toBe("客户");
+    // 直接建在影子对象类型上的那条边照旧也在（不是二选一）。
+    expect(result.edges.some((edge) => edge.from === "客户" && edge.relation === "客户拥有账户")).toBe(true);
+  });
+
   it("默认 3 跳；hop 取最短距离，edges 是诱导子图（含跨层的那些关系）", () => {
     const result = traverseTypeGraph(chainDefinition(), { start: "客户" });
     expect(result.hops).toBe(3);

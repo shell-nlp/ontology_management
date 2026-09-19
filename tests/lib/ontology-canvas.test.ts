@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCanvasProjection, interfaceLinkEdgeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
+import { buildCanvasProjection, inheritedLinkEdgeId, interfaceLinkEdgeId, interfaceNodeId, isInterfaceNodeId, parseImplementationEdgeId, parseInterfaceLinkEdgeId } from "@/lib/ontology-canvas";
 import type { Definition } from "@/lib/ontology-draft";
 
 const 客户 = "11111111-1111-4111-8111-111111111111";
@@ -64,6 +64,28 @@ describe("buildCanvasProjection", () => {
     });
     const projection = buildCanvasProjection({ ...base, definition: converted, selectedInterfaceId: 接口 });
     expect(projection.edges.some((edge) => edge.kind === "interface-link")).toBe(true);
+  });
+
+  it("实现接口的对象类型继承接口的关系：默认挂在接口身上，点开实现方才挂到它自己身上", () => {
+    const 账户 = "55555555-5555-4555-8555-555555555555";
+    const converted = definition({
+      interfaces: [{ id: 接口, name: "客户", description: "", promotedFromEntityTypeId: 客户, properties: [property], extends: [], linkConstraints: [] }],
+      entityTypes: [
+        { id: 客户, name: "客户", description: "", properties: [property], sources: [] },
+        { id: 集团客户, name: "集团客户", description: "", properties: [property], implements: [接口], sources: [] },
+        { id: 账户, name: "账户", description: "", properties: [property], sources: [] },
+      ],
+      relationshipTypes: [{ id: 关系, name: "客户拥有账户", sourceEntityTypeId: 客户, targetEntityTypeId: 账户, properties: [] }],
+    });
+    const links = (input: Parameters<typeof buildCanvasProjection>[0]) => buildCanvasProjection(input).edges.filter((edge) => edge.kind === "interface-link");
+    // 没点任何东西：这条关系只挂在接口「客户」身上，集团客户身上没有。
+    expect(links({ ...base, definition: converted, showInterfaceLinks: true })).toEqual([
+      { id: interfaceLinkEdgeId(接口, 关系), type: "客户拥有账户", source: interfaceNodeId(接口), target: 账户, kind: "interface-link" },
+    ]);
+    // 点开实现方：接口的关系改挂到它身上（它就"有了"接口的关系类型）。
+    expect(links({ ...base, definition: converted, selectedEntityId: 集团客户 })).toEqual([
+      { id: inheritedLinkEdgeId(接口, 关系, 集团客户), type: "客户拥有账户", source: 集团客户, target: 账户, kind: "interface-link" },
+    ]);
   });
 
   it("转成接口的节点留在原地：接口接手影子对象类型的位置（不会跳到别处）", () => {

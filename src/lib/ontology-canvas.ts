@@ -9,8 +9,8 @@ import type { Definition, EntityType, RelationType } from "@/lib/ontology-draft"
  * - **被提取成接口的对象类型**（`interfaces[].promotedFromEntityTypeId`）在画布上由接口节点代表，
  *   影子对象类型本身不画 —— 但它的定义与关系仍然留在草稿里，不动数据映射。
  * - **接口**都画（紫色，标签带 ◇），实现它的对象类型用紫色虚线连过去。
- * - **接口承接的关系**（由影子类型的关系推出来）默认不画：接口关系一多就会糊成一片。
- *   打开「接口连接」开关、或选中接口 / 它的实现方时才展开，用青绿色虚线区分。
+ * - **接口承接的关系**（由影子类型的关系推出来）画成青绿色实线，默认就是展开的
+ *   （收起时接口节点看着像"和谁都没连线"）；「接口连接」开关可以收起来，接口 / 实现方被选中时也会画。
  *
  * 纯函数：不读 localStorage、不碰 React，位置由调用方传进来（画布手动摆过的坐标）。
  */
@@ -91,6 +91,20 @@ export function parseInterfaceLinkEdgeId(edgeId: string): { interfaceId: string;
 }
 
 /**
+ * 实现方身上那条"从接口集成来的关系"：点开对象类型 A 时，接口的关系才挂到 A 上。
+ * 与 `interface-link:` 只差一个"挂在谁身上"，所以单独一排前缀，别混用。
+ */
+export function inheritedLinkEdgeId(interfaceId: string, relationId: string, entityTypeId: string) {
+  return `inherited-link:${interfaceId}:${relationId}:${entityTypeId}`;
+}
+
+export function parseInheritedLinkEdgeId(edgeId: string): { interfaceId: string; relationId: string; entityTypeId: string } | null {
+  if (!edgeId.startsWith("inherited-link:")) return null;
+  const [, interfaceId, relationId, entityTypeId] = edgeId.split(":");
+  return interfaceId && relationId && entityTypeId ? { interfaceId, relationId, entityTypeId } : null;
+}
+
+/**
  * 没被手动摆放过的对象类型：度数最高的那个居中，其余绕成一圈。
  * 换一个 seed 就是绕轴转一圈，所以「自动整理」看得见变化，布局本身仍是确定的。
  */
@@ -154,15 +168,30 @@ export function buildCanvasProjection(input: CanvasProjectionInput): CanvasProje
     }
   }
 
-  // 接口承接的关系默认收起：接口 / 实现方被选中，或开关打开时才画。
+  /*
+   * 接口承接的关系：开关默认打开就都画；收起时至少保证接口 / 实现方被选中时画出来。
+   *
+   * 挂在谁身上（2026-09-19 用户口径）：默认挂在**接口节点**上 —— 不点任何东西时，
+   * 这些关系类型只属于接口。一旦选中某个实现它的对象类型 A，这些关系就改挂到 A 身上，
+   * 让"点 A 就能看到 A 从接口集成来的关系类型"，而不是让用户自己去接口那边找。
+   */
   const expandedInterfaces = definition.interfaces.filter((item) => showInterfaceLinks || item.id === selectedInterfaceId || selectedImplementationIds.includes(item.id));
   for (const iface of expandedInterfaces) {
     const shadowId = iface.promotedFromEntityTypeId;
     if (!shadowId) continue;
+    const ownerId = selectedEntityId && selectedImplementationIds.includes(iface.id) ? selectedEntityId : interfaceNodeId(iface.id);
     for (const relation of definition.relationshipTypes) {
       const counterpart = relation.sourceEntityTypeId === shadowId ? relation.targetEntityTypeId : relation.targetEntityTypeId === shadowId ? relation.sourceEntityTypeId : "";
       if (!counterpart || !visibleEntityIds.has(counterpart)) continue;
-      drawnEdges.push({ id: interfaceLinkEdgeId(iface.id, relation.id), type: relation.name, source: interfaceNodeId(iface.id), target: counterpart, kind: "interface-link" });
+      // 自己连自己（实现方就是那个对端）就不画。
+      if (counterpart === ownerId) continue;
+      drawnEdges.push({
+        id: ownerId === selectedEntityId ? inheritedLinkEdgeId(iface.id, relation.id, ownerId) : interfaceLinkEdgeId(iface.id, relation.id),
+        type: relation.name,
+        source: ownerId,
+        target: counterpart,
+        kind: "interface-link",
+      });
     }
   }
 
