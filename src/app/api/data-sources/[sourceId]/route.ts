@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { encryptSecret } from "@/lib/crypto";
 import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
+import { clearStructureCache } from "@/lib/data-source/structure-cache";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
 
@@ -46,6 +47,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ s
        WHERE id = $1`,
       [sourceId, next.name, next.kind, next.host, next.port, next.database_name, next.schema_name, next.username, next.credential_secret, JSON.stringify(next.options), next.enabled],
     );
+    /*
+     * 换了连接就作废结构缓存：缓存里存的是"那个库那个模式下的表清单"，
+     * host / 库 / 模式 / 账号 / 密码 一变，旧清单就不成立了。
+     * 只改名字或启用状态时留着它 —— 那种改动不影响库里的结构。
+     */
+    const connectionChanged = current.kind !== next.kind
+      || current.host !== next.host
+      || Number(current.port) !== Number(next.port)
+      || current.database_name !== next.database_name
+      || current.schema_name !== next.schema_name
+      || current.username !== next.username
+      || current.credential_secret !== next.credential_secret;
+    if (connectionChanged) await clearStructureCache(sourceId);
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_UPDATED", details: { dataSourceId: sourceId, name: next.name, kind: next.kind, enabled: next.enabled } });
     return NextResponse.json(publicDataSource({ ...current, ...next }));
   } catch (error) {

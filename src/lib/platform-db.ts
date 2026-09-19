@@ -120,6 +120,14 @@ async function ensurePlatformSchemaOnce() {
       `);
       await client.query(`ALTER TABLE ontology_platform.data_sources DROP CONSTRAINT IF EXISTS data_sources_kind_check`);
       await client.query(`ALTER TABLE ontology_platform.data_sources ADD CONSTRAINT data_sources_kind_check CHECK (kind IN (${sourceKinds}))`);
+      /*
+       * 结构缓存（2026-09-19 用户要求"复用 data_sources 这张表"）：从源库读回来的
+       * 表/视图清单、字段清单、样本行就存在这一行的 catalog 列里，之后只从平台库取，
+       * 只有点「刷新结构 / 重新取数」才回源库重读。远端 Oracle 扫一次数据字典要几秒，
+       * 而结构一天也未必变一次。
+       * 形状：{ catalog: { "<范围>": { fetchedAt, objects } }, views: { "<模式.表>@<行数>": { fetchedAt, fields, preview } } }
+       */
+      await client.query(`ALTER TABLE ontology_platform.data_sources ADD COLUMN IF NOT EXISTS catalog JSONB NOT NULL DEFAULT '{}'::jsonb`);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
           id TEXT PRIMARY KEY,
@@ -363,4 +371,51 @@ export async function writePlatformSetting<T>(key: string, value: T, updatedBy?:
     [key, JSON.stringify(value), updatedBy ?? null],
   );
   return value;
+}
+
+/**
+ * 数据资源的**结构缓存**，落在 `data_sources.catalog` 这一列（用户要求复用这张表）。
+ *
+ * 两个桶：
+ * - `catalog`：表 / 视图清单，按范围分片（登记的模式、或"*"=看全库）。
+ * - `views`：某张表 / 视图的字段清单与样本行，按「模式.表@行数」分片。
+ *
+ * 只存，不判断新鲜度 —— "什么时候该回源库"由调用方决定（现在只有用户点刷新才回）。
+ */
+export type DataSourceCatalogEntry = { fetchedAt: string };
+export type DataSourceCatalogCache = {
+  catalog?: Record<string, DataSourceCatalogEntry & { objects?: unknown[] }>;
+  views?: Record<string, DataSourceCatalogEntry & { fields?: unknown[]; preview?: unknown }>;
+};
+
+export async function readDataSourceCatalogCache(sourceId: string): Promise<DataSourceCatalogCache> {
+  const result = await platformQuery<{ catalog: DataSourceCatalogCache }>(
+    "SELECT catalog FROM ontology_platform.data_sources WHERE id = $1",
+    [sourceId],
+  );
+  const value = result.rows[0]?.catalog;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+/**
+ * 合并写入：只覆盖这次给到的分片，别的分片原样留着。
+ * 用 SQL 里的 `||` 合并，避免"读-改-写"把并发写进来的另一张表覆盖掉。
+ */
+export async function writeDataSourceCatalogCache(
+  sourceId: string,
+  patch: { catalog?: NonNullable<DataSourceCatalogCache["catalog"]>; views?: NonNullable<DataSourceCatalogCache["views"]> },
+): Promise<void> {
+  await platformQuery(
+    `UPDATE ontology_platform.data_sources
+        SET catalog = jsonb_set(
+              jsonb_set(catalog, '{catalog}', COALESCE(catalog->'catalog', '{}'::jsonb) || $2::jsonb),
+              '{views}', COALESCE(catalog->'views', '{}'::jsonb) || $3::jsonb)
+      WHERE id = $1`,
+    [sourceId, JSON.stringify(patch.catalog ?? {}), JSON.stringify(patch.views ?? {})],
+  );
+}
+
+/** 清掉一个数据资源的全部结构缓存（改连接信息时用：换了库还拿旧结构就是错的）。 */
+export async function clearDataSourceCatalogCache(sourceId: string): Promise<void> {
+  await platformQuery("UPDATE ontology_platform.data_sources SET catalog = '{}'::jsonb WHERE id = $1", [sourceId]);
 }

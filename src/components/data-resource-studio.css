@@ -44,6 +44,9 @@
 .drs-fact-ok svg { align-self: center; }
 .drs-fact-pending { color: #1d4ed8 !important; }
 .drs-fact-pending svg { align-self: center; }
+/* 结构缓存的读取时间：告诉用户"这份结构是什么时候从源库读回来的"。 */
+.drs-fact-cache { color: #6b7280 !important; }
+.drs-fact-cache svg { align-self: center; }
 
 /* ---------- 结构浏览 ---------- */
 /* 高度跟着视口走，让结构清单和数据预览尽量占满中间这块，不留大片空白。 */

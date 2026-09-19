@@ -337,6 +337,20 @@
   SELECT/ASK/CONSTRUCT/DESCRIBE 和接口传递，不声称 OWL/RDFS 完整蕴含、SHACL 强约束已经可用。
 - Docker Compose 只部署平台 `app`；Jena/Fuseki 仍受支持，但作为可选的外部图引擎单独部署。移出编排不删除已有 Jena 本体或 Fuseki 数据。
 
+## 数据资源的结构缓存（2026-09-19）
+
+用户口径：「不用每次点都真查，建议将这部分保存到数据库中……只有手动点击刷新的时候才再次去查」，并明确「完全可以复用 `data_sources` 这张表」。
+
+- 缓存就存在 `ontology_platform.data_sources.catalog`（JSONB，`ADD COLUMN IF NOT EXISTS`，形状
+  `{ catalog: { "<范围>": { fetchedAt, objects } }, views: { "<模式.表>@<行数>": { fetchedAt, fields, preview } } }`）。
+  **不要另开一张缓存表**，也别把这份数据塞进 `graph_targets` / 版本快照。
+- 取数口径：`src/lib/data-source/structure-cache.ts` 的 `cachedStructure()` —— 命中平台库就直接返回，**没有 TTL**；
+  只有 `refresh=1`（「刷新结构 / 重新取数」）或库里还没有时才连源库，读完顺手写回。失败时不写缓存。
+- 路由：`GET /api/data-sources/:id/views`（清单，按范围分片）与 `.../views/:name?limit=N`（字段 + 样本行，按「模式.表@行数」分片）
+  都走这一层，响应里带 `fetched_at` / `from_cache`，界面据此显示"结构存于平台库 / 刚回源重读 · 时间"。
+- **改连接信息要作废缓存**（`[sourceId]/route.ts` 的 PATCH 比对 kind/host/port/库/模式/账号/密码后才清）；删资源时随行删除。
+- 单测：`tests/lib/data-source/structure-cache.test.ts`（命中不回源、未命中回源并写回、refresh 覆盖、两个桶互不干扰、失败不写）。
+
 ## 部署（Docker Compose）
 
 当前编排只启动本体平台 `app`。PostgreSQL（平台库）、业务数据源以及可选的

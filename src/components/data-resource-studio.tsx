@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   Columns3,
+  Database,
   Eye,
   KeyRound,
   Loader2,
@@ -208,6 +209,12 @@ function probeClock(at: Date) {
   return at.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+/** 平台库里的结构是什么时候读回来的；读不出来就退回一句"已缓存"。 */
+function cacheClock(iso: string) {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "已缓存" : `${at.toLocaleDateString("zh-CN")} ${probeClock(at)}`;
+}
+
 function cellText(value: unknown) {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") return value;
@@ -321,6 +328,13 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   const [views, setViews] = useState<DataViewSummary[]>(() => sessionCache.catalogs.get(`${source.id}|container`) ?? []);
   const [viewsBusy, setViewsBusy] = useState(() => source.enabled && !sessionCache.catalogs.has(`${source.id}|container`));
   const [viewsError, setViewsError] = useState("");
+  /*
+   * 结构清单是"查一次就存进平台库、之后从平台库读"（见 /api/data-sources/:id/views）。
+   * 把"这份是什么时候读回来的"显示出来，用户才知道自己看的是不是最新的，
+   * 也才知道什么时候该点「刷新结构」。
+   */
+  const [catalogMeta, setCatalogMeta] = useState<{ at: string; fromCache: boolean } | null>(null);
+  const [detailMeta, setDetailMeta] = useState<{ at: string; fromCache: boolean } | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ScopeFilter>("all");
   const [selectedName, setSelectedName] = useState(() => sessionCache.selected.get(source.id) ?? "");
@@ -331,6 +345,8 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   const [rows, setRows] = useState(20);
   // 再点一次同一张表不会触发请求，所以给「重新取数」留一个显式的触发位。
   const [detailToken, setDetailToken] = useState(0);
+  // 「重新取数」要显式回源库（refresh=1）；用 ref 是因为它不该单独触发一次 effect。
+  const detailRefreshRef = useRef(false);
   const [health, setHealth] = useState<DataSourceHealth | null>(null);
   const [probedAt, setProbedAt] = useState<Date | null>(null);
   const [probing, setProbing] = useState(false);
@@ -359,10 +375,11 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       const query = new URLSearchParams({ limit: "5000" });
       if (scope === "all") query.set("schema", "*");
       if (options.refresh) query.set("refresh", "1");
-      const data = await api<{ views: DataViewSummary[] }>(`/api/data-sources/${source.id}/views?${query.toString()}`);
+      const data = await api<{ views: DataViewSummary[]; fetched_at?: string; from_cache?: boolean }>(`/api/data-sources/${source.id}/views?${query.toString()}`);
       if (run !== catalogRun.current) return;
       rememberCatalog(key, data.views);
       setViews(data.views);
+      setCatalogMeta(data.fetched_at ? { at: data.fetched_at, fromCache: Boolean(data.from_cache) } : null);
       setSelectedName((current) => {
         const next = data.views.some((item) => item.name === current) ? current : data.views[0]?.name ?? "";
         sessionCache.selected.set(source.id, next);
@@ -395,9 +412,20 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       if (cached) { setFields(cached.fields); setPreview(cached.preview); setDetailBusy(false); setDetailError(""); }
       else { setDetailBusy(true); }
       setDetailError("");
-      // 表里的数据会变，缓存只负责秒开：后台再取一份最新的换上去。
-      void api<{ fields: DataViewField[]; preview: DataViewPreview }>(`/api/data-sources/${source.id}/views/${encodeURIComponent(selectedName)}?limit=${rows}`)
-        .then((data) => { if (cancelled) return; rememberDetail(key, data); setFields(data.fields); setPreview(data.preview); })
+      /*
+       * 字段和样本行也走平台库缓存：平时读的就是上次查回来的那一份，
+       * 只有点了「重新取数」才带 refresh=1 回源库重读（后端会顺手把新结果存回平台库）。
+       */
+      const refresh = detailRefreshRef.current ? "&refresh=1" : "";
+      detailRefreshRef.current = false;
+      void api<{ fields: DataViewField[]; preview: DataViewPreview; fetched_at?: string; from_cache?: boolean }>(`/api/data-sources/${source.id}/views/${encodeURIComponent(selectedName)}?limit=${rows}${refresh}`)
+        .then((data) => {
+          if (cancelled) return;
+          rememberDetail(key, { fields: data.fields, preview: data.preview });
+          setFields(data.fields);
+          setPreview(data.preview);
+          setDetailMeta(data.fetched_at ? { at: data.fetched_at, fromCache: Boolean(data.from_cache) } : null);
+        })
         .catch((reason) => { if (cancelled) return; if (!cached) { setFields([]); setPreview(null); } setDetailError(errorText(reason)); })
         .finally(() => { if (!cancelled) setDetailBusy(false); });
     }, 0);
@@ -471,7 +499,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
           <input type="checkbox" checked={source.enabled} onChange={(event) => void toggleEnabled(event.target.checked)} />
           <span />
         </label>}
-        <button className="action compact" disabled={viewsBusy} onClick={() => void loadViews({ refresh: true })} title="回库重读结构清单，跳过 60 秒缓存">{viewsBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}{viewsBusy ? "读取中" : "刷新结构"}</button>
+        <button className="action compact" disabled={viewsBusy} onClick={() => void loadViews({ refresh: true })} title="回源库重读结构清单（平时读的是平台库里存着的那一份），读完顺手存回平台库">{viewsBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}{viewsBusy ? "读取中" : "刷新结构"}</button>
         <button className="action compact" disabled={probing} onClick={() => void probe()}>{probing ? <Loader2 size={13} className="drs-spin" /> : <PlugZap size={13} />}{probing ? "连接中" : "测试连接"}</button>
         {canEdit && <button className="action compact" onClick={onEdit}><Pencil size={13} />编辑连接</button>}
         {canEdit && <button className="action compact danger" disabled={busy === "delete"} onClick={() => void remove()}><Trash2 size={13} />{busy === "delete" ? "删除中" : "删除"}</button>}
@@ -486,6 +514,10 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       <span><b>{source.username || "—"}</b>连接账号</span>
       {probing && <span className="drs-fact-pending" role="status"><Loader2 size={13} className="drs-spin" />正在测试连接…</span>}
       {!probing && health && <span className="drs-fact-ok" role="status"><Check size={13} />连接正常 · {health.agent} · 读取范围 {health.container}{probedAt ? ` · ${probeClock(probedAt)}` : ""}</span>}
+      {source.enabled && catalogMeta && <span className="drs-fact-cache" role="status">
+        {viewsBusy ? <Loader2 size={13} className="drs-spin" /> : catalogMeta.fromCache ? <Database size={13} /> : <RefreshCcw size={13} />}
+        {viewsBusy ? "正在回源库重读结构…" : `${catalogMeta.fromCache ? "结构存于平台库" : "结构刚回源重读"} · ${cacheClock(catalogMeta.at)}`}
+      </span>}
     </div>
 
     <div className="drs-split">
@@ -545,8 +577,8 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
               <h3>{selected.name}</h3>
             </div>
             <div className="drs-view-head-actions">
-              <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}</span>
-              <button type="button" className="action compact" disabled={detailBusy} onClick={() => setDetailToken((current) => current + 1)} title="重新读这一张表的字段和数据">{detailBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}重新取数</button>
+              <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}{!detailBusy && !detailError && detailMeta ? ` · ${detailMeta.fromCache ? "取自平台库" : "刚回源重读"} ${cacheClock(detailMeta.at)}` : ""}</span>
+              <button type="button" className="action compact" disabled={detailBusy} onClick={() => { detailRefreshRef.current = true; setDetailToken((current) => current + 1); }} title="回源库重读这一张表的字段和数据（平时读的是平台库里存着的那一份），读完顺手存回平台库">{detailBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}重新取数</button>
             </div>
           </div>
           {detailError && <div className="drs-view-error"><TriangleAlert size={15} />{detailError}</div>}
