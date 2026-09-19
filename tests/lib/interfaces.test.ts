@@ -72,6 +72,24 @@ describe("interface inheritance", () => {
     expect(resolveInterfacePropertyMappings(interfaces, implementer, facility)[0]).toMatchObject({ name: "设施名称", entityProperty: "", source: "missing" });
   });
 
+  it("动作约束：实现方得把约束映射到自己的一条动作上，required 没映射就报出来", () => {
+    const withAction = [
+      { id: facility, name: "设施", properties: [{ name: "设施名称", required: true }], extends: [], linkConstraints: [], actionConstraints: [{ id: link2, name: "冻结设施", required: true }, { id: link3, name: "导出报表", required: false }] },
+    ];
+    const freezeAction = "aaaaaaaa-1111-4111-8111-111111111111";
+    const otherAction = "bbbbbbbb-2222-4222-8222-222222222222";
+    const implementer = { id: flightAlert, name: "航班告警", properties: [{ name: "设施名称" }], implements: [facility] };
+    // 没映射：required 的报缺，optional 的不报。
+    const bare = checkImplementations(implementer, withAction, [], [implementer], [{ id: freezeAction, scopeEntityTypeId: flightAlert }])[0];
+    expect(bare.missingActions).toEqual(["冻结设施"]);
+    // 映射到自己身上的动作才算对上；映射到别人的动作不算。
+    const mapped = { ...implementer, interfaceMappings: [{ interfaceId: facility, properties: {}, actions: { 冻结设施: freezeAction } }] };
+    expect(checkImplementations(mapped, withAction, [], [implementer], [{ id: freezeAction, scopeEntityTypeId: flightAlert }])[0].missingActions).toEqual([]);
+    const wrongOwner = { ...implementer, interfaceMappings: [{ interfaceId: facility, properties: {}, actions: { 冻结设施: otherAction } }] };
+    expect(checkImplementations(wrongOwner, withAction, [], [implementer], [{ id: otherAction, scopeEntityTypeId: asset }])[0].missingActions).toEqual(["冻结设施"]);
+    expect(validateInterfaceImplementations({ interfaces: withAction, entityTypes: [implementer], relationshipTypes: [], actionTypes: [{ id: freezeAction, scopeEntityTypeId: flightAlert }] }).some((item) => item.rule === "INTERFACE_ACTION_MISSING")).toBe(true);
+  });
+
   it("血缘是自身 + 祖先，近的在前", () => {
     expect(interfaceLineage(interfaces, facility)).toEqual([facility, asset]);
     expect(interfaceLineage(interfaces, asset)).toEqual([asset]);

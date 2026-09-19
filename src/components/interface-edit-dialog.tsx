@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Boxes, CornerDownRight, Diamond, Plus, Trash2, X } from "lucide-react";
 import { newId } from "@/lib/ids";
-import { resolveInterfacePropertyMappings } from "@/lib/interfaces";
+import { resolveInterfaceActionMappings, resolveInterfacePropertyMappings } from "@/lib/interfaces";
 import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, type InterfaceType, type Property, type PropertyDataType } from "@/lib/ontology-draft";
 import "./type-edit-dialog.css";
 import "./interface-edit-dialog.css";
@@ -25,6 +25,8 @@ function cloneInterface(item: InterfaceType): InterfaceType {
     properties: item.properties.map((property) => ({ ...property })),
     extends: [...item.extends],
     linkConstraints: item.linkConstraints.map((constraint) => ({ ...constraint })),
+    // 老草稿里没有这一项（zod 会给默认值，但保险起见还是兜一下），否则 .map 会炸。
+    actionConstraints: (item.actionConstraints ?? []).map((constraint) => ({ ...constraint })),
   };
 }
 
@@ -55,6 +57,19 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
   const patchProperty = (index: number, next: Partial<Property>) => setDraft((state) => ({ ...state, properties: state.properties.map((item, position) => (position === index ? { ...item, ...next } : item)) }));
   const patchConstraint = (id: string, next: Partial<InterfaceLinkConstraint>) => setDraft((state) => ({ ...state, linkConstraints: state.linkConstraints.map((item) => (item.id === id ? { ...item, ...next } : item)) }));
   const toggleImplementer = (entityId: string) => setImplementerIds((list) => (list.includes(entityId) ? list.filter((item) => item !== entityId) : [...list, entityId]));
+  /** 接口动作约束名 → 实现方自己的动作 id。规则与属性映射一致：只存"显式写过"的。 */
+  const [actionMappings, setActionMappings] = useState<Record<string, Record<string, string>>>(() => Object.fromEntries(
+    definition.entityTypes
+      .filter((entity) => (entity.implements ?? []).includes(value.id))
+      .map((entity) => [entity.id, { ...(entity.interfaceMappings?.find((item) => item.interfaceId === value.id)?.actions ?? {}) }]),
+  ));
+  const patchActionMapping = (entityId: string, constraintName: string, actionTypeId: string) => setActionMappings((state) => {
+    const current = { ...(state[entityId] ?? {}) };
+    if (actionTypeId) current[constraintName] = actionTypeId;
+    else delete current[constraintName];
+    return { ...state, [entityId]: current };
+  });
+  const patchActionConstraint = (id: string, next: Partial<InterfaceType["actionConstraints"][number]>) => setDraft((state) => ({ ...state, actionConstraints: state.actionConstraints.map((item) => (item.id === id ? { ...item, ...next } : item)) }));
   const patchMapping = (entityId: string, propertyName: string, entityProperty: string) => setMappings((state) => {
     const current = { ...(state[entityId] ?? {}) };
     if (entityProperty) current[propertyName] = entityProperty;
@@ -94,8 +109,9 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
           }
           // 只留非空映射：空对象等于"全部按同名"，不必往定义里塞噪音。
           const properties = mappings[entity.id] ?? {};
+          const actions = actionMappings[entity.id] ?? {};
           const kept = (entity.interfaceMappings ?? []).filter((item) => item.interfaceId !== value.id);
-          const next = Object.keys(properties).length ? [...kept, { interfaceId: value.id, properties }] : kept;
+          const next = Object.keys(properties).length || Object.keys(actions).length ? [...kept, { interfaceId: value.id, properties, actions }] : kept;
           return { ...entity, implements: [...new Set([...(entity.implements ?? []), value.id])], interfaceMappings: next };
         }),
       });
@@ -168,7 +184,7 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
               </div>
               <div className="ted-props">
                 {draft.properties.map((property, index) => (
-                  <div className="ted-prop editing" key={`${property.name}-${index}`}>
+                  <div className="ted-prop-inline" key={`${property.name}-${index}`}>
                     <input className="ted-input" value={property.name} disabled={!canEdit} onChange={(event) => patchProperty(index, { name: event.target.value })} placeholder="属性名" />
                     <select className="ted-select" value={property.dataType} disabled={!canEdit} onChange={(event) => patchProperty(index, { dataType: event.target.value as PropertyDataType })}>
                       {propertyTypeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -177,7 +193,7 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
                     <button type="button" className="ted-icon-button danger" disabled={!canEdit} title={`删除 ${property.name || "这条属性"}`} onClick={() => patch({ properties: draft.properties.filter((_, position) => position !== index) })}><Trash2 size={13} /></button>
                   </div>
                 ))}
-                {!draft.properties.length && <p className="ted-props-empty">还没有属性。实现它的对象类型必须同名提供这里所有必填的属性。</p>}
+                {!draft.properties.length && <p className="ted-props-empty">还没有属性。这里必填的属性，实现方必须有对应属性（同名，或在映射里显式对上）。</p>}
               </div>
               <div className="ted-add">
                 <button type="button" className="ted-add-button" disabled={!canEdit} onClick={() => patch({ properties: [...draft.properties, { name: "", displayName: "", description: "", dataType: "TEXT" as PropertyDataType, required: true, unique: false, indexed: false }] })}><Plus size={14} />添加属性</button>
@@ -214,6 +230,22 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
             </section>
 
             <div className="ted-field">
+              <span className="ted-iface-head"><Boxes size={12} />动作约束<em>接口要求"实现方得有个动作能干这件事"</em></span>
+              {draft.actionConstraints.map((constraint) => (
+                <div className="ted-action-constraint" key={constraint.id}>
+                  <input value={constraint.name} placeholder="约束名，例如：冻结账户" disabled={!canEdit} onChange={(event) => patchActionConstraint(constraint.id, { name: event.target.value })} />
+                  <input value={constraint.description} placeholder="说明（可选）" disabled={!canEdit} onChange={(event) => patchActionConstraint(constraint.id, { description: event.target.value })} />
+                  <label className="ted-check"><input type="checkbox" checked={constraint.required} disabled={!canEdit} onChange={(event) => patchActionConstraint(constraint.id, { required: event.target.checked })} />必填</label>
+                  <button type="button" className="ted-row-remove" disabled={!canEdit} onClick={() => patch({ actionConstraints: draft.actionConstraints.filter((item) => item.id !== constraint.id) })}><Trash2 size={14} /></button>
+                </div>
+              ))}
+              {!draft.actionConstraints.length && <p className="ted-props-empty">还没有动作约束。只有确实要求实现方能做某件事时才需要加。</p>}
+              <div className="ted-add">
+                <button type="button" className="ted-add-button" disabled={!canEdit} onClick={() => patch({ actionConstraints: [...draft.actionConstraints, { id: newId(), name: "", description: "", required: true }] })}><Plus size={14} />添加动作约束</button>
+              </div>
+            </div>
+
+            <div className="ted-field">
               <span className="ted-iface-head"><Boxes size={12} />谁实现了它{implementerIds.length > 0 && <em>已实现 {implementerIds.length}</em>}{implementerIds.length > 0 && <button type="button" className="ted-iface-clear" onClick={() => setImplementerIds([])}>全部取消</button>}</span>
               {definition.entityTypes.filter((entity) => !definition.interfaces.some((item) => item.promotedFromEntityTypeId === entity.id)).length > 0 ? (
                 <div className="ted-source-picker">
@@ -236,7 +268,8 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
                     const entity = definition.entityTypes.find((item) => item.id === entityId);
                     if (!entity) return null;
                     const rows = resolveInterfacePropertyMappings(definition.interfaces, entity, value.id);
-                    if (!rows.length) return null;
+                    const actionRows = resolveInterfaceActionMappings(definition.interfaces, entity, value.id, definition.actionTypes);
+                    if (!rows.length && !actionRows.length) return null;
                     return (
                       <div className="ted-map-block" key={entityId}>
                         <b>{entity.name}</b>
@@ -255,6 +288,24 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
                             {!row.entityProperty && row.required && <i className="ted-map-warn">必填，还没对上</i>}
                           </label>
                         ))}
+                        {actionRows.map((row) => (
+                          <label key={`action:${row.name}`} className="ted-map-row" data-state={row.actionTypeId ? "ok" : row.required ? "missing" : "optional"}>
+                            <span className="ted-map-iface">动作 · {row.name || "未命名"}{row.required ? "" : "（可选）"}</span>
+                            <CornerDownRight size={12} />
+                            <select
+                              value={actionMappings[entityId]?.[row.name] ?? ""}
+                              disabled={!canEdit}
+                              onChange={(event) => patchActionMapping(entityId, row.name, event.target.value)}
+                            >
+                              <option value="">未映射</option>
+                              {definition.actionTypes.filter((action) => action.scopeEntityTypeId === entity.id).map((action) => <option key={action.id} value={action.id}>{action.name}</option>)}
+                            </select>
+                            {!row.actionTypeId && row.required && <i className="ted-map-warn">必填，还没对上</i>}
+                          </label>
+                        ))}
+                        {actionRows.length > 0 && !definition.actionTypes.some((action) => action.scopeEntityTypeId === entity.id) && (
+                          <small>「{entity.name}」还没有定义在这个类型上的动作，先去「动作」页建一条。</small>
+                        )}
                       </div>
                     );
                   })}

@@ -97,6 +97,14 @@ export const interfaceLinkConstraintSchema = z.object({
  * 属性沿用 `propertySchema`：接口属性只关心 name / displayName / description / dataType / required，
  * `unique` / `indexed` / `sourceField` 对接口没有意义（接口不绑数据），界面也不展示。
  */
+/** 接口上的一条动作约束：实现方必须有一条动作跟它对上。 */
+export const interfaceActionConstraintSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().max(100).default(""),
+  description: z.string().max(500).default(""),
+  required: z.boolean().default(true),
+});
+
 export const interfaceTypeSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1).max(100),
@@ -108,6 +116,12 @@ export const interfaceTypeSchema = z.object({
   /** 继承的接口：本接口继承谁；空数组表示没有父接口。可以写多个。 */
   extends: z.array(z.string().uuid()).default([]),
   linkConstraints: z.array(interfaceLinkConstraintSchema).default([]),
+  /**
+   * 动作约束（对齐 Palantir 的 interface action type constraints）：
+   * 接口可以说"实现我的对象类型，必须有一个动作能干这件事"，实现方把它映射到自己的一条 actionType 上。
+   * 和属性/关系约束一样，`required` 的没映射就不算实现，发布前校验会拦。
+   */
+  actionConstraints: z.array(interfaceActionConstraintSchema).default([]),
 });
 export const conceptGroupSchema = z.object({
   id: z.string().uuid(),
@@ -259,6 +273,8 @@ export const ontologyDefinitionSchema = z.object({
     interfaceMappings: z.array(z.object({
       interfaceId: z.string().uuid(),
       properties: z.record(z.string(), z.string()).default({}),
+      /** 接口的动作约束名 → 本对象类型上的动作 id（必须是作用在它自己身上的动作）。 */
+      actions: z.record(z.string(), z.string()).default({}),
     })).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
@@ -288,3 +304,4 @@ export type EntitySource = z.infer<typeof entitySourceSchema>;
 export type ConceptGroup = z.infer<typeof conceptGroupSchema>;
 export type InterfaceType = z.infer<typeof interfaceTypeSchema>;
 export type InterfaceLinkConstraint = z.infer<typeof interfaceLinkConstraintSchema>;
+export type InterfaceActionConstraint = z.infer<typeof interfaceActionConstraintSchema>;

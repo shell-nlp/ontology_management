@@ -23,6 +23,14 @@ export type InterfaceLinkConstraintLike = {
   description?: string;
 };
 
+/** 接口的动作约束：实现方必须有一条动作能满足它（Palantir 的 interface action type constraints）。 */
+export type InterfaceActionConstraintLike = {
+  id: string;
+  name: string;
+  description?: string;
+  required?: boolean;
+};
+
 export type InterfaceLike = {
   id: string;
   name: string;
@@ -30,6 +38,7 @@ export type InterfaceLike = {
   properties?: readonly InterfacePropertyLike[];
   extends?: readonly string[];
   linkConstraints?: readonly InterfaceLinkConstraintLike[];
+  actionConstraints?: readonly InterfaceActionConstraintLike[];
 };
 
 export type ImplementerLike = {
@@ -38,8 +47,39 @@ export type ImplementerLike = {
   properties?: readonly InterfacePropertyLike[];
   implements?: readonly string[];
   /** 接口属性的显式映射（接口属性名 → 本对象类型属性名）。没写就按同名匹配。 */
-  interfaceMappings?: readonly { interfaceId: string; properties?: Readonly<Record<string, string>> }[];
+  interfaceMappings?: readonly { interfaceId: string; properties?: Readonly<Record<string, string>>; actions?: Readonly<Record<string, string>> }[];
 };
+
+/** 一个接口动作约束在实现方身上落到了哪条动作。 */
+export type InterfaceActionMapping = {
+  name: string;
+  required: boolean;
+  actionTypeId: string;
+  source: "explicit" | "missing";
+};
+
+/**
+ * 接口动作约束 → 实现方动作 的对应关系。
+ *
+ * `actionTypes` 传进来是为了确认这条动作**真的存在、而且就定义在这个对象类型上** ——
+ * 映射指到别人的动作或已删除的动作都算没对上，不能悄悄放过（发布校验会因此拦下来）。
+ * 不传 `actionTypes` 时只做"填了就算对上"的弱校验，给不关心动作的调用方（比如纯属性比对）用。
+ */
+export function resolveInterfaceActionMappings(
+  interfaces: readonly InterfaceLike[],
+  entity: ImplementerLike,
+  interfaceId: string,
+  actionTypes: readonly { id: string; scopeEntityTypeId?: string }[] = [],
+): InterfaceActionMapping[] {
+  const explicit = entity.interfaceMappings?.find((item) => item.interfaceId === interfaceId)?.actions ?? {};
+  return effectiveInterfaceActionConstraints(interfaces, interfaceId).map((constraint) => {
+    const required = constraint.required !== false;
+    const mapped = explicit[constraint.name] ?? "";
+    if (!mapped) return { name: constraint.name, required, actionTypeId: "", source: "missing" as const };
+    const known = actionTypes.length === 0 || actionTypes.some((action) => action.id === mapped && (!action.scopeEntityTypeId || action.scopeEntityTypeId === entity.id));
+    return { name: constraint.name, required, actionTypeId: known ? mapped : "", source: known ? "explicit" as const : "missing" as const };
+  });
+}
 
 /** 一条接口层面的问题；`severity: "WARN"` 是提示，不带的是会挡住发布的矛盾。 */
 export type InterfaceViolation = { rule: string; message: string; count: number; severity?: "WARN" };
@@ -176,6 +216,23 @@ export function effectiveInterfaceLinkConstraints(interfaces: readonly Interface
   return result;
 }
 
+/** 一个接口的最终动作约束：自己声明的 + 继承来的；同名以更近的为准。 */
+export function effectiveInterfaceActionConstraints(interfaces: readonly InterfaceLike[], id: string): InterfaceActionConstraintLike[] {
+  const byId = indexInterfaces(interfaces);
+  const result: InterfaceActionConstraintLike[] = [];
+  const seen = new Set<string>();
+  for (const interfaceId of interfaceLineage(interfaces, id)) {
+    const node = byId.get(interfaceId);
+    if (!node) continue;
+    for (const constraint of node.actionConstraints ?? []) {
+      if (seen.has(constraint.name)) continue;
+      seen.add(constraint.name);
+      result.push(constraint);
+    }
+  }
+  return result;
+}
+
 /** 直接实现了这个接口的对象类型。 */
 export function directImplementersOf(entities: readonly ImplementerLike[], interfaceId: string): ImplementerLike[] {
   return entities.filter((entity) => implementsIdsOf(entity).includes(interfaceId));
@@ -240,6 +297,10 @@ export type ImplementationCheck = {
   mappedProperties: string[];
   /** 每个接口属性最终落到实现方哪个属性上（显式映射 / 同名 / 没对上）。 */
   propertyMappings: InterfacePropertyMapping[];
+  /** 必填但还没映射到实现方动作上的动作约束名。 */
+  missingActions: string[];
+  /** 每条动作约束最终落到实现方哪条动作上。 */
+  actionMappings: InterfaceActionMapping[];
   /** 必填但还没有具体关系类型满足的关系约束。 */
   missingLinks: InterfaceLinkConstraintLike[];
   /** 已经满足的关系约束，以及是哪个关系类型满足的。 */
@@ -260,6 +321,8 @@ export function checkImplementations(
   interfaces: readonly InterfaceLike[],
   relationshipTypes: readonly { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string }[],
   entities: readonly ImplementerLike[] = [],
+  /** 本体里的动作清单：用来确认映射指向的动作真的存在、而且就定义在这个对象类型上。 */
+  actionTypes: readonly { id: string; scopeEntityTypeId?: string }[] = [],
 ): ImplementationCheck[] {
   return implementsIdsOf(entity).map((interfaceId) => {
     const node = interfaces.find((item) => item.id === interfaceId);
@@ -274,12 +337,15 @@ export function checkImplementations(
       if (hit) satisfiedLinks.push({ constraint, relationshipName: hit.name });
       else if (constraint.required !== false) missingLinks.push(constraint);
     }
+    const actionMappings = resolveInterfaceActionMappings(interfaces, entity, interfaceId, actionTypes);
     return {
       interfaceId,
       interfaceName: node?.name ?? "",
       missingProperties: [...new Set(missingProperties)],
       mappedProperties: [...new Set(mappedProperties)],
       propertyMappings: mappings,
+      missingActions: actionMappings.filter((item) => !item.actionTypeId && item.required).map((item) => item.name),
+      actionMappings,
       missingLinks,
       satisfiedLinks,
       direct: true,
@@ -325,7 +391,7 @@ export function validateInterfaces(definition: { interfaces: readonly InterfaceL
 
 /** 接口实现的校验：实现了不存在的接口、缺必填属性、必填关系约束没满足。 */
 export function validateInterfaceImplementations(
-  definition: { interfaces: readonly InterfaceLike[]; entityTypes: readonly ImplementerLike[]; relationshipTypes: readonly { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string }[] },
+  definition: { interfaces: readonly InterfaceLike[]; entityTypes: readonly ImplementerLike[]; relationshipTypes: readonly { name: string; sourceEntityTypeId?: string; targetEntityTypeId?: string }[]; actionTypes?: readonly { id: string; scopeEntityTypeId?: string }[] },
 ): InterfaceViolation[] {
   const violations: InterfaceViolation[] = [];
   for (const entity of definition.entityTypes) {
@@ -334,7 +400,7 @@ export function validateInterfaceImplementations(
         violations.push({ rule: "IMPLEMENTS_MISSING_INTERFACE", message: `对象类型「${entity.name}」声明实现了一个不存在的接口。`, count: 1 });
       }
     }
-    for (const check of checkImplementations(entity, definition.interfaces, definition.relationshipTypes, definition.entityTypes)) {
+    for (const check of checkImplementations(entity, definition.interfaces, definition.relationshipTypes, definition.entityTypes, definition.actionTypes ?? [])) {
       if (!check.interfaceId || !check.interfaceName) continue;
       if (check.missingProperties.length) {
         violations.push({
@@ -348,6 +414,14 @@ export function validateInterfaceImplementations(
         violations.push({
           rule: "INTERFACE_LINK_MISSING",
           message: `对象类型「${entity.name}」实现接口「${check.interfaceName}」，还缺关系约束「${constraint.name}」（指向${kind}的${constraint.cardinality === "ONE" ? "一对一" : "一对多"}关系）。`,
+          count: 1,
+        });
+      }
+      // 动作约束：接口要求的那件事，实现方得有一条自己的动作顶上（Palantir 的 action type constraint）。
+      for (const name of check.missingActions) {
+        violations.push({
+          rule: "INTERFACE_ACTION_MISSING",
+          message: `对象类型「${entity.name}」实现接口「${check.interfaceName}」，动作约束「${name || "未命名"}」还没有映射到它自己的动作上。`,
           count: 1,
         });
       }

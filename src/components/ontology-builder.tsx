@@ -178,6 +178,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
       properties: selectedEntity.properties.map((property) => ({ ...property, displayName: property.displayName ?? "", description: property.description ?? "", sourceField: undefined, sourceId: undefined })),
       extends: [],
       linkConstraints: constraints,
+      actionConstraints: [],
     };
     const next = {
       ...definition,

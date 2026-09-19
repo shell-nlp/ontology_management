@@ -2,6 +2,7 @@ import { jsonSchema, tool } from "ai";
 import {
   checkImplementations,
   effectiveInterfaceLinkConstraints,
+  effectiveInterfaceActionConstraints,
   effectiveInterfaceProperties,
   implementsIdsOf,
   implementersOf,
@@ -735,7 +736,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           // 实现的接口：Palantir 里对象类型靠接口被通用地消费，模型要能顺着接口理解它。
           interfaces: implementsIdsOf(type).map((interfaceId) => {
             const node = (definition.interfaces ?? []).find((item) => item.id === interfaceId) ?? null;
-            const check = checkImplementations(type, definition.interfaces ?? [], definition.relationshipTypes, definition.entityTypes)
+            const check = checkImplementations(type, definition.interfaces ?? [], definition.relationshipTypes, definition.entityTypes, definition.actionTypes)
               .find((item) => item.interfaceId === interfaceId) ?? null;
             return {
               name: node?.name ?? "",
@@ -756,6 +757,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
                 : [],
               missing_properties: check?.missingProperties ?? [],
               missing_links: (check?.missingLinks ?? []).map((item) => item.name),
+              // 动作约束：接口要求的那件事，实现方映射到了哪条动作；没映射就在这里报出来。
+              action_constraints: (check?.actionMappings ?? []).map((item) => ({
+                name: item.name,
+                required: item.required,
+                action: item.actionTypeId ? (definition.actionTypes.find((action) => action.id === item.actionTypeId)?.name ?? "") : "",
+                mapped: Boolean(item.actionTypeId),
+              })),
+              missing_actions: check?.missingActions ?? [],
             };
           }),
           interface_note: implementsIdsOf(type).length
@@ -825,6 +834,11 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
                 target_kind: constraint.targetKind === "INTERFACE" ? "接口" : "对象类型",
                 target: nameOf(constraint),
                 cardinality: constraint.cardinality === "ONE" ? "一对一" : "一对多",
+                required: constraint.required !== false,
+              })),
+              action_constraints: effectiveInterfaceActionConstraints(interfaces, item.id).map((constraint) => ({
+                name: constraint.name,
+                description: constraint.description ?? "",
                 required: constraint.required !== false,
               })),
               implementers: implementers.map((entry) => entry.name),

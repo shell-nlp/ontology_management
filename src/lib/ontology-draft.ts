@@ -23,7 +23,7 @@ export type EntityType = {
   /** 实现的接口（`Definition.interfaces` 里的 id）；一个对象类型可以实现多个接口。 */
   implements?: string[];
   /** 接口属性的显式映射：接口属性名 → 本对象类型的属性名。没写就按同名匹配。 */
-  interfaceMappings?: { interfaceId: string; properties: Record<string, string> }[];
+  interfaceMappings?: { interfaceId: string; properties: Record<string, string>; actions?: Record<string, string> }[];
   properties: Property[];
   /** sources[0] 是主来源，决定对象身份与标题；后面的是按主键补充属性的来源。 */
   sources?: EntitySource[];

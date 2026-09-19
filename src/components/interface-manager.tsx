@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Link2, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { Check, Link2, Plus, Save, ShieldAlert, Trash2, X, Zap } from "lucide-react";
 import { newId } from "@/lib/ids";
 import {
   checkImplementations,
@@ -10,6 +10,8 @@ import {
   implementersOf,
   interfaceAncestorsOf,
   interfacePropertyRows,
+  resolveInterfaceActionMappings,
+  resolveInterfacePropertyMappings,
   validateInterfaces,
   validateInterfaceImplementations,
 } from "@/lib/interfaces";
@@ -44,6 +46,8 @@ function cloneInterface(item: InterfaceType): InterfaceType {
     properties: item.properties.map((property) => ({ ...property })),
     extends: [...item.extends],
     linkConstraints: item.linkConstraints.map((constraint) => ({ ...constraint })),
+    // 老草稿里没有这一项（zod 会给默认值，保险起见还是兜一下），否则 .map 会炸。
+    actionConstraints: (item.actionConstraints ?? []).map((constraint) => ({ ...constraint })),
   };
 }function interfaceNameOf(definition: Definition, id: string) {
   return definition.interfaces.find((item) => item.id === id)?.name ?? "";
@@ -78,7 +82,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
   );
   const checks = useMemo(
     () => definition.entityTypes
-      .map((entity) => ({ entity, check: checkImplementations(entity, interfaces, definition.relationshipTypes, definition.entityTypes).find((item) => item.interfaceId === selectedId) }))
+      .map((entity) => ({ entity, check: checkImplementations(entity, interfaces, definition.relationshipTypes, definition.entityTypes, definition.actionTypes).find((item) => item.interfaceId === selectedId) }))
       .filter((row) => row.check && (row.check.interfaceId === selectedId)),
     [definition.entityTypes, definition.relationshipTypes, interfaces, selectedId],
   );
@@ -115,7 +119,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
     let name = "新接口";
     let index = 2;
     while (interfaces.some((item) => item.name.trim().toLowerCase() === name.trim().toLowerCase())) { name = `新接口 ${index}`; index += 1; }
-    const created: InterfaceType = { id: newId(), name, description: "", properties: [], extends: [], linkConstraints: [] };
+    const created: InterfaceType = { id: newId(), name, description: "", properties: [], extends: [], linkConstraints: [], actionConstraints: [] };
     setSelectedId(created.id);
     void commit({ ...definition, interfaces: [...interfaces, created] }, `已新建接口，写清楚它要求实现方具备什么。`);
   };
@@ -203,6 +207,44 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
     setDraft((state) => (state ? { ...state, linkConstraints: state.linkConstraints.filter((item) => item.id !== id) } : state));
   };
 
+  /* 动作约束跟着接口草稿走（和关系约束同一套），保存时由 saveDraft 一起写回。 */
+  const addActionConstraint = () => {
+    setDraft((state) => (state ? { ...state, actionConstraints: [...state.actionConstraints, { id: newId(), name: "", description: "", required: true }] } : state));
+  };
+  const patchActionConstraint = (id: string, patch: Partial<InterfaceType["actionConstraints"][number]>) => {
+    setDraft((state) => (state ? { ...state, actionConstraints: state.actionConstraints.map((item) => (item.id === id ? { ...item, ...patch } : item)) } : state));
+  };
+  const removeActionConstraint = (id: string) => {
+    setDraft((state) => (state ? { ...state, actionConstraints: state.actionConstraints.filter((item) => item.id !== id) } : state));
+  };
+
+  /**
+   * 接口属性 / 动作约束 落到实现方身上的映射（Palantir 的 map local properties / action type constraint）。
+   *
+   * 改的是**对象类型**（`interfaceMappings`），不是接口自己，所以和「加/取消实现」一样立刻写回草稿，
+   * 不跟着右栏那份接口 draft 走。
+   */
+  const setImplementationMapping = (entityId: string, bucket: "properties" | "actions", key: string, value: string) => {
+    if (!selected) return;
+    const interfaceId = selected.id;
+    const entityTypes = definition.entityTypes.map((entity) => {
+      if (entity.id !== entityId) return entity;
+      const existing = (entity.interfaceMappings ?? []).find((item) => item.interfaceId === interfaceId);
+      const properties = { ...(existing?.properties ?? {}) };
+      const actions = { ...(existing?.actions ?? {}) };
+      const target = bucket === "properties" ? properties : actions;
+      if (value) target[key] = value;
+      else delete target[key];
+      const kept = (entity.interfaceMappings ?? []).filter((item) => item.interfaceId !== interfaceId);
+      const next = Object.keys(properties).length || Object.keys(actions).length ? [...kept, { interfaceId, properties, actions }] : kept;
+      return { ...entity, interfaceMappings: next };
+    });
+    void commit(
+      { ...definition, entityTypes },
+      bucket === "properties" ? `已更新「${selected.name}」的属性映射。` : `已更新「${selected.name}」的动作映射。`,
+    );
+  };
+
   const implementerIds = new Set(implementers.map((entry) => entry.id));
   const addCandidates = selected ? definition.entityTypes.filter((entity) => !implementerIds.has(entity.id)) : [];
   const requiredNames = selected ? effectiveInterfaceProperties(interfaces, selected.id).filter((property) => property.required !== false).map((property) => property.name) : [];
@@ -269,7 +311,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
         </div>
 
         <div className="iface-block">
-          <span className="iface-block-label">接口属性（{current.properties.length}）· 必填的实现在对象类型上必须同名</span>
+          <span className="iface-block-label">接口属性（{current.properties.length}）· 必填的必须有对应属性（同名或显式映射）</span>
           <div className="iface-table">
             <div className="iface-table-head"><span>名称</span><span>显示名</span><span>类型</span><span>必填</span><span /></div>
             {current.properties.map((property, index) => (
@@ -319,6 +361,24 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
         </div>
 
         <div className="iface-block">
+          <span className="iface-block-label">动作约束（{current.actionConstraints.length}）</span>
+          <p className="iface-hint">约束描述的是「实现方得有个动作能干这件事」（Palantir 的 action type constraint）：实现方要把它映射到自己的一条动作上，required 的没映射发布前会被拦下来。</p>
+          <div className="iface-table iface-table-action">
+            <div className="iface-table-head"><span>约束名</span><span>说明</span><span>必填</span><span /></div>
+            {current.actionConstraints.map((constraint, index) => (
+              <div className="iface-table-row" key={constraint.id}>
+                <input aria-label={`动作约束 ${index + 1} 名称`} disabled={!canEdit} placeholder="例如：冻结账户" value={constraint.name} onChange={(event) => patchActionConstraint(constraint.id, { name: event.target.value })} />
+                <input aria-label={`动作约束 ${index + 1} 说明`} disabled={!canEdit} placeholder="说明（可选）" value={constraint.description} onChange={(event) => patchActionConstraint(constraint.id, { description: event.target.value })} />
+                <label className="iface-check"><input type="checkbox" disabled={!canEdit} checked={constraint.required} onChange={(event) => patchActionConstraint(constraint.id, { required: event.target.checked })} /></label>
+                <button type="button" className="action compact danger" disabled={!canEdit} onClick={() => removeActionConstraint(constraint.id)} title="删除动作约束"><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {!current.actionConstraints.length && <p className="iface-empty">还没有动作约束。只有确实要求实现方能做某件事时才需要加。</p>}
+          </div>
+          <button className="action compact" disabled={!canEdit} onClick={addActionConstraint}><Plus size={13} /><Zap size={13} />添加动作约束</button>
+        </div>
+
+        <div className="iface-block">
           <div className="iface-block-head">
             <span className="iface-block-label">实现情况（{implementers.length}）</span>
             {canEdit && addCandidates.length > 0 && (
@@ -333,7 +393,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
           </div>
           <div className="iface-chips">
             {checks.map(({ entity, check }) => {
-              const missing = [...(check?.missingProperties ?? []), ...(check?.missingLinks ?? []).map((item) => `关系「${item.name}」`)];
+              const missing = [...(check?.missingProperties ?? []), ...(check?.missingLinks ?? []).map((item) => `关系「${item.name}」`), ...(check?.missingActions ?? []).map((name) => `动作「${name}」`)];
               return <span key={entity.id} className={missing.length ? "iface-chip missing" : "iface-chip borrowed"} title={missing.length ? `还差：${missing.join("、")}` : "已满足接口要求"}>
                 <i />{entity.name}{missing.length ? ` · 还差 ${missing.length} 项` : ""}
                 <button type="button" className="iface-chip-x" disabled={!canEdit || busy} aria-label={`取消对象类型「${entity.name}」的实现`} title={`取消「${entity.name}」对这个接口的实现`} onClick={() => cancelImplementation(entity.id, entity.name)}><X size={11} /></button>
@@ -342,7 +402,47 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
             {implementers.filter((entry) => !entry.direct).map((entry) => <span key={entry.id} className="iface-chip" title="通过继承的子接口间接实现：要取消得去实现方的对象类型上摘掉那个子接口"><i />{entry.name} · 间接</span>)}
             {!implementers.length && <p className="iface-empty">还没有对象类型实现它。到「可视化建模」或「对象类型」标签里打开那个对象类型，在「实现接口」里勾上。</p>}
           </div>
-          <p className="iface-hint">实现 = 对象类型提供同名属性 + 满足必填的关系约束；发布前校验会拦住没满足的实现。摘掉实现可以点实现项尾巴上的 ✕，也可以到对象类型那一侧的「实现接口」里取消勾选。</p>
+          <p className="iface-hint">实现 = 满足必填属性（同名或显式映射）+ 满足必填的关系约束 + 把必填的动作约束映射到自己的动作上；发布前校验会拦住没满足的实现。摘掉实现可以点实现项尾巴上的 ✕，也可以到对象类型那一侧的「实现接口」里取消勾选。</p>
+
+          {current && checks.length > 0 && (
+            <div className="iface-map">
+              <span className="iface-block-label">接口要求怎么落到实现方身上</span>
+              <p className="iface-hint">属性没选的按同名匹配；也可以显式映射到实现方别的属性（Palantir 的 map local properties）。动作约束必须选实现方自己的一条动作。</p>
+              {checks.map(({ entity }) => {
+                const propertyRows = resolveInterfacePropertyMappings(interfaces, entity, current.id);
+                const actionRows = resolveInterfaceActionMappings(interfaces, entity, current.id, definition.actionTypes);
+                if (!propertyRows.length && !actionRows.length) return null;
+                const mapping = entity.interfaceMappings?.find((item) => item.interfaceId === current.id);
+                const owningActions = definition.actionTypes.filter((action) => action.scopeEntityTypeId === entity.id);
+                return (
+                  <div className="iface-map-block" key={entity.id}>
+                    <b>{entity.name}</b>
+                    {propertyRows.map((row) => (
+                      <label key={row.name} className="iface-map-row" data-state={row.entityProperty ? "ok" : row.required ? "missing" : "optional"}>
+                        <span className="iface-map-key">{row.name}{row.required ? "" : "（可选）"}</span>
+                        <select aria-label={`${entity.name} 的属性「${row.name}」映射到哪个属性`} disabled={!canEdit || busy} value={mapping?.properties?.[row.name] ?? ""} onChange={(event) => setImplementationMapping(entity.id, "properties", row.name, event.target.value)}>
+                          <option value="">{row.source === "same-name" ? `同名属性 · ${row.name}` : "未映射"}</option>
+                          {entity.properties.map((property) => <option key={property.name} value={property.name}>{property.name}</option>)}
+                        </select>
+                        {!row.entityProperty && row.required && <i className="iface-map-warn">必填，还没对上</i>}
+                      </label>
+                    ))}
+                    {actionRows.map((row) => (
+                      <label key={`action:${row.name}`} className="iface-map-row" data-state={row.actionTypeId ? "ok" : row.required ? "missing" : "optional"}>
+                        <span className="iface-map-key">动作 · {row.name || "未命名"}{row.required ? "" : "（可选）"}</span>
+                        <select aria-label={`${entity.name} 的动作约束「${row.name}」映射到哪条动作`} disabled={!canEdit || busy} value={mapping?.actions?.[row.name] ?? ""} onChange={(event) => setImplementationMapping(entity.id, "actions", row.name, event.target.value)}>
+                          <option value="">未映射</option>
+                          {owningActions.map((action) => <option key={action.id} value={action.id}>{action.name}</option>)}
+                        </select>
+                        {!row.actionTypeId && row.required && <i className="iface-map-warn">必填，还没对上</i>}
+                      </label>
+                    ))}
+                    {actionRows.length > 0 && !owningActions.length && <small className="iface-map-tip">「{entity.name}」还没有定义在它身上的动作，先去「动作」页建一条。</small>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="iface-sheet-foot">
