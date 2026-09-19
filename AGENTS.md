@@ -614,6 +614,26 @@ linkSource: { mode: "JOIN_TABLE" | "FOREIGN_KEY", dataSourceId, schema, view, fo
 **已知边界**：复合主键的端点不铺开（一跳展开只处理单列主键的邻居）；关系类型自己的属性目前只从连接行按
 `sourceField` 读同名列，没做别名映射。
 
+### 对象详情与「扩展一度邻居」也吃 D2 的边（2026-09-19，D2 收尾）
+
+D2 当初只接了「从数据源加载」与 AI 子图，留下两处对不上的地方：对象详情里看不到关系；点节点展开时只有图库快照里的边。
+现在两处都补上，共用同一段客户端逻辑。
+
+- **对象 id 不可逆**：对象 id 由 `(对象类型, 主键)` 哈希而来（S1），点一个节点时手上只有 id，反推不出主键，
+  也就没法去问关系类型的数据来源。所以图谱页多了一张 `keysByNodeId`（`functional-workbench.tsx` 的 `GraphManager`）：
+  「从数据源加载」的种子对象与自动补出来的邻居对象都把 `(对象类型, 主键)` 登记进去，展开时靠它还原。
+- **两条来源合起来才算完整的一度**：`/api/instances/neighbors`（已发布 / 草稿快照里的边）+ `/api/links`（D2 的业务边），
+  客户端共用 `readBusinessLinks()`。**别只接一条** —— 那会出现"从数据源加载能看到边、点节点展开却还是孤立点"。
+  实测（Oracle 测试库，8 个「政企网格编码字典」种子）：点一个**县区**节点扩展，图从 10/10 节点·关系涨到 16/16，
+  提示「又从业务库取到 10 条关系、10 个相邻对象」，请求是 `/api/links?entityType=县区编码字典&key=SALE_DISTRICT_ID=…`。
+- **对象详情多一块「一跳关系」**（`ObjectLinkList`，与图谱同一个组件文件）：数据同样来自 `/api/links`，
+  每行写清「关系类型 + 方向 + 另一端的引用」，点一行跳到那个对象（不在本页列表里就先切到它的对象类型再选）。
+  空的两种原因要分开说（`linkHint`）：**没配 `linkSource`** vs **真的有零条边**。
+- **客户端也要算主键**：`primaryKeyFromProperties` / `primaryKeyColumns` / `normalizeKeyValue` 从
+  `@/lib/object-identity` 搬到了 `@/lib/ontology-fields`（那边带 `node:crypto`，客户端引不了），
+  前者原样再导出，服务端调用点一行没改。**别再各写一份主键换算。**
+- 已知边界同 D2：复合主键的端点不做一跳展开；关系类型自己的属性只按 `sourceField` 同名列读。
+
 ### 数据源取行的 Oracle 坑（都已在代码里处理，别再踩）
 
 1. **11g 没有 `FETCH NEXT`**：TypeORM 的 `.limit()/.offset()` 在 Oracle 上生成 `FETCH NEXT n ROWS ONLY`，
@@ -626,6 +646,48 @@ linkSource: { mode: "JOIN_TABLE" | "FOREIGN_KEY", dataSourceId, schema, view, fo
    再把 `getParameters()`（`{p1: …}`）交给驱动会"参数没传进去、过滤静默返回空"。
    正确做法是 `getQueryAndParameters()` 拿位置化 SQL + 值数组，再转成数字键对象。
 4. 取数失败时错误信息里会附上语句（截断 800 字符）：排障靠这一段就能判断是列名、分页还是绑定。
+
+## 数据资源的连接池与并发闸门（D3，2026-09-19）
+
+动的只有 `src/lib/data-source/sql.ts` 的 `withConnection()`：以前是**每次操作连一次、断开一次**
+（`new DataSource()` → `initialize()` → `destroy()`），试连 ~400ms、点开一张表 ~500ms 基本都花在建连接上。现在：
+
+- **按连接指纹缓存连接池**：指纹 = `buildConnectionOptions()` 的结果（除 `name`）做 SHA-256。
+  主机 / 端口 / 库名 / 模式 / 用户名 / 密码 / 池参数改任何一项都是另一条池。
+- **状态挂 `globalThis`（`__ontologyDataSourcePools` / `__ontologyDataSourceGates`）**：dev 下模块会被反复求值，
+  挂模块变量会漏掉上一份池子（连接收不回来）。和平台库连接池一个思路。
+- **回收规则**：池子上限 8 条、空闲 10 分钟回收；`entry.inUse` 计数，**正在用的池子不收**（空闲 sweep 与 LRU 都跳过它）。
+  改连接信息与删来源时调 `releaseDataSourcePool(sourceId)`（挂在 `data-sources/[sourceId]` 的 PATCH / DELETE 里）。
+- **并发闸门**：每个来源最多 4 个操作在跑（`MAX_CONCURRENT_PER_SOURCE`），多的排队；等超过 30 秒直接报
+  「这个数据资源正同时处理 4 个请求…」。名额是**直接转交**的（不经过 active++/--），排队不会漏名额。
+- **超时**：PG `connectTimeoutMS` + `extra.max`；MySQL `connectTimeout` + `poolSize`；Oracle
+  `poolSize` + `extra.{connectTimeout,queueTimeout,poolMax,poolMin:0}`。`poolMin` 保持 0：空闲时不留会话。
+- **Oracle 原生状态也挂 `globalThis`（`__ontologyOracleClient`）**：`initOracleClient` 一个进程只能调一次，
+  dev 下模块重求值会让模块变量归零、第二次初始化直接抛错 —— 这正是"改了别的代码之后 Oracle 突然连不上"的根因。
+- **只有连接坏了才丢池**：`withConnection` 仅在 `!connection.isInitialized` 时丢掉这条池；
+  语句自己报错（只读检查、列名写错）不动池子。
+- 实测（Oracle 测试库 `oracle-test`）：试连 1677ms（首次，含编辑后的编译）→ **58ms → 47ms**；
+  取一张表 `refresh=1` 1487ms → **194ms**；8 个并发试连全部 200、合计 349ms；
+  `/api/links` 按网格主键取边仍返回 1 条（`GRID_ID=DD002 → SALE_DISTRICT_ID=DD`）；`pnpm test` 363 全绿。
+- 没做（有意）：没给用户开"池大小 / 只读"这类旋钮 —— 只读靠 `sql-guard` 的语句检查 + 只读事务，
+  跟连接池不是一回事；要调池参数直接改 `sql.ts` 顶部那几个常量。
+
+## 审计记录（U2，2026-09-19）
+
+发布 / 失败 / 图引擎与数据资源变更 / 草稿写入 / 动作执行，本来只在 PostgreSQL `audit_entries` 里躺着。
+现在有界面了：**设置 → 审计记录**（第三档，仅管理员可见）。
+
+- **范围切换是核心**：`src/lib/audit.ts` 的动作目录（`AUDIT_ACTIONS`）一处定义中文名、分组与失败标记，API 与界面共用。
+  四档范围：`changes`（默认：本体 / 版本 / 草稿 / 索引 / 图引擎 / 数据资源）、`all`、`actions`、`reads`（问答与图查询）。
+  **默认把 `REASONING_RUN` / `GRAPH_QUERY_READ` 排除在外** —— 一次提问好几条，混进来会把真正的变更淹掉；要看就切「全部记录」。
+- `GET /api/audit`：`scope` / `action` / `actorId` / `targetId` / `from` / `to` / `limit`（默认 50，上限 200）/ `offset`。
+  过滤、排序、分页全在服务端（`listPlatformAudit()`：TypeORM `findAndCount`，`total` 是精确值），
+  顺带返回 `targets` 与 `actors`（`listPlatformUsers()`）给下拉框。
+  `action` 必须落在当前 `scope` 内，越界返回 400 —— 不然会出现"范围写着变更、列表全是问答"。
+- **只有 ADMIN 能读**：审计里有操作人邮箱、数据资源主机名这类信息，查看者没有理由看到；界面上那一档也只给管理员。
+- 目录里没登记的动作码不会被吞：标签退回显示原始码（`auditActionLabel`），「全部记录」里照样看得到。
+- 展开一行看 `details` 原文（JSON），失败类动作用红色标出（`isAuditFailure`）。
+- 实测（真浏览器 1680×1000）：变更记录 46 条 / 全部记录 56 条 / 过滤「发布成功」5 条；展开能看到 `details`；全程无 4xx。
 
 ## 部署（Docker Compose）
 
@@ -804,8 +866,7 @@ shared properties / struct、接口的 status 与 searchable 元数据、把接�
 | --- | --- | --- | --- |
 | D1 | 用数据源实例化对象 | 类可以绑到表（`entityTypes[].sources`，多来源已支持按主键合并），但不会把表里的行读成对象 | 按主键去重、按属性映射填值，先把行读成只读对象；写入另算（Palantir 也是写 user edits 层，不回写源表）。依赖 M1 先把对象身份定下来 |
 | D2 | 关系类型的数据来源 | **已于 2026-09-19 完成**（见「关系类型的数据来源（D2）」一节）：定义层 `relationshipTypes[].linkSource`（连接表式 / 外键式）、`/api/links`、关系类型编辑弹窗、图谱「从数据源加载」一跳展开（连边 + 补另一端节点）、AI 子图工具都吃这些边 | 已落地。剩下的是 D1（把对象读成实例）与 D3（连接池）/ D4（非关系来源） |
-| D3 | 连接池与超时 | 结构清单已有 60 秒 TTL 缓存（命中不建连接），但**建连接本身**仍是每次操作 `new DataSource()` + `initialize()` + `destroy()`：试连 ~400ms、点一张表 ~500ms 基本都是这部分开销。2026-09-12 出现过一次 dev server 直接退出（exit 3221225477 / 0xC0000005，崩前最后一条日志是 `POST /data-sources/:id/test 200`），重启后连续 16 次试连 + 2 次 HMR 未复现 | 按来源把连接池缓存到 `globalThis` 复用（凭据/host 变了再重建），加连接超时与并发上限，`options` 里暴露只读开关；顺带把 Oracle 的原生状态也放到 `globalThis` |
-
+| D3 | ~~连接池与超时~~ | **已于 2026-09-19 完成**（见「数据资源的连接池与并发闸门（D3）」一节）：按连接指纹缓存连接池、每个来源 4 个并发名额、连接/排队超时、Oracle 原生状态挂 `globalThis` |
 | D4 | 非关系来源接入 | `PLANNED_DATA_SOURCES` 只列了 ES / REST / 文件，界面归到「规划中」 | 在 `openDataSourceConnector` 里分流到新实现，实现 `DataSourceConnector` 的四个方法即可 |
 
 ### 对象检索层
@@ -867,11 +928,11 @@ Object Views / Object Explorer / Object Monitors）后得出的 P0 结论，用�
 
 ### 界面
 
+**U2 / U3 已于 2026-09-19 完成**：审计记录进了「设置 → 审计记录」（见「审计记录（U2）」一节）；弹窗层级把全局 `.dialog-backdrop` 的
+z-index 从 10 抬到 **120**（与 `.ted-backdrop` 一致），不再被 sigma 的缩放控件压住。
+
 | 编号 | 事项 | 现状 |
 | --- | --- | --- |
-| U2 | 审计记录查看界面 | 发布 / 失败 / 本体存储变更记录只在 PostgreSQL `audit_entries` 里，界面上看不到 |
-| U3 | 弹窗层级低于图谱控件 | sigma 的缩放控件 z-index 为 `--sigma-controls-zindex`（100），全局 `.dialog-backdrop` 只有 10，弹窗够高时控件会浮在弹窗上。本次只在类型编辑弹窗用 `.ted-backdrop` 抬到 120 规避，其它弹窗（新建本体存储、新建关系、新建对象）仍有此问题 |
-
 | U4 | 本体骨架从图库反推 | 「本体骨架」读的是 `db.schema.visualization()` / 实例的 `rdf:type`，所以图库一空骨架就空——草稿里定义了类也看不见，而且图里的标签可能与定义漂移 | 骨架改为直接渲染版本快照里的类与关系类型；图库侧只作为「已发布生效结构」的对照 |
 
 ### 多本体隔离

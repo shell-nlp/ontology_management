@@ -3,6 +3,7 @@ import { encryptSecret } from "@/lib/crypto";
 import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
 import { clearStructureCache } from "@/lib/data-source/structure-cache";
+import { releaseDataSourcePool } from "@/lib/data-source/sql";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -68,6 +69,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ s
       || current.username !== next.username
       || current.credential_secret !== next.credential_secret;
     if (connectionChanged) await clearStructureCache(sourceId);
+    // 连接信息变了（D3）：顺手把旧连接池收掉，别让旧凭据的会话挂着。
+    if (connectionChanged) await releaseDataSourcePool(sourceId);
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_UPDATED", details: { dataSourceId: sourceId, name: next.name, kind: next.kind, enabled: next.enabled } });
     return NextResponse.json(publicDataSource({ ...current, ...next }));
   } catch (error) {
@@ -84,6 +87,8 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
     if (!current) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
     // 审计先写：data_sources 删除后再补就找不到这条来源了。
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_DELETED", details: { dataSourceId: sourceId, name: current.name, kind: current.kind } });
+    // 来源没了，连接池也收掉（D3）：不回收的话业务库那边会留着连不上的孤儿会话。
+    await releaseDataSourcePool(sourceId);
     const repo = await platformRepo(DataSourceEntity);
     await repo.delete({ id: sourceId });
     return NextResponse.json({ deleted: true });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { In } from "typeorm";
+import { And, In, LessThanOrEqual, MoreThanOrEqual, type FindOptionsWhere } from "typeorm";
 import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/db";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
 
@@ -137,6 +137,60 @@ export async function listAuditEntries(input: { targetId: string; actions?: stri
   }));
 }
 
+/**
+ * 全平台审计列表（U2）。与 `listAuditEntries` 的区别只有一点：**不要求 targetId**
+ * —— 那个是"某个版本 / 某个动作的决策记录"，这个是"整个平台发生过的操作"。
+ *
+ * 过滤、排序、分页都交给 TypeORM 的 `findAndCount`，不写 SQL；
+ * `total` 是同一组过滤条件下的**精确总数**（审计是平台库自己的小表，不像业务表那样要估算）。
+ */
+export async function listPlatformAudit(input: {
+  /** 动作码白名单；不传 = 不按动作过滤。 */
+  actions?: string[];
+  actorId?: string;
+  targetId?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  offset?: number;
+}): Promise<{ entries: AuditEntry[]; total: number }> {
+  const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 50)));
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const where: FindOptionsWhere<AuditEntryEntity> = {};
+  if (input.actions?.length) where.action = In(input.actions);
+  if (input.actorId) where.actorId = input.actorId;
+  if (input.targetId) where.targetId = input.targetId;
+  if (input.from && input.to) where.createdAt = And(MoreThanOrEqual(input.from), LessThanOrEqual(input.to));
+  else if (input.from) where.createdAt = MoreThanOrEqual(input.from);
+  else if (input.to) where.createdAt = LessThanOrEqual(input.to);
+
+  const repo = await platformRepo(AuditEntryEntity);
+  const [rows, total] = await repo.findAndCount({ where, order: { createdAt: "DESC" }, take: limit, skip: offset });
+  // 操作人邮箱与 listAuditEntries 一样**单独查一次**，不联表（TypeORM 1.x 联表会炸，见那边的注释）。
+  const actorIds = [...new Set(rows.map((row) => row.actorId).filter((id): id is string => Boolean(id)))];
+  const actors = actorIds.length ? await repoIn(repo.manager, PlatformUserEntity).find({ where: { id: In(actorIds) } }) : [];
+  const emailOf = new Map(actors.map((actor) => [actor.id, actor.email]));
+  return {
+    entries: rows.map((row) => ({
+      id: row.id,
+      actorId: row.actorId,
+      actorEmail: row.actorId ? emailOf.get(row.actorId) ?? null : null,
+      targetId: row.targetId,
+      action: row.action,
+      details: (row.details as Record<string, unknown> | null) ?? {},
+      createdAt: new Date(row.createdAt).toISOString(),
+    })),
+    total,
+  };
+}
+
+
+/** 平台用户清单：审计页的"操作人"筛选用它（用户数量很小，整表取回即可）。 */
+export async function listPlatformUsers(): Promise<{ id: string; email: string; role: Role }[]> {
+  const repo = await platformRepo(PlatformUserEntity);
+  const rows = await repo.find({ order: { email: "ASC" } });
+  return rows.map((row) => ({ id: row.id, email: row.email, role: row.role as Role }));
+}
 /**
  * 平台级设置：一段 JSON 存在库里，按 key 取。
  *

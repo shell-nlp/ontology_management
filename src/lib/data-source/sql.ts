@@ -1,5 +1,6 @@
 import "reflect-metadata";
 
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +56,139 @@ const DDL_LIMIT = 8000;
 const CATALOG_TTL_MS = 60_000;
 const CATALOG_CACHE_MAX = 24;
 const catalogCache = new Map<string, { at: number; objects: CatalogObject[] }>();
+
+/*
+ * 连接池与并发闸门（backlog D3，2026-09-19）。
+ *
+ * 以前每个操作都是"连一次、干一件事、断开"（`new DataSource()` → `initialize()` → `destroy()`）：
+ * 试连 ~400ms、点开一张表 ~500ms 基本都花在建连接上，批量取数时还会把业务库的连接数顶上去。
+ * 现在按**连接指纹**缓存连接池，同一个来源反复用同一条池：
+ *
+ * - 指纹带上库/主机/端口/用户名/密码/池参数 —— 改了连接信息自然换一条新池，旧池按空闲回收；
+ * - 状态挂在 `globalThis` 上（和平台库连接池一个思路）：Next 的 dev/HMR 会重复求值模块，
+ *   挂在模块变量上会让旧池失去引用、连接收不回来；
+ * - 池子上限 8 条、空闲 10 分钟回收；每个来源最多 4 个并发操作，多的排队（超时给明确提示）。
+ *   `poolMin` 保持 0：空闲时不留会话，Oracle 的连接数不至于被平台占着。
+ */
+const POOL_SIZE = 4;
+const POOL_IDLE_MS = 10 * 60_000;
+const POOL_CACHE_MAX = 8;
+const MAX_CONCURRENT_PER_SOURCE = 4;
+const QUEUE_WAIT_MS = 30_000;
+
+/** `inUse` 是正在用这条池子的调用数：回收（空闲杀掉 / LRU 顶掉）必须跳过它，否则会把跑着的查询掐断。 */
+type PoolEntry = { key: string; dataSourceId: string; connection: DataSource; lastUsedAt: number; inUse: number };
+type Gate = { active: number; queue: (() => void)[] };
+
+/**
+ * 进程级状态。**故意挂 globalThis**：dev 下模块会被反复求值，模块级 Map 会漏掉上一份池子。
+ * 只在服务端用（这里本来也不进客户端包）。
+ */
+const poolState = (() => {
+  const holder = globalThis as typeof globalThis & {
+    __ontologyDataSourcePools?: Map<string, PoolEntry>;
+    __ontologyDataSourceGates?: Map<string, Gate>;
+  };
+  holder.__ontologyDataSourcePools ??= new Map();
+  holder.__ontologyDataSourceGates ??= new Map();
+  return holder as typeof globalThis & { __ontologyDataSourcePools: Map<string, PoolEntry>; __ontologyDataSourceGates: Map<string, Gate> };
+})();
+
+/** 连接指纹：连接参数 + 凭据全进哈希，改了任何一项就是另一条池。 */
+function poolKey(kind: DataSourceKind, record: DataSourceRecord, credentials: DataSourceCredentials) {
+  const options = { ...buildConnectionOptions(kind, record, credentials) } as Record<string, unknown>;
+  // `name` 只带来源 id，不代表连接差异（id 变了本来就走另一条记录）。
+  delete options.name;
+  return createHash("sha256").update(JSON.stringify(options)).digest("hex");
+}
+
+/** 空闲太久就收掉：池子里没有活干还占着连接没意义。 */
+function sweepPools() {
+  const now = Date.now();
+  for (const entry of [...poolState.__ontologyDataSourcePools.values()]) {
+    if (now - entry.lastUsedAt < POOL_IDLE_MS) continue;
+    if (entry.inUse > 0) continue;
+    poolState.__ontologyDataSourcePools.delete(entry.key);
+    void entry.connection.destroy().catch(() => undefined);
+  }
+}
+
+/**
+ * 丢掉某个来源的池子（改连接信息、删来源时调用）。
+ * 不传 id = 全丢。返回丢掉几条，便于调用方记日志。
+ */
+export async function releaseDataSourcePool(dataSourceId?: string): Promise<number> {
+  // 正在被用的先留着（掐断跑到一半的查询更糟），它们随后续请求把空闲计时归零，交给 sweep 收。
+  const doomed = [...poolState.__ontologyDataSourcePools.values()].filter((entry) => entry.inUse === 0 && (!dataSourceId || entry.dataSourceId === dataSourceId));
+  for (const entry of doomed) poolState.__ontologyDataSourcePools.delete(entry.key);
+  await Promise.all(doomed.map((entry) => entry.connection.destroy().catch(() => undefined)));
+  return doomed.length;
+}
+
+function gateFor(dataSourceId: string): Gate {
+  const existing = poolState.__ontologyDataSourceGates.get(dataSourceId);
+  if (existing) return existing;
+  const gate: Gate = { active: 0, queue: [] };
+  poolState.__ontologyDataSourceGates.set(dataSourceId, gate);
+  return gate;
+}
+
+/** 抢一个并发名额：满了就排队，等太久直接报错（比无限挂着强）。 */
+function acquireSlot(gate: Gate): Promise<void> {
+  if (gate.active < MAX_CONCURRENT_PER_SOURCE) {
+    gate.active += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    const release = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => {
+      gate.queue = gate.queue.filter((item) => item !== release);
+      reject(new Error(`这个数据资源正同时处理 ${MAX_CONCURRENT_PER_SOURCE} 个请求，排队超过 ${QUEUE_WAIT_MS / 1000} 秒，请稍后再试。`));
+    }, QUEUE_WAIT_MS);
+    gate.queue.push(release);
+  });
+}
+
+/** 让出名额：有人排队就把名额直接转给他（active 不变）。 */
+function releaseSlot(gate: Gate) {
+  const next = gate.queue.shift();
+  if (next) next();
+  else gate.active = Math.max(0, gate.active - 1);
+}
+
+/** 取一条连接：命中池子就复用，没有才新建并入库。 */
+async function acquireConnection(kind: DataSourceKind, record: DataSourceRecord, credentials: DataSourceCredentials, info: DataSourceKindInfo) {
+  sweepPools();
+  const key = poolKey(kind, record, credentials);
+  const cached = poolState.__ontologyDataSourcePools.get(key);
+  if (cached?.connection.isInitialized) {
+    cached.lastUsedAt = Date.now();
+    cached.inUse += 1;
+    return cached;
+  }
+  if (cached) poolState.__ontologyDataSourcePools.delete(key);
+
+  const connection = new DataSource(buildConnectionOptions(kind, record, credentials));
+  try {
+    await connection.initialize();
+  } catch (error) {
+    await connection.destroy().catch(() => undefined);
+    throw new Error(describeConnectionError(info, error));
+  }
+  const entry: PoolEntry = { key, dataSourceId: record.id, connection, lastUsedAt: Date.now(), inUse: 1 };
+  poolState.__ontologyDataSourcePools.set(key, entry);
+  // 超上限就收掉最久没用的那条（不含刚放进来的这条）。
+  if (poolState.__ontologyDataSourcePools.size > POOL_CACHE_MAX) {
+    const oldest = [...poolState.__ontologyDataSourcePools.values()]
+      .filter((item) => item.key !== key && item.inUse === 0)
+      .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
+    if (oldest) {
+      poolState.__ontologyDataSourcePools.delete(oldest.key);
+      void oldest.connection.destroy().catch(() => undefined);
+    }
+  }
+  return entry;
+}
 
 /** 缓存键带上密文：改过连接信息（含密码）自然换一条缓存，不会拿旧结构糊弄人；密文本身不出内存。 */
 function catalogCacheKey(kind: DataSourceKind, record: DataSourceRecord, container: string) {
@@ -113,6 +247,9 @@ export function buildConnectionOptions(kind: DataSourceKind, record: DataSourceR
       username,
       password,
       ...(record.schema_name ? { schema: record.schema_name } : {}),
+      // 池子：最多 4 条连接，排队与连接各给一个超时（oracledb 的池参数由 extra 透传）。
+      poolSize: POOL_SIZE,
+      extra: { connectTimeout: CONNECT_TIMEOUT_MS, queueTimeout: QUEUE_WAIT_MS, poolMax: POOL_SIZE, poolMin: 0 },
     } as DataSourceOptions;
   }
 
@@ -126,6 +263,7 @@ export function buildConnectionOptions(kind: DataSourceKind, record: DataSourceR
       username,
       password,
       connectTimeout: CONNECT_TIMEOUT_MS,
+      poolSize: POOL_SIZE,
       // 64 位主键在预览里不能丢精度。
       supportBigNumbers: true,
       bigNumberStrings: true,
@@ -142,6 +280,7 @@ export function buildConnectionOptions(kind: DataSourceKind, record: DataSourceR
     password,
     schema: record.schema_name || "public",
     connectTimeoutMS: CONNECT_TIMEOUT_MS,
+    extra: { max: POOL_SIZE },
   } as DataSourceOptions;
 }
 
@@ -189,7 +328,7 @@ export function describeConnectionError(info: DataSourceKindInfo, error: unknown
   if (/Cannot find module|MODULE_NOT_FOUND/i.test(message)) return `缺少 ${info.label} 驱动（${info.driverPackage}），请先安装后再连接。`;
   // 11g 及更早的服务端在 Thin 模式下会被驱动直接拒绝，只能靠 Instant Client 走 Thick 模式。
   if (/NJS-138|not supported by node-oracledb in Thin mode/i.test(message)) {
-    return `${info.label} 服务端版本较旧，驱动的 Thin 模式连不上：需要 Oracle Instant Client（Thick 模式）。放到项目 .data/oracle-client/ 下，或用 ORACLE_CLIENT_LIB_DIR 指向它的目录${oracleClientState?.error ? `（当前探测失败：${oracleClientState.error}）` : ""}。`;
+    return `${info.label} 服务端版本较旧，驱动的 Thin 模式连不上：需要 Oracle Instant Client（Thick 模式）。放到项目 .data/oracle-client/ 下，或用 ORACLE_CLIENT_LIB_DIR 指向它的目录${oracleState.status?.error ? `（当前探测失败：${oracleState.status.error}）` : ""}。`;
   }
   if (/NJS-118/i.test(message)) return `${info.label} 的连接模式已经锁在 Thin：需要重启服务后再连（oracledb 一旦建过连接就不能切模式）。`;
   if (/password|authentication|ORA-01017|access denied/i.test(message)) return `${info.label} 认证失败，请检查用户名与密码。`;
@@ -220,8 +359,20 @@ export function resolveOracleClientDir(candidates: string[] = defaultOracleClien
   return "";
 }
 
-let oracleClientState: { ready: boolean; libDir: string; error?: string } | undefined;
-let oracleClientPromise: Promise<{ ready: boolean; libDir: string; error?: string }> | undefined;
+type OracleClientStatus = { ready: boolean; libDir: string; error?: string };
+
+/**
+ * Oracle 原生客户端的状态同样挂 `globalThis`（D3）。
+ * `initOracleClient` 一个进程只能调用一次：dev 下模块被重新求值会让模块变量归零，
+ * 第二次初始化直接抛错 —— 表现就是"改了别的代码之后 Oracle 突然连不上"。
+ */
+const oracleState = (() => {
+  const holder = globalThis as typeof globalThis & {
+    __ontologyOracleClient?: { status?: OracleClientStatus; promise?: Promise<OracleClientStatus> };
+  };
+  holder.__ontologyOracleClient ??= {};
+  return holder.__ontologyOracleClient;
+})();
 
 /**
  * 让 oracledb 进入 Thick 模式。
@@ -230,26 +381,31 @@ let oracleClientPromise: Promise<{ ready: boolean; libDir: string; error?: strin
  * 让连接照常按 Thin 模式走 —— 连不上旧服务端时上面的错误信息会告诉用户缺什么。
  */
 export async function ensureOracleClient() {
-  oracleClientPromise ??= (async () => {
+  oracleState.promise ??= (async (): Promise<OracleClientStatus> => {
     const libDir = resolveOracleClientDir();
     if (!libDir) {
-      oracleClientState = { ready: false, libDir: "", error: "没有找到 Instant Client 目录" };
-      return oracleClientState;
+      oracleState.status = { ready: false, libDir: "", error: "没有找到 Instant Client 目录" };
+      return oracleState.status;
     }
     try {
       const loaded = (await import("oracledb")) as unknown as { default?: { initOracleClient?: (options?: { libDir?: string }) => void }; initOracleClient?: (options?: { libDir?: string }) => void };
       const oracledb = loaded.default ?? loaded;
       oracledb.initOracleClient?.({ libDir });
-      oracleClientState = { ready: true, libDir };
+      oracleState.status = { ready: true, libDir };
     } catch (error) {
-      oracleClientState = { ready: false, libDir, error: error instanceof Error ? error.message : String(error) };
+      oracleState.status = { ready: false, libDir, error: error instanceof Error ? error.message : String(error) };
     }
-    return oracleClientState;
+    return oracleState.status;
   })();
-  return oracleClientPromise;
+  return oracleState.promise;
 }
 
-/** 连接一次、干一件事、断开：管理界面是低频操作，按需连接不会因为某个来源挂掉拖住别的来源。 */
+/**
+ * 借一条连接干一件事。
+ *
+ * 连接来自**按来源缓存的池**（见文件上方「连接池与并发闸门」）：同一个来源不会每次操作都重连，
+ * 池子的状态挂在 `globalThis` 上，dev 下模块重求值也不会漏掉旧池。
+ */
 async function withConnection<T>(
   kind: DataSourceKind,
   record: DataSourceRecord,
@@ -257,16 +413,26 @@ async function withConnection<T>(
   job: (info: DataSourceKindInfo, connection: DataSource) => Promise<T>,
 ): Promise<T> {
   const info = dataSourceKindInfo(kind);
-  const connection = new DataSource(buildConnectionOptions(kind, record, credentials));
+  // 并发闸门按来源算：一个来源最多 MAX_CONCURRENT_PER_SOURCE 个操作在跑，多了排队。
+  const gate = gateFor(record.id);
+  await acquireSlot(gate);
+  let entry: PoolEntry | undefined;
   try {
-    await connection.initialize();
+    entry = await acquireConnection(kind, record, credentials, info);
+    return await job(info, entry.connection);
   } catch (error) {
-    throw new Error(describeConnectionError(info, error));
-  }
-  try {
-    return await job(info, connection);
+    // 连接断了（网络设备掐了、库重启了）就把这条池丢掉，下一个请求重建；
+    // 语句自己报错（只读检查、列名写错）不动池子 —— 那种情况连接还是好的。
+    if (entry && !entry.connection.isInitialized) {
+      poolState.__ontologyDataSourcePools.delete(entry.key);
+      entry.inUse = 0;
+      await entry.connection.destroy().catch(() => undefined);
+    }
+    throw error;
   } finally {
-    await connection.destroy().catch(() => undefined);
+    // 用完把空闲计时归零，并交还名额（有人排队就直接转给他）。
+    if (entry) { entry.inUse = Math.max(0, entry.inUse - 1); entry.lastUsedAt = Date.now(); }
+    releaseSlot(gate);
   }
 }
 

@@ -230,7 +230,7 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
             </section>
 
             <div className="ted-field">
-              <span className="ted-iface-head"><Boxes size={12} />动作约束<em>接口要求"实现方得有个动作能干这件事"</em></span>
+              <span className="ted-iface-head"><Boxes size={12} />动作约束<em>接口要求「实现方得有个动作能干这件事」</em></span>
               {draft.actionConstraints.map((constraint) => (
                 <div className="ted-action-constraint" key={constraint.id}>
                   <input value={constraint.name} placeholder="约束名，例如：冻结账户" disabled={!canEdit} onChange={(event) => patchActionConstraint(constraint.id, { name: event.target.value })} />

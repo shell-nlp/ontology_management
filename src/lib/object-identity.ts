@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { OntologyDefinition } from "@/lib/ontology";
-import { columnForProperty, propertyForColumn } from "@/lib/ontology-fields";
+import { normalizeKeyValue, primaryKeyFromProperties, type IdentityEntityType, type ObjectPrimaryKey } from "@/lib/ontology-fields";
 
-// 属性 ↔ 列的换算住在 `@/lib/ontology-fields`（客户端也要用，这里只是转出去，不再另写一份）。
-export { columnForProperty, propertyForColumn } from "@/lib/ontology-fields";
+// 属性 ↔ 列、以及"从属性里取主键值"住在 `@/lib/ontology-fields`（客户端也要用，这里只是转出去，不再另写一份）。
+export { columnForProperty, normalizeKeyValue, primaryKeyColumns, primaryKeyFromProperties, propertyForColumn } from "@/lib/ontology-fields";
+export type { IdentityEntityType, ObjectPrimaryKey } from "@/lib/ontology-fields";
 
 /**
  * 对象身份 = (对象类型, 主键)。**这是平台里唯一一处定义「一个对象是谁」的地方**（S1）。
@@ -19,62 +20,11 @@ export { columnForProperty, propertyForColumn } from "@/lib/ontology-fields";
  * 所以换存储（见 backlog P4）时对象身份不变。
  */
 
-/** 一个对象的业务主键：主来源的主键列 -> 值（值统一按字符串口径比较与哈希）。 */
-export type ObjectPrimaryKey = Record<string, string>;
-
 /**
  * 确定性 id 的命名空间。**改了它，全平台所有按主键推导出来的对象 id 都会变**，
  * 相当于把历史数据全部变成"另一个对象"，所以这是一个只读常量。
  */
 const IDENTITY_NAMESPACE = "b6f1d0e2-3a4c-5d6e-8f90-1a2b3c4d5e6f";
-
-/** 主键值的长度上限：超长值不适合当身份（跟索引里 8KB 的唯一键上限一个思路）。 */
-const MAX_KEY_VALUE_LENGTH = 400;
-
-/** 身份推导只依赖对象类型的这几项，避免把整个定义类型绑进来。 */
-export type IdentityEntityType = {
-  name: string;
-  properties: readonly { name: string; sourceField?: string | null; sourceId?: string | null }[];
-  sources?: readonly { id: string; primaryKey: readonly string[] }[] | null;
-};
-
-function normalizeKeyValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    const text = value.trim();
-    return text ? text.slice(0, MAX_KEY_VALUE_LENGTH) : null;
-  }
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (value instanceof Date) return value.toISOString();
-  // 复合值（数组 / 对象）不能当身份：它们没有稳定的字符串形态。
-  return null;
-}
-
-/** 主来源（sources[0]）定义的主键列；没绑来源或没写主键时返回空数组。 */
-export function primaryKeyColumns(entityType: IdentityEntityType): string[] {
-  const columns = entityType.sources?.[0]?.primaryKey ?? [];
-  return columns.map((column) => column?.trim() ?? "").filter(Boolean);
-}
-
-/**
- * 从对象属性里取主键值。
- * `missing` 是"声明了主键列、但对象上没有值"的列 —— 调用方据此如实提示，而不是拿半截主键硬算身份。
- */
-export function primaryKeyFromProperties(
-  entityType: IdentityEntityType,
-  properties: Record<string, unknown>,
-): { primaryKey: ObjectPrimaryKey; missing: string[] } {
-  const primaryKey: ObjectPrimaryKey = {};
-  const missing: string[] = [];
-  for (const column of primaryKeyColumns(entityType)) {
-    const property = propertyForColumn(entityType, column);
-    const value = property ? normalizeKeyValue(properties[property]) : null;
-    if (value === null) { missing.push(column); continue; }
-    primaryKey[column] = value;
-  }
-  return { primaryKey, missing };
-}
 
 /** 主键值里的 `\`、`&`、`=` 要转义，否则 `{a:"b&c=d"}` 与 `{a:"b",c:"d"}` 会撞成同一个键。 */
 function escapeKeyPart(value: string) {

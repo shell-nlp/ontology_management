@@ -3,6 +3,7 @@
 import { Children, FormEvent, KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Activity, AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, CircleDot, Database, Eraser, FileCheck2, GitBranch, History, Link2, Loader2, LogOut, Merge, Network, Pencil, Play, PlugZap, Plus, RefreshCcw, RotateCcw, Search, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Sparkles, Stethoscope, Table2, Terminal, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { ActionStudio } from "@/components/action-studio";
+import { AuditLog } from "@/components/audit-log";
 import { ConceptGroupManager } from "@/components/concept-group-manager";
 import { BindSourcesDialog } from "@/components/bind-sources-dialog";
 import { InterfaceManager } from "@/components/interface-manager";
@@ -27,7 +28,7 @@ import { api } from "@/lib/api-client";
 import { CREATABLE_GRAPH_TARGET_KINDS, DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
 import { entitySources, propertyTypeOptions, sourceName, type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
 import { brokenSourcesOf } from "@/lib/source-binding";
-import { propertyForColumn } from "@/lib/ontology-fields";
+import { primaryKeyFromProperties, propertyForColumn } from "@/lib/ontology-fields";
 import { EMPTY_LINK_SOURCE } from "@/lib/ontology";
 
 type User = { id: string; email: string; role: "ADMIN" | "VIEWER" };
@@ -36,9 +37,15 @@ type BusinessLink = {
   relationshipType: string;
   linkRef: string;
   properties: Record<string, unknown>;
-  source: { entityType: string; objectId: string; primaryKey: Record<string, string> };
-  target: { entityType: string; objectId: string; primaryKey: Record<string, string> };
+  source: { entityType: string; objectId: string; primaryKey: Record<string, string>; objectRef: string };
+  target: { entityType: string; objectId: string; primaryKey: Record<string, string>; objectRef: string };
 };
+/**
+ * 节点 id → 它的业务主键。
+ * 只有"从业务库读来的对象"才会登记：对象 id 是从 (对象类型, 主键) 哈希出来的、**不可逆**，
+ * 点节点做一跳展开时得靠它还原主键，才能去问关系类型的数据来源（D2）。
+ */
+type NodeKeyMap = Record<string, { entityType: string; primaryKey: Record<string, string> }>;
 type Target = { id: string; name: string; kind: GraphTargetKind; kindLabel: string; queryLanguage: "sparql"; uri: string; databaseName: string; username: string; options: Record<string, unknown> };
 type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
 type View = "overview" | "ontology" | "actions" | "rules" | "qa" | "mcp" | "skills" | "graph" | "entities" | "relations" | "data" | "settings";
@@ -265,7 +272,7 @@ export function FunctionalWorkbench() {
   // draft / published 属于哪个本体存储：切换时旧版本在新目标上不成立，先别往下传。
   const [versionTargetId, setVersionTargetId] = useState("");
   const [view, setView] = useState<View>("overview");
-  const [settingsTab, setSettingsTab] = useState<"general" | "storage">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "storage" | "audit">("general");
   const [newTargetOpen, setNewTargetOpen] = useState(false);
   // 推理页点证据跳到对象页时带上的目标对象：到了就清空，避免下次进来又跳一次。
   const [focusEntityId, setFocusEntityId] = useState<string | null>(null);
@@ -423,7 +430,7 @@ export function FunctionalWorkbench() {
       {view === "mcp" && <McpStudio ontologies={ontologies} notify={notify} fail={fail} />}
       {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
       {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
-      {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button><button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button></div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} />}</section>}
+      {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button><button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>{user.role === "ADMIN" && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} /> : <AuditLog fail={fail} />}</section>}
     </section>
   </main>;
 }
@@ -932,6 +939,8 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
   const [sourceType, setSourceType] = useState("");
   const [sourceLimit, setSourceLimit] = useState(50);
   const [sourceLoading, setSourceLoading] = useState(false);
+  /** 从业务库读来的节点：记下它的 (对象类型, 主键)，点它展开时才能继续走 D2 的关系数据来源。 */
+  const [keysByNodeId, setKeysByNodeId] = useState<NodeKeyMap>({});
 
   useEffect(() => {
     if (!target) return;
@@ -968,65 +977,25 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id, version?.id, settings.nodeLimit]);
 
-  const expand = useCallback(async (nodeId: string) => {
-    if (!target) return;
-    const expanded = await api<GraphData>(`/api/instances/neighbors?targetId=${encodeURIComponent(target.id)}&nodeId=${encodeURIComponent(nodeId)}&limit=${Math.max(1, settings.maxNeighbors)}`);
-    setGraph((current) => ({ nodes: [...new Map([...current.nodes, ...expanded.nodes].map((node) => [node.id, node])).values()], relationships: [...new Map([...current.relationships, ...expanded.relationships].map((relationship) => [relationship.id, relationship])).values()] }));
-  }, [target, settings.maxNeighbors]);
+  /** 节点的业务主键 → `/api/links` 认得的 `列=值&列=值`。 */
+  const keyParamOf = (primaryKey: Record<string, string>) => Object.entries(primaryKey).map(([column, value]) => `${column}=${value}`).join("&");
 
-  /**
-   * 从数据源加载一批业务对象作为节点。
-   *
-   * 这些节点是**实时读业务库**拿到的：本体里没有副本，也还没有关系类型的数据来源，
-   * 所以它们只以孤立点的形式出现 —— 界面上要如实说明，别让人以为"关系丢了"。
-   */
-  const loadBusinessObjects = async () => {
-    if (!target || !sourceType) return;
-    setSourceLoading(true);
-    try {
-      const params = new URLSearchParams({ targetId: target.id, entityType: sourceType, origin: "source", limit: String(sourceLimit) });
-      // 和对象页同一个口径：带上正在看的那一版，草稿里刚补的来源绑定要当场生效。
-      if (version?.id) params.set("versionId", version.id);
-      const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown>; primaryKey: Record<string, string> }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
-      const seedNodes: GraphNode[] = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
-      if (!seedNodes.length) { notify(`数据源里没有「${sourceType}」的对象。`); return; }
-
-      /*
-       * 一跳：以这一批节点为起点把边取回来（D2）。
-       * 过滤下推到业务库（等值 / IN），而不是把整张连接表拉回来再筛；
-       * 另一端的对象也要取成节点，否则边没有落脚点、图上看不出来。
-       */
-      const linkParams = new URLSearchParams({ targetId: target.id });
-      if (version?.id) linkParams.set("versionId", version.id);
-      linkParams.set("entityType", sourceType);
-      for (const row of data.rows) {
-        const key = Object.entries(row.primaryKey).map(([column, value]) => `${column}=${value}`).join("&");
-        if (key) linkParams.append("key", key);
-      }
-      const linked = await api<{ links: BusinessLink[]; warnings: string[] }>(`/api/links?${linkParams.toString()}`).catch(() => ({ links: [] as BusinessLink[], warnings: [] as string[] }));
-      const relationships: GraphRelationship[] = linked.links.map((link) => ({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId, properties: link.properties }));
-      const neighbors = await loadLinkNeighbors(linked.links, new Set(seedNodes.map((node) => node.id)));
-
-      const nodes = [...seedNodes, ...neighbors];
-      setGraph((current) => ({
-        nodes: [...new Map([...current.nodes, ...nodes].map((node) => [node.id, node])).values()],
-        relationships: [...new Map([...current.relationships, ...relationships].map((link) => [link.id, link])).values()],
-      }));
-      const message = relationships.length
-        ? `已从数据源加载 ${seedNodes.length} 个「${sourceType}」对象、${neighbors.length} 个相邻对象，以及它们之间的 ${relationships.length} 条关系。`
-        : `已从数据源加载 ${seedNodes.length} 个「${sourceType}」对象${data.total !== null ? `（表里共 ${data.total} 条）` : ""}。这些对象之间没有配好数据来源的关系类型，所以还是孤立点 —— 到「关系类型」里给关系配上数据来源就能连起来。`;
-      notify(message);
-      if (linked.warnings.length) notify(linked.warnings[0]);
-    } catch (reason) { fail(reason); } finally { setSourceLoading(false); }
+  /** 把节点与边并进当前图（按 id 去重）：几个加载入口共用，别各写一遍。 */
+  const mergeIntoGraph = (nodes: GraphNode[], relationships: GraphRelationship[]) => {
+    setGraph((current) => ({
+      nodes: [...new Map([...current.nodes, ...nodes].map((node) => [node.id, node])).values()],
+      relationships: [...new Map([...current.relationships, ...relationships].map((link) => [link.id, link])).values()],
+    }));
   };
 
   /**
    * 把边的另一端也取成节点。
    * **按对象类型分组 + IN 过滤，一个类型一个请求** —— 一条边一个请求会把业务库打爆（Oracle 一次往返 ~500ms）。
    * 复合主键的端点先不铺开（很少见，铺开要按每个对象各取一次）。
+   * 顺带把这些节点登记进 `keysByNodeId`，下次点它们也能接着展开。
    */
   const loadLinkNeighbors = async (links: BusinessLink[], known: Set<string>) => {
-    if (!target) return [] as GraphNode[];
+    if (!target) return { nodes: [] as GraphNode[], keys: {} as NodeKeyMap };
     const buckets = new Map<string, { property: string; values: Set<string> }>();
     for (const link of links) {
       for (const side of [link.source, link.target]) {
@@ -1041,15 +1010,100 @@ function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotCh
         buckets.set(side.entityType, bucket);
       }
     }
+    type NeighborRow = { objectId: string; entityType: string; properties: Record<string, unknown>; primaryKey: Record<string, string> };
     const nodes: GraphNode[] = [];
+    const keys: NodeKeyMap = {};
     for (const [entityType, bucket] of buckets) {
       const query = new URLSearchParams({ targetId: target.id, entityType, origin: "source", limit: String(settings.nodeLimit) });
       if (version?.id) query.set("versionId", version.id);
       query.append("filter", `${bucket.property}:IN:${[...bucket.values].join(",")}`);
-      const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown> }[] }>(`/api/objects?${query.toString()}`).catch(() => ({ rows: [] }));
-      for (const row of data.rows) nodes.push({ id: row.objectId, labels: [row.entityType], properties: row.properties });
+      const data = await api<{ rows: NeighborRow[] }>(`/api/objects?${query.toString()}`).catch(() => ({ rows: [] as NeighborRow[] }));
+      for (const row of data.rows) {
+        nodes.push({ id: row.objectId, labels: [row.entityType], properties: row.properties });
+        keys[row.objectId] = { entityType: row.entityType, primaryKey: row.primaryKey ?? {} };
+      }
     }
-    return nodes;
+    return { nodes, keys };
+  };
+
+  /**
+   * 以一批**同类型**对象为起点读 D2 的业务边：过滤下推到业务库（等值 / IN），
+   * 再把另一端的对象也取成节点 —— 否则边没有落脚点，图上画不出来。
+   *
+   * 图谱的两个入口共用它：「从数据源加载」（一批种子）与点节点「扩展一度邻居」（一个种子）。
+   * 各写一份的话，会出现"从数据源加载能看到边、点节点展开却还是孤立点"这种前后不一致。
+   */
+  const readBusinessLinks = async (entityType: string, primaryKeys: Record<string, string>[], known: Set<string>) => {
+    const empty = { nodes: [] as GraphNode[], relationships: [] as GraphRelationship[], keys: {} as NodeKeyMap, warnings: [] as string[] };
+    if (!target) return empty;
+    const params = new URLSearchParams({ targetId: target.id });
+    if (version?.id) params.set("versionId", version.id);
+    params.set("entityType", entityType);
+    for (const primaryKey of primaryKeys) {
+      const key = keyParamOf(primaryKey);
+      if (key) params.append("key", key);
+    }
+    // 没有可用的主键就别问了（`/api/links` 会当成参数错误）。
+    if (!params.getAll("key").length) return empty;
+    /*
+     * 关系类型还没配数据来源时，`/api/links` 返回的是空边 —— 那是**正常的建模中间状态**，不是错误。
+     * 所以这里兜住异常：界面照常显示"还是孤立点"，而不是弹一片红。
+     */
+    const linked = await api<{ links: BusinessLink[]; warnings: string[] }>(`/api/links?${params.toString()}`).catch(() => ({ links: [] as BusinessLink[], warnings: [] as string[] }));
+    const relationships: GraphRelationship[] = linked.links.map((link) => ({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId, properties: link.properties }));
+    const { nodes, keys } = await loadLinkNeighbors(linked.links, known);
+    return { nodes, relationships, keys, warnings: linked.warnings };
+  };
+
+  /**
+   * 扩展一度邻居。**两条来源合起来才是完整的一度**：
+   * 图库那条（已发布 / 草稿快照里的边）走 `/api/instances/neighbors`；
+   * 业务库那条（D2 的关系类型数据来源）由 `/api/links` 按主键取 —— 只有从业务库读来的节点才有后一条。
+   */
+  const expand = async (nodeId: string) => {
+    if (!target) return;
+    const expanded = await api<GraphData>(`/api/instances/neighbors?targetId=${encodeURIComponent(target.id)}&nodeId=${encodeURIComponent(nodeId)}&limit=${Math.max(1, settings.maxNeighbors)}`);
+    const nodes = [...expanded.nodes];
+    const relationships = [...expanded.relationships];
+    const seed = keysByNodeId[nodeId];
+    if (seed && Object.keys(seed.primaryKey).length) {
+      const linked = await readBusinessLinks(seed.entityType, [seed.primaryKey], new Set([nodeId, ...nodes.map((node) => node.id)]));
+      nodes.push(...linked.nodes);
+      relationships.push(...linked.relationships);
+      if (linked.relationships.length) notify(`又从业务库取到 ${linked.relationships.length} 条关系、${linked.nodes.length} 个相邻对象。`);
+      if (linked.warnings.length) notify(linked.warnings[0]);
+    }
+    mergeIntoGraph(nodes, relationships);
+  };
+
+  /**
+   * 从数据源加载一批业务对象作为节点。
+   *
+   * 这些节点是**实时读业务库**拿到的：本体里没有副本。配好数据来源的关系类型（D2）会一起取回来，
+   * 边和另一端的对象都画上；没配的就在提示里说清楚，别让人以为"关系丢了"。
+   */
+  const loadBusinessObjects = async () => {
+    if (!target || !sourceType) return;
+    setSourceLoading(true);
+    try {
+      const params = new URLSearchParams({ targetId: target.id, entityType: sourceType, origin: "source", limit: String(sourceLimit) });
+      // 和对象页同一个口径：带上正在看的那一版，草稿里刚补的来源绑定要当场生效。
+      if (version?.id) params.set("versionId", version.id);
+      const data = await api<{ rows: { objectId: string; entityType: string; properties: Record<string, unknown>; primaryKey: Record<string, string> }[]; total: number | null; warnings: string[] }>(`/api/objects?${params.toString()}`);
+      const seedNodes: GraphNode[] = data.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties }));
+      if (!seedNodes.length) { notify(`数据源里没有「${sourceType}」的对象。`); return; }
+      const seedKeys: NodeKeyMap = Object.fromEntries(data.rows.map((row) => [row.objectId, { entityType: row.entityType, primaryKey: row.primaryKey }]));
+
+      // 一跳：以这一批节点为起点把边取回来（D2），过滤下推到业务库，而不是把整张连接表拉回来再筛。
+      const linked = await readBusinessLinks(sourceType, data.rows.map((row) => row.primaryKey), new Set(seedNodes.map((node) => node.id)));
+      mergeIntoGraph([...seedNodes, ...linked.nodes], linked.relationships);
+      setKeysByNodeId((current) => ({ ...current, ...seedKeys, ...linked.keys }));
+      const message = linked.relationships.length
+        ? `已从数据源加载 ${seedNodes.length} 个「${sourceType}」对象、${linked.nodes.length} 个相邻对象，以及它们之间的 ${linked.relationships.length} 条关系。`
+        : `已从数据源加载 ${seedNodes.length} 个「${sourceType}」对象${data.total !== null ? `（表里共 ${data.total} 条）` : ""}。这些对象之间没有配好数据来源的关系类型，所以还是孤立点 —— 到「关系类型」里给关系配上数据来源就能连起来。`;
+      notify(message);
+      if (linked.warnings.length) notify(linked.warnings[0]);
+    } catch (reason) { fail(reason); } finally { setSourceLoading(false); }
   };
   const runCypher = useCallback(async () => {
     if (!target) return;
@@ -1109,6 +1163,40 @@ function ScopedActions({ definition, versionId, subjectId, labels, disabled, onR
   );
 }
 
+
+/** 对象详情里的一跳关系（D2）：一条边 + "另一端是谁"。 */
+type ObjectLinkView = {
+  linkRef: string;
+  relationshipType: string;
+  /** `out` = 这个对象是起点，`in` = 它是终点。关系类型本身是双向的，这里只说明读到的方向。 */
+  direction: "out" | "in";
+  otherType: string;
+  otherId: string;
+  otherRef: string;
+  otherTitle: string;
+};
+
+/**
+ * 对象详情里的「一跳关系」。
+ *
+ * 为什么详情要单独读一次：关系实例（边）存在**业务库**里（D2 的 `linkSource`），
+ * 而详情面板里的对象可能刚从业务库读出来、本体里连副本都没有 —— 不查这一下，
+ * 用户看到的就是一个有属性、却和谁都没关系的对象。
+ *
+ * 点一条关系跳到另一端：那端已经在本页列表里就直接选中，否则先换到它的对象类型再选中。
+ */
+function ObjectLinkList({ links, loading, hint, onOpen }: { links: ObjectLinkView[]; loading: boolean; hint: string; onOpen: (link: ObjectLinkView) => void }) {
+  return <div className="detail-links">
+    <div className="detail-links-head"><Link2 size={14} /><b>一跳关系</b><span>{loading ? "读取中…" : `${links.length} 条`}</span></div>
+    {links.map((link) => <button key={link.linkRef} className="detail-link" onClick={() => onOpen(link)} title={`${link.otherType} · ${link.otherRef}`}>
+      <span className="detail-link-arrow">{link.direction === "out" ? "→" : "←"}</span>
+      <b>{link.relationshipType}</b>
+      <span className="detail-link-other">{link.otherTitle || link.otherRef}</span>
+      <span className="detail-link-type">{link.otherType}</span>
+    </button>)}
+    {!links.length && !loading ? <p className="subtle">{hint}</p> : null}
+  </div>;
+}
 function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { ontologyId: string; target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
@@ -1144,6 +1232,83 @@ function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes,
     void api<{ id: string }[]>("/api/data-sources").then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds([]));
   }, [version?.id]);
 
+  /**
+   * 选中对象的一跳关系（D2）。关系实例在**业务库**里，快照里没有，
+   * 所以详情面板要单独问一次 `/api/links`；读出来的边只有配上 `linkSource` 的关系类型才有。
+   */
+  const [links, setLinks] = useState<ObjectLinkView[]>([]);
+  const [linksLoading, setLinksLoading] = useState(false);
+
+  /** 这一行的业务主键：对象服务给过就用它，否则按定义从属性里推（纯函数，客户端也能跑）。 */
+  const primaryKeyOf = (row: EntityRow) => {
+    const known = keyById[row.id];
+    if (known && Object.keys(known).length) return known;
+    const entityType = version?.definition.entityTypes.find((item) => item.name === row.labels[0]);
+    if (!entityType) return {};
+    return primaryKeyFromProperties(entityType, row.properties).primaryKey;
+  };
+
+  /** 读某个对象的一跳关系；另一端在本页列表里的时候顺手把它的标题取出来显示。 */
+  const loadLinks = useCallback(async (row: EntityRow, page: EntityRow[]) => {
+    if (!target) { setLinks([]); return; }
+    const entityType = row.labels[0] ?? "";
+    const primaryKey = primaryKeyOf(row);
+    const key = Object.entries(primaryKey).map(([column, value]) => `${column}=${value}`).join("&");
+    if (!entityType || !key) { setLinks([]); return; }
+    setLinksLoading(true);
+    try {
+      const params = new URLSearchParams({ targetId: target.id, entityType });
+      if (version?.id) params.set("versionId", version.id);
+      params.append("key", key);
+      // 关系类型还没配数据来源时这里读回空边，那是正常的建模中间状态，不是错误。
+      const data = await api<{ links: BusinessLink[] }>(`/api/links?${params.toString()}`).catch(() => ({ links: [] as BusinessLink[] }));
+      const titleOf = new Map(page.map((item) => [item.id, entityTitle(item, version?.definition ?? null)]));
+      setLinks(data.links.map((link) => {
+        const outgoing = link.source.objectId === row.id;
+        const other = outgoing ? link.target : link.source;
+        return {
+          linkRef: link.linkRef,
+          relationshipType: link.relationshipType,
+          direction: outgoing ? "out" : "in",
+          otherType: other.entityType,
+          otherId: other.objectId,
+          otherRef: other.objectRef,
+          otherTitle: titleOf.get(other.objectId) ?? "",
+        } as ObjectLinkView;
+      }));
+    } catch (reason) { fail(reason); } finally { setLinksLoading(false); }
+    // primaryKeyOf / entityTitle 都是纯函数，跟着下面这几项变就够了。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id, version?.id, keyById, fail]);
+
+  useEffect(() => {
+    const row = rows.find((item) => item.id === selectedId);
+    // 选中项不在当前列表里时不用清空：详情面板本来就是空的，而换到"没有主键的对象"时
+    // `loadLinks` 自己会把列表清掉。
+    if (!row) return;
+    // 放进微任务里再读：effect 里同步 setState（loading 标记）会触发级联渲染。
+    void Promise.resolve().then(() => loadLinks(row, rows));
+    // 选中项或这一页的对象变了都要重问（keyById 由 load 填，跟着 rows 一起变）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, rows, version?.id, target?.id]);
+
+  /** 点一条关系跳到另一端：已经在本页列表里就选中，否则先换到它的对象类型再选中。 */
+  const revealRelated = async (link: ObjectLinkView) => {
+    const pick = (row: EntityRow) => { setSelectedId(row.id); setDraftProps(Object.fromEntries(Object.entries(row.properties).filter(([key]) => key !== "fx" && key !== "fy"))); };
+    const current = rows.find((item) => item.id === link.otherId);
+    if (current) { pick(current); return; }
+    try {
+      const next = await load(link.otherType, "");
+      const target2 = next.find((item) => item.id === link.otherId);
+      if (target2) pick(target2);
+      else notify(`「${link.otherType}」的列表里没找到这个对象（可能不在前 ${entityLimit} 条里）。`);
+    } catch (reason) { fail(reason); }
+  };
+
+  /** 一跳关系为空的两种原因，说法不一样：没配来源 vs 真的没有边。 */
+  const linkHint = (version?.definition.relationshipTypes ?? []).some((item) => item.linkSource?.dataSourceId)
+    ? "这个对象在业务库里没有一跳关系。"
+    : "关系类型还没配数据来源，业务库里读不出关系 —— 到「关系类型」里给关系配上数据来源，这里就能看到它连接的对象。";
   const brokenSources = version ? brokenSourcesOf(version.definition, sourceIds) : [];
 
   const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
@@ -1266,7 +1431,7 @@ function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes,
       <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(Object.fromEntries(Object.entries(row.properties).filter(([key]) => key !== "fx" && key !== "fy"))); }}><CircleDot size={15} /><span><b>{entityTitle(row, version?.definition ?? null)}</b><small>{row.labels.join(", ")} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的对象。</p>}</div>
     </div>
     <div className="panel functional-panel detail-panel">
-      {selected ? <><span className="eyebrow">选中对象</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div><ScopedActions definition={version?.definition ?? null} versionId={version?.id} subjectId={selected.id} labels={selected.labels} disabled={user.role !== "ADMIN"} onRun={(actionId) => onRunAction(actionId, { ...selected, objectRef: originById[selected.id] === "source" ? `${selected.labels[0]}/${Object.entries(keyById[selected.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&")}` : undefined })} />{originById[selected.id] === "source" ? <p className="subtle">这条对象来自业务库（实时读取，本体里还没有副本）：要编辑或对它执行动作，先「取进草稿」。</p> : null}{user.role === "ADMIN" && originById[selected.id] === "source" ? <div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void materialize(selected)}><Plus size={15} />取进草稿</button></div> : null}{user.role === "ADMIN" && originById[selected.id] !== "source" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}</> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条对象</b><span>点击左侧列表中的对象查看与编辑属性。</span></div>}
+      {selected ? <><span className="eyebrow">选中对象</span><h2>{entityTitle(selected, version?.definition ?? null)}</h2><div className="detail-meta"><span>{selected.labels.join(", ") || "无标签"}</span><code>{selected.id}</code></div><ScopedActions definition={version?.definition ?? null} versionId={version?.id} subjectId={selected.id} labels={selected.labels} disabled={user.role !== "ADMIN"} onRun={(actionId) => onRunAction(actionId, { ...selected, objectRef: originById[selected.id] === "source" ? `${selected.labels[0]}/${Object.entries(keyById[selected.id] ?? {}).map(([column, value]) => `${column}=${value}`).join("&")}` : undefined })} />{originById[selected.id] === "source" ? <p className="subtle">这条对象来自业务库（实时读取，本体里还没有副本）：要编辑或对它执行动作，先「取进草稿」。</p> : null}{user.role === "ADMIN" && originById[selected.id] === "source" ? <div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void materialize(selected)}><Plus size={15} />取进草稿</button></div> : null}{user.role === "ADMIN" && originById[selected.id] !== "source" ? <><PropertyEditor key={selected.id} definitions={definitions ?? []} values={selected.properties} mode={managed ? "managed" : "raw"} onChange={setDraftProps} /><div className="functional-actions"><button className="action primary" disabled={busy} onClick={() => void save()}><Pencil size={15} />保存到草稿</button><button className="action danger" disabled={busy} onClick={() => void remove()}><Trash2 size={15} />从草稿删除</button></div><p className="subtle">{draft ? "修改当前草稿快照。" : "首次修改会基于当前发布版本自动创建草稿。"}</p></> : <><div className="graph-properties">{Object.entries(selected.properties).filter(([key]) => key !== "fx" && key !== "fy").map(([key, value]) => <div key={key}><span>{key}</span><b>{typeof value === "object" ? JSON.stringify(value) : String(value)}</b></div>)}</div><p className="subtle">查看者只能浏览属性。</p></>}<ObjectLinkList links={links} loading={linksLoading} hint={linkHint} onOpen={(link) => void revealRelated(link)} /></> : <div className="graph-inspector-empty"><CircleDot size={20} /><b>选择一条对象</b><span>点击左侧列表中的对象查看与编辑属性。</span></div>}
     </div>
     {user.role === "ADMIN" && createOpen && <EntityCreateDialog published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择本体存储。"); const current = await ensureDraft(); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: label, properties }) }); notify("对象已加入草稿快照。"); setCreateOpen(false); await load(label, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
     {bindOpen && <BindSourcesDialog ontologyId={ontologyId} onClose={() => setBindOpen(false)} onSaved={async (count) => { setBindOpen(false); notify(`已补齐 ${count} 个数据来源绑定。`); await onSnapshotChange(); await load(label, search); }} fail={fail} />}
