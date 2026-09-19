@@ -387,8 +387,9 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   它要求 Node >= 24（Docker 基镜像已经是 `node:24-bookworm-slim`）；peer 上写着 TypeScript >= 5.9，
   本项目是 5.8，实测能跑（它自带 TS6 兼容编译器兜底），哪天出问题先升 TS。
   `pnpm-workspace.yaml` 里给 `@scarf/scarf` 显式写了 `false`（swagger-ui-dist 带的匿名统计脚本，不跑）。
-- **入口**：左侧导航「平台」分组下多了一个 **API 文档** 链接（`functional-workbench.tsx` 的 `NAV_SECTIONS` 里，
-  挂在 `section.label === "平台"` 后面，`target="_blank"` 打开 `/docs`）—— 它不是 `view` 之一，别把它塞进 `NAV_ITEMS`。
+- **入口**：**侧栏不放链接**（2026-09-19 用户看到后要求「不要显示这个 API 文档」）——
+  它就是 `functional-workbench.tsx` 里那段 `section.label === "平台" && <a href="/docs">`，加过又去掉了，
+  别再往侧栏加；`/docs` 直接敲地址访问。
 
 ## 关系类型的键映射（2026-09-19）
 
