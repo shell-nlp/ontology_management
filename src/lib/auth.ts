@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { platformQuery, type PlatformUser, type Role } from "@/lib/platform-db";
+import { findSessionUser, findUserByEmail as findUserRow, type PlatformUser, type Role } from "@/lib/platform-db";
 
 /** 会话失效的哨兵值：路由用它判断状态码，不要把它当消息回给用户。 */
 const UNAUTHORIZED = "UNAUTHORIZED";
@@ -52,11 +52,7 @@ export async function currentUser() {
   if (!payload.sub || typeof payload.email !== "string") return null;
   // Cookie 签名有效不代表用户仍在当前平台库里：切换 PG、删用户或改权限后，
   // 旧 subject 不能继续作为审计 actor_id，否则会被 users 外键拦下。
-  const result = await platformQuery<Pick<PlatformUser, "id" | "email" | "role">>(
-    "SELECT id, email, role FROM ontology_platform.users WHERE id = $1",
-    [payload.sub],
-  );
-  const user = result.rows[0];
+  const user = await findSessionUser(payload.sub);
   if (!user || user.email !== payload.email) return null;
   return { id: user.id, email: user.email, role: user.role };
 }
@@ -68,11 +64,7 @@ export async function requireRole(role: Role) {
 }
 
 export async function findUserByEmail(email: string) {
-  const result = await platformQuery<PlatformUser>(
-    "SELECT id, email, password_hash, role FROM ontology_platform.users WHERE email = $1",
-    [email.toLowerCase()],
-  );
-  return result.rows[0] ?? null;
+  return findUserRow(email);
 }
 
 export { SESSION_COOKIE };

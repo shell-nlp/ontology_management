@@ -3,7 +3,8 @@ import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { getObjectIndex } from "@/lib/object-index";
-import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
+import { GraphTargetEntity, platformRepo } from "@/lib/db";
+import { writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
 
@@ -28,8 +29,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     if (input.kind && input.kind !== target.kind) return NextResponse.json({ error: "不能直接修改存储后端；请新建目标存储并迁移本体。" }, { status: 409 });
     if (Object.keys(input).length === 0) return NextResponse.json({ error: "没有需要更新的字段。" }, { status: 400 });
 
-    const updates: string[] = [];
-    const values: unknown[] = [];
     // 改连接信息也可能撞到别的本体存储的库上，先按改完之后的样子检查一次。
     const candidate = {
       kind: input.kind ?? target.kind,
@@ -39,20 +38,18 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     };
     const conflict = findTargetConflict(candidate, await listTargets(), targetId);
     if (conflict) return NextResponse.json({ error: describeTargetConflict(conflict, candidate) }, { status: 409 });
-    if (input.name !== undefined) { updates.push(`name = $${updates.length + 1}`); values.push(input.name); }
-    if (input.kind !== undefined) { updates.push(`kind = $${updates.length + 1}`); values.push(input.kind); }
-    if (input.uri !== undefined) { updates.push(`uri = $${updates.length + 1}`); values.push(input.uri); }
-    if (input.databaseName !== undefined) { updates.push(`database_name = $${updates.length + 1}`); values.push(input.databaseName); }
-    if (input.username !== undefined) { updates.push(`username = $${updates.length + 1}`); values.push(input.username); }
-    if (input.password !== undefined && input.password.length > 0) { updates.push(`credential_secret = $${updates.length + 1}`); values.push(encryptSecret(input.password)); }
-    if (input.options !== undefined) { updates.push(`options = $${updates.length + 1}`); values.push(JSON.stringify(parseTargetOptions(input.options))); }
-    values.push(targetId);
+    const changes: Partial<GraphTargetEntity> = {};
+    if (input.name !== undefined) changes.name = input.name;
+    if (input.kind !== undefined) changes.kind = input.kind;
+    if (input.uri !== undefined) changes.uri = input.uri;
+    if (input.databaseName !== undefined) changes.databaseName = input.databaseName;
+    if (input.username !== undefined) changes.username = input.username;
+    if (input.password !== undefined && input.password.length > 0) changes.credentialSecret = encryptSecret(input.password);
+    if (input.options !== undefined) changes.options = parseTargetOptions(input.options);
 
-    const result = await platformQuery<{ id: string }>(
-      `UPDATE ontology_platform.graph_targets SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING id`,
-      values,
-    );
-    if (result.rows.length === 0) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
+    const repo = await platformRepo(GraphTargetEntity);
+    const result = await repo.update({ id: targetId }, changes);
+    if (!result.affected) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_UPDATED", details: { ...input, password: undefined } });
     const updated = await getTarget(targetId);
     return NextResponse.json(publicTarget(updated!));
@@ -71,7 +68,8 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     if (target.kind === "EMBEDDED") return NextResponse.json({ error: "内置类型图是平台自带资源，不能删除；如需删除本体，请到本体列表操作。" }, { status: 409 });
     // 审计记录必须先写：graph_targets 删除后审计表的外键就找不到本体存储了。
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
-    await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [targetId]);
+    const repo = await platformRepo(GraphTargetEntity);
+    await repo.delete({ id: targetId });
     await removeTargetSnapshotDirectory(targetId);
     // 检索索引是派生数据，但它的行以 target_id 为键，不跟着本体存储一起删就会留下孤儿。
     // 删本体存储是用户的最终意图，这里失败不挡请求，只留一条审计说明该清没清干净。

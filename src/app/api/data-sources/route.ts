@@ -4,7 +4,8 @@ import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { listDataSources, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
-import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
+import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
+import { writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET() {
   try {
@@ -35,11 +36,20 @@ export async function POST(request: NextRequest) {
       enabled: input.enabled,
       created_at: new Date(),
     };
-    await platformQuery(
-      `INSERT INTO ontology_platform.data_sources (id, name, kind, host, port, database_name, schema_name, username, credential_secret, options, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [record.id, record.name, record.kind, record.host, record.port, record.database_name, record.schema_name, record.username, record.credential_secret, JSON.stringify(record.options), record.enabled],
-    );
+    const repo = await platformRepo(DataSourceEntity);
+    await repo.insert({
+      id: record.id,
+      name: record.name,
+      kind: record.kind,
+      host: record.host,
+      port: record.port,
+      databaseName: record.database_name,
+      schemaName: record.schema_name,
+      username: record.username,
+      credentialSecret: record.credential_secret,
+      options: jsonValue(record.options),
+      enabled: record.enabled,
+    });
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_CREATED", details: { dataSourceId: record.id, name: record.name, kind: record.kind, host: record.host, databaseName: record.database_name } });
     return NextResponse.json(publicDataSource(record), { status: 201 });
   } catch (error) {

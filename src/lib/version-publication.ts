@@ -47,9 +47,14 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     try {
       await store.replaceGraph(snapshot);
       graphReplaced = true;
-      // 检索索引是派生数据，但必须和发布同时成立：索引落后会让搜索结果指向不存在的对象，比发布失败更难排查。
-      // 索引写失败时图数据已替换、版本仍是 DRAFT，走下面同一条「重新发布以恢复一致」的路径。
-      await getObjectIndex().replaceTargetObjects(target.id, buildIndexEntries(snapshot.definition, snapshot.nodes), { versionId: version.id });
+      /*
+       * 检索索引是派生数据，但必须和发布同时成立：索引落后会让搜索结果指向不存在的对象，比发布失败更难排查。
+       * 走**增量同步**（按对象键 upsert + 删掉本次没出现的键），不再整表替换：
+       * - 没变的对象不会被删了重写，索引上的读请求不会因为一次发布而整段时间无数据；
+       * - 索引行以 (对象类型, 主键) 为键，和对象身份同一套口径（S3）。
+       * 索引写失败时图数据已替换、版本仍是 DRAFT，走下面同一条「重新发布以恢复一致」的路径。
+       */
+      await getObjectIndex().syncTargetObjects(target.id, buildIndexEntries(snapshot.definition, snapshot.nodes), { versionId: version.id, prune: true });
       indexSynced = true;
       canEnforceRequired = (await store.reconcileStrongRules(snapshot.definition)).enforced;
       for (const record of await listVersionRecords(version.target_id)) {

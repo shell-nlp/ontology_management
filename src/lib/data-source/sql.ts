@@ -14,7 +14,9 @@ import {
   type DataSourceHealth,
   type DataSourceKind,
   type DataSourceKindInfo,
+  type DataSourceRowQuery,
   type DataSourceRecord,
+  type DataSourceRows,
   type DataViewField,
   type DataViewPreview,
   type DataViewRef,
@@ -491,6 +493,96 @@ function ddlFromColumns(kind: DataSourceKind, schema: string, name: string, obje
   return statements.join("\n");
 }
 
+/** LIKE 里的 % 与 _ 是通配符：用户输入的它们应当按字面匹配。 */
+function escapeLikePattern(value: string) {
+  return value.replace(/([\\%_])/g, "\\$1");
+}
+
+/** Oracle 深翻页上限：ROWNUM 方案要把前面几页读出来再丢掉，翻太深代价不划算。 */
+export const ORACLE_MAX_OFFSET = 5000;
+
+/**
+ * 哪些列是**定长 CHAR**。
+ *
+ * Oracle 的 CHAR 列在库里带尾空格，而且**绑定变量走的是不补空格的比较**：
+ * `CUST_ID = :1`（绑 '16540005206960'）匹配不到，`CUST_ID = '16540005206960'`（字面量）却能匹配。
+ * 对象身份里的主键值是去空格的，所以这些列的等值比较要写成 `RTRIM(col) = :p`。
+ * 代价是这一列上用不上普通索引 —— 对 CHAR 主键是必要取舍（正确优先），
+ * 别的类型仍走普通等值比较，索引照用。
+ */
+const paddedColumnCache = new Map<string, { at: number; columns: Set<string> }>();
+const PADDED_CACHE_TTL_MS = 5 * 60_000;
+
+/**
+ * 结构化取行的 QueryBuilder。
+ *
+ * **这里一行 SQL 字面量都不拼**：表名交给 `.from()`（**必须传裸名**，
+ * TypeORM 自己按驱动转义，传进来先引号会变成 `"""GISTOOLS"""` 这种三重引号），
+ * 值一律 `setParameter` 绑定，分页交给 TypeORM 的 `.limit()/.offset()`。
+ * 大小写保持库里读回来的原样：Oracle 的数据字典给的是大写，转义后正好对得上。
+ */
+function rowQueryBuilder(
+  connection: DataSource,
+  kind: DataSourceKind,
+  hit: CatalogObject,
+  container: string,
+  query: Pick<DataSourceRowQuery, "columns" | "filters" | "search">,
+  padded: ReadonlySet<string>,
+) {
+  const schema = hit.schema || container;
+  const target = [schema, hit.name].filter(Boolean).join(".");
+  const builder = connection.createQueryBuilder().from(target, "t");
+  /*
+   * 别名必须按驱动引用：`.from()` 生成的是带引号的 `"t"`（大小写敏感），
+   * 而片段里写裸的 `t.` 在 Oracle 会被折成大写 `T`，两边对不上就是 ORA-00904。
+   */
+  const alias = quoteIdentifier(kind, "t");
+  /** 等值比较用的列表达式：定长 CHAR 列要按去空格比，否则绑定值永远匹配不上。 */
+  const equalityColumn = (column: string) => {
+    const reference = `${alias}.${quoteIdentifier(kind, column)}`;
+    return padded.has(column.toUpperCase()) ? `RTRIM(${reference})` : reference;
+  };
+  const columns = (query.columns ?? []).map((column) => column.trim()).filter(Boolean);
+  builder.select(columns.length ? columns.map((column) => `${alias}.${quoteIdentifier(kind, column)}`).join(", ") : `${alias}.*`);
+
+  let index = 0;
+  const conditions: string[] = [];
+  for (const filter of query.filters ?? []) {
+    if (!filter.column?.trim()) continue;
+    const column = `${alias}.${quoteIdentifier(kind, filter.column)}`;
+    if (filter.operator === "IN") {
+      const values = (Array.isArray(filter.value) ? filter.value : [filter.value])
+        .filter((item) => item !== null && item !== undefined)
+        .slice(0, 200);
+      if (!values.length) { conditions.push("1 = 0"); continue; }
+      index += 1;
+      conditions.push(`${equalityColumn(filter.column)} IN (:...p${index})`);
+      builder.setParameter(`p${index}`, values);
+      continue;
+    }
+    index += 1;
+    if (filter.operator === "CONTAINS") {
+      conditions.push(`${column} LIKE :p${index} ESCAPE '\\'`);
+      builder.setParameter(`p${index}`, `%${escapeLikePattern(String(filter.value ?? ""))}%`);
+      continue;
+    }
+    conditions.push(`${filter.operator === "NE" ? column : equalityColumn(filter.column)} ${filter.operator === "NE" ? "<>" : "="} :p${index}`);
+    builder.setParameter(`p${index}`, filter.value);
+  }
+
+  // 文本检索：在给定列上做不区分大小写的包含匹配（UPPER 两侧同改，Oracle / PG 都成立）。
+  const text = query.search?.text?.trim() ?? "";
+  const searchColumns = (query.search?.columns ?? []).map((column) => column.trim()).filter(Boolean);
+  if (text && searchColumns.length) {
+    index += 1;
+    builder.setParameter(`p${index}`, `%${escapeLikePattern(text)}%`);
+    const parts = searchColumns.map((column) => `UPPER(${alias}.${quoteIdentifier(kind, column)}) LIKE UPPER(:p${index}) ESCAPE '\\'`);
+    conditions.push(`(${parts.join(" OR ")})`);
+  }
+  if (conditions.length) builder.where(conditions.join(" AND "));
+  return builder;
+}
+
 export async function createSqlConnector(kind: DataSourceKind, record: DataSourceRecord, credentials: DataSourceCredentials): Promise<DataSourceConnector> {
   const container = resolveContainer(kind, record);
   // Oracle 旧版本必须走 Thick 模式：在建连接之前先把 Instant Client 装上（幂等）。
@@ -528,6 +620,22 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
    * 名字里写了模式就按它找，没写就用登记的模式；候选都对不上时退回同名对象（登记的模式与实际不符时不至于查不到）。
    */
   const locate = async (connection: DataSource, ref: DataViewRef): Promise<CatalogObject> => {
+    return locateObject(connection, ref);
+  };
+
+  /** 定长 CHAR 列清单（只对 Oracle 有意义），按「来源 + 视图」记 5 分钟。 */
+  const paddedColumnsFor = async (connection: DataSource, hit: CatalogObject, schema: string): Promise<ReadonlySet<string>> => {
+    if (kind !== "ORACLE") return new Set<string>();
+    const key = `${kind}:${schema}.${hit.name}`;
+    const cached = paddedColumnCache.get(key);
+    if (cached && Date.now() - cached.at < PADDED_CACHE_TTL_MS) return cached.columns;
+    const fields = await readColumns(connection, hit).catch(() => [] as DataViewField[]);
+    const columns = new Set(fields.filter((field) => field.dataType.toUpperCase().startsWith("CHAR")).map((field) => field.name.toUpperCase()));
+    paddedColumnCache.set(key, { at: Date.now(), columns });
+    return columns;
+  };
+
+  const locateObject = async (connection: DataSource, ref: DataViewRef): Promise<CatalogObject> => {
     const raw = String(ref.name ?? "").trim();
     const wanted = resolveRef(ref);
     const where = wanted.owners.length ? `（在模式 ${wanted.owners.join("、")} 下都没查到）` : "";
@@ -662,7 +770,94 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       });
     },
 
-    /** 表结构（DDL）：能拿到库里的原始语句就用原始的，拿不到就按列元数据还原，并说明差在哪。 */
+    /**
+     * 结构化取行（对象服务用）。
+     *
+     * **用 TypeORM 的 QueryBuilder 生成语句**（用户要求：操作数据库一定要用 ORM）：
+     * 列名走驱动自己的标识符转义，值走绑定参数（`:p1`），没有一处字符串字面量拼接。
+     * 换一种来源（Elasticsearch / REST / 物化对象层）时，只需要另写一个连接器实现这个方法，
+     * 对象服务与上层界面不用动。
+     *
+     * 执行沿用只读查询那一套"只读事务 + 超时 + 行数上限"；多取一行用来判断有没有被截断。
+     */
+    async selectRows(query: DataSourceRowQuery): Promise<DataSourceRows> {
+      const rows = clampLimit(query.limit, QUERY_LIMIT_MAX, DEFAULT_QUERY_ROWS);
+      const timeout = statementTimeoutStatements(kind, QUERY_TIMEOUT_MS);
+      return withConnection(kind, record, credentials, async (_info, connection) => {
+        const hit = await locate(connection, query.view);
+        const runner = connection.createQueryRunner();
+        try {
+          for (const setup of timeout.before) await runner.query(setup).catch(() => undefined);
+          await beginReadOnlyTransaction(runner, kind);
+          for (const setup of timeout.inside) await runner.query(setup).catch(() => undefined);
+          // rows + 1：套了行数上限之后再也查不出更多行，靠多出来的那一行判断"还有没有剩下的"。
+          const schema = hit.schema || container || "";
+          const builder = rowQueryBuilder(connection, kind, hit, container, query, await paddedColumnsFor(connection, hit, schema));
+          const offset = Math.max(0, Math.floor(query.offset ?? 0));
+          let raw: Record<string, unknown>[];
+          let statement: string;
+          try {
+            if (kind === "ORACLE") {
+              /*
+               * Oracle 11g 没有 `FETCH NEXT`（TypeORM 的 limit/offset 会生成它，旧库直接 ORA-03001），
+               * 所以这里用**条件**限行：`ROWNUM <= take + skip`，前几页在内存里丢掉（offset 有上限）。
+               *
+               * 绑定参数也必须走 `getQueryAndParameters()`：它给的是"位置化 SQL + 值数组"，
+               * 把数组转成 `{ "1": v1, "2": v2 }`（Oracle 的绑定名就是数字）后驱动才认得。
+               * 直接 `getRawMany()` 在 Oracle 上会丢掉绑定值 —— 过滤条件悄悄变成"匹配不到任何行"。
+               */
+              const skip = Math.min(offset, ORACLE_MAX_OFFSET);
+              builder.andWhere(`ROWNUM <= ${rows + 1 + skip}`);
+              const [sql, values] = builder.getQueryAndParameters();
+              statement = sql;
+              const binds = Object.fromEntries(values.map((value, index) => [String(index + 1), value]));
+              raw = (await runner.query(sql, binds)) as Record<string, unknown>[];
+              if (skip) raw = raw.slice(skip);
+            } else {
+              const paged = builder.limit(rows + 1).offset(offset);
+              statement = paged.getSql();
+              raw = (await paged.getRawMany()) as Record<string, unknown>[];
+            }
+          } catch (error) {
+            // 取数失败时把语句一并报出去：这是排障时唯一能定位到"哪种分页 / 哪个列名"的信息。
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(`${detail}\n语句：${builder.getSql().slice(0, 800)}`);
+          }
+          const page = takeRows(raw, rows);
+          const normalized = page.rows.map(normalizeRow);
+          return {
+            columns: normalized.length ? Object.keys(normalized[0]) : (query.columns ?? []),
+            rows: normalized,
+            rowLimit: rows,
+            truncated: page.truncated,
+            statement,
+          };
+        } finally {
+          await runner.query("ROLLBACK").catch(() => undefined);
+          await runner.release();
+        }
+      });
+    },
+
+    /** 满足条件的总行数；分页要用的总数。 */
+    async countRows(query: Omit<DataSourceRowQuery, "columns" | "limit" | "offset">): Promise<number> {
+      return withConnection(kind, record, credentials, async (_info, connection) => {
+        const hit = await locate(connection, query.view);
+        const runner = connection.createQueryRunner();
+        try {
+          await beginReadOnlyTransaction(runner, kind);
+          const schema = hit.schema || container || "";
+          const counted = rowQueryBuilder(connection, kind, hit, container, { ...query, columns: [] }, await paddedColumnsFor(connection, hit, schema)).select("COUNT(*)", "total");
+          const raw = (await counted.getRawOne()) as Record<string, unknown> | undefined;
+          const total = Number(Object.values(raw ?? {})[0]);
+          return Number.isFinite(total) ? total : 0;
+        } finally {
+          await runner.query("ROLLBACK").catch(() => undefined);
+          await runner.release();
+        }
+      });
+    },
+
     async describeTableDdl(view: DataViewRef): Promise<TableDdl> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
         const hit = await locate(connection, view);

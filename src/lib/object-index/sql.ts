@@ -16,6 +16,12 @@ export type ObjectSearchPlan = {
   vectorUsed: boolean;
 };
 
+/** 单条对象查询：按对象键（对象类型 + 主键）取一条，走唯一键，不做全文检索。 */
+export type ObjectLookupPlan = {
+  text: string;
+  values: unknown[];
+};
+
 /**
  * 关键字里的 % 与 _ 是 ILIKE 的通配符。用户输入 `%` 不应该变成「匹配一切」，
  * 所以进 SQL 之前先转义，并在语句里声明 ESCAPE。
@@ -151,7 +157,7 @@ export function planObjectSearch(query: ObjectSearchQuery, features: ObjectSearc
 
   return {
     hits: {
-      text: `SELECT e.object_id, e.labels, e.title, e.properties, e.primary_key, ${scoreSelect}
+      text: `SELECT e.object_id, e.entity_type, e.object_key, e.labels, e.title, e.properties, e.primary_key, ${scoreSelect}
                FROM ontology_platform.object_entries e
               WHERE ${whereSql}
               ORDER BY ${order.join(", ")}

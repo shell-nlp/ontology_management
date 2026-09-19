@@ -8,24 +8,36 @@ import {
   type PublicDataSource,
 } from "@/lib/data-source/types";
 import { decryptSecret } from "@/lib/crypto";
-import { platformQuery } from "@/lib/platform-db";
+import { platformRepo, DataSourceEntity } from "@/lib/db";
 
-const COLUMNS = `id, name, kind, host, port, database_name, schema_name, username, credential_secret, options, enabled, created_at`;
+/** 实体 -> 领域记录：字段名按数据资源自己的口径（snake_case）。 */
+function toRecord(row: DataSourceEntity): DataSourceRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: normalizeDataSourceKind(row.kind),
+    host: row.host,
+    port: Number(row.port),
+    database_name: row.databaseName,
+    schema_name: row.schemaName,
+    username: row.username,
+    credential_secret: row.credentialSecret,
+    options: parseDataSourceOptions(row.options),
+    enabled: row.enabled,
+    created_at: row.createdAt,
+  };
+}
 
 export async function listDataSources(): Promise<DataSourceRecord[]> {
-  const result = await platformQuery<DataSourceRecord>(
-    `SELECT ${COLUMNS} FROM ontology_platform.data_sources ORDER BY kind, name`,
-  );
-  return result.rows.map(normalizeRecord);
+  const repo = await platformRepo(DataSourceEntity);
+  const rows = await repo.find({ order: { kind: "ASC", name: "ASC" } });
+  return rows.map(toRecord);
 }
 
 export async function getDataSource(sourceId: string): Promise<DataSourceRecord | null> {
-  const result = await platformQuery<DataSourceRecord>(
-    `SELECT ${COLUMNS} FROM ontology_platform.data_sources WHERE id = $1`,
-    [sourceId],
-  );
-  const row = result.rows[0];
-  return row ? normalizeRecord(row) : null;
+  const repo = await platformRepo(DataSourceEntity);
+  const row = await repo.findOne({ where: { id: sourceId } });
+  return row ? toRecord(row) : null;
 }
 
 export function normalizeRecord(row: DataSourceRecord): DataSourceRecord {

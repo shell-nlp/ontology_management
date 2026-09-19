@@ -15,6 +15,16 @@ export type ObjectIndexKind = "POSTGRES";
 /** 一条进入检索索引的对象。objectId 是平台身份，primaryKey 是业务主键（M1 落位后成为真身份）。 */
 export type ObjectIndexEntry = {
   objectId: string;
+  /**
+   * 这个对象的**对象类型**名（不是接口名）。多标签节点取定义里的那个对象类型，
+   * 索引里的唯一键、按类型统计与对象服务都靠它。
+   */
+  entityType: string;
+  /**
+   * 对象键 = (对象类型, 主键) 的唯一表示（`@/lib/object-identity` 的 `objectKeyOf`）。
+   * 没有主键时退回 `id:<objectId>`：索引行仍然唯一，但它**不构成身份**。
+   */
+  objectKey: string;
   labels: string[];
   title: string;
   properties: Record<string, unknown>;
@@ -49,11 +59,20 @@ export type ObjectSearchQuery = {
 
 export type ObjectSearchHit = {
   objectId: string;
+  entityType: string;
+  objectKey: string;
   labels: string[];
   title: string;
   properties: Record<string, unknown>;
   primaryKey: Record<string, string>;
   score: number;
+};
+
+/** 一次增量同步的结果：写进去多少、删掉多少、这个本体存储同步后总共有多少。 */
+export type ObjectIndexSyncResult = {
+  upserted: number;
+  deleted: number;
+  total: number;
 };
 
 export type ObjectSearchResult = {
@@ -82,6 +101,24 @@ export type ObjectIndexCapabilities = {
 
 export interface ObjectIndex {
   readonly kind: ObjectIndexKind;
+  /**
+   * 增量写入：按**对象键**（对象类型 + 主键）upsert。
+   *
+   * 这是发布与"改一行同步一行"走的路：不整表替换，没变的行原样留着。
+   * `prune` 为真时，把这次没出现的键删掉（发布时用：快照才是权威）；为假时只增不删（同步单行用）。
+   */
+  syncTargetObjects(
+    targetId: string,
+    entries: ObjectIndexEntry[],
+    options?: { versionId?: string | null; prune?: boolean },
+  ): Promise<ObjectIndexSyncResult>;
+  /**
+   * 按对象键读一条原始条目（对象服务按主键定位对象用）。
+   * 走唯一键，不经过全文检索，也不受检索行数上限影响。
+   */
+  readObject(targetId: string, objectKey: string): Promise<ObjectIndexEntry | null>;
+  /** 按对象键批量删除，返回实际删除的行数。 */
+  deleteObjects(targetId: string, objectKeys: string[]): Promise<number>;
   /** 用给定对象整体替换该本体存储的索引；失败时旧索引保持可用。 */
   replaceTargetObjects(
     targetId: string,

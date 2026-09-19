@@ -253,6 +253,41 @@ export type TableDdl = {
 
 export type DataViewRef = { schema?: string; name: string };
 
+/**
+ * 结构化取行 —— **对象服务的唯一数据接缝**。
+ *
+ * 对象服务要的是"按主键取一行 / 按条件取一页"，不是一段 SQL：
+ * 把这件事定义成连接器的能力之后，将来接 Elasticsearch / REST / 物化对象层，
+ * 只要实现 `selectRows` / `countRows`，对象服务与上层界面一行都不用改。
+ * 列名一律是库里真实的列名（来自本体属性的 `sourceField`），由连接器负责引用与转义。
+ */
+export type DataSourceRowFilter = {
+  column: string;
+  operator: "EQ" | "NE" | "CONTAINS" | "IN";
+  value: string | number | boolean | string[];
+};
+
+export type DataSourceRowQuery = {
+  view: DataViewRef;
+  /** 只取这些列；空数组 = 全部列。 */
+  columns?: string[];
+  filters?: DataSourceRowFilter[];
+  /** 不区分大小写的包含匹配；`columns` 为空时不做文本过滤。 */
+  search?: { text: string; columns: string[] };
+  limit: number;
+  offset?: number;
+};
+
+export type DataSourceRows = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  /** 这次实际生效的行数上限（连接器会再夹一次），便于排障。 */
+  rowLimit: number;
+  /** 命中行数超过上限被截断。 */
+  truncated: boolean;
+  statement: string;
+};
+
 export type DataSourceHealth = {
   connected: boolean;
   /** 服务端自报的身份，例如 "PostgreSQL 16.3"。 */
@@ -277,6 +312,13 @@ export interface DataSourceConnector {
    * 没有这个方法就是没有，调用方如实拒绝，别假装支持。
    */
   runReadOnlyQuery?(sql: string, options?: { limit?: number }): Promise<SqlQueryResult>;
+  /**
+   * 结构化取行（对象服务用）。同样是可选的：数据来源没有"按列取行"这个概念时如实缺席，
+   * 对象服务会退回只读 SQL（关系库）或直接告知该来源不支持按主键取对象。
+   */
+  selectRows?(query: DataSourceRowQuery): Promise<DataSourceRows>;
+  /** 统计满足条件的行数（分页要用的总数）。 */
+  countRows?(query: Omit<DataSourceRowQuery, "columns" | "limit" | "offset">): Promise<number>;
   /** 表结构 / 视图定义（DDL）。同样只有关系库提供。 */
   describeTableDdl?(view: DataViewRef): Promise<TableDdl>;
 }

@@ -1,4 +1,4 @@
-import { platformQuery } from "@/lib/platform-db";
+import { jsonValue, platformRepo, OntologyEntity, GraphTargetEntity } from "@/lib/db";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
@@ -39,54 +39,70 @@ function slugify(value: string, fallback: string) {
   return slug || `ontology-${fallback.slice(0, 8)}`;
 }
 
+/** 实体 -> 领域记录（本体沿用 snake_case 口径）。 */
+function toOntology(row: OntologyEntity): Ontology {
+  return {
+    id: row.id,
+    identifier: row.identifier,
+    name: row.name,
+    description: row.description,
+    color: row.color,
+    tags: row.tags ?? [],
+    target_id: row.targetId,
+    owner_target_id: row.ownerTargetId,
+    namespace: row.namespace,
+    created_by: row.createdBy,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  };
+}
+
 async function uniqueIdentifier(base: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
-    const existing = await platformQuery<{ id: string }>("SELECT id FROM ontology_platform.ontologies WHERE identifier = $1", [candidate]);
-    if (!existing.rows.length) return candidate;
+    const repo = await platformRepo(OntologyEntity);
+    const existing = await repo.findOne({ where: { identifier: candidate }, select: { id: true } });
+    if (!existing) return candidate;
   }
   throw new Error("无法生成本体标识，请换一个名称。");
 }
 
 export async function listOntologies(): Promise<Ontology[]> {
-  const result = await platformQuery<Ontology>(
-    `SELECT id, identifier, name, description, color, tags, target_id, owner_target_id, namespace, created_by, created_at, updated_at
-       FROM ontology_platform.ontologies
-      ORDER BY updated_at DESC`,
-  );
-  return result.rows;
+  const repo = await platformRepo(OntologyEntity);
+  const rows = await repo.find({ order: { updatedAt: "DESC" } });
+  return rows.map(toOntology);
 }
 
 export async function getOntology(id: string): Promise<Ontology | null> {
-  const result = await platformQuery<Ontology>(
-    `SELECT id, identifier, name, description, color, tags, target_id, owner_target_id, namespace, created_by, created_at, updated_at
-       FROM ontology_platform.ontologies WHERE id = $1`,
-    [id],
-  );
-  return result.rows[0] ?? null;
+  const repo = await platformRepo(OntologyEntity);
+  const row = await repo.findOne({ where: { id } });
+  return row ? toOntology(row) : null;
 }
 
 export async function getOntologyByTargetId(targetId: string): Promise<Ontology | null> {
-  const result = await platformQuery<Ontology>(
-    `SELECT id, identifier, name, description, color, tags, target_id, owner_target_id, namespace, created_by, created_at, updated_at
-       FROM ontology_platform.ontologies WHERE target_id = $1`,
-    [targetId],
-  );
-  return result.rows[0] ?? null;
+  const repo = await platformRepo(OntologyEntity);
+  const row = await repo.findOne({ where: { targetId } });
+  return row ? toOntology(row) : null;
 }
 
 /** 受管存储记录：只在「存储资源」页归到某个资源下面显示，不当作独立资源让用户去选。 */
 async function createManagedTarget(storage: GraphTarget, ontologyId: string, name: string, namespace: string) {
-  const taken = await platformQuery<{ id: string }>("SELECT id FROM ontology_platform.graph_targets WHERE name = $1", [name]);
-  const targetName = taken.rows.length ? `${name} · ${ontologyId.slice(0, 4)}` : name;
+  const repo = await platformRepo(GraphTargetEntity);
+  const taken = await repo.findOne({ where: { name }, select: { id: true } });
+  const targetName = taken ? `${name} · ${ontologyId.slice(0, 4)}` : name;
   const id = crypto.randomUUID();
   const options: Record<string, unknown> = { ...parseTargetOptions(storage.options), namedGraph: namespace };
   delete options.builtin;
-  await platformQuery(
-    `INSERT INTO ontology_platform.graph_targets (id, name, kind, uri, database_name, username, credential_secret, options)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, targetName, storage.kind, storage.uri, storage.database_name, storage.username, storage.credential_secret, JSON.stringify(options)],
-  );
+  await repo.insert({
+    id,
+    name: targetName,
+    kind: storage.kind,
+    uri: storage.uri,
+    databaseName: storage.database_name,
+    username: storage.username,
+    credentialSecret: storage.credential_secret,
+    options: jsonValue(options),
+  });
   return id;
 }
 
@@ -107,23 +123,19 @@ export async function createOntology(
 
   // 导入本体包时希望能沿用包里的标识；被占了就自动往后加序号，不因为重名而失败。
   const identifier = await uniqueIdentifier(slugify(input.identifier?.trim() || name, id));
-  await platformQuery(
-    `INSERT INTO ontology_platform.ontologies
-       (id, identifier, name, description, color, tags, target_id, owner_target_id, namespace, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [
-      id,
-      identifier,
-      name,
-      (input.description ?? "").trim(),
-      (input.color ?? "").trim(),
-      input.tags ?? [],
-      targetId,
-      storage.id === BUILTIN_EMBEDDED_TARGET_ID ? null : storage.id,
-      namespace,
-      userId ?? null,
-    ],
-  );
+  const repo = await platformRepo(OntologyEntity);
+  await repo.insert({
+    id,
+    identifier,
+    name,
+    description: (input.description ?? "").trim(),
+    color: (input.color ?? "").trim(),
+    tags: input.tags ?? [],
+    targetId,
+    ownerTargetId: storage.id === BUILTIN_EMBEDDED_TARGET_ID ? null : storage.id,
+    namespace,
+    createdBy: userId ?? null,
+  });
   const created = await getOntology(id);
   if (!created) throw new Error("本体创建失败。");
   return created;
@@ -135,33 +147,23 @@ export async function updateOntology(
 ): Promise<Ontology> {
   const current = await getOntology(id);
   if (!current) throw new Error("本体不存在。");
-  const updates: string[] = [];
-  const values: unknown[] = [];
+  const changes: Partial<OntologyEntity> = {};
   if (patch.name !== undefined) {
     const name = patch.name.trim();
     if (!name) throw new Error("本体名称不能为空。");
-    updates.push(`name = $${updates.length + 1}`);
-    values.push(name);
+    changes.name = name;
   }
-  if (patch.description !== undefined) {
-    updates.push(`description = $${updates.length + 1}`);
-    values.push(patch.description.trim());
-  }
-  if (patch.color !== undefined) {
-    updates.push(`color = $${updates.length + 1}`);
-    values.push(patch.color.trim());
-  }
-  if (patch.tags !== undefined) {
-    updates.push(`tags = $${updates.length + 1}`);
-    values.push(patch.tags);
-  }
-  if (!updates.length) return current;
-  values.push(id);
-  await platformQuery(`UPDATE ontology_platform.ontologies SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`, values);
+  if (patch.description !== undefined) changes.description = patch.description.trim();
+  if (patch.color !== undefined) changes.color = patch.color.trim();
+  if (patch.tags !== undefined) changes.tags = patch.tags;
+  if (!Object.keys(changes).length) return current;
+  const repo = await platformRepo(OntologyEntity);
+  await repo.update({ id }, { ...changes, updatedAt: new Date() });
 
   // 本体改名时，受管存储记录跟着改（它只是这段隔离空间的载体，名字应该和本体一致）。
   if (patch.name !== undefined && await managedTargetId(current)) {
-    await platformQuery("UPDATE ontology_platform.graph_targets SET name = $1 WHERE id = $2", [patch.name.trim(), current.target_id]);
+    const targets = await platformRepo(GraphTargetEntity);
+    await targets.update({ id: current.target_id }, { name: patch.name.trim() });
   }
   const updated = await getOntology(id);
   if (!updated) throw new Error("本体不存在。");
@@ -175,9 +177,11 @@ export async function deleteOntology(id: string): Promise<{ removedTargetId: str
   const current = await getOntology(id);
   if (!current) throw new Error("本体不存在。");
   const managedId = await managedTargetId(current);
-  await platformQuery("DELETE FROM ontology_platform.ontologies WHERE id = $1", [id]);
+  const repo = await platformRepo(OntologyEntity);
+  await repo.delete({ id });
   if (!managedId) return { removedTargetId: null };
-  await platformQuery("DELETE FROM ontology_platform.graph_targets WHERE id = $1", [managedId]);
+  const targets = await platformRepo(GraphTargetEntity);
+  await targets.delete({ id: managedId });
   await removeTargetSnapshotDirectory(managedId);
   return { removedTargetId: managedId };
 }

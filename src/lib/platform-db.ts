@@ -1,292 +1,57 @@
 import { randomUUID } from "node:crypto";
-import bcrypt from "bcryptjs";
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
-import { DATA_SOURCE_KINDS } from "@/lib/data-source/types";
-import { BUILTIN_EMBEDDED_TARGET_ID, GRAPH_TARGET_KINDS } from "@/lib/graph/types";
+import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/db";
+import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
 
-let pool: Pool | undefined;
-let schemaPromise: Promise<void> | undefined;
+/**
+ * 平台库（PostgreSQL）的数据访问。
+ *
+ * **这一层现在只负责"业务口径"，SQL 全部交给 TypeORM**（2026-09-19 用户要求：
+ * "操作数据库一定要用 ORM，不能直接写 SQL"）。表结构在 `@/lib/db/migrations`，
+ * 实体在 `@/lib/db/entities`，这里只做查询编排与领域类型转换。
+ *
+ * 换库 / 换存储实现时改的是 `@/lib/db` 里的 `type` 与那一处 advisory lock，
+ * 本文件与所有调用点都不需要动。
+ */
 
 export type Role = "ADMIN" | "VIEWER";
 
-export type PlatformUser = QueryResultRow & {
+export type PlatformUser = {
   id: string;
   email: string;
   role: Role;
   password_hash: string;
 };
 
-function getPool() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured.");
-  }
+export { ensurePlatformSchema, withAdvisoryLock, withPlatformTransaction };
 
-  if (!pool) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    /*
-     * 空闲连接被对端或中间的网络设备掐断时（远端平台库很常见），pg 会在**池对象**上发 error 事件。
-     * 没有监听者就是一个未捕获的 error 事件 —— 进程可能直接退出，部署里表现为"用着用着服务没了"，
-     * 而且日志会把整个连接对象打出来（几 KB 的噪音）。这里兜住并只记一行：断了池会自己重建。
-     */
-    pool.on("error", (error) => {
-      console.error(`[platform-db] 平台库连接断了（连接池会自动重连）：${error.message}`);
-    });
-  }
-  return pool;
+/** 按 id 取当前有效用户；找不到说明这个会话已经不该再用（换库、删用户、改权限）。 */
+export async function findSessionUser(id: string): Promise<Pick<PlatformUser, "id" | "email" | "role"> | null> {
+  const repo = await platformRepo(PlatformUserEntity);
+  const user = await repo.findOne({ where: { id }, select: { id: true, email: true, role: true } });
+  if (!user) return null;
+  return { id: user.id, email: user.email, role: user.role as Role };
 }
 
-export async function ensurePlatformSchema() {
-  schemaPromise ??= ensurePlatformSchemaOnce().catch((error) => {
-    // 失败的 promise 不能留在缓存里：一次并发竞争或连接抖动，会让这个进程后续所有请求都失败。
-    schemaPromise = undefined;
-    throw error;
-  });
-  return schemaPromise;
+/** 按邮箱取账号（含密码哈希）：登录用。 */
+export async function findUserByEmail(email: string): Promise<PlatformUser | null> {
+  const repo = await platformRepo(PlatformUserEntity);
+  const user = await repo.findOne({ where: { email: email.trim().toLowerCase() } });
+  if (!user) return null;
+  return { id: user.id, email: user.email, role: user.role as Role, password_hash: user.passwordHash };
 }
 
-async function ensurePlatformSchemaOnce() {
-  // DDL 里有 DROP + ADD 约束这种两步操作，并发请求会互相踩（约束已存在）。用数据库层面的锁串起来。
-  return withAdvisoryLock("ontology_platform_schema", async () => {
-    const client = await getPool().connect();
-    try {
-      await client.query("CREATE SCHEMA IF NOT EXISTS ontology_platform");
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.users (
-          id TEXT PRIMARY KEY,
-          email TEXT NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL,
-          role TEXT NOT NULL CHECK (role IN ('ADMIN', 'VIEWER')),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      // 本体存储表从 neo4j_targets 演进为后端无关的 graph_targets；这条改名迁移保留，
-      // 老部署升级时历史数据不会丢（Neo4j 引擎本身已于 2026-09-14 移除）。
-      await client.query(`
-        DO $$
-        BEGIN
-          IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ontology_platform' AND table_name = 'neo4j_targets')
-             AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ontology_platform' AND table_name = 'graph_targets') THEN
-            ALTER TABLE ontology_platform.neo4j_targets RENAME TO graph_targets;
-          END IF;
-        END $$;
-      `);
-      const kinds = GRAPH_TARGET_KINDS.map((item) => `'${item.kind}'`).join(", ");
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.graph_targets (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL UNIQUE,
-          kind TEXT NOT NULL DEFAULT 'JENA',
-          uri TEXT NOT NULL,
-          database_name TEXT NOT NULL DEFAULT 'ds',
-          username TEXT NOT NULL DEFAULT '',
-          credential_secret TEXT NOT NULL DEFAULT '',
-          options JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'JENA'`);
-      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb`);
-      await client.query(`ALTER TABLE ontology_platform.graph_targets DROP CONSTRAINT IF EXISTS graph_targets_kind_check`);
-      await client.query(`ALTER TABLE ontology_platform.graph_targets ADD CONSTRAINT graph_targets_kind_check CHECK (kind IN (${kinds}))`);
-      // 平台自带的内置存储资源是虚拟选项，不占 graph_targets 行；
-      // 只有用户创建的具体本体才会拥有独立的受管目标记录。
-      // 内置后端的已发布视图：平台库负责持久化与原子切换，进程内 RDF/Graphology 图始终可重建。
-      // 实例数组仅兼容当前手工样本；未来海量业务对象不进入这张表。
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.embedded_graphs (
-          target_id TEXT PRIMARY KEY REFERENCES ontology_platform.graph_targets(id) ON DELETE CASCADE,
-          snapshot JSONB NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      // 数据资源：外部业务数据的来源（关系库等）。与本体存储 graph_targets 是两件事：
-      // 前者是数据从哪来，后者是本体存在哪。这里只存连接信息，取数一律按需连、用完断开。
-      const sourceKinds = DATA_SOURCE_KINDS.map((item) => `'${item.kind}'`).join(", ");
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.data_sources (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL UNIQUE,
-          kind TEXT NOT NULL DEFAULT 'POSTGRES',
-          host TEXT NOT NULL,
-          port INTEGER NOT NULL DEFAULT 5432,
-          database_name TEXT NOT NULL DEFAULT '',
-          schema_name TEXT NOT NULL DEFAULT '',
-          username TEXT NOT NULL DEFAULT '',
-          credential_secret TEXT NOT NULL DEFAULT '',
-          options JSONB NOT NULL DEFAULT '{}'::jsonb,
-          enabled BOOLEAN NOT NULL DEFAULT TRUE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`ALTER TABLE ontology_platform.data_sources DROP CONSTRAINT IF EXISTS data_sources_kind_check`);
-      await client.query(`ALTER TABLE ontology_platform.data_sources ADD CONSTRAINT data_sources_kind_check CHECK (kind IN (${sourceKinds}))`);
-      /*
-       * 结构缓存（2026-09-19 用户要求"复用 data_sources 这张表"）：从源库读回来的
-       * 表/视图清单、字段清单、样本行就存在这一行的 catalog 列里，之后只从平台库取，
-       * 只有点「刷新结构 / 重新取数」才回源库重读。远端 Oracle 扫一次数据字典要几秒，
-       * 而结构一天也未必变一次。
-       * 形状：{ catalog: { "<范围>": { fetchedAt, objects } }, views: { "<模式.表>@<行数>": { fetchedAt, fields, preview } } }
-       */
-      await client.query(`ALTER TABLE ontology_platform.data_sources ADD COLUMN IF NOT EXISTS catalog JSONB NOT NULL DEFAULT '{}'::jsonb`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.audit_entries (
-          id TEXT PRIMARY KEY,
-          actor_id TEXT REFERENCES ontology_platform.users(id),
-          target_id TEXT REFERENCES ontology_platform.graph_targets(id) ON DELETE SET NULL,
-          action TEXT NOT NULL,
-          details JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      // 本体：平台的隔离单位。一个本体占一份图数据（target_id 唯一），
-      // 「本体存储」退到后面当落点用；用户建本体时只需要挑一个存储资源。
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.ontologies (
-          id TEXT PRIMARY KEY,
-          identifier TEXT NOT NULL UNIQUE,
-          name TEXT NOT NULL,
-          description TEXT NOT NULL DEFAULT '',
-          color TEXT NOT NULL DEFAULT '',
-          tags TEXT[] NOT NULL DEFAULT '{}'::text[],
-          target_id TEXT NOT NULL UNIQUE REFERENCES ontology_platform.graph_targets(id) ON DELETE CASCADE,
-          /** 用户挑的那个存储资源。Jena 上会另开一条受管记录，这里记住它从哪来。 */
-          owner_target_id TEXT REFERENCES ontology_platform.graph_targets(id) ON DELETE SET NULL,
-          /** Fuseki 里的命名图，一个本体一个。 */
-          namespace TEXT,
-          created_by TEXT REFERENCES ontology_platform.users(id),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      /*
-       * 智能问答的对话历史（能力验证 → 智能问答）。
-       *
-       * conversation 挂在**一个本体**下、属于**提问的那个人**；message 是一轮问答，
-       * 存问题、结论、思考过程，以及那次运行的完整结果 `run`（步骤 / 证据 / 用量）。
-       * 存 run 是为了"看以前的对话"能看到和当时一模一样的过程，而不是只剩一段结论。
-       *
-       * ontology_id 可为空、target_id 不设外键：只有直接选中一条未纳管的存储资源时
-       * 才没有本体可挂，这时退化成按落点归类；本体换落点之后历史仍然属于这个本体。
-       */
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.platform_settings (
-          key TEXT PRIMARY KEY,
-          value JSONB NOT NULL,
-          updated_by TEXT REFERENCES ontology_platform.users(id),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.reasoning_conversations (
-          id TEXT PRIMARY KEY,
-          ontology_id TEXT REFERENCES ontology_platform.ontologies(id) ON DELETE CASCADE,
-          target_id TEXT,
-          title TEXT NOT NULL DEFAULT '',
-          created_by TEXT REFERENCES ontology_platform.users(id),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ontology_platform.reasoning_messages (
-          id TEXT PRIMARY KEY,
-          conversation_id TEXT NOT NULL REFERENCES ontology_platform.reasoning_conversations(id) ON DELETE CASCADE,
-          question TEXT NOT NULL,
-          answer TEXT NOT NULL DEFAULT '',
-          thinking TEXT NOT NULL DEFAULT '',
-          thinking_on BOOLEAN NOT NULL DEFAULT TRUE,
-          run JSONB,
-          error TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      // 多轮上下文：更早的轮次压成一段摘要存这儿，下一轮直接复用（不重复压）。
-      // 用 ADD COLUMN IF NOT EXISTS 而不是重建表：老部署升级时历史记录要原样留着。
-      await client.query(`ALTER TABLE ontology_platform.reasoning_conversations ADD COLUMN IF NOT EXISTS history_summary TEXT`);
-      await client.query(`ALTER TABLE ontology_platform.reasoning_conversations ADD COLUMN IF NOT EXISTS history_summary_through TEXT`);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS reasoning_conversations_scope_idx
-          ON ontology_platform.reasoning_conversations (created_by, ontology_id, updated_at DESC)
-      `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS reasoning_messages_conversation_idx
-          ON ontology_platform.reasoning_messages (conversation_id, created_at)
-      `);
-      // 首次使用新平台库时自动创建管理员。schema advisory lock 覆盖检查与写入，
-      // 多个 Next 进程同时启动也不会各建一个；已有用户的库绝不重设密码。
-      const existing = await client.query<{ exists: boolean }>(
-        "SELECT EXISTS (SELECT 1 FROM ontology_platform.users) AS exists",
-      );
-      if (!existing.rows[0]?.exists) {
-        const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
-        const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
-        if (!email || !password) {
-          throw new Error("平台库还没有用户，请配置 BOOTSTRAP_ADMIN_EMAIL 和 BOOTSTRAP_ADMIN_PASSWORD。");
-        }
-        await client.query(
-          "INSERT INTO ontology_platform.users (id, email, password_hash, role) VALUES ($1, $2, $3, 'ADMIN')",
-          [randomUUID(), email, await bcrypt.hash(password, 12)],
-        );
-      }
-    } finally {
-      client.release();
-    }
-  });
+/** 用户总数：首次启动引导用。 */
+export async function countUsers(): Promise<number> {
+  const repo = await platformRepo(PlatformUserEntity);
+  return repo.count();
 }
 
-export async function platformQuery<T extends QueryResultRow>(text: string, values: unknown[] = []) {
-  await ensurePlatformSchema();
-  return getPool().query<T>(text, values);
-}
-
-/**
- * 需要多条语句原子生效时用这个（典型场景：删掉旧索引 + 写入新索引）。
- * 与 platformQuery 共用同一个连接池；回调里拿到的 client 只在回调内使用，不要外传。
- */
-export async function withPlatformTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  await ensurePlatformSchema();
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    const result = await operation(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // 连接已经断开时回滚也会失败；保留原始错误更有诊断价值。
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * 跨实例互斥锁。
- *
- * 进程内的 Promise 队列只能挡住同一个实例：多实例部署时，两个实例可能同时发布同一个本体存储。
- * 这里用 PostgreSQL 会话级 advisory lock 补齐这一层，让同一个 key 在集群范围内串行。
- * 连接断开时锁会自动释放；解锁在 finally 里显式执行，且必须与加锁落在同一条连接上。
- */
-export async function withAdvisoryLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
-  try {
-    await client.query("SELECT pg_advisory_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint)", [key]);
-  } catch (error) {
-    client.release();
-    throw error;
-  }
-  try {
-    return await operation();
-  } finally {
-    try {
-      await client.query("SELECT pg_advisory_unlock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint)", [key]);
-    } finally {
-      client.release();
-    }
-  }
+/** 建用户（引导流程与将来的用户管理都用它）。 */
+export async function insertUser(input: { id?: string; email: string; passwordHash: string; role?: Role }) {
+  const repo = await platformRepo(PlatformUserEntity);
+  const id = input.id ?? randomUUID();
+  await repo.insert({ id, email: input.email.trim().toLowerCase(), passwordHash: input.passwordHash, role: input.role ?? "ADMIN" });
+  return id;
 }
 
 export async function writeAuditEntry(input: {
@@ -297,12 +62,17 @@ export async function writeAuditEntry(input: {
 }) {
   // 虚拟入口不在 graph_targets 中；审计表的 FK 只引用真实受管目标。
   const virtualTarget = input.targetId === BUILTIN_EMBEDDED_TARGET_ID;
-  await platformQuery(
-    `INSERT INTO ontology_platform.audit_entries (id, actor_id, target_id, action, details)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [crypto.randomUUID(), input.actorId ?? null, virtualTarget ? null : (input.targetId ?? null), input.action,
-      JSON.stringify(virtualTarget ? { ...input.details, virtualTargetId: input.targetId } : (input.details ?? {}))],
-  );
+  const details = virtualTarget ? { ...input.details, virtualTargetId: input.targetId } : (input.details ?? {});
+  const versionId = typeof details.versionId === "string" ? details.versionId : null;
+  const repo = await platformRepo(AuditEntryEntity);
+  await repo.insert({
+    id: randomUUID(),
+    actorId: input.actorId ?? null,
+    targetId: virtualTarget ? null : (input.targetId ?? null),
+    action: input.action,
+    versionId,
+    details: jsonValue(details),
+  });
 }
 
 export type AuditEntry = {
@@ -318,36 +88,43 @@ export type AuditEntry = {
 /**
  * 读审计记录。动作的决策记录（干跑 / 执行 / 被拦截）也走这张表，
  * 因此按 action 前缀过滤就能同时服务"审计"和"决策记录"两个界面。
+ *
+ * 版本过滤走 `version_id` 这一列（写入时从 details 里提出来），不再在查询里拆 jsonb。
  */
 export async function listAuditEntries(input: { targetId: string; actions?: string[]; versionId?: string; limit?: number }): Promise<AuditEntry[]> {
   const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 50)));
-  const result = await platformQuery<{
+  const repo = await platformRepo(AuditEntryEntity);
+  const query = repo.createQueryBuilder("a")
+    .leftJoin(PlatformUserEntity, "u", "u.id = a.actorId")
+    .select("a.id", "id")
+    .addSelect("a.actor_id", "actorId")
+    .addSelect("u.email", "actorEmail")
+    .addSelect("a.target_id", "targetId")
+    .addSelect("a.action", "action")
+    .addSelect("a.details", "details")
+    .addSelect("a.created_at", "createdAt")
+    .where("a.target_id = :targetId", { targetId: input.targetId })
+    .orderBy("a.created_at", "DESC")
+    .limit(limit);
+  if (input.actions?.length) query.andWhere("a.action IN (:...actions)", { actions: input.actions });
+  if (input.versionId) query.andWhere("a.version_id = :versionId", { versionId: input.versionId });
+  const rows = await query.getRawMany<{
     id: string;
-    actor_id: string | null;
-    actor_email: string | null;
-    target_id: string | null;
+    actorId: string | null;
+    actorEmail: string | null;
+    targetId: string | null;
     action: string;
-    details: Record<string, unknown>;
-    created_at: Date | string;
-  }>(
-    `SELECT a.id, a.actor_id, u.email AS actor_email, a.target_id, a.action, a.details, a.created_at
-       FROM ontology_platform.audit_entries a
-       LEFT JOIN ontology_platform.users u ON u.id = a.actor_id
-      WHERE a.target_id = $1
-        AND ($2::text[] IS NULL OR a.action = ANY($2))
-        AND ($4::text IS NULL OR a.details->>'versionId' = $4)
-      ORDER BY a.created_at DESC
-      LIMIT $3`,
-    [input.targetId, input.actions && input.actions.length ? input.actions : null, limit, input.versionId ?? null],
-  );
-  return result.rows.map((row) => ({
+    details: Record<string, unknown> | null;
+    createdAt: Date | string;
+  }>();
+  return rows.map((row) => ({
     id: row.id,
-    actorId: row.actor_id,
-    actorEmail: row.actor_email,
-    targetId: row.target_id,
+    actorId: row.actorId,
+    actorEmail: row.actorEmail,
+    targetId: row.targetId,
     action: row.action,
     details: row.details ?? {},
-    createdAt: new Date(row.created_at).toISOString(),
+    createdAt: new Date(row.createdAt).toISOString(),
   }));
 }
 
@@ -359,17 +136,15 @@ export async function listAuditEntries(input: { targetId: string; actions?: stri
  * 所以这类"跟着部署走"的设置必须落在平台库上。
  */
 export async function readPlatformSetting<T>(key: string): Promise<T | null> {
-  const result = await platformQuery<{ value: T }>("SELECT value FROM ontology_platform.platform_settings WHERE key = $1", [key]);
-  return result.rows[0]?.value ?? null;
+  const repo = await platformRepo(PlatformSettingEntity);
+  const row = await repo.findOne({ where: { key } });
+  return (row?.value as T) ?? null;
 }
 
 export async function writePlatformSetting<T>(key: string, value: T, updatedBy?: string): Promise<T> {
-  await platformQuery(
-    `INSERT INTO ontology_platform.platform_settings (key, value, updated_by, updated_at)
-     VALUES ($1, $2, $3, NOW())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-    [key, JSON.stringify(value), updatedBy ?? null],
-  );
+  const repo = await platformRepo(PlatformSettingEntity);
+  // upsert：主键冲突时覆盖值与更新人，等价于原来的 ON CONFLICT DO UPDATE。
+  await repo.upsert({ key, value: jsonValue(value), updatedBy: updatedBy ?? null, updatedAt: new Date() }, ["key"]);
   return value;
 }
 
@@ -389,33 +164,38 @@ export type DataSourceCatalogCache = {
 };
 
 export async function readDataSourceCatalogCache(sourceId: string): Promise<DataSourceCatalogCache> {
-  const result = await platformQuery<{ catalog: DataSourceCatalogCache }>(
-    "SELECT catalog FROM ontology_platform.data_sources WHERE id = $1",
-    [sourceId],
-  );
-  const value = result.rows[0]?.catalog;
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const repo = await platformRepo(DataSourceEntity);
+  const row = await repo.findOne({ where: { id: sourceId }, select: { id: true, catalog: true } });
+  const value = row?.catalog;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as DataSourceCatalogCache) : {};
 }
 
 /**
  * 合并写入：只覆盖这次给到的分片，别的分片原样留着。
- * 用 SQL 里的 `||` 合并，避免"读-改-写"把并发写进来的另一张表覆盖掉。
+ * 用 `FOR UPDATE` 锁住这一行再做读-改-写，效果与原来 SQL 里的 `||` 合并一致：
+ * 并发写进来的另一张表不会被这次写覆盖掉。
  */
 export async function writeDataSourceCatalogCache(
   sourceId: string,
   patch: { catalog?: NonNullable<DataSourceCatalogCache["catalog"]>; views?: NonNullable<DataSourceCatalogCache["views"]> },
 ): Promise<void> {
-  await platformQuery(
-    `UPDATE ontology_platform.data_sources
-        SET catalog = jsonb_set(
-              jsonb_set(catalog, '{catalog}', COALESCE(catalog->'catalog', '{}'::jsonb) || $2::jsonb),
-              '{views}', COALESCE(catalog->'views', '{}'::jsonb) || $3::jsonb)
-      WHERE id = $1`,
-    [sourceId, JSON.stringify(patch.catalog ?? {}), JSON.stringify(patch.views ?? {})],
-  );
+  await withPlatformTransaction(async (manager) => {
+    const repo = repoIn(manager, DataSourceEntity);
+    const row = await repo.findOne({ where: { id: sourceId }, lock: { mode: "pessimistic_write" } });
+    if (!row) return;
+    const current = row.catalog && typeof row.catalog === "object" && !Array.isArray(row.catalog) ? (row.catalog as DataSourceCatalogCache) : {};
+    await repo.update({ id: sourceId }, {
+      catalog: jsonValue({
+        ...current,
+        ...(patch.catalog ? { catalog: { ...(current.catalog ?? {}), ...patch.catalog } } : {}),
+        ...(patch.views ? { views: { ...(current.views ?? {}), ...patch.views } } : {}),
+      }),
+    });
+  });
 }
 
 /** 清掉一个数据资源的全部结构缓存（改连接信息时用：换了库还拿旧结构就是错的）。 */
 export async function clearDataSourceCatalogCache(sourceId: string): Promise<void> {
-  await platformQuery("UPDATE ontology_platform.data_sources SET catalog = '{}'::jsonb WHERE id = $1", [sourceId]);
+  const repo = await platformRepo(DataSourceEntity);
+  await repo.update({ id: sourceId }, { catalog: {} });
 }

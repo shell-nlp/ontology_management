@@ -1,19 +1,19 @@
 import Graph from "graphology";
 import { QueryEngine } from "@comunica/query-sparql";
 import { DataFactory, Parser, Store } from "n3";
-import { ensurePlatformSchema, platformQuery } from "@/lib/platform-db";
+import { EmbeddedGraphEntity, ensurePlatformSchema, jsonValue, platformRepo } from "@/lib/db";
 import { valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
 import { bindSparqlParameters, containsWriteSparql, graphFromTriples, snapshotStatements, sparqlQueryForm } from "@/lib/graph/jena";
 import { graphTargetKindInfo, type GraphData, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type QueryResult, type RelationshipRecord, type RuntimeTypeSet } from "@/lib/graph/types";
 
-const TABLE = "ontology_platform.embedded_graphs";
 const NODE_PREFIX = "urn:bkn:node:";
 const EMPTY: GraphWriteSnapshot = { definition: { entityTypes: [], relationshipTypes: [], interfaces: [] }, nodes: [], relationships: [] };
 
 /** PG 是唯一的已发布状态；内存图只在查询期间由当前版本构建，不依赖单个 Node 进程的寿命。 */
 async function activeSnapshot(targetId: string): Promise<GraphWriteSnapshot> {
-  const result = await platformQuery<{ snapshot: GraphWriteSnapshot }>(`SELECT snapshot FROM ${TABLE} WHERE target_id = $1`, [targetId]);
-  return result.rows[0]?.snapshot ?? EMPTY;
+  const repo = await platformRepo(EmbeddedGraphEntity);
+  const row = await repo.findOne({ where: { targetId } });
+  return (row?.snapshot as GraphWriteSnapshot | undefined) ?? EMPTY;
 }
 
 function typeGraph(snapshot: GraphWriteSnapshot) {
@@ -180,11 +180,11 @@ export function createEmbeddedStore(target: GraphTarget): GraphStore {
       return { nodes: snapshot.nodes.map((node) => ({ ...node })), relationships: snapshot.relationships.map((rel) => ({ ...rel })) };
     },
     async replaceGraph(snapshot) {
-      // 单行 UPSERT 是 PG 的原子操作；查询只见到旧图或新图，不见半成品。
-      await platformQuery(`INSERT INTO ${TABLE} (target_id, snapshot) VALUES ($1, $2::jsonb)
-        ON CONFLICT (target_id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()`, [target.id, JSON.stringify(snapshot)]);
+      // 单行 upsert 是数据库层面的原子操作；查询只见到旧图或新图，不见半成品。
+      const repo = await platformRepo(EmbeddedGraphEntity);
+      await repo.upsert({ targetId: target.id, snapshot: jsonValue(snapshot), updatedAt: new Date() }, ["targetId"]);
     },
-    async clearGraph() { await platformQuery(`DELETE FROM ${TABLE} WHERE target_id = $1`, [target.id]); },
+    async clearGraph() { const repo = await platformRepo(EmbeddedGraphEntity); await repo.delete({ targetId: target.id }); },
     async validateDefinition(definition): Promise<GraphViolation[]> {
       const snapshot = await activeSnapshot(target.id);
       const violations: GraphViolation[] = [];

@@ -4,7 +4,8 @@ import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
 import { clearStructureCache } from "@/lib/data-source/structure-cache";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
-import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
+import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
+import { writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {
@@ -41,12 +42,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ s
       options: input.options ? parseDataSourceOptions(input.options) : current.options,
       enabled: input.enabled ?? current.enabled,
     };
-    await platformQuery(
-      `UPDATE ontology_platform.data_sources
-       SET name = $2, kind = $3, host = $4, port = $5, database_name = $6, schema_name = $7, username = $8, credential_secret = $9, options = $10, enabled = $11
-       WHERE id = $1`,
-      [sourceId, next.name, next.kind, next.host, next.port, next.database_name, next.schema_name, next.username, next.credential_secret, JSON.stringify(next.options), next.enabled],
-    );
+    const repo = await platformRepo(DataSourceEntity);
+    await repo.update({ id: sourceId }, {
+      name: next.name,
+      kind: next.kind,
+      host: next.host,
+      port: next.port,
+      databaseName: next.database_name,
+      schemaName: next.schema_name,
+      username: next.username,
+      credentialSecret: next.credential_secret,
+      options: jsonValue(next.options),
+      enabled: next.enabled,
+    });
     /*
      * 换了连接就作废结构缓存：缓存里存的是"那个库那个模式下的表清单"，
      * host / 库 / 模式 / 账号 / 密码 一变，旧清单就不成立了。
@@ -76,7 +84,8 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
     if (!current) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
     // 审计先写：data_sources 删除后再补就找不到这条来源了。
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_DELETED", details: { dataSourceId: sourceId, name: current.name, kind: current.kind } });
-    await platformQuery(`DELETE FROM ontology_platform.data_sources WHERE id = $1`, [sourceId]);
+    const repo = await platformRepo(DataSourceEntity);
+    await repo.delete({ id: sourceId });
     return NextResponse.json({ deleted: true });
   } catch (error) {
     const status = isUnauthorized(error) ? 401 : 400;

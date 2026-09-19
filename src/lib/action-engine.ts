@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
+import { resolveObjectIdentity } from "@/lib/object-identity";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 /**
@@ -243,11 +244,23 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
     if (edit.op === "CREATE_ENTITY") {
       const type = definition.entityTypes.find((item) => item.id === edit.entityTypeId);
       if (!type) throw new Error("动作要新建的对象类型不存在。");
-      const node: ActionNode = { id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawFromAssignments(edit.assignments, params)) };
-      nodes.push(node);
+      const properties = parsePropertyValues(type.properties, rawFromAssignments(edit.assignments, params));
+      /*
+       * 身份 = (对象类型, 主键)：动作把主键写全了，就用主键推出确定性 id。
+       * 同一个主键再次执行同一个动作时落到同一个对象上（改它，而不是造出第二份）。
+       */
+      const identity = resolveObjectIdentity(type, properties);
+      const existing = identity ? nodes.find((item) => item.id === identity.id) : undefined;
+      const node: ActionNode = existing ?? { id: identity?.id ?? randomUUID(), labels: [type.name], properties };
+      if (existing) {
+        existing.properties = parsePropertyValues(type.properties, { ...existing.properties, ...properties });
+        steps.push(`命中已存在的${type.name}「${actionNodeDisplay(definition, existing)}」，改为更新它`);
+      } else {
+        nodes.push(node);
+      }
       if (edit.alias) refs.set(refKey("EDIT", edit.alias), node.id);
       createdEntities.push({ id: node.id, label: type.name, display: actionNodeDisplay(definition, node) });
-      steps.push(`新建${type.name}「${actionNodeDisplay(definition, node)}」`);
+      if (!existing) steps.push(`新建${type.name}「${actionNodeDisplay(definition, node)}」`);
       continue;
     }
     if (edit.op === "SET_PROPERTY") {

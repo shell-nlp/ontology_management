@@ -2,7 +2,7 @@ import { createPostgresObjectIndex } from "@/lib/object-index/postgres";
 import type { ObjectIndex } from "@/lib/object-index/types";
 
 export * from "@/lib/object-index/types";
-export { buildIndexEntries, MAX_SEARCH_TEXT, type IndexableNode } from "@/lib/object-index/entries";
+export { buildIndexEntries, buildIndexEntry, resolveEntityType, resolvePrimaryKey, MAX_SEARCH_TEXT, type IndexableNode } from "@/lib/object-index/entries";
 export { escapeLike, normalizeSearchQuery, planObjectSearch } from "@/lib/object-index/sql";
 
 let instance: ObjectIndex | undefined;

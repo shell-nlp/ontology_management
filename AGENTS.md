@@ -416,6 +416,75 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   `build-bundle.mjs` 原样编译并顺手报"指到不存在的属性"；`check-bundle.mjs` 也会查一遍。
 - 单测：`tests/lib/relationship-keys.test.ts`（10 条）+ `tests/lib/version-snapshot.test.ts` 的发布门禁用例。
 
+## 平台库统一走 TypeORM（2026-09-19 用户要求）
+
+**口径：操作数据库一定要用 ORM，不能直接写 SQL；以前写在业务代码里的 SQL 也要改掉。**
+这条是硬约束，改任何数据访问前先看这一节。
+
+**平台库（PostgreSQL，schema `ontology_platform`）**：全部走 `@/lib/db`。
+
+- 实体在 `src/lib/db/entities.ts`，表结构在 `src/lib/db/migrations/`（**幂等**，按数组顺序执行；
+  加表 / 加列就追加一支迁移类，不要在业务代码里写 DDL）。
+- 读写用 `platformRepo(Entity)`（事务内用 `repoIn(manager, Entity)`）；事务用
+  `withPlatformTransaction(manager => …)`。`src/lib/platform-db.ts` 只留业务口径与领域类型转换。
+- **仓储一律按"实体名"解析**（`repositoryFor`）：dev 的 HMR 会让同一份代码存在多个模块副本、
+  各自换一批实体类，按类身份判断会互相重建 DataSource，表现为随机的
+  `No metadata for "…Entity" was found`。所以 DataSource 只按配置建一次，仓储按名字找 target。
+- **TypeORM 1.x 的 PG 查询器只接受位置参数**（`$1` + 数组）；传对象（`:name`）会直接抛
+  `Your driver does not support named placeholders.`
+
+**业务数据源**：对象服务不拼 SQL，只声明"要哪些列、什么条件"。接缝是连接器的
+`selectRows` / `countRows`（`DataSourceRowQuery`），实现里用 TypeORM 的 **QueryBuilder**：
+表名交给 `.from()`（**传裸名**，预转义会变成 `"""GISTOOLS"""`），值走 `setParameter`。
+
+**允许保留的显式 SQL**（都在各自文件的注释里写明原因，别再扩散）：
+
+1. `src/lib/db/migrations/*`：建表 / 改列 / 数据回填（迁移本来就是干这个的）；
+2. `@/lib/db` 的 `withAdvisoryLock`：PG 会话级 advisory lock，TypeORM 没有等价 API；
+3. `object-index/postgres.ts` 的**表结构与全文 / 向量检索**：GIN、tsvector 生成列、pgvector、
+   `@@` / `ts_rank` / `<=>` —— PG 专有，换搜索引擎就是换这个文件；
+4. `data-source/sql.ts` 的 **DDL 还原、Oracle 数据字典、只读 SQL 工作台**：
+   前两个是驱动能力（TypeORM 对旧 Oracle 的 ALL_TABLES 支持有问题），第三个功能本身就是"执行用户写的 SQL"。
+
+### 对象身份与对象服务（S1 / S2 / S3，2026-09-19）
+
+**身份 = (对象类型, 主键)**：`@/lib/object-identity` 是唯一定义处（纯函数、有单测）。
+
+- `objectIdOf(entityType, primaryKey)`：SHA-1 派生的**确定性 UUID**（v5 风格）。同一主键永远同一个 id，
+  发布 / 动作写入 / 导出快照 / 索引键四处共用；主键不全时返回空串，调用方退回"快照里的那一行"。
+  **命名空间常量不要随手改**：改了等于把所有对象换一批身份。
+- `objectKeyOf` 是索引里的唯一键（`[对象类型, 规范化主键]` 的 JSON），主键值里的 `\` `&` `=` 会转义，
+  避免 `{a:"b&c=d"}` 与 `{a:"b",c:"d"}` 撞键。没有主键的对象退回 `id:<objectId>`（唯一，但**不是身份**）。
+- 主键值统一**去空格**：Oracle 的 CHAR 列取回来带尾空格（`"371       "`），身份、索引键、
+  按主键查询都用去空格后的值。
+- **主键重复挡发布**：`validateVersionSnapshot` 会报"同一个对象类型里主键必须唯一"（`primaryKeyConflicts`）。
+
+**对象服务**（`@/lib/object-service`）是"按对象类型 + 主键取对象"的唯一入口：
+
+| 入口 | 说明 |
+| --- | --- |
+| `getObject(context, 类型, 主键, {origin})` | 索引里有就走索引（快），没有就按 `sources[]` 回源（全）；`origin` 可强制 |
+| `queryObjects(context, {text, filters, limit, offset})` | `auto`：索引里这个对象类型有数据就用索引，否则回源；总数拿不到时是 `null`，不编造 |
+| `syncObjectsToIndex(context, 类型, {keys?, limit?})` | 增量写索引（只 upsert 不 prune；发布才 prune） |
+| `GET /api/objects` | `?targetId&entityType` + `key=列=值&列=值`（单个），或 `text` / `filter=列:算子:值`（列表） |
+| `POST /api/objects/index` | 增量同步：给 `keys` 就只同步这几条 |
+
+来源是可替换的一层：`ObjectSource` 目前只有"数据资源"一个实现（`data-source.ts`），
+将来接物化对象层 / ES / REST 只加实现，门面与界面不动。**对象页 / 图谱 / 动作页还没接过来（下一步）。**
+
+### 数据源取行的 Oracle 坑（都已在代码里处理，别再踩）
+
+1. **11g 没有 `FETCH NEXT`**：TypeORM 的 `.limit()/.offset()` 在 Oracle 上生成 `FETCH NEXT n ROWS ONLY`，
+   旧服务端直接 `ORA-03001: unimplemented feature`。现在 Oracle 走 `ROWNUM <= take + skip` 条件限行，
+   深翻页在内存里丢掉前几页（`ORACLE_MAX_OFFSET = 5000`）。
+2. **CHAR 列的绑定值不补空格**：`WHERE CUST_ID = :1`（绑 `'1654…'`）匹配不到，`= '1654…'`（字面量）却匹配，
+   绑**带空格的原值**才匹配。所以定长 CHAR 列的等值比较写成 `RTRIM(col) = :p`
+   （`paddedColumnsFor` 按视图缓存列类型，5 分钟）。代价是这一列用不上普通索引 —— 正确优先。
+3. **Oracle 的绑定名必须是数字键**（`{"1": v}`）：TypeORM 的 `getSql()` 已经把 `:p1` 变成 `:1`，
+   再把 `getParameters()`（`{p1: …}`）交给驱动会"参数没传进去、过滤静默返回空"。
+   正确做法是 `getQueryAndParameters()` 拿位置化 SQL + 值数组，再转成数字键对象。
+4. 取数失败时错误信息里会附上语句（截断 800 字符）：排障靠这一段就能判断是列名、分页还是绑定。
+
 ## 部署（Docker Compose）
 
 当前编排只启动本体平台 `app`。PostgreSQL（平台库）、业务数据源以及可选的
@@ -609,6 +678,42 @@ SSPL / ELv2 / AGPLv3 三选一对闭源产品分发都有风险（详见 `docs/a
 | R1 | 前端接入对象检索 | 接口 `/api/object-search` 已可用（全文 + 模糊 + 属性过滤 + 向量 + 分页），但对象页的搜索与筛选仍走图库的 `searchEntities` | 对象页搜索与筛选改走检索接口，接口报错时退回图库；图谱页的属性筛选同样接入 |
 | R2 | embedding 提供方 | 向量列（维度 1536）、HNSW 索引与向量检索都已实现并验证过，但没有生成向量的能力，`embedding` 目前恒为 NULL | 接入 embedding 模型（本地或远端）后，在发布与重建索引时写入向量；改维度需要 ALTER 列并重建索引 |
 | R3 | 大对象集的总数统计 | 每次检索都跑一次 `COUNT(*)`；当前规模无影响 | 命中集超阈值时改为估算行数，或让前端只在需要时请求总数 |
+
+### 对象层（P0 路线：对象身份 → 对象服务 → 检索索引归位）
+
+记录时间：2026-09-19。来源：对照 Palantir Ontology 文档全集（Object Storage V2 / Object Set Service /
+Object Views / Object Explorer / Object Monitors）后得出的 P0 结论，用户确认把这一段记进本清单。
+**默认只记录、不执行。**
+
+**先厘清三样东西**（这条路线的前提，别混）：
+
+| 层次 | 现在有没有 | 规模取决于 |
+| --- | --- | --- |
+| 对象存储（对象存在哪、身份是什么） | 实质是版本快照里的节点 | 发布快照节点数 |
+| 对象检索索引（PG 全文 + `pg_trgm` + 向量，见上一节） | 有：`src/lib/object-index/` | **同上** |
+| 对象服务（按业务主键按需取对象） | 没有 | 业务表行数 ← 海量对象真正来自这里 |
+
+关键事实（动手前先确认这几条还成立，变了就要重估）：
+
+- 发布时走 `buildIndexEntries(snapshot.definition, snapshot.nodes)` → `replaceTargetObjects()` **全量替换**
+  （`src/lib/version-publication.ts`）；`buildIndexEntries` 的入参 `IndexableNode` 注释就写着
+  "正好是 VersionSnapshot 里节点的形状"（`src/lib/object-index/entries.ts`）。
+  → **索引再大也大不过快照**：业务表 100 万行，索引里一条都没有。
+- 对象类型的 `sources[]` 目前只服务绑定校验与多来源（MDO）按列合并，不会把表里的行读成对象（见 D1）。
+- 动作 `runSnapshotAction` 写的是版本快照 + 审计，不回写业务库。
+- 索引行只有平台生成的 `objectId`，**没有业务键**；业务主键只以 `primaryKey` 备注字段的形式存在。
+
+**顺序是硬的**：第 1 步不做，第 2、3 步做了也是白做。
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| S1 | 对象身份 = (对象类型, 主键) | **已于 2026-09-19 完成**（见「对象身份与对象服务」一节）：`@/lib/object-identity` 按主键推导确定性 UUID，新建对象 / 动作写入 / 导出快照 / 索引键四处共用同一份口径；主键重复在发布前**挡发布** | 已落地。M1 随之关闭 |
+| S2 | 对象服务：类型 + 主键 → 对象 | **已于 2026-09-19 完成**：`@/lib/object-service`（门面 + 数据资源来源）+ `GET /api/objects`。索引里有就走索引，没有就按 `sources[]` 回源取数（含 MDO 合并）。**未做**：对象页 / 图谱 / 动作页改走它（还在读快照节点） | 把界面接到对象服务上；AI 侧 `query_object_instance` / `query_instance_subgraph` 的 `disabled` 也在这之后摘 |
+| S3 | 检索索引归位：稳定唯一键 + 增量 upsert | **已于 2026-09-19 完成**：索引行有 `entity_type` / `object_key`，唯一键 `(target_id, object_key)`；发布改走 `syncTargetObjects(..., { prune: true })`，另有 `POST /api/objects/index` 做单条增量 | 已落地。R1 / R3 仍是它的前端与统计面 |
+| S4 | 物化 / 回源的按对象类型策略 | 没有"要不要物化"这个概念 | 按对象类型配置：物化「身份 + 检索 / 排序 / 聚合字段」，明细字段按需回源。纯联邦查询在跨源 join、排序、分页、聚合上会崩；全量物化等于给业务库做一份迟早过期的副本 —— 两头都不选 |
+
+**验收口径**（做 S2 / S3 时要能拿出这几条）：给一个绑定了业务表的对象类型，表里有 N 万行而快照里没有节点，
+仍能按主键取到对象、能检索、能按属性过滤分页；改一行数据后只同步这一行。
 
 ### 界面
 

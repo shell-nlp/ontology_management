@@ -1,5 +1,20 @@
-import { platformQuery } from "@/lib/platform-db";
+import { platformRepo, GraphTargetEntity } from "@/lib/db";
 import { BUILTIN_EMBEDDED_TARGET_ID, graphTargetKindInfo, isGraphTargetKind, type GraphTarget, type GraphTargetKind } from "@/lib/graph/types";
+
+/** 实体 -> 领域记录（本体存储沿用 snake_case 口径）。 */
+export function targetFromRow(row: GraphTargetEntity): GraphTarget {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind as GraphTargetKind,
+    uri: row.uri,
+    database_name: row.databaseName,
+    username: row.username,
+    credential_secret: row.credentialSecret,
+    options: (row.options ?? {}) as Record<string, unknown>,
+    created_at: row.createdAt,
+  };
+}
 
 /** 唯一的内置资源入口，不保存于 graph_targets；具体本体的目标仍由平台库持久化。 */
 function builtInTarget(): GraphTarget {
@@ -34,16 +49,12 @@ export function describeTargetError(kind: GraphTargetKind, error: unknown) {
 
 export async function getTarget(targetId: string): Promise<GraphTarget | null> {
   if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return builtInTarget();
-  const result = await platformQuery<GraphTarget>(
-    `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
-     FROM ontology_platform.graph_targets WHERE id = $1`,
-    [targetId],
-  );
-  const row = result.rows[0];
+  const repo = await platformRepo(GraphTargetEntity);
+  const row = await repo.findOne({ where: { id: targetId } });
   // 库里可能残留平台已不再支持的 kind（例如 2026-09-14 移除的 Neo4j）。
   // 这类记录当作不存在：让接口明确回答「不存在」，而不是拿错后端去连。
   if (!row || !isGraphTargetKind(row.kind)) return null;
-  return { ...row, kind: row.kind, options: (row.options ?? {}) as Record<string, unknown> };
+  return targetFromRow(row);
 }
 
 
@@ -54,14 +65,12 @@ export function parseTargetOptions(value: unknown): Record<string, unknown> {
 
 /** 平台虚拟入口 + 数据库里登记的外部连接与受管本体目标。 */
 export async function listTargets(): Promise<GraphTarget[]> {
-  const result = await platformQuery<GraphTarget>(
-    `SELECT id, name, kind, uri, database_name, username, credential_secret, options, created_at
-     FROM ontology_platform.graph_targets ORDER BY kind, name`,
-  );
-  return [builtInTarget(), ...result.rows
+  const repo = await platformRepo(GraphTargetEntity);
+  const rows = await repo.find({ order: { kind: "ASC", name: "ASC" } });
+  return [builtInTarget(), ...rows
     // 旧版手动登记的内置根资源不再供新本体选择；已有本体仍可按 id 读取原目标。
-    .filter((row) => isGraphTargetKind(row.kind) && !(row.kind === "EMBEDDED" && !row.options?.namedGraph))
-    .map((row) => ({ ...row, kind: row.kind as GraphTargetKind, options: (row.options ?? {}) as Record<string, unknown> }))];
+    .filter((row) => isGraphTargetKind(row.kind) && !(row.kind === "EMBEDDED" && !(row.options as Record<string, unknown> | null)?.namedGraph))
+    .map((row) => targetFromRow(row))];
 }
 
 /** 端点归一成 host:port，缺端口时用 Fuseki 的默认端口。 */

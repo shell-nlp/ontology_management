@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
-import { platformQuery, writeAuditEntry } from "@/lib/platform-db";
+import { GraphTargetEntity, jsonValue, platformRepo } from "@/lib/db";
+import { writeAuditEntry } from "@/lib/platform-db";
 import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
 import { graphTargetKindInfo, type GraphTarget } from "@/lib/graph/types";
 
@@ -47,11 +48,17 @@ export async function POST(request: NextRequest) {
     // 同一个库上再登记一个，两边发布时会互相清空 —— 这里直接拦下来。
     const conflict = findTargetConflict(target, await listTargets());
     if (conflict) return NextResponse.json({ error: describeTargetConflict(conflict, target) }, { status: 409 });
-    await platformQuery(
-      `INSERT INTO ontology_platform.graph_targets (id, name, kind, uri, database_name, username, credential_secret, options)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [target.id, target.name, target.kind, target.uri, target.database_name, target.username, target.credential_secret, JSON.stringify(target.options)],
-    );
+    const repo = await platformRepo(GraphTargetEntity);
+    await repo.insert({
+      id: target.id,
+      name: target.name,
+      kind: target.kind,
+      uri: target.uri,
+      databaseName: target.database_name,
+      username: target.username,
+      credentialSecret: target.credential_secret,
+      options: jsonValue(target.options),
+    });
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "TARGET_CREATED", details: { name: target.name, kind: target.kind, uri: target.uri } });
     return NextResponse.json(publicTarget(target), { status: 201 });
   } catch (error) {

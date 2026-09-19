@@ -1,5 +1,6 @@
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ObjectIndexEntry } from "@/lib/object-index/types";
+import { fallbackObjectKey, objectKeyOf, primaryKeyFromProperties, type IdentityEntityType, type ObjectPrimaryKey } from "@/lib/object-identity";
 
 /** 快照节点进索引时只看这三项，正好是 VersionSnapshot 里节点的形状。 */
 export type IndexableNode = { id: string; labels: string[]; properties: Record<string, unknown> };
@@ -9,22 +10,12 @@ export const MAX_SEARCH_TEXT = 4000;
 
 type ClassMeta = {
   displayProperty: string;
-  /** 业务主键的列 -> 属性名映射；列名与属性名相同也接受。 */
-  keyMapping: { column: string; property: string }[];
 };
 
 function collectClassMeta(definition: OntologyDefinition): Map<string, ClassMeta> {
   const meta = new Map<string, ClassMeta>();
   for (const entity of definition.entityTypes) {
-    const columns = entity.sources?.[0]?.primaryKey?.filter((column) => column?.trim()) ?? [];
-    const keyMapping = columns.map((column) => {
-      const matched = entity.properties.find((property) => property.sourceField?.trim() === column || property.name === column);
-      return { column, property: matched?.name ?? "" };
-    });
-    meta.set(entity.name, {
-      displayProperty: entity.displayProperty?.trim() ?? "",
-      keyMapping: keyMapping.filter((item) => item.property),
-    });
+    meta.set(entity.name, { displayProperty: entity.displayProperty?.trim() ?? "" });
   }
   return meta;
 }
@@ -58,18 +49,23 @@ export function resolveObjectTitle(node: IndexableNode, meta: Map<string, ClassM
   return node.id.slice(0, 8);
 }
 
-/** 业务主键值：按 sources[0].primaryKey 的列顺序取值，取不到就留空。 */
-export function resolvePrimaryKey(node: IndexableNode, meta: Map<string, ClassMeta>): Record<string, string> {
-  const result: Record<string, string> = {};
+/**
+ * 节点属于哪个**对象类型**：取标签里第一个在定义中登记为对象类型的那个
+ * （节点可能同时带接口标签 —— 接口是契约，不是它所属的对象类型）。
+ */
+export function resolveEntityType(node: IndexableNode, definition: OntologyDefinition): IdentityEntityType | null {
   for (const label of node.labels) {
-    const mapping = meta.get(label)?.keyMapping ?? [];
-    for (const { column, property } of mapping) {
-      if (result[column] !== undefined) continue;
-      const text = scalarText(node.properties[property])[0];
-      if (text) result[column] = text;
-    }
+    const entity = definition.entityTypes.find((item) => item.name === label);
+    if (entity) return entity;
   }
-  return result;
+  return null;
+}
+
+/** 业务主键值：按该对象类型的 sources[0].primaryKey 取值，取不到就留空。 */
+export function resolvePrimaryKey(node: IndexableNode, definition: OntologyDefinition): ObjectPrimaryKey {
+  const entityType = resolveEntityType(node, definition);
+  if (!entityType) return {};
+  return primaryKeyFromProperties(entityType, node.properties).primaryKey;
 }
 
 export function buildSearchText(title: string, properties: Record<string, unknown>) {
@@ -78,20 +74,31 @@ export function buildSearchText(title: string, properties: Record<string, unknow
 }
 
 /**
+ * 一个对象 -> 一条索引条目。**单条与整批共用这一份**，所以"发布时怎么写"与
+ * "对象服务/增量同步怎么写"永远不会各说各话。
+ */
+export function buildIndexEntry(definition: OntologyDefinition, node: IndexableNode, meta?: Map<string, ClassMeta>): ObjectIndexEntry {
+  const resolvedMeta = meta ?? collectClassMeta(definition);
+  const title = resolveObjectTitle(node, resolvedMeta);
+  const entityType = resolveEntityType(node, definition);
+  const primaryKey = entityType ? primaryKeyFromProperties(entityType, node.properties).primaryKey : {};
+  return {
+    objectId: node.id,
+    entityType: entityType?.name ?? "",
+    objectKey: objectKeyOf(entityType?.name ?? "", primaryKey) || fallbackObjectKey(node.id),
+    labels: [...node.labels],
+    title,
+    properties: node.properties,
+    primaryKey,
+    searchText: buildSearchText(title, node.properties),
+  };
+}
+
+/**
  * 把已发布快照映射成索引条目。纯函数：发布流程与「重建索引」接口共用这一份逻辑，
  * 两边不会各说各话。
  */
 export function buildIndexEntries(definition: OntologyDefinition, nodes: readonly IndexableNode[]): ObjectIndexEntry[] {
   const meta = collectClassMeta(definition);
-  return nodes.map((node) => {
-    const title = resolveObjectTitle(node, meta);
-    return {
-      objectId: node.id,
-      labels: [...node.labels],
-      title,
-      properties: node.properties,
-      primaryKey: resolvePrimaryKey(node, meta),
-      searchText: buildSearchText(title, node.properties),
-    };
-  });
+  return nodes.map((node) => buildIndexEntry(definition, node, meta));
 }

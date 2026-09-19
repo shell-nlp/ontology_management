@@ -12,6 +12,7 @@ import { relationshipKeyViolations } from "@/lib/relationship-keys";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
+import { objectIdOf, primaryKeyConflicts, resolveObjectIdentity } from "@/lib/object-identity";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/graph/types";
 
 const INTERNAL_ID = "__ontology_id";
@@ -377,18 +378,38 @@ export async function exportTargetSnapshot(target: GraphTarget, definition: Onto
   const usedIds = new Set<string>();
   const isUuid = (value: string) => VERSION_SEGMENT.test(value);
   const storedIdOf = (properties: Record<string, unknown>) => (typeof properties[INTERNAL_ID] === "string" ? (properties[INTERNAL_ID] as string) : null);
+  /**
+   * 对象身份 = (对象类型, 主键)：能算出来就用它，图里那条记录换一次快照也还是同一个对象（S1）。
+   * 标签里可能带接口名，只有定义里的对象类型才算得出身份。
+   */
+  const identityIdOf = (labels: string[], properties: Record<string, unknown>) => {
+    for (const label of labels) {
+      const type = definition.entityTypes.find((entity) => entity.name === label);
+      if (!type) continue;
+      const identity = resolveObjectIdentity(type, properties);
+      if (identity) return identity.id;
+    }
+    return null;
+  };
   /** 后端元素 id -> 快照 UUID。优先保留后端里存的稳定 id，否则按需生成。 */
-  const snapshotIdOf = (rawId: string, properties: Record<string, unknown>) => {
+  const snapshotIdOf = (rawId: string, properties: Record<string, unknown>, labels: string[] = []) => {
     const existing = snapshotIds.get(rawId);
     if (existing) return existing;
     const stored = storedIdOf(properties);
-    const preferred = stored && !usedIds.has(stored) ? stored : isUuid(rawId) && !usedIds.has(rawId) ? rawId : randomUUID();
+    const derived = identityIdOf(labels, properties);
+    const preferred = stored && !usedIds.has(stored)
+      ? stored
+      : derived && !usedIds.has(derived)
+        ? derived
+        : isUuid(rawId) && !usedIds.has(rawId)
+          ? rawId
+          : randomUUID();
     usedIds.add(preferred);
     snapshotIds.set(rawId, preferred);
     return preferred;
   };
   const nodes = exported.nodes.map((node) => nodeSchema.parse({
-    id: snapshotIdOf(node.id, node.properties),
+    id: snapshotIdOf(node.id, node.properties, node.labels),
     labels: node.labels,
     properties: stripInternalProperties(node.properties),
   }));
@@ -582,6 +603,17 @@ export type SnapshotViolation = { rule: string; message: string; count: number; 
 
 export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   const violations: SnapshotViolation[] = [];
+  /*
+   * 对象身份是 (对象类型, 主键)：同一个对象类型里主键重复 = 本体里同一个对象存在两份，
+   * 后续按主键取数、写回、索引都会打架，所以这一条**挡发布**（不是提醒）。
+   */
+  for (const conflict of primaryKeyConflicts(snapshot.definition, snapshot.nodes)) {
+    violations.push({
+      rule: `${conflict.typeName}.主键`,
+      message: `主键重复：「${conflict.key}」出现在 ${conflict.ids.length} 个「${conflict.typeName}」对象上（${conflict.ids.join("、")}）。同一个对象类型里主键必须唯一。`,
+      count: conflict.ids.length,
+    });
+  }
   // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
   for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
   // 关系类型的键映射同理：它是定义层的声明，指向不存在的属性时换台机器导入就是悬空引用。
@@ -702,7 +734,16 @@ export async function createSnapshotEntity(versionId: string, entityType: string
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
     if (!type) throw new Error("对象类型未在当前草稿中定义。");
-    const node = nodeSchema.parse({ id: randomUUID(), labels: [type.name], properties: parsePropertyValues(type.properties, rawProperties) });
+    const properties = parsePropertyValues(type.properties, rawProperties);
+    /*
+     * 对象身份 = (对象类型, 主键)：主键齐全时 id 由主键推出来（确定性），
+     * 于是同一个业务记录在本体里只有一份，换快照 / 重复导入都落到同一个对象上（S1）。
+     */
+    const identity = resolveObjectIdentity(type, properties);
+    if (identity && snapshot.nodes.some((node) => node.id === identity.id)) {
+      throw new Error(`已经存在主键相同的「${type.name}」对象，不能在同一个本体里重复新建。`);
+    }
+    const node = nodeSchema.parse({ id: identity?.id ?? randomUUID(), labels: [type.name], properties });
     snapshot.nodes.push(node);
     return entityFromSnapshot(node);
   });
