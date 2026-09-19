@@ -362,8 +362,10 @@ function fetchConversations(targetId: string) {
  * 铺回主区，和当时看到的一模一样。删除走就地二次确认 —— 历史是随手可删的东西，
  * 但也不该点一下就没了。
  */
-function HistoryRail({ conversations, activeId, loadingId, confirmingId, busy, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
+function HistoryRail({ conversations, loading, activeId, loadingId, confirmingId, busy, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
   conversations: ConversationSummary[];
+  /** 列表正在读：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
+  loading: boolean;
   /** 当前画面正对着哪段对话；新开的一轮在服务端定下 id 之前是 null。 */
   activeId: string | null;
   loadingId: string | null;
@@ -385,7 +387,9 @@ function HistoryRail({ conversations, activeId, loadingId, confirmingId, busy, o
 
       {!conversations.length ? (
         <p className="qa-history-empty">
-          还没有历史对话。跑完一轮问答它就会留在这里 —— 只有跑出结论的才记，失败的不会占位置。
+          {loading
+            ? "正在读取对话历史…"
+            : "还没有历史对话。跑完一轮问答它就会留在这里 —— 只有跑出结论的才记，失败的不会占位置。"}
         </p>
       ) : (
         <div className="qa-history-body">
@@ -452,8 +456,12 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   // 「问答配置」里的那几个数：默认是空的 = 不限制，存在本机。
   const [settings, setSettings] = useState<ReasoningSettings>(loadReasoningSettings);
   const [configOpen, setConfigOpen] = useState(false);
-  // 列表跟着本体走：换了本体就当还没读过，不去 effect 里清空（和 turns 一个套路）。
-  const [history, setHistory] = useState<{ targetId: string; items: ConversationSummary[] }>(() => ({ targetId, items: [] }));
+  /**
+   * 列表跟着本体走：`targetId` 记的是"这份 items 是给哪个本体读的"。
+   * 它和当前本体不一致，就说明还没读过（空串 = 从没读过）—— 侧栏据此显示"正在读取"，
+   * 也就不会出现"还没读完"和"确实是空的"看起来一样的尴尬（2026-09-19 用户报的）。
+   */
+  const [history, setHistory] = useState<{ targetId: string; items: ConversationSummary[] }>(() => ({ targetId: "", items: [] }));
   const [loadingConversation, setLoadingConversation] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
@@ -471,6 +479,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
   const conversationId = session.targetId === targetId ? session.conversationId : null;
   const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
+  /** 还没为当前本体读过列表：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
+  const historyPending = history.targetId !== targetId;
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
   const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit)
     || settings.historyTurns !== undefined;
@@ -547,7 +557,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     let cancelled = false;
     void fetchConversations(targetId)
       .then((items) => { if (!cancelled) setHistory({ targetId, items }); })
-      .catch(() => { /* 静默：展开侧栏时还会再读一次 */ });
+      // 读不到就当作空：侧栏是辅助区域，不弹错，但也别一直停在"正在读取"上。
+      .catch(() => { if (!cancelled) setHistory({ targetId, items: [] }); });
     return () => { cancelled = true; };
   }, [historyOpen, targetId]);
 
@@ -932,6 +943,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       {historyOpen && (
         <HistoryRail
           conversations={conversations}
+          loading={historyPending}
           activeId={conversationId}
           loadingId={loadingConversation}
           confirmingId={confirmingDelete}
