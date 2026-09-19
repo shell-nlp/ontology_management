@@ -366,6 +366,14 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 - **怎么跑**：`pnpm openapi`。`pnpm dev` 与 `pnpm build` 前面都会先跑它，所以文档不会和代码脱节；
   只想快速起服务用 `pnpm dev:only`。生成产物是 `public/openapi.json` 与 `public/swagger-ui/`，
   两个都在 `.gitignore` 里（构建产物，不入库）。
+**怎么跑**：生成入口是 `scripts/openapi-fresh.mjs` —— `pnpm openapi`（强制）、`pnpm dev`、`pnpm build` 都走它，
+  所以文档不会和代码脱节；只想快速起服务用 `pnpm dev:only`。生成产物是 `public/openapi.json` 与 `public/swagger-ui/`，
+  两个都在 `.gitignore` 里（构建产物，不入库）。
+**`pnpm dev` 不再每次都重新生成**（2026-09-19，用户要求「降低启动时间」）：这一步要 1~2.6s，还会把几十条诊断刷满屏，
+  而产物只有接口相关的东西变了才会变。现在把 `src/` 下全部 TS + `openapi-gen.config.ts` + 两个 scripts + `package.json`
+  算成哈希存进 `.data/openapi-fresh.json`，对得上就跳过（实测 2.6s → **0.07s**），对不上（或产物被删了）才真的生成。
+  判定故意**宁滥勿缺**（整个 `src/` 都进哈希）：多算只是多花一次生成时间，漏算才会让文档过期。
+  `pnpm build` 传 `--force`，生产/容器里永远是全新生成的。
 - **文件分工**：
   - `openapi-gen.config.ts`：标题、描述、`servers`（**相对路径 `/api`**，本机 3001 / 容器 3000 / 内网 IP 都跟着走）、
     扫描范围、失败响应形状（我们的路由统一是 `{ error }`）。能在这里表达的别写进脚本。

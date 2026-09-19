@@ -69,7 +69,7 @@ COPY --from=builder --chown=node:node /app/.next ./.next
 COPY --from=builder --chown=node:node /app/skills ./skills
 # next start 会读配置：少了它，serverExternalPackages 这类设置就丢了。
 COPY --from=builder --chown=node:node /app/next.config.ts ./next.config.ts
-# 接口文档的静态产物：public/openapi.json 与 public/swagger-ui/（构建阶段 `pnpm build` 里跑 `pnpm openapi` 生成）。
+# 接口文档的静态产物：public/openapi.json 与 public/swagger-ui/（构建阶段 `pnpm build` 里强制重新生成，见 scripts/openapi-fresh.mjs）。
 # 少了这一行 `/docs` 打不开、`/openapi.json` 也 404。
 COPY --from=builder --chown=node:node /app/public ./public
 # Oracle Thick 模式要的客户端（含 instantclient -> instantclient_23_4 的软链）。

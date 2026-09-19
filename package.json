@@ -4,10 +4,10 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "pnpm openapi && next dev",
+    "dev": "node scripts/openapi-fresh.mjs && next dev",
     "dev:only": "next dev",
-    "build": "pnpm openapi && next build",
-    "openapi": "openapi-gen generate && node scripts/openapi-build.mjs",
+    "build": "node scripts/openapi-fresh.mjs --force && next build",
+    "openapi": "node scripts/openapi-fresh.mjs --force",
     "test": "vitest run",
     "start": "next start",
     "lint": "eslint .",
