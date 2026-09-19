@@ -44,6 +44,7 @@ function radialLayout(entities: EntityType[], edges: SigmaEdge[], seed: number) 
 }
 
 export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
+/** 关系类型：一条定义、两个端点；它是双向的，不用再建反向的那一条。 */
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "relation"; id: string } | null;
@@ -151,7 +152,6 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
   // 实现接口：这里留接口对象而不是名字——右栏的「实现接口」要能就地取消实现。
   const selectedInterfaces = (selectedEntity?.implements ?? []).map((id) => definition.interfaces.find((item) => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
   const selectedRelation = selected?.kind === "relation" ? relationById.get(selected.id) ?? null : null;
-
   const organize = useCallback(() => {
     // 「自动整理」= 忘掉手工摆放，回到算出来的位置（分组布局下就是转一圈重新铺）。
     if (positionKey) writeStoredPositions(positionKey, {});
@@ -344,6 +344,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
               <h3>{selectedRelation.name}</h3>
               {matchedProperty && <p className="ob-inspector-match">匹配属性 · {matchedProperty}</p>}
               <p><span>起点</span> {entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "未指定"}<br /><span>终点</span> {entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "未指定"}</p>
+              <p><span>方向</span> 双向：起点与终点两个方向都能走，不用再建反向的那一条。</p>
               {(entityById.get(selectedRelation.sourceEntityTypeId)?.name ?? "") === "" || (entityById.get(selectedRelation.targetEntityTypeId)?.name ?? "") === "" ? <p className="ob-inspector-warning"><AlertTriangle size={13} />端点未指定，这条关系类型不会出现在画布上，也无法发布。</p> : null}
               {selectedRelation.properties.length > 0 ? (
                 <div className="graph-properties">

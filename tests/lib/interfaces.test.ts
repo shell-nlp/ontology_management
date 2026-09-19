@@ -87,7 +87,7 @@ describe("checkImplementations", () => {
     expect(checks[0].missingProperties).toEqual(["设施名称", "资产编号"]);
   });
 
-  it("出生点在实现方的具体关系类型才算满足约束", () => {
+  it("关系类型双向：实现方在任一头都算满足约束", () => {
     const satisfied = checkImplementations(
       { id: airport, name: "机场", properties: [{ name: "资产编号" }, { name: "设施名称" }], implements: [facility] },
       interfaces,
@@ -97,11 +97,23 @@ describe("checkImplementations", () => {
     expect(satisfied[0].missingLinks).toEqual([]);
     expect(satisfied[0].satisfiedLinks.map((item) => item.relationshipName)).toEqual(["服务航司"]);
 
-    const missing = checkImplementations(
+    // 反向那条同样算：Palantir 的一条 link type 两侧都能走（见 AGENTS.md 的术语约定），
+    // 实现方在终点这一头，另一端是对端，约束就满足了。
+    const reversed = checkImplementations(
       { id: airport, name: "机场", properties: [{ name: "资产编号" }, { name: "设施名称" }], implements: [facility] },
       interfaces,
       [{ name: "航司开班", sourceEntityTypeId: airline, targetEntityTypeId: airport }],
       [{ id: airport, name: "机场" }, { id: airline, name: "航司" }],
+    );
+    expect(reversed[0].missingLinks).toEqual([]);
+    expect(reversed[0].satisfiedLinks.map((item) => item.relationshipName)).toEqual(["航司开班"]);
+
+    // 完全不沾边的关系类型仍然不算。
+    const missing = checkImplementations(
+      { id: airport, name: "机场", properties: [{ name: "资产编号" }, { name: "设施名称" }], implements: [facility] },
+      interfaces,
+      [{ name: "航司开航站", sourceEntityTypeId: airline, targetEntityTypeId: flightAlert }],
+      [{ id: airport, name: "机场" }, { id: airline, name: "航司" }, { id: flightAlert, name: "航班告警" }],
     );
     expect(missing[0].missingLinks.map((item) => item.name)).toEqual(["服务的航司"]);
   });

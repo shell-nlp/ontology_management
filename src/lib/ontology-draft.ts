@@ -36,6 +36,7 @@ export function emptyEntitySource(id = "primary"): EntitySource {
 
 /** 来源清单的读写与自检都在 @/lib/ontology-sources，这里转出去，界面只认这一个入口。 */
 export { LEGACY_PRIMARY_SOURCE_ID, entitySources, newEntitySourceId, sourceFieldsKey, sourceName, sourceRoleLabel, validateEntitySources, type SourceViolation } from "@/lib/ontology-sources";
+/** 关系类型（草稿态）：一条关系类型只有一份定义、两个端点，两个方向都能走，不用再建反向的那一条。 */
 export type RelationType = { id: string; name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; properties: Property[] };
 export type ActionParameter = OntologyDefinition["actionTypes"][number]["params"][number];
 export type ActionValueSource = OntologyDefinition["actionTypes"][number]["edits"][number]["assignments"][number]["value"];

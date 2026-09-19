@@ -114,7 +114,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "traverse_object_types",
     description:
-      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。",
+      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。关系类型是**双向**的（一条关系类型两侧都能走，不用另建反向关系），所以默认两个方向都算连通；要只往外或只往回，用 direction 收窄。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。",
     parameters: {
       type: "object",
       properties: {
@@ -122,6 +122,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
         hops: { type: "integer", description: "最多走几跳，默认 3，上限 5" },
         object_types: { type: "array", items: { type: "string" }, description: "只走（并只落到）这些对象类型；不填 = 不限定" },
         relationship_types: { type: "array", items: { type: "string" }, description: "只沿这些关系类型走；不填 = 不限定" },
+        direction: { type: "string", enum: ["both", "forward", "backward"], description: "遍历方向：both（默认，两个方向都走）、forward（只沿「起点→终点」）、backward（只沿「终点→起点」）" },
       },
     },
   },
@@ -300,7 +301,8 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       kind: "RELATION_TYPE",
       name: relationship.name,
       haystack: normalize([relationship.name, source, target].join(" ")),
-      detail: `${source || "未指定"} → ${target || "未指定"}`,
+      // 双向关系类型只写一条定义：用 ↔ 表示两个方向都能走，别让人以为反向要再来一条。
+      detail: `${source || "未指定"} ↔ ${target || "未指定"}`,
       weight: relationshipCount.get(relationship.name) ?? 0,
     });
   }
@@ -402,10 +404,20 @@ export type TypeGraphNode = {
   bound_tables: string[];
 };
 
+/** 一条边（关系类型）。`from` / `to` 是定义里的起点与终点；两个方向都能走，所以它同时表示反向那条。 */
 export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number };
+
+/** 遍历方向：`both` 两个方向都走（默认），`forward` 只沿"起点→终点"，`backward` 只沿"终点→起点"。 */
+export type TraverseDirection = "both" | "forward" | "backward";
+
+export function parseTraverseDirection(value: unknown): TraverseDirection {
+  return value === "forward" || value === "backward" ? value : "both";
+}
 
 export type TypeGraphTraversal = {
   hops: number;
+  /** 本次实际生效的方向（没传或传了不认识的值就是 `both`）。 */
+  direction: TraverseDirection;
   starts: string[];
   nodes: TypeGraphNode[];
   edges: TypeGraphEdge[];
@@ -427,6 +439,7 @@ function describeBriefly(text: string, limit = 80) {
  * 沿关系类型走：起点是 `start`（留空 = 全部对象类型），最多 `hops` 跳（默认 3、上限 5）。
  * `objectTypes` / `relationshipTypes` 是白名单：给了就只走这些关系类型、只落到这些对象类型上；
  * 不给就是不限定。起点永远包含在结果里，哪怕它自己不在白名单内（否则"从这个类型出发"就说不通了）。
+ * `direction` 默认 `both`：关系类型是双向的，两个方向都能走到下一跳；要"只往外"或"只往回"再收紧。
  *
  * `nodes[].hop` 是**最短距离**；`edges` 是这些节点之间**全部**关系的诱导子图，每条边带
  * `hop = 两端里更远的那个的跳数`。这样"隔两跳能到谁"和"这两个类型之间还连着哪几条关系"
@@ -434,9 +447,10 @@ function describeBriefly(text: string, limit = 80) {
  */
 export function traverseTypeGraph(
   definition: OntologyDefinition,
-  options: { start?: string; hops?: number; objectTypes?: readonly string[]; relationshipTypes?: readonly string[] } = {},
+  options: { start?: string; hops?: number; objectTypes?: readonly string[]; relationshipTypes?: readonly string[]; direction?: TraverseDirection } = {},
 ): TypeGraphTraversal {
   const hops = clamp(options.hops, DEFAULT_TRAVERSE_HOPS, MAX_TRAVERSE_HOPS);
+  const direction = options.direction ?? "both";
   const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
   const typeByName = new Map(definition.entityTypes.map((item) => [item.name, item]));
   const groupNameById = new Map((definition.groups ?? []).map((item) => [item.id, item.name]));
@@ -468,6 +482,9 @@ export function traverseTypeGraph(
         const outgoing = relation.sourceEntityTypeId === from.id;
         const incoming = relation.targetEntityTypeId === from.id;
         if (!outgoing && !incoming) continue;
+        // 方向开关：关系类型双向，默认两个方向都走；只沿"起点→终点"或只沿"终点→起点"时在这里收窄。
+        if (direction === "forward" && !outgoing) continue;
+        if (direction === "backward" && !incoming) continue;
         const otherName = typeNameById.get(outgoing ? relation.targetEntityTypeId : relation.sourceEntityTypeId);
         // 端点未定义的关系类型不进结果（发布前校验会拦，这里不猜）。
         if (!otherName || hopOf.has(otherName)) continue;
@@ -502,7 +519,7 @@ export function traverseTypeGraph(
     })
     .filter((edge): edge is TypeGraphEdge => edge !== null);
 
-  return { hops, starts, nodes, edges, unknown_start: unknownStart, unknown_names: unknownNames, filters: { object_types: wantedTypes, relationship_types: wantedRelations } };
+  return { hops, direction, starts, nodes, edges, unknown_start: unknownStart, unknown_names: unknownNames, filters: { object_types: wantedTypes, relationship_types: wantedRelations } };
 }
 
 /**
@@ -625,7 +642,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const oneHop = {
         outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.targetEntityTypeId) })),
         incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => ({ relation: item.name, ...neighbor(item.sourceEntityTypeId) })),
-        note: "这里只列一跳。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型与关系类型）。",
+        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
       };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
@@ -761,12 +778,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         hops: typeof args.hops === "number" ? args.hops : Number(args.hops),
         objectTypes: Array.isArray(args.object_types) ? args.object_types.map((item) => String(item)) : [],
         relationshipTypes: Array.isArray(args.relationship_types) ? args.relationship_types.map((item) => String(item)) : [],
+        direction: parseTraverseDirection(args.direction),
       });
       if (traversal.unknown_start) throw new Error(`本体里没有对象类型「${traversal.unknown_start}」。先用 search_schema 确认名字。`);
       const relationNames = [...new Set(traversal.edges.map((edge) => edge.relation))];
       return {
         payload: {
           hops: traversal.hops,
+          direction: traversal.direction,
           starts: traversal.starts,
           filters: traversal.filters,
           node_count: traversal.nodes.length,
@@ -778,8 +797,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             ? { unknown_names: traversal.unknown_names, unknown_note: "这些名字本体里没有，已忽略；先用 search_schema 确认真实名字。" }
             : {}),
           note: !startName
-            ? "没有指定起点，所以是整张类型图（每个对象类型都是 0 跳）：nodes 是全部对象类型，edges 是它们之间全部的关系。想从某个类型往外看，传 start_type。要看某个类型的属性、来源与动作，用 get_object_type。"
-            : "hop 是离起点的最短跳数（起点是 0）；edges 是这些对象类型之间全部的关系，hop 取两端里更远的那个。要看某个类型的属性、来源与动作，用 get_object_type。",
+            ? "没有指定起点，所以是整张类型图（每个对象类型都是 0 跳）：nodes 是全部对象类型，edges 是它们之间全部的关系（关系类型双向，每条边两个方向都能走）。想从某个类型往外看，传 start_type。要看某个类型的属性、来源与动作，用 get_object_type。"
+            : `hop 是离起点的最短跳数（起点是 0）；edges 是这些对象类型之间全部的关系，hop 取两端里更远的那个。direction 是本次生效的方向（${traversal.direction === "both" ? "两个方向都走" : traversal.direction === "forward" ? "只沿起点→终点" : "只沿终点→起点"}）。要看某个类型的属性、来源与动作，用 get_object_type。`,
         },
         evidence: [
           ...traversal.nodes.map((node) => ({ kind: "OBJECT_TYPE" as const, id: node.name, label: node.name })),

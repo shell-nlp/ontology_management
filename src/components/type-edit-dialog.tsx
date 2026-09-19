@@ -379,7 +379,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                       <ArrowGlyph />
                       <span data-empty={!targetEntity} style={targetEntity ? { background: graphColor(targetEntity.name) } : undefined}>{targetEntity ? compactGraphLabel(targetEntity.name) : "终点"}</span>
                     </div>
-                    <small>连线由起点指向终点。</small>
+                    <small>关系类型是双向的：建好这一条，两个方向都能走，不用再建反向的那一条。</small>
                   </div>
                 </div>
                 <label className="ted-field">

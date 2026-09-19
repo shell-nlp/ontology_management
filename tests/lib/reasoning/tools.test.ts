@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longestCommonSubstring, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
+import { longestCommonSubstring, parseTraverseDirection, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -66,7 +66,8 @@ describe("schemaConcepts", () => {
     expect(专线.detail).not.toContain("父类");
     expect(concepts.some((item) => item.kind === "PROPERTY" && item.name === "专业线产品用户.姓名")).toBe(false);
     const 下单 = concepts.find((item) => item.kind === "RELATION_TYPE")!;
-    expect(下单.detail).toContain("用户 → 订单");
+    // 关系类型双向：用 ↔ 表示两个方向都能走，不写箭头方向
+    expect(下单.detail).toContain("用户 ↔ 订单");
     expect(下单.detail).not.toContain("关系数");
     const 停机 = concepts.find((item) => item.kind === "ACTION")!;
     expect(停机.detail).toContain("作用于 专业线产品用户");
@@ -353,12 +354,26 @@ describe("traverseTypeGraph", () => {
     expect(traverseTypeGraph(chainDefinition(), { hops: Number.NaN }).hops).toBe(3);
   });
 
-  it("从终点往回也走（关系类型是有方向的，但遍历不分方向）", () => {
+  it("从终点往回也走：关系类型是双向的，遍历默认不分方向", () => {
     const result = traverseTypeGraph(chainDefinition(), { start: "应收", hops: 1 });
+    expect(result.direction).toBe("both");
     // 节点按定义顺序返回
     expect(result.nodes.map((node) => node.name)).toEqual(["用户", "应收", "订购关系"]);
     // 这是节点集合的诱导子图：用户与订购关系都被走到（各 1 跳）时，它们之间那条关系也在结果里
     expect(result.edges.map((edge) => `${edge.relation}@${edge.hop}`).sort()).toEqual(["用户产生应收@1", "用户拥有订购关系@1", "订购关系产生应收@1"].sort());
+  });
+
+  it("direction 收窄：forward 只沿起点→终点，backward 只沿终点→起点", () => {
+    // 客户只有出边：只往回走就一步都走不出去
+    expect(traverseTypeGraph(chainDefinition(), { start: "客户", direction: "backward" }).nodes.map((node) => node.name)).toEqual(["客户"]);
+    // 应收只有入边：只往外走同样走不出去
+    expect(traverseTypeGraph(chainDefinition(), { start: "应收", direction: "forward" }).nodes.map((node) => node.name)).toEqual(["应收"]);
+    // 用户两头都有：forward 到应收与订购关系，backward 到客户
+    expect(traverseTypeGraph(chainDefinition(), { start: "用户", direction: "forward", hops: 1 }).nodes.map((node) => node.name)).toEqual(["用户", "应收", "订购关系"]);
+    expect(traverseTypeGraph(chainDefinition(), { start: "用户", direction: "backward", hops: 1 }).nodes.map((node) => node.name)).toEqual(["客户", "用户"]);
+    // 不认识的方向回落 both（工具入参先过一遍 parseTraverseDirection）
+    expect(parseTraverseDirection("sideways")).toBe("both");
+    expect(parseTraverseDirection(undefined)).toBe("both");
   });
 
   it("限定关系类型：只沿这几条走", () => {
@@ -421,6 +436,19 @@ describe("traverse_object_types", () => {
     expect(payload.hops).toBe(5);
     expect(payload.filters.relationship_types).toEqual(["客户拥有用户"]);
     expect(payload.edges.map((edge) => edge.relation)).toEqual(["客户拥有用户"]);
+  });
+
+  it("direction 照传，note 里说明本次方向；不认识的取值回落 both", async () => {
+    const backward = await runReasoningTool("traverse_object_types", { start_type: "客户", direction: "backward" }, context);
+    const payload = backward.payload as { direction: string; node_count: number; edges: { relation: string }[]; note: string };
+    expect(payload.direction).toBe("backward");
+    // 客户只有出边，只往回走就只剩起点
+    expect(payload.node_count).toBe(1);
+    expect(payload.edges).toEqual([]);
+    expect(payload.note).toContain("只沿终点→起点");
+
+    const fallback = await runReasoningTool("traverse_object_types", { start_type: "客户", direction: "sideways" }, context);
+    expect((fallback.payload as { direction: string }).direction).toBe("both");
   });
 
   it("起点名字不对时直接报错，让模型先确认名字", async () => {

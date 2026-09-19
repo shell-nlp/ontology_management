@@ -165,8 +165,10 @@ export function implementersOf(
 /**
  * 一条具体关系类型能不能满足接口的关系约束。
  *
- * 起点必须是实现方自己（约束描述的是"从我出去"这条关系）；终点要么就是要的那个对象类型
- * （或它的子类），要么是实现了目标接口的对象类型。
+ * 关系类型是**双向**的（Palantir 的一条 link type 两侧都能走），
+ * 所以实现方在这条关系的**任一头**都算满足：它当起点、另一端是对端算满足；
+ * 它当终点、另一端是对端同样算满足。另一端要么就是要的那个对象类型，
+ * 要么是实现了目标接口的对象类型。
  */
 export function satisfiesLinkConstraint(
   entity: ImplementerLike,
@@ -175,8 +177,11 @@ export function satisfiesLinkConstraint(
   interfaces: readonly InterfaceLike[] = [],
   entities: readonly ImplementerLike[] = [],
 ): boolean {
-  if (relationship.sourceEntityTypeId !== entity.id) return false;
-  const targetId = relationship.targetEntityTypeId;
+  const asSource = relationship.sourceEntityTypeId === entity.id;
+  const asTarget = relationship.targetEntityTypeId === entity.id;
+  if (!asSource && !asTarget) return false;
+  // 双向：实现方在关系哪一头，就从另一头取"对端"。
+  const targetId = asSource ? relationship.targetEntityTypeId : relationship.sourceEntityTypeId;
   if (!targetId || !constraint.targetId) return false;
   const target = entities.find((item) => item.id === targetId);
   // 类之间不再有父子关系：关系约束的终点必须是那个对象类型本身（或实现了目标接口的类型）。

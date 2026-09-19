@@ -110,7 +110,8 @@ describe("清单 → 本体包的编译脚本", () => {
       // 和手写示例同一条链路：解析 → 导入（重发 id）→ 发布前校验，必须零违规。
       const plan = planBundleImport(bundle, []);
       expect(plan.definition.entityTypes).toHaveLength(4);
-      expect(plan.definition.relationshipTypes).toHaveLength(5);
+      // 双向关系类型只算一条：示例里「客户拥有专线产品用户」的反向不再单列（见 bundle-format.md）。
+      expect(plan.definition.relationshipTypes).toHaveLength(3);
       expect(plan.definition.interfaces).toHaveLength(1);
       expect(plan.definition.actionTypes).toHaveLength(1);
       expect(plan.definition.rules).toHaveLength(1);
@@ -153,7 +154,7 @@ describe("技能自带的示例本体包", () => {
     // 导入：id 重发 + 数据资源按坐标匹配（本机没有登记，于是留空并给一条提醒）。
     const plan = planBundleImport(bundle, []);
     expect(plan.definition.entityTypes).toHaveLength(4);
-    expect(plan.definition.relationshipTypes).toHaveLength(5);
+    expect(plan.definition.relationshipTypes).toHaveLength(3);
     expect(plan.definition.interfaces).toHaveLength(1);
     expect(plan.definition.actionTypes).toHaveLength(1);
     expect(plan.definition.rules).toHaveLength(1);
@@ -165,7 +166,7 @@ describe("技能自带的示例本体包", () => {
     expect(violations).toEqual([]);
   });
 
-  it("示例里的接口实现是满足契约的（同名属性 + 方向正确的必填关系）", async () => {
+  it("示例里的接口实现是满足契约的（同名属性 + 必填关系，双向都算）", async () => {
     const bundle = await exampleBundle();
     expect(validateInterfaces(bundle.definition)).toEqual([]);
     expect(validateInterfaceImplementations(bundle.definition)).toEqual([]);
