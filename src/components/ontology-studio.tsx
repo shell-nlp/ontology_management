@@ -389,7 +389,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         {warnings && warnings.length > 0 && (
           <div className="os-warnings">
             <b><TriangleAlert size={14} />已导入，但有 {warnings.length} 处需要你核对</b>
-            <ul>{warnings.map((text) => <li key={text}>{text}</li>)}</ul>
+            <ul>{warnings.map((text, index) => <li key={`${index}-${text}`}>{text}</li>)}</ul>
           </div>
         )}
         {pendingSources && pendingSources.length > 0 && (

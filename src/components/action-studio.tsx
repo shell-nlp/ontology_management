@@ -122,15 +122,23 @@ function scopeName(definition: Definition, action: ActionType | null | undefined
 function refOptions(definition: Definition, action: ActionType | null, options: { beforeIndex?: number } = {}) {
   if (!action) return [] as { value: string; label: string }[];
   const list: { value: string; label: string }[] = [];
+  // 下拉的 value 就是 React key，必须唯一：参数标识可能还没填（两个空标识都拼成 "PARAM:"），
+  // 新建别名也可能重复；重复的 option 会让 React 报 key 重复、选中项也跟着串位。
+  const seen = new Set<string>();
+  const push = (value: string, label: string) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    list.push({ value, label });
+  };
   const scope = scopeName(definition, action);
-  if (scope) list.push({ value: "SUBJECT:", label: `主对象（执行时选的那个${scope}）` });
+  if (scope) push("SUBJECT:", `主对象（执行时选的那个${scope}）`);
   for (const parameter of action.params) {
     if (parameter.kind !== "ENTITY_REF") continue;
-    list.push({ value: `PARAM:${parameter.code}`, label: `入参：${parameter.name || parameter.code}（${typeName(definition, parameter.entityTypeId) || "未选类型"}）` });
+    push(`PARAM:${parameter.code}`, `入参：${parameter.name || parameter.code}（${typeName(definition, parameter.entityTypeId) || "未选类型"}）`);
   }
   action.edits.slice(0, options.beforeIndex ?? action.edits.length).forEach((edit, index) => {
     if (edit.op !== "CREATE_ENTITY" || !edit.alias) return;
-    list.push({ value: `EDIT:${edit.alias}`, label: `第 ${index + 1} 步新建的${typeName(definition, edit.entityTypeId) || "对象"}（${edit.alias}）` });
+    push(`EDIT:${edit.alias}`, `第 ${index + 1} 步新建的${typeName(definition, edit.entityTypeId) || "对象"}（${edit.alias}）`);
   });
   return list;
 }
@@ -371,8 +379,8 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                       <table className="as-table">
                         <thead><tr><th>参数</th><th>类型</th><th>必填</th></tr></thead>
                         <tbody>
-                          {selected.params.map((parameter) => (
-                            <tr key={parameter.code}>
+                          {selected.params.map((parameter, index) => (
+                            <tr key={`${parameter.code}-${index}`}>
                               <td><b>{parameter.name || parameter.code}</b><code>{parameter.code}</code></td>
                               <td>{parameter.kind === "ENTITY_REF" ? `${typeName(definition, parameter.entityTypeId) || "未选类型"} · 对象` : parameter.dataType}</td>
                               <td>{parameter.required ? "必填" : "可选"}</td>
@@ -491,8 +499,8 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                         ) : <span className="as-chip muted">需要先用草稿保存一次</span>}
                       </div>
                     )}
-                    {selected.params.length ? selected.params.map((parameter) => (
-                      <div className="as-param-row" key={parameter.code}>
+                    {selected.params.length ? selected.params.map((parameter, index) => (
+                      <div className="as-param-row" key={`${parameter.code}-${index}`}>
                         <div className="as-param-label">
                           <b>{parameter.name || parameter.code || "（未命名参数）"}{parameter.required ? "" : "（可选）"}</b>
                           <small>{parameter.kind === "ENTITY_REF" ? `对象 · ${typeName(definition, parameter.entityTypeId) || "未选类型"}` : `值 · ${parameter.dataType}`}</small>
@@ -556,7 +564,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                               <div className="as-ledger-hit" key={`${entry.id}-${item.ruleName}`}>
                                 <em>{item.ruleName}</em>
                                 {item.message ? <span>{item.message}</span> : null}
-                                {item.evidence?.length ? <ul className="as-evidence">{item.evidence.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+                                {item.evidence?.length ? <ul className="as-evidence">{item.evidence.map((line, lineIndex) => <li key={`${lineIndex}-${line}`}>{line}</li>)}</ul> : null}
                               </div>
                             ))}
                           </article>
@@ -631,7 +639,7 @@ function OutcomePanel({ outcome }: { outcome: ActionRunOutcome }) {
       {outcome.steps.length > 0 && (
         <div className="as-rail-block">
           <b>{outcome.applied ? "已执行的操作" : "计划的操作"}</b>
-          <ol className="as-steps">{outcome.steps.map((step) => <li key={step}><span>{step}</span></li>)}</ol>
+          <ol className="as-steps">{outcome.steps.map((step, index) => <li key={`${index}-${step}`}><span>{step}</span></li>)}</ol>
         </div>
       )}
       {outcome.createdEntities.length > 0 && (
@@ -648,7 +656,7 @@ function Finding({ finding, level }: { finding: ActionFinding; level: "blocker" 
     <div className={`as-finding ${level}`}>
       <b>{level === "blocker" ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}{finding.ruleName}<span className="as-chip muted">{effectLabel(finding.effect)}</span></b>
       {finding.message && <p>{finding.message}</p>}
-      {finding.evidence.length > 0 && <ul className="as-evidence">{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul>}
+      {finding.evidence.length > 0 && <ul className="as-evidence">{finding.evidence.map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>}
     </div>
   );
 }
@@ -693,7 +701,7 @@ function AssignmentList({ action, properties, rows, freeText, onChange }: {
             <option value="NOW">当前时间</option>
           </select>
           {row.value.kind === "CONST" && <input className="ted-input" value={row.value.value} onChange={(event) => update(index, { value: { ...row.value, value: event.target.value } })} placeholder="固定值" />}
-          {row.value.kind === "PARAM" && <select className="ted-select" value={row.value.code} onChange={(event) => update(index, { value: { ...row.value, code: event.target.value } })}>{action.params.map((parameter) => <option key={parameter.code} value={parameter.code}>{parameter.name || parameter.code}</option>)}</select>}
+          {row.value.kind === "PARAM" && <select className="ted-select" value={row.value.code} onChange={(event) => update(index, { value: { ...row.value, code: event.target.value } })}>{action.params.map((parameter, optionIndex) => <option key={`${parameter.code}-${optionIndex}`} value={parameter.code}>{parameter.name || parameter.code}</option>)}</select>}
           {row.value.kind === "NOW" && <span className="as-chip muted">运行时取当前时间</span>}
           <button type="button" className="ted-icon-button danger" title="删除这条赋值" onClick={() => onChange(rows.filter((_, i) => i !== index))}><Trash2 size={12} /></button>
         </div>
@@ -865,7 +873,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
             </div>
             <div className="as-rail-block">
               <b>定义体检</b>
-              {issues.length ? <ul className="as-rail-list">{issues.map((message) => <li key={message}>{message}</li>)}</ul> : <p>引用都成立。保存后动作会立刻出现在左侧清单里。</p>}
+              {issues.length ? <ul className="as-rail-list">{issues.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}</ul> : <p>引用都成立。保存后动作会立刻出现在左侧清单里。</p>}
             </div>
             <p className="ted-note">动作定义保存在本体草稿里，随版本走；发布后导入图库的数据就是按这份模板写出来的。</p>
           </aside>
@@ -1026,7 +1034,7 @@ function RuleEditDialog({ definition, rule, mode, actions, onClose, onSave }: { 
             </div>
             <div className="as-rail-block">
               <b>定义体检</b>
-              {issues.length ? <ul className="as-rail-list">{issues.map((message) => <li key={message}>{message}</li>)}</ul> : <p>引用都成立。</p>}
+              {issues.length ? <ul className="as-rail-list">{issues.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}</ul> : <p>引用都成立。</p>}
             </div>
             <p className="ted-note">「隐藏」决定这个动作在这个对象上出不出得来，只能看动作执行前就有的数据；「拦截」拒绝执行；「提示」只提醒不拦。三种处置用同一条规则切换，条件不用重配。</p>
           </aside>
