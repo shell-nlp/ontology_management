@@ -810,6 +810,12 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 | M1 | 对象身份 = (类, 主键) | 发布时对象身份取快照节点 id（临时写成 `__ontology_id`，发布后移除），`sources[].primaryKey` 只用于来源绑定校验与多来源（MDO）按列合并；图上的唯一约束来自属性自己的 `unique` / `indexed` 标志（`jena.ts` 的 `applyStrongRules`），不看 `sources[].primaryKey` | 让主键成为对象的真实身份：发布与动作写入都用 `sources[0].primaryKey` 生成稳定 id，按主键建唯一约束，读路径与动作引用改按主键定位。是 D1 的前置依赖 |
 | M2 | ~~接口（interfaces）~~ | **2026-09-15 已完成第一版**（见「接口类型（Palantir Interface）」一节）：定义层、实现映射（按同名属性）、关系约束、多继承、Jena 落库、校验、界面、`list_interfaces` 工具都到位。**未做**：动作约束（action type constraints）、shared properties / struct、status / searchable 元数据、画布上画接口节点 |
 
+### 动作输入（待办，2026-09-20）
+
+| 编号 | 事项 | 现状 | 建议做法 |
+| --- | --- | --- | --- |
+| A1 | 对齐 Palantir Action Type 的输入契约 | 平台已有 `scopeEntityTypeId`（动作适用的对象类型）、执行时的 `subjectRef`（主对象）和 `params`，但尚未把“主对象也是具体对象输入”与其余参数统一说明、核对 API/界面/校验契约；也未支持 Palantir 的全部参数能力 | 明确区分“适用对象类型”与“执行时传入的具体对象”：例如修改工单状态时，主对象是某一张工单，`newStatus` 是业务值。对象引用参数应传具体对象、普通值参数传业务值；主对象可由上下文预填而不必再手填。先核对当前行为与官方参数能力，再分阶段完善参数类型、默认值、隐藏/预填与批量输入；未明确要求前**只记录，不实施**。 |
+
 **M3（类层级与类型传播，第一档推理）已于 2026-09-13 完成（Jena 侧），又于 2026-09-16 整条废止。**
 下面这段保留为历史记录，**当前代码里已经没有这些行为**：`parents`、`class-hierarchy.ts`、
 `mergeInheritedProperties`、`expandLabelFilter`、`validateClassHierarchy` 全删，
