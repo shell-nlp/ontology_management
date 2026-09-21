@@ -67,3 +67,12 @@
 /* 兜底：内容再长也让弹窗自己滚，底部那两个按钮永远够得着。 */
 .dialog.os-dialog { max-height: calc(100vh - 40px); overflow: auto; }
 .os-warnings li { font-size: 11.5px; line-height: 1.6; }
+
+/* 编辑本体：配色一行（取色器 + 恢复自动配色）。 */
+.os-color { display: flex; align-items: center; gap: 8px; }
+.os-color input[type="color"] { width: 42px; height: 28px; padding: 0; border: 1px solid #cfdcec; border-radius: 4px; background: #fff; cursor: pointer; }
+.os-color em { color: #8c9db4; font-size: 11px; font-style: normal; }
+.os-edit-hint { margin: 0; color: #8c9db4; font-size: 11.5px; line-height: 1.6; }
+.os-edit-hint code { font-family: ui-monospace, "Cascadia Code", monospace; color: #5c7593; }
+/* 字段下方的备注：说清输入格式（标签用英文逗号分隔）。 */
+.os-field-hint { color: #8c9db4; font-size: 11px; line-height: 1.5; }

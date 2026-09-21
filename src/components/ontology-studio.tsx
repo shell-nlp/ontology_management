@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Boxes, Clock3, Database, Download, FileJson, Layers, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { Boxes, Clock3, Database, Download, FileJson, Layers, Pencil, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { bindingKey, type PendingSource } from "@/lib/source-binding";
 import { api } from "@/lib/api-client";
 import { downloadResponse } from "@/lib/clipboard";
@@ -43,6 +43,14 @@ type Props = {
 const PAGE_SIZE = 12;
 
 /**
+ * 标签输入：**界面口径是用英文逗号分隔**（输入框的 placeholder 与下方备注都这么写）。
+ * 解析时顺手容忍中文逗号、顿号与空格 —— 从别处粘一串标签过来时，不至于被当成一个标签。
+ */
+function parseTags(text: string) {
+  return text.split(/[,，、\s]+/).map((tag) => tag.trim()).filter(Boolean).slice(0, 12);
+}
+
+/**
  * 本体列表：平台的隔离单位在这里被建立和管理。
  *
  * 用户只需要填名字、挑一个「存储资源」，剩下的落点分配由后端完成
@@ -52,6 +60,8 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const [dialog, setDialog] = useState<null | "create" | "import">(null);
+  /** 正在编辑的本体。改名 / 描述 / 标签 / 配色走 PATCH，改名时后端会把受管存储记录一起改。 */
+  const [editing, setEditing] = useState<OntologySummary | null>(null);
 
   const filtered = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
@@ -153,6 +163,7 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
               </div>
               <div className="os-card-actions">
                 <button className="graph-action primary" onClick={() => onOpen(ontology)}>打开</button>
+                <button className="graph-action" disabled={!canEdit} onClick={() => setEditing(ontology)}><Pencil size={13} />编辑</button>
                 <button className="graph-action" onClick={() => void exportBundle(ontology)}><Download size={13} />导出</button>
                 <button className="graph-action danger" disabled={!canEdit} onClick={() => void remove(ontology)}><Trash2 size={13} />删除</button>
                 <span className="os-time"><Clock3 size={11} />{new Date(ontology.updated_at).toLocaleDateString("zh-CN")}</span>
@@ -186,6 +197,16 @@ export function OntologyStudio({ ontologies, targets, selectedId, canEdit, refre
             if (summary) onOpen(summary);
             notify(options?.imported ? `本体「${name}」已从本体包导入到草稿，核对后即可发布。` : `本体「${name}」已创建。`);
           }}
+          fail={fail}
+        />
+      )}
+
+      {editing && (
+        <EditOntologyDialog
+          ontology={editing}
+          onClose={() => setEditing(null)}
+          onSaved={refresh}
+          notify={notify}
           fail={fail}
         />
       )}
@@ -308,7 +329,7 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim(),
-          tags: tagText.split(/[,，\s]+/).map((tag) => tag.trim()).filter(Boolean),
+          tags: parseTags(tagText),
           storageTargetId: selectedStorageTargetId,
         }),
       });
@@ -411,7 +432,12 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
 
         <label>{importing ? "本体名称（可改）" : "名称"}<input autoFocus={!importing} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：专线业务本体" required={!importing} /></label>
         {!importing && <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>}
-        {!importing && <label>标签<input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="用逗号或空格分隔，可留空" /></label>}
+        {!importing && (
+          <label>标签
+            <input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="例如：客户,用户,订购" />
+            <small className="os-field-hint">用英文逗号「,」分隔，最多 12 个；留空表示没有标签。</small>
+          </label>
+        )}
         <label>存储资源
           <select value={selectedStorageTargetId} onChange={(event) => setStorageTargetId(event.target.value)} required>
             <option value="">选择一个存储资源</option>
@@ -428,6 +454,89 @@ function CreateOntologyDialog({ mode, targets, ontologies, onClose, onImported, 
                 <button type="button" className="quiet-button" onClick={onClose}>取消</button>
                 <button className="primary-button" disabled={busy || !ready}>{busy ? (importing ? "导入中…" : "创建中…") : importing ? "导入为草稿" : "创建本体"}</button>
               </>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * 编辑本体：名称 / 描述 / 标签 / 配色。
+ *
+ * 只改这份本体的身份信息，不动结构 —— 对象类型、关系类型那些在「本体建模」里改。
+ * 改名时后端会把受管存储记录一起改名（那条记录只是这段隔离空间的载体）。
+ */
+function EditOntologyDialog({ ontology, onClose, onSaved, notify, fail }: {
+  ontology: OntologySummary;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  notify: (text: string) => void;
+  fail: (reason: unknown) => void;
+}) {
+  const [name, setName] = useState(ontology.name);
+  const [description, setDescription] = useState(ontology.description ?? "");
+  const [tagText, setTagText] = useState(ontology.tags.join(","));
+  const [color, setColor] = useState(ontology.color ?? "");
+  const [busy, setBusy] = useState(false);
+
+  // 和新建 / 导入弹窗一个规矩：Escape 关闭。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const tags = parseTags(tagText);
+  const changed = name.trim() !== ontology.name
+    || description.trim() !== (ontology.description ?? "")
+    || color !== (ontology.color ?? "")
+    || tags.join(",") !== ontology.tags.join(",");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    try {
+      await api(`/api/ontologies/${ontology.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: name.trim(), description: description.trim(), tags, color }),
+      });
+      await onSaved();
+      notify(`本体「${name.trim()}」已更新。`);
+      onClose();
+    } catch (reason) {
+      fail(reason);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <form className="dialog os-dialog" onSubmit={submit}>
+        <button type="button" className="close-button" onClick={onClose} title="关闭"><X size={18} /></button>
+        <div className="dialog-icon"><Pencil size={22} /></div>
+        <span className="eyebrow">编辑</span>
+        <h2>编辑本体</h2>
+        <p>改的是这份本体的身份信息：名称、描述、标签与配色。对象类型、关系类型这些结构在「本体建模」里改。</p>
+
+        <label>名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：专线业务本体" required /></label>
+        <label>描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个本体描述什么" /></label>
+        <label>标签
+          <input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="例如：客户,用户,订购" />
+          <small className="os-field-hint">用英文逗号「,」分隔，最多 12 个；留空表示没有标签。</small>
+        </label>
+        <label>配色
+          <span className="os-color">
+            <input type="color" value={color || graphColor(name || ontology.name)} onChange={(event) => setColor(event.target.value)} />
+            <button type="button" className="graph-action" onClick={() => setColor("")}>用自动配色</button>
+            <em>{color ? color : "自动（按名称生成）"}</em>
+          </span>
+        </label>
+        <p className="os-edit-hint">标识 <code>{ontology.identifier}</code> 与存储空间不随改名变化，历史版本与图数据都留在原处。</p>
+
+        <div className="dialog-actions">
+          <button type="button" className="quiet-button" onClick={onClose}>取消</button>
+          <button className="primary-button" disabled={busy || !name.trim() || !changed}>{busy ? "保存中…" : "保存修改"}</button>
         </div>
       </form>
     </div>
