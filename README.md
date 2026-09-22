@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  面向 Apache Jena 的本体与图数据管理平台<br/>
-  可插拔图数据库抽象 · 版本化本体快照 · 草稿安全编辑 · 发布重建图数据
+  本体建模 · 版本化快照 · 可插拔图存储 · 数据资源 · 智能问答与 MCP<br/>
+  默认使用平台自带的内置图存储；Apache Jena / Fuseki 是可选后端，随时可换
 </p>
 
 <p align="center">
@@ -21,8 +21,10 @@
 </p>
 
 <p align="center">
-  <img alt="Apache Jena" src="https://img.shields.io/badge/Apache_Jena-RDF_Graph-6D4AFF?style=flat-square" />
+  <img alt="Graph Store" src="https://img.shields.io/badge/Graph_Store-Embedded_|_Apache_Jena-6D4AFF?style=flat-square" />
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Platform_DB-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-Ontology_Tools_+_Skills-1F7A57?style=flat-square" />
+  <img alt="AI SDK" src="https://img.shields.io/badge/AI_SDK-7-000000?style=flat-square" />
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-11-F69220?style=flat-square&logo=pnpm&logoColor=white" />
   <img alt="Vitest" src="https://img.shields.io/badge/Vitest-Unit_Tests-6E9F18?style=flat-square&logo=vitest&logoColor=white" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square&logo=apache&logoColor=white" /></a>
@@ -31,9 +33,9 @@
 
 ---
 
-使用 Next.js 管理本体存储（Apache Jena / Fuseki 与内置类型图并存）；在 PostgreSQL 的 `ontology_platform` Schema 中保存账号、连接、审计与内置后端的当前发布视图。
+平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿只写本地文件，发布才重建图数据。
 
-图数据库访问统一收敛在 `src/lib/graph` 抽象层：上层 API 与界面只调用 `GraphStore`，不感知底层查询语言与存储模型的差异。接入新的图后端只需新增一个适配器。
+图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象，不感知具体引擎。平台库（PostgreSQL `ontology_platform`）保存账号、连接、审计、对象检索索引与版本状态。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
@@ -51,8 +53,12 @@
 - [Docker Compose 部署](#docker-compose-部署)
 - [统一版本快照](#统一版本快照)
 - [本体包（导出与导入）](#本体包导出与导入)
+- [智能问答与 MCP](#智能问答与-mcp)
+- [本体技能](#本体技能)
+- [对象从哪来](#对象从哪来)
 - [角色与安全](#角色与安全)
 - [服务端接口](#服务端接口)
+- [图存储抽象](#图存储抽象)
 - [数据资源](#数据资源)
 - [目录结构](#目录结构)
 - [开发约定](#开发约定)
@@ -63,9 +69,10 @@
 
 | | 是什么 | 平台里的位置 |
 | --- | --- | --- |
-| **本体模型** | 本体「是什么」：对象类型（Object Type）与它们的属性、关系类型 | 本体建模 |
-| **本体实例** | 本体里"实际有什么"：对象与关系，以及它们的实例图谱 | 图谱 · 对象 · 关系 |
+| **本体模型** | 本体「是什么」：对象类型（Object Type）与它们的属性、关系类型、接口、概念分组 | 本体建模 · 本体技能 |
+| **本体实例** | 本体里"实际有什么"：对象与关系，以及它们的实例图谱 | 实例图谱 · 对象 · 关系 |
 | **动力模型** | 本体「能做什么」：动作（唯一的业务写入口），以及挂在动作上的规则 / 动态安全 | 动作 · 规则 |
+| **能力验证** | 把本体交给模型与外部 Agent 用起来：智能问答（工具循环）与 MCP 服务 | 智能问答 · MCP 调试 |
 
 「总览」同时展示当前本体的运行状态与本体列表，可在列表中搜索、新建、导入、打开或导出。数据资源（本体脚下来自哪张表）与本体存储（本体落在哪个图库）是平台层；图引擎连接在「设置 → 图引擎配置」管理。
 | | 模块 | 说明 |
@@ -75,23 +82,33 @@
 | 🪪 | **接口（Interfaces）** | 抽象契约：只描述"实现我的对象类型必须有哪些属性与关系"，不绑数据、不能实例化；一个对象类型可实现多个接口、接口可继承接口。本体建模的「接口」标签可查看定义和实现情况 |
 | 🧩 | **属性系统** | 文本 / 整数 / 小数 / 布尔 / 日期 / 日期时间 / 文本数组 / JSON；每个属性可带**显示名**与**说明**（外部本体的中文名与口径原文能原样带进来） |
 | 👁 | **建模与实例图谱** | 本体建模画布查看和搜索对象类型、属性、关系类型；图谱只展示实例。两处节点都可拖拽摆放：有草稿的实例位置写入图快照，建模画布的位置只记在本机浏览器 |
-| ⌨️ | **查询工作台** | SPARQL 只读查询与可视化；禁止绕过发布直接写入 |
-| 🗄 | **本体存储管理** | 可选内置类型图或 Apache Jena；Jena 凭据 AES-256-GCM 加密入库 |
-| 🔌 | **存储抽象** | `GraphStore` 接口 + Jena / 内置两个适配器，业务 API 不直接依赖具体引擎 |
+| ⌨️ | **只读查询** | 实例图谱页可展开的只读查询（内置与 Jena 共用同一套模板）；写入一律拒绝，避免绕过版本 |
+| 🗄 | **图引擎配置** | 内置图存储开箱可用；也可登记 Apache Jena / Fuseki，凭据 AES-256-GCM 加密入库 |
+| 🔌 | **存储抽象** | `GraphStore` 契约 + 注册表（内置 / Jena 两个适配器），业务 API 不直接依赖具体引擎 |
 | 🧱 | **数据资源** | 外部关系库的只读连接（PostgreSQL / MySQL / Oracle）：列结构、字段与数据预览，再把类绑到表上（一个类可挂多份来源，按主键合并属性） |
 | 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
 | 📤 | **本体包** | 一个 `.ontology.json` 带走整份**结构**（类 / 关系类型 / 动作 / 规则 + 数据资源坐标），导入停在草稿。不含实例数据，也不含凭据 |
+| 🧭 | **概念分组** | 画布上的逻辑分组：先建分组，再在对象类型上选归属；智能问答可以按分组找类型 |
+| 🤖 | **智能问答** | 服务端工具循环（AI SDK）：模型只调只读工具（本体检索、多跳、表结构、只读 SQL），流式输出、可中断、可带图片、带会话历史 |
+| 🛰 | **MCP** | 两个服务端：本体数据工具（会话或令牌）与建模技能（免令牌），外部 Agent / IDE 直接接 |
+| ✨ | **本体技能** | 三套建模技能（需求澄清 → 本体设计 → 出包交付），整包下载，或经 MCP 直接给 Agent 用 |
+| 🔍 | **对象检索** | 对象索引（全文 / 模糊 / 向量，当前落 PostgreSQL）+ 回源策略；海量业务对象不进进程内存 |
+| 🧾 | **审计记录** | 发布、导入、删除、改名等关键操作留痕，在「设置 → 审计记录」里按动作筛选 |
 
 ## 技术栈
 
 | 层级 | 选型 |
 | --- | --- |
-| 前端 / API | Next.js（App Router）、React 19 |
-| 本体存储 | 内置类型图（PG + Graphology + N3.js + Comunica）或 Apache Jena / Fuseki；Neo4j 已移除 |
-| 平台元数据 | PostgreSQL · Schema `ontology_platform` |
-| 图可视化 | Sigma / Graphology、React Flow |
-| 校验 | Zod |
-| 工具链 | pnpm · TypeScript · Vitest · ESLint · Playwright |
+| 前端 / API | Next.js 16（App Router）、React 19、TypeScript |
+| 本体存储 | 默认**内置图存储**（PostgreSQL 持久化 + Graphology 类型图 + N3.js / Comunica 只读 SPARQL）；可选 **Apache Jena / Fuseki**。Neo4j 已移除 |
+| 平台元数据 | PostgreSQL · Schema `ontology_platform` · TypeORM（业务侧不写裸 SQL） |
+| 对象检索 | PostgreSQL 索引表：`tsvector` 全文 + `pg_trgm` 模糊 + `pgvector` 向量；缺扩展自动降级 |
+| 智能问答 | AI SDK 7（`ai` + `@ai-sdk/openai-compatible`）：服务端工具循环、流式输出、可中断 |
+| 对外协议 | MCP：本体数据工具与建模技能两个服务端 |
+| 图可视化 | Sigma + Graphology（实例图谱）、React Flow（本体建模画布） |
+| 数据资源驱动 | `pg` · `mysql2` · `oracledb`（Thick 模式，镜像内置 Instant Client） |
+| 契约与文档 | Zod；OpenAPI 由 `next-openapi-gen` 生成，Swagger UI 在 `/docs` |
+| 工具链 | pnpm · Vitest · ESLint · Playwright |
 
 ## 快速开始
 
@@ -108,6 +125,7 @@ cp .env.example .env.local
 | `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话 Cookie |
 | `AUTH_COOKIE_SECURE` | 可选 | 会话 Cookie 的 Secure 开关；留空按请求实际协议判断（推荐） |
 | `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | Jena 端点主机名改写；容器默认 `localhost=host.docker.internal`，外部服务可覆盖 |
+| `MCP_API_TOKEN` | 可选 | 外部 MCP 客户端访问 `/api/mcp` 用的 Bearer 令牌；不配则只有平台会话能连（站内「MCP 调试」不受影响） |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
 | `ONTOLOGY_VERSION_DIR` | 可选 | 快照目录，默认 `<项目>/.data/ontology-versions` |
@@ -313,12 +331,66 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 - `primary_keys` 落到来源绑定的主键上；没有数据来源的类，主键改记成"必填 + 唯一"并给出提醒；
 - bkn 只写 `SCHEMA.TABLE`、不带数据库连接，所以来源资源要导入后自己在类型编辑里选一次。
 
+## 智能问答与 MCP
+
+「能力验证」这一组是同一个能力的两种用法：**平台内的问答**与**对外的 MCP 服务**共用同一套只读工具，
+所以不会出现"界面上查得到、MCP 里查不到"的漂移。
+
+### 智能问答（工具循环）
+
+- **循环在服务端**：AI SDK 的 `ToolLoopAgent` 负责"模型选工具 → 执行 → 结果回灌 → 再选"，平台只负责提供事实工具。
+- **工具全部只读**：本体概念检索、对象类型详情、概念分组、接口、多跳遍历、动作定义、表结构（DDL）、只读 SQL。写入业务数据的唯一入口是**动作**。
+- **旋钮**在「问答配置」抽屉里：步数上限、单次工具返回长度、取数行数、历史轮数与系统提示词；默认都不限制（服务端兜底防死循环）。
+- **流式与中断**：回答按「思考 / 正文 / 工具步」分段流式回传，可随时停止；提问支持附带图片。
+- **会话历史**存在平台库，可回看、可删除；上下文过长时由框架负责裁剪压缩。
+
+### MCP（两个服务端）
+
+| 服务端 | 地址 | 鉴权 | 提供什么 |
+| --- | --- | --- | --- |
+| 本体数据 | `/api/mcp` | 平台会话或 `Bearer <MCP_API_TOKEN>` | 本体与 Schema 检索、对象类型详情与多跳、概念分组、接口、动作定义、表结构与只读 SQL |
+| 建模技能 | `/api/skills/mcp` | **免令牌** | 三套建模技能的正文与参考文件（公开文档，不含凭据） |
+
+「MCP 调试」页把工具逐个列出来：可以改参数、直接运行、看真实返回，也能复制各家客户端的接入配置（默认是通用 `mcp.json`）。
+工具说明按「用途 / 输入 / 产出 / 下一步调谁」写，模型不点开 schema 也知道怎么用。
+
+## 本体技能
+
+平台自带三套建模技能，目标是让 Agent 按本平台的规范建模，并直接产出**能导入的本体包**：
+
+| 技能 | 干什么 | 产物 |
+| --- | --- | --- |
+| `ontology-requirement` | 需求澄清：把业务描述问成可建模的清单 | 澄清后的对象类型 / 关系类型 / 动作清单 |
+| `ontology-builder` | 本体设计：按建模细则设计对象类型、关系类型、接口、动作 | 设计稿与校验结论 |
+| `ontology-bundle` | 出包交付：把设计编译成平台可直接导入的本体包 | `.ontology.json` |
+
+- **模型只写结构化清单，脚本负责编译**：手写 UUID 与 id 引用最容易出错，所以由 `skills/ontology-bundle/scripts/build-bundle.mjs` 生成最终包（只用 Node 内置模块，Windows / Linux / macOS 同一套命令）。
+- 技能页可以**整包下载** zip（解压进 `~/.codex/skills/` 之类的目录），也可以直接走上面的**免令牌 MCP**。
+
+## 对象从哪来
+
+平台把"对象"和"对象存在哪"解耦成两层，读路径只有一条：
+
+```text
+界面 / 智能问答 / MCP
+        │  按「对象类型 + 主键」取对象
+        ▼
+   对象服务（Object Service）
+        │  auto（默认）：先查索引，索引里没有就回源
+        ├──► 对象检索索引（Object Index）   当前落 PostgreSQL：全文 / 模糊 / 向量
+        └──► 数据资源连接（DataSourceConnector）  Oracle / PostgreSQL / MySQL 只读事务
+```
+
+- **索引层**是可选加速：对象量大时把常用类型物化进索引表，检索、过滤、分页都快；不物化也能用，代价是每次回源查业务库。
+- **回源**按对象类型上绑定的数据资源与主键字段读，只走只读事务与语句白名单。
+- 换中间件（例如把检索索引换成独立搜索引擎）只替换扩展点，对象服务、界面与 AI 工具一行都不用改。
+
 ## 角色与安全
 
 | 角色 | 权限 |
 | --- | --- |
-| `ADMIN` | 本体存储、本体版本、实例写入、原生查询写入（已默认禁止） |
-| `VIEWER` | 登录、浏览与只读查询 |
+| `ADMIN` | 本体与版本、数据资源、图引擎连接、导入导出、本体编辑与删除、审计；实例与动作写入 |
+| `VIEWER` | 登录、浏览、只读查询与智能问答（工具全部只读） |
 
 - 会话：HttpOnly Cookie，`AUTH_SECRET` 签署  
 - 数据面：图库 / PostgreSQL 仅服务端访问，浏览器不接触密码与主密钥  
@@ -339,7 +411,7 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 </details>
 
 <details>
-<summary><b>本体存储（Apache Jena）</b></summary>
+<summary><b>图引擎连接</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -389,7 +461,7 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 </details>
 
 <details>
-<summary><b>查询工作台</b></summary>
+<summary><b>只读查询</b></summary>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -411,7 +483,47 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 
 </details>
 
-## 图数据库抽象
+<details>
+<summary><b>智能问答</b></summary>
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/api/reasoning/stream` | 流式问答（SSE：思考 / 正文 / 工具步 / 收尾） |
+| `POST` | `/api/reasoning/run` | 非流式运行，给脚本与调试用 |
+| `GET` | `/api/reasoning/tools` | 工具清单与启用状态 |
+| `GET` | `/api/reasoning/status` | 模型与运行状态 |
+| `GET` / `DELETE` | `/api/reasoning/conversations` | 会话历史列表 / 清空 |
+| `GET` / `DELETE` | `/api/reasoning/conversations/:conversationId` | 单个会话的轮次 / 删除 |
+
+</details>
+
+<details>
+<summary><b>MCP 与技能</b></summary>
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/api/mcp` | 本体数据 MCP 服务（会话或令牌） |
+| `GET` | `/api/mcp/info` | 该 MCP 服务的接入信息与工具清单 |
+| `POST` | `/api/skills/mcp` | 建模技能 MCP 服务（免令牌） |
+| `GET` | `/api/skills` | 技能清单 + MCP 接入信息 |
+| `GET` | `/api/skills/archive` | 全部技能打包成 zip |
+
+</details>
+
+<details>
+<summary><b>对象检索与审计</b></summary>
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/api/objects/index` | 把对象按类型同步进检索索引 |
+| `POST` | `/api/objects/materialize` | 物化：把来源数据写进索引 |
+| `POST` | `/api/object-search` | 按关键词与过滤条件检索对象 |
+| `POST` | `/api/object-search/reindex` | 重建索引 |
+| `GET` | `/api/audit` | 审计记录（`scope=changes` / `actions` / `reads` / `all`，仅管理员） |
+
+</details>
+
+## 图存储抽象
 
 `src/lib/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
 
@@ -424,7 +536,7 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 
 ### 本体存储配置字段
 
-| 字段 | Apache Jena |
+| 字段 | 说明（Apache Jena） |
 | --- | --- |
 | `uri` | Fuseki 服务地址，如 `http://host:3030`（也接受 `/ds/query`、`/ds/sparql`） |
 | `database_name` | 数据集名 |
@@ -527,24 +639,35 @@ Oracle 注意两点：服务端版本较旧（11g 及更早）时必须用 Insta
 ```text
 ontology_management/
 ├── src/
-│   ├── app/              # 页面与 API 路由
-│   ├── components/       # 工作台、图画布、属性编辑器
-│   └── lib/              # 认证、图数据库抽象（graph/）、数据来源抽象（data-source/）、本体、版本快照、本体包（ontology-bundle.ts）
-├── docs/
-│   └── adr/              # 架构决策记录
-├── e2e/                  # Playwright 端到端
+│   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
+│   ├── components/       # 工作台、建模画布、实例图谱、动作、问答、MCP 调试
+│   └── lib/
+│       ├── graph/        # 图存储抽象：内置（embedded/）与 Jena（jena/）两个适配器 + 注册表
+│       ├── data-source/  # 数据资源抽象：Oracle / PostgreSQL / MySQL
+│       ├── object-index/ # 对象检索索引（当前落 PostgreSQL）
+│       ├── object-service/ # 对象从哪来：索引 / 回源 / 自动
+│       ├── reasoning/    # 智能问答：工具循环、工具集、提示词、会话历史、MCP
+│       ├── db/           # TypeORM 实体与迁移
+│       └── ...           # 本体定义、版本快照、本体包、接口、动作引擎、认证、审计
+├── skills/               # 随平台下发的建模技能（Markdown + 出包脚本）
+├── docs/                 # 设计文档与架构决策记录
+├── scripts/              # OpenAPI 生成等构建脚本
+├── docker/               # Oracle Instant Client 等镜像内资源
+├── e2e/ · tests/         # Playwright 端到端与 Vitest 单测
 ├── .env.example
 ├── LICENSE
 └── package.json
 ```
 
-设计细节见 [`docs/adr/`](docs/adr/)。
+设计细节见 [`docs/`](docs/) 与 [`skills/README.md`](skills/README.md)。
 
 ## 开发约定
 
 - 包管理统一使用 **pnpm**（见 `packageManager`）
 - 业务逻辑优先放在 `src/lib`，API 路由保持薄封装
 - 改动版本快照 / 发布流程时，同步关注 `src/lib/version-snapshot.ts` 与相关 ADR
+- 改 `src/lib/ontology.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
+- 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建
 
 ## 许可证
 
