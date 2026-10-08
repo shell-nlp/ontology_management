@@ -24,6 +24,7 @@
   "dataSources": [],
   "groups": [],
   "interfaces": [],
+  "metrics": [],
   "objectTypes": [],
   "relationTypes": [],
   "actionTypes": [],
@@ -41,8 +42,9 @@
 | `dataSources` | 否 | 数据资源的**连接坐标**（`name` / `kind` / `host` / `port` / `databaseName` / `schemaName`）。**绝不写账号密码** |
 | `groups` | 否 | 概念分组：`name` / `color` |
 | `interfaces` | 否 | 接口：`name` / `description` / `properties` / `extends` / `linkConstraints` |
+| `metrics` | 否 | 指标（业务口径）：`name` / `description` / `scope` / `aggregation` / `property` / `filters` / `dimensions` / `timeProperty` / `unit` / `tags`。`scope` 写对象类型名，`property` 与 `filters[].property` / `dimensions[]` 写**该对象类型的属性名** |
 | `objectTypes` | 否 | 对象类型：`name` / `description` / `displayProperty` / `group` / `implements` / `properties` / `sources` |
-| `relationTypes` | 否 | 关系类型：`name` / `description` / `source` / `target` / `properties` / `sourceKeyMappings` / `targetKeyMappings`。关系类型是**双向**的：只写一条，反向不用再建 |
+| `relationTypes` | 否 | 关系类型：`name` / `description` / `source` / `target` / `properties` / `cardinality` / `sourceKeyMappings` / `targetKeyMappings`。关系类型是**双向**的：只写一条，反向不用再建；`cardinality` 只说明"起点端 → 终点端"的数量关系（不写 = 未标注） |
 | `actionTypes` | 否 | 动作：`name` / `code` / `description` / `scope` / `params` / `edits` |
 | `rules` | 否 | 规则：`name` / `effect` / `priority` / `enabled` / `action` / `conditions` / `message` |
 
@@ -59,6 +61,8 @@
 | `actionTypes[].scope` | 对象类型名（动作定义在它上面） |
 | `actionTypes[].params[].entityType` | 对象类型名（只对 `kind: "ENTITY_REF"` 有意义） |
 | `actionTypes[].edits[].entityType` / `.relationshipType` | 对象类型名 / 关系类型名 |
+| `metrics[].scope` | 对象类型名（指标作用在它上面） |
+| `metrics[].property` / `.filters[].property` / `.dimensions[]` / `.timeProperty` | **上面那个对象类型的属性名**（编译器会核对，指错了当场报错） |
 | `rules[].action` | 动作名（空 = 对所有动作生效） |
 | `rules[].conditions[].subject.relationshipType` | 关系类型名（先沿这条关系跳到邻域再比属性） |
 
@@ -82,6 +86,9 @@
 | `actionTypes[].params[].kind` | `ENTITY_REF`（指向一个已有对象）/ `VALUE`（字面量） |
 | `actionTypes[].edits[].op` | `CREATE_ENTITY` / `SET_PROPERTY` / `CREATE_RELATIONSHIP` |
 | `actionTypes[].edits[].assignments[].value.kind` | `PARAM` / `CONST` / `NOW` |
+| `metrics[].aggregation` | `SUM` / `COUNT` / `COUNT_DISTINCT` / `AVG` / `MIN` / `MAX`（默认 `COUNT`） |
+| `metrics[].filters[].operator` | `EQ` / `NE` / `GT` / `GTE` / `LT` / `LTE` / `IN` / `NOT_IN` / `CONTAINS` / `IS_NULL` / `NOT_NULL` |
+| `relationTypes[].cardinality` | `ONE_TO_ONE` / `ONE_TO_MANY` / `MANY_TO_ONE` / `MANY_TO_MANY`（不写 = 未标注） |
 | `rules[].effect` | `BLOCK`（拒绝）/ `WARN`（只提示）/ `HIDE`（动作在满足条件的对象上不出现；必须绑具体动作） |
 | `rules[].conditions[].operator` | `EQUALS` / `NOT_EQUALS` / `IS_TRUTHY` / `IS_FALSY` / `IS_EMPTY` / `IS_NOT_EMPTY` |
 

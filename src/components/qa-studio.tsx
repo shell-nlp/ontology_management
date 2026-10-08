@@ -1043,7 +1043,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 }
 
 function Evidence({ run, onOpenObject }: { run: ReasoningRun; onOpenObject: (id: string) => void }) {
-  const concepts = run.evidence.filter((item) => item.kind === "OBJECT_TYPE" || item.kind === "RELATION_TYPE" || item.kind === "ACTION" || item.kind === "INTERFACE");
+  const concepts = run.evidence.filter((item) => item.kind === "OBJECT_TYPE" || item.kind === "RELATION_TYPE" || item.kind === "ACTION" || item.kind === "INTERFACE" || item.kind === "METRIC");
   const objects = run.evidence.filter((item) => item.kind === "OBJECT");
   const relationships = run.evidence.filter((item) => item.kind === "RELATIONSHIP");
   if (!concepts.length && !objects.length && !relationships.length) return null;

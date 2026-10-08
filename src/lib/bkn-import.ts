@@ -8,8 +8,9 @@ import { EMPTY_LINK_SOURCE, type OntologyDefinition } from "@/lib/ontology";
  * `ontology.bundle`，照样走 `POST /api/ontologies/import`（换 id、接数据资源、写草稿都在那边）。
  *
  * bkn 的字段比我们多，转换时**只搬我们装得下的，其余逐条报出来** —— 静默丢内容比报错更糟。
- * 装得下：对象类型（含属性 / 主键 / 数据来源）、关系类型（含说明）、概念分组（concept_groups → `groups`）。
- * 已知装不下的（见 warnings）：指标、关系类型的连接规则（mapping_rules）、
+ * 装得下：对象类型（含属性 / 主键 / 数据来源）、关系类型（含说明）、概念分组（concept_groups → `groups`）、
+ * 指标（metrics → `metrics`，作用类型 / 聚合 / 条件 / 单位都搬过来）。
+ * 已知装不下的（见 warnings）：关系类型的连接规则（mapping_rules）、
  * 以及每类对象上的 operations（那是「能不能查/能增删改」的能力开关，不是带参数与规则的动作定义）。
  *
  * 记录时间：2026-09-14。
@@ -151,7 +152,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
     if (!from || !to) warnings.push(`关系类型「${name}」的端点找不到对应对象类型，导入后请手动补选起点与终点。`);
     const rules = Array.isArray(item.mapping_rules) ? item.mapping_rules.length : 0;
     droppedMappings += rules;
-    return { id: crypto.randomUUID(), name, description: text(item.comment), sourceEntityTypeId: from, targetEntityTypeId: to, sourceKeyMappings: [], targetKeyMappings: [], properties: [], linkSource: EMPTY_LINK_SOURCE } as OntologyDefinition["relationshipTypes"][number];
+    return { id: crypto.randomUUID(), name, description: text(item.comment), sourceEntityTypeId: from, targetEntityTypeId: to, sourceKeyMappings: [], targetKeyMappings: [], properties: [], linkSource: EMPTY_LINK_SOURCE, cardinality: "" } as OntologyDefinition["relationshipTypes"][number];
   });
 
   if (droppedMappings > 0) warnings.push(`bkn 里的 ${droppedMappings} 条关系连接规则（mapping_rules，靠两边哪些字段相等来连边）平台还没有对应的模型，本次没有导入。`);
@@ -194,8 +195,75 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
   const operations = list(source.operations);
   if (operations.length) warnings.push(`bkn 里的 ${operations.length} 类操作能力（${operations.join("、")}）是权限开关而不是动作定义，平台的动作还需要参数与校验规则，本次没有导入。`);
 
-  const metrics = Array.isArray(source.metrics) ? source.metrics : [];
-  if (metrics.length) warnings.push(`bkn 里的 ${metrics.length} 条指标（${metrics.map((metric) => text((metric as Unknown).name)).filter(Boolean).join("、")}）平台还没有对应的模型，本次没有导入。`);
+  /*
+   * 指标（metrics）：bkn 的指标已经带齐「作用对象类型 + 聚合 + 条件 + 单位」，和平台的指标模型
+   * 基本同构，所以**这次真的导进来**（原先整块丢掉）。映射不上的一律逐条报数，不静默丢：
+   * - scope_ref 在文件里找不到对象类型 → 指标保留，但先不挂类型；
+   * - 平台的口径是「条件全部满足」（AND），OR 组合表达不了 → 这一组条件跳过并报数；
+   * - 不认识的聚合方式按 COUNT、不认识的比较符按 EQ 处理，各自报数。
+   */
+  const rawMetrics = Array.isArray(source.metrics) ? (source.metrics as Unknown[]) : [];
+  const metrics: OntologyDefinition["metrics"] = [];
+  let metricsWithoutName = 0;
+  let metricsWithoutScope = 0;
+  let metricsUnknownAggregation = 0;
+  let metricsDroppedCondition = 0;
+  let metricsUnknownOperator = 0;
+  const AGGREGATIONS: Record<string, OntologyDefinition["metrics"][number]["aggregation"]> = {
+    sum: "SUM", count: "COUNT", count_distinct: "COUNT_DISTINCT", distinct_count: "COUNT_DISTINCT", distinct: "COUNT_DISTINCT",
+    avg: "AVG", average: "AVG", mean: "AVG", max: "MAX", min: "MIN",
+  };
+  const OPERATORS: Record<string, OntologyDefinition["metrics"][number]["filters"][number]["operator"]> = {
+    "=": "EQ", "==": "EQ", eq: "EQ", "!=": "NE", "<>": "NE", ne: "NE",
+    ">": "GT", gt: "GT", ">=": "GTE", gte: "GTE", "<": "LT", lt: "LT", "<=": "LTE", lte: "LTE",
+    in: "IN", "not in": "NOT_IN", not_in: "NOT_IN", like: "CONTAINS", contains: "CONTAINS",
+    "is null": "IS_NULL", "is not null": "NOT_NULL",
+  };
+  for (const metric of rawMetrics) {
+    const name = text(metric.name);
+    if (!name) { metricsWithoutName += 1; continue; }
+    const formula = (metric.calculation_formula ?? {}) as Unknown;
+    const aggregationNode = (formula.aggregation ?? {}) as Unknown;
+    const aggregation = AGGREGATIONS[text(aggregationNode.aggr).toLowerCase()] ?? "";
+    if (!aggregation) metricsUnknownAggregation += 1;
+    const entityTypeId = idMap.get(text(metric.scope_ref)) ?? "";
+    if (!entityTypeId) metricsWithoutScope += 1;
+    const filters: OntologyDefinition["metrics"][number]["filters"] = [];
+    const condition = (formula.condition ?? null) as Unknown | null;
+    if (condition) {
+      const operation = text(condition.operation).toLowerCase();
+      const subConditions = Array.isArray(condition.sub_conditions) ? (condition.sub_conditions as Unknown[]) : [];
+      if (operation && operation !== "and") metricsDroppedCondition += 1;
+      else for (const sub of subConditions) {
+        const property = text(sub.field);
+        if (!property) continue;
+        const operator = OPERATORS[text(sub.operation).toLowerCase()];
+        if (!operator) metricsUnknownOperator += 1;
+        filters.push({ property, operator: operator ?? "EQ", value: text(sub.value) });
+      }
+    }
+    const unit = text(metric.unit);
+    metrics.push({
+      id: crypto.randomUUID(),
+      name,
+      description: text(metric.comment),
+      entityTypeId,
+      aggregation: aggregation || "COUNT",
+      property: text(aggregationNode.property),
+      filters,
+      dimensions: [],
+      timeProperty: text(((metric.time_dimension ?? {}) as Unknown).property),
+      unitType: text(metric.unit_type),
+      unit: /^none$/i.test(unit) ? "" : unit,
+      tags: list(metric.tags),
+    });
+  }
+  if (metrics.length) warnings.push(`已导入 ${metrics.length} 条指标（业务口径），可在「本体建模 → 指标」里核对与修改。`);
+  if (metricsWithoutName) warnings.push(`有 ${metricsWithoutName} 条指标没有名字，已跳过。`);
+  if (metricsWithoutScope) warnings.push(`有 ${metricsWithoutScope} 条指标的对象类型在本文件里找不到，指标先保留、没有挂类型，导入后在「指标」里补一次。`);
+  if (metricsUnknownAggregation) warnings.push(`有 ${metricsUnknownAggregation} 条指标的聚合方式平台不认识，已按 COUNT 处理，导入后请核对。`);
+  if (metricsDroppedCondition) warnings.push(`有 ${metricsDroppedCondition} 条指标用的是 OR 组合条件，平台的指标口径只表达「条件全部满足」，这一组条件没有导入。`);
+  if (metricsUnknownOperator) warnings.push(`有 ${metricsUnknownOperator} 个比较符平台不认识，已按相等处理，导入后请核对。`);
 
   const bundle = buildOntologyBundle({
     ontology: {
@@ -205,7 +273,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       color: text(source.color),
       tags: list(source.tags),
     },
-    definition: { groups, interfaces: [], entityTypes: grouped, relationshipTypes: mappings, actionTypes: [], rules: [] },
+    definition: { groups, interfaces: [], metrics, entityTypes: grouped, relationshipTypes: mappings, actionTypes: [], rules: [] },
   });
 
   return { bundle, warnings };

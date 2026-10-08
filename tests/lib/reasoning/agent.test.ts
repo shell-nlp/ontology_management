@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STOPPED_ANSWER_FALLBACK, worthKeepingTurn } from "@/lib/reasoning/agent";
+import { STOPPED_ANSWER_FALLBACK, TOOL_RESULT_STORE_LIMIT, truncateForHistory, worthKeepingTurn } from "@/lib/reasoning/agent";
 import type { ReasoningRun } from "@/lib/reasoning/types";
 
 /**
@@ -54,5 +54,35 @@ describe("worthKeepingTurn", () => {
   it("被叫停且什么都没跑出来：不记，免得历史里多一条空条目", () => {
     expect(worthKeepingTurn(run({ stopped: true, answer: STOPPED_ANSWER_FALLBACK, reasoning: "", steps: [] }))).toBe(false);
     expect(worthKeepingTurn(run({ stopped: true, answer: "", reasoning: "   ", steps: [] }))).toBe(false);
+  });
+});
+
+/**
+ * 工具结果的留存上限。
+ *
+ * 背景（2026-10-08 的实测）：`steps[].result` 不只是界面上的展示串，它还会被当成 tool-result
+ * **回放给模型**。以前截在 8000 字符，而一个 66 属性的对象类型定义就有 1.7 万字符，
+ * 于是模型在追问里说"one_hop 被截断了、看不到某个字段" —— 它看到的是半截 JSON。
+ * 现在放到 60k，真超了也必须写明截到哪、原长多少。
+ */
+describe("truncateForHistory", () => {
+  it("正常长度原样返回，不做任何改动", () => {
+    const text = JSON.stringify({ name: "订单", properties: Array.from({ length: 50 }, (_, i) => `P${i}`) });
+    expect(truncateForHistory(text)).toBe(text);
+  });
+
+  it("常见的大对象类型定义（约 1.7 万字符）不再被截断", () => {
+    const text = JSON.stringify({ properties: Array.from({ length: 66 }, (_, i) => ({ name: `P${i}`, description: "属性说明".repeat(60) })) });
+    expect(text.length).toBeGreaterThan(8000);
+    expect(truncateForHistory(text)).toBe(text);
+  });
+
+  it("真超过上限时写明原长与截断位置，不让模型把半截数据当成完整数据", () => {
+    const text = "x".repeat(TOOL_RESULT_STORE_LIMIT + 500);
+    const kept = truncateForHistory(text);
+    expect(kept.length).toBeLessThan(text.length);
+    expect(kept.startsWith("x".repeat(TOOL_RESULT_STORE_LIMIT))).toBe(true);
+    expect(kept).toContain("不要把它当成完整数据");
+    expect(kept).toContain(`${text.length} 字符`);
   });
 });

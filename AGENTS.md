@@ -142,16 +142,79 @@
 现在是一级标签一排，顺序固定：
 
 ```
-可视化建模 · 概念分组 N · 对象类型 N · 关系类型 N · 接口 N
+可视化建模 · 概念分组 N · 对象类型 N · 关系类型 N · 接口 N · 指标 N
 ```
 
 - **可视化建模放首位**（2026-09-16 用户补充确认），是默认档：`mode` 初始值 `"visual"`。
-- `functional-workbench.tsx` 里的 `mode` 只有 `"visual" | "groups" | "entities" | "relations" | "interfaces"` 五档，
-  每档一个组件：`OntologyBuilder` / `ConceptGroupManager` / 对象类型清单 / 关系类型清单 / `InterfaceManager`。
+- `functional-workbench.tsx` 里的 `mode` 只有 `"visual" | "groups" | "entities" | "relations" | "interfaces" | "metrics"` 六档，
+  每档一个组件：`OntologyBuilder` / `ConceptGroupManager` / 对象类型清单 / 关系类型清单 / `InterfaceManager` / `MetricManager`（2026-10-08 加最后一档）。
   旧的 `tab` / `switchTab` 二级状态与那个内嵌的 `graph-view-switcher` 已删掉，别再往回加。
 - 后两档（对象类型 / 关系类型）是**清单 + 新增表单**两块，和原来「表单」标签里的内容一致，只是入口提上来了。
 - 每个标签的副标题（那行 `.subtle`）按档位各写一句，别再写成"请先在下方切换到…"。
 - 术语按上面的约定：标签写「对象类型」「关系类型」，不写「类」。
+
+## 指标（Metric）与列画像（2026-10-08）
+
+用户口径：「指标层也做」「列画像 … 只对被对象类型绑定的表、只对低基数列、按天缓存，这个也要做」。
+两件事都是为了把**口径**从列注释里搬到定义层：模型答统计类问题时不必再一轮轮手写 GROUP BY 去探。
+
+**指标 = 业务口径**（对齐 Palantir 的 Metric）：说清「这个数怎么算」——作用在哪个对象类型、按哪个属性怎么聚合、
+固定过滤是什么、能按哪些维度分组、单位是什么。它**只描述口径，不是查询结果**；出数仍由模型落成只读 SQL。
+
+- 定义与校验：`ontology.ts` 的 `metricSchema` / `metrics`（加这一项之前的老快照读出来是空数组）；
+  发布前检查在 `src/lib/metrics.ts`（重名、作用类型不存在、聚合/过滤/维度/时间维度指向不存在的属性 → **挡发布**；
+  没选作用类型、`SUM/AVG/MIN/MAX` 用在非数值属性 → WARN），由 `validateVersionSnapshot` 统一收口。
+- 界面：`metric-manager.tsx`（左清单 + 右口径表单，与概念分组同一套 `manager-grid` + `split-pane` 骨架），
+  标签排在「接口」之后（见上面「本体建模」页的标签结构）。`Definition` 多了 `metrics` 字段，`emptyDefinition` 要带上 `metrics: []`。
+- 工具：`list_metrics`；`get_object_type` 的 `metrics`、prompt 概念清单里的「指标：…」一行也都要有 ——
+  只加定义不加这两处，模型看不到指标就还会去猜口径。加/改工具名必须同步 `mcp.ts` 的 `TOOL_GROUP` / `TOOL_TITLES`。
+- 出包：bundle 的 `definition.metrics[]`（格式见 `skills/ontology-bundle/references/bundle-format.md` 的 2.7）；
+  blueprint 里 `metrics[].scope` 写**对象类型名**、`property` / `filters[].property` / `dimensions[]` 写**该类型的属性名**，
+  由 `build-bundle.mjs` 翻成 id 并当场校验（`index(metrics, "指标")` 那一步负责发 id，漏了就整包空 id 报错）。
+  `skills.test.ts` 的 token 列表里有 `metrics`，改了 schema 忘了改文档会直接红。
+- 证据：`ReasoningEvidence.kind` 多了 `"METRIC"`，qa-studio 的「依据」那一行要把它算进概念类。
+
+**列画像的成本红线**（`src/lib/column-profile.ts`，别改成精确统计）：只对**被对象类型绑定的表**做（`mappedColumnsFor`，
+没绑定的表返回空 → 调用方跳过）；只**采样**前 1000 行（`ROWNUM <= 1000` / `LIMIT`），不做全表 `COUNT(DISTINCT)`；
+采样里取值种数超过 50 的列按高基数列处理（不存取值）；写进 `column_profiles` 表（迁移 0003）后**按天复用**，
+只有 `get_table_ddl` 带 `refresh: true`（或过期）才回源库重采。返回里必须如实写 `cached` / `sample_size` / 采样说明。
+
+**`search_schema` v2**（2026-10-08，用户口径「默认可以大一点」）：默认 20 条、上限 50；
+入参多了 `kinds` / `object_type` / `include_values`（`limit` 是 `max_concepts` 的别名）。每条命中有 `matched`
+（`name` / `value` / `description` / `fallback`）与落点 `bound_table` / `source_column` / `object_type`。
+检索面包括属性说明、接口说明、指标说明；**取值命中单独一档**（45 分，来自列画像），描述命中 30，
+名字命中（100 / 70）不再叠加后两档；不传 `kinds` 时对象类型 / 指标 / 关系类型保底占一半名额（`applyTypeQuota`）。
+改打分必须跑 `tests/lib/reasoning/tools.test.ts` —— 那里有旧断言钉着"名字命中不许回归"。
+`search_schema` 的返回里还有一句「表只能通过对象类型到达」，别删（那是在挡模型退回枚举数据源表）。
+
+**工具结果留存上限**：`steps[].result` 既是界面展开时看到的返回，也是**下一轮回放给模型的 tool-result**
+（`history.ts` 的 `turnUIMessages` 直接用 `step.result`）。所以 `agent.ts` 的 `truncateForHistory` 放到 60k
+并写明"原长多少、截到哪里"。以前截在 8000，模型会看到半截 `get_object_type`（66 个属性约 1.7 万字符），
+然后在追问里说"某个字段没返回"。**别再单独在展示层截一刀** —— 两者共用这一份。
+
+**跨表统计的三个补充（2026-10-08 晚，用户口径「补」）**：
+
+- **关系类型的数量关系** `relationshipTypes[].cardinality`（`ONE_TO_ONE` / `ONE_TO_MANY` / `MANY_TO_ONE` / `MANY_TO_MANY`，
+  空串 = 未标注，老快照读出来是空串）。说的是**起点端 → 终点端**，只回答"走一次会放大几倍"
+  （一个客户 141 条专线，按客户聚合会重复计数）。**它不是正向/反向名字** —— "关系类型双向、不配正反向名字"的口径不变，
+  别把它写成「正向基数/反向基数」两栏。纯逻辑在 `src/lib/relationship-cardinality.ts`（有单测），
+  工具侧 `get_object_type` 的入边要 `reversed` 翻过来说（`cardinality_from_here`），改这里必须跑
+  `tests/lib/reasoning/tools.test.ts` 的「数量关系」一组用例。bkn 导入没有这个字段，导入后是"未标注"。
+- **`get_table_ddl` 的反向引用** `bound_object_types`：这张表被哪些对象类型绑定、各映射了哪几列、是主来源还是补充来源。
+  纯函数 `objectTypesBoundTo`（零成本，不连库）。没绑定时返回空 + 一句"表只能通过对象类型到达，先确认表名" ——
+  这是模型排查"表名写错了"的唯一线索，别删。用户明确否决过 `list_tables`，这个反向引用是它的替代。
+- **`run_sql` / `get_table_ddl` 的 `elapsed_ms`**：让模型知道哪次查询贵、下次要不要合并成一条 CTE。
+  `run_sql` 的工具说明里也写了"一次调用可以带多个 CTE"。没做 `scanned_rows`（Oracle 要 `EXPLAIN`，不稳）与结果缓存。
+
+## 功能实现记录（2026-10-08 用户要求）
+
+用户原话：「实现的功能都要记录下来，因为都是 AI 写的，记下来，后面我也知道都实现了什么」。
+所以仓库根有一份**给人看的功能账本**：`docs/功能实现记录.md`（README 的目录里有链接）。
+
+- **每完成一批功能就回来追加一条**：日期 + 做了什么 + 入口在哪 + 有什么限制 + 怎么验证。
+- 它是"用户视角的功能清单"，不是提交日志：写"现在能用什么"，别抄 commit message。
+- 分工：`git log` 是提交历史，`AGENTS.md`（本文）是工程约定与踩坑，`docs/功能实现记录.md` 是功能账本，
+  `docs/adr/` 是架构决策。
 
 ## 客户端代码约定
 

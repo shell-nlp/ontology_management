@@ -23,14 +23,16 @@ export const DEFAULT_SYSTEM_PROMPT = `你是本体（ontology）推理助手。�
 3. 问"某对象类型一圈都和什么有关""隔两跳能到哪些类型""A 和 B 之间怎么连"时用 traverse_object_types（默认 3 跳、最多 5 跳，可用 object_types / relationship_types 限定范围，不填就是不限定）。一跳的细节就在 get_object_type 里，不必重复调。
 4. **概念分组（业务域）和每组包含的对象类型已经写在下面的概念清单里**，直接据此回答；要看"哪些类型还没归组"这类完整清单才需要 list_concept_groups。
 5. **接口（抽象契约）与它的实现情况也写在下面的概念清单里**：问"有哪些接口""这个接口谁实现了""这个类型实现了哪些接口"时直接据此回答；要看接口属性与关系约束的完整清单才调 list_interfaces，单个类型的接口细节在 get_object_type 里。
-6. 要具体数据时走"对象类型 → 它绑定的表"：先 get_table_ddl 看表结构，再 run_sql 只读查数。**表名一律写全「模式.表」**（下面清单里括号内的写法，例如 GISTOOLS.TB_DIC_AREA_CODE）：get_table_ddl 的 table 这样写，run_sql 的 SQL 里也这样写，不要省掉模式前缀，也不要另加别的模式。
-7. 复杂问题拆成多步：先定位涉及哪几个对象类型，再逐个读它们的定义与关系，最后再下结论。
+6. 要具体数据时走"对象类型 → 它绑定的表"：先 get_table_ddl 看表结构与**列画像**（低基数列的取值清单：某个状态列有哪些码值、占比多少），再 run_sql 只读查数。**表名一律写全「模式.表」**（下面清单里括号内的写法，例如 GISTOOLS.TB_DIC_AREA_CODE）：get_table_ddl 的 table 这样写，run_sql 的 SQL 里也这样写，不要省掉模式前缀，也不要另加别的模式。问「某某状态 / 某某类型」时先看列画像里有没有对应的码值，**不要用一轮轮 GROUP BY 去探码值**。
+7. 指标（业务口径）优先用现成的：某个对象类型上可能有定义好的指标（怎么聚合、口径过滤、可用维度、单位）—— get_object_type 的 metrics、或 list_metrics 能看到。问「某某条数 / 金额怎么算」先查它，不要自己从列注释里另立一套口径。
+8. 复杂问题拆成多步：先定位涉及哪几个对象类型，再逐个读它们的定义与关系，最后再下结论。
 - **关系类型是双向的**（Palantir 的 link type）：一条关系类型只有一条定义、两个端点，两个方向都能走，
   **反向不用另建一条关系类型**。回答"A 和 B 怎么连""隔两跳能到谁"时两个方向都算连通；
   只有明确要单向时才用 traverse_object_types 的 direction。
 
 硬性要求：
 - 只能依据工具返回的真实数据回答。不要编造对象类型、属性、关系类型、动作或数据来源。
+- **表只能通过对象类型到达**：不要枚举数据源里的表和列（没有"列出所有表"这种工具，也不要用 run_sql 去查数据字典）；找不到就换关键词 search_schema，或看对象类型绑了哪张表。
 - **本体这一层只到定义**：不查图库里的对象与关系（本体实例）。要真实数据就走源表 —— get_table_ddl 看结构、run_sql 只读查数，两者都用对象类型绑定的那张表。
 - 被问到"本体里有哪些对象""某个具体对象是什么"这类实例问题时，说明这一版不提供实例推理，并给出可行的替代：查它绑定的表，或到平台的「对象」「图谱」页看。**不要凭空编一个对象。**
 - 写操作一律不做：run_sql 只能读，动作只描述不执行。
@@ -81,6 +83,15 @@ export function schemaBrief(context: ToolContext): string {
   }).join("；");
   const relations = context.definition.relationshipTypes.map((item) => item.name);
   const actions = context.definition.actionTypes.map((item) => item.name);
+  /*
+   * 指标要在这里点名：模型看不到它就不会去用它，而"这个数怎么算"正是统计类问题的核心。
+   * 一行一个 `名称（聚合(属性) · 作用对象类型）`，完整口径（过滤 / 维度 / 单位）用 list_metrics 取。
+   */
+  const metrics = (context.definition.metrics ?? []).map((item) => {
+    const scope = context.definition.entityTypes.find((type) => type.id === item.entityTypeId)?.name;
+    const calc = `${item.aggregation}${item.property ? `(${item.property})` : "（行数）"}`;
+    return `${item.name}（${calc}${scope ? ` · ${scope}` : ""}）`;
+  });
   // 数据资源名要带上：run_sql / get_table_ddl 的 data_source 就用这里的名字，模型猜不出来。
   const sources = (context.dataSources ?? []).map((item) => `${item.name}（${item.kind}${item.schema_name ? ` · ${item.schema_name}` : ""}）`);
   return [
@@ -89,6 +100,7 @@ export function schemaBrief(context: ToolContext): string {
     `对象类型：${objects.join("、") || "无"}`,
     `关系类型：${relations.join("、") || "无"}`,
     `动作：${actions.join("、") || "无"}`,
+    metrics.length ? `指标：${metrics.join("、")}（口径细节用 list_metrics）` : "",
     `数据资源：${sources.join("、") || "无"}（run_sql / get_table_ddl 的 data_source 用这里的名字）`,
   ].join("\n");
 }

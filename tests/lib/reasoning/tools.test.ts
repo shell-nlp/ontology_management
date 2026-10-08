@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { longestCommonSubstring, parseTraverseDirection, queryTokens, rankSchemaConcepts, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
+import { longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
+import { profileTableKey, type ColumnValueIndex } from "@/lib/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
 
@@ -113,8 +114,15 @@ describe("工具范围", () => {
   it("定义层与实例工具都给模型用（实例工具走对象服务）", () => {
     const active = REASONING_TOOLS.filter((tool) => !tool.disabled).map((tool) => tool.name);
     // 2026-09-19：对象服务落地后实例工具重新开放（索引优先、没有就按主键回源）。
-    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "query_object_instance", "query_instance_subgraph", "list_actions"]);
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "query_object_instance", "query_instance_subgraph", "list_actions", "list_metrics"]);
     expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual([]);
+  });
+
+  it("每个工具的 JSON Schema 都能被 AI SDK 的 jsonSchema() 收下（数组/枚举参数拼错只会在这里炸）", () => {
+    const context = { store: {} as never, definition: definition(), runtimeTypes };
+    expect(() => reasoningToolSet(context, () => {}, [])).not.toThrow();
+    // 被用户关掉的工具不进模型能看到的那一份，别把开关做丢了。
+    expect(Object.keys(reasoningToolSet(context, () => {}, ["run_sql"]))).not.toContain("run_sql");
   });
 });
 
@@ -316,7 +324,7 @@ function chainDefinition(): OntologyDefinition {
       { ...type(订购关系id, "订购关系", "用户与产品的订购关系") },
     ],
     relationshipTypes: [
-      { id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, properties: [] },
+      { id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, cardinality: "ONE_TO_MANY", properties: [] },
       { id: "rrrrrrr2-2222-4222-8222-222222222222", name: "用户产生应收", sourceEntityTypeId: 用户id, targetEntityTypeId: 应收id, properties: [] },
       { id: "rrrrrrr3-3333-4333-8333-333333333333", name: "用户拥有订购关系", sourceEntityTypeId: 用户id, targetEntityTypeId: 订购关系id, properties: [] },
       { id: "rrrrrrr4-4444-4444-8444-444444444444", name: "订购关系产生应收", sourceEntityTypeId: 订购关系id, targetEntityTypeId: 应收id, properties: [] },
@@ -485,5 +493,171 @@ describe("traverse_object_types", () => {
     const payload = outcome.payload as { unknown_names?: string[]; unknown_note?: string };
     expect(payload.unknown_names).toEqual(["不存在的类"]);
     expect(payload.unknown_note).toContain("search_schema");
+  });
+});
+
+const 线路类 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const 指标id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const 线路资源 = "99999999-9999-4999-8999-999999999997";
+const 线路表 = "TB_MK_GRP_LINE_LIST_DAY";
+
+/**
+ * 带数据来源与指标的对象类型：查「落点字段」与「指标」用。
+ * 属性的 description 故意写成「2=互联网专线」这种**列注释式口径**——现实里口径就长这样。
+ */
+function profiledDefinition(): OntologyDefinition {
+  const base = definition();
+  return {
+    ...base,
+    metrics: [
+      {
+        id: 指标id,
+        name: "互联网专线条数",
+        description: "状态正常的互联网专线条数",
+        entityTypeId: 线路类,
+        aggregation: "SUM",
+        property: "条数",
+        filters: [{ property: "专线类型", operator: "EQ", value: "2" }],
+        dimensions: ["地市"],
+        timeProperty: "",
+        unitType: "",
+        unit: "条",
+        tags: [],
+      },
+    ],
+    entityTypes: [
+      ...base.entityTypes.filter((item) => item.id !== 专线类),
+      {
+        id: 线路类,
+        name: "专业线产品用户",
+        description: "开通了专线产品的用户",
+        displayProperty: "姓名",
+        properties: [
+          { name: "姓名", dataType: "TEXT", required: true, unique: false, indexed: false, sourceField: "CUST_NAME" },
+          { name: "专线类型", description: "专线类型：2=互联网专线，3=语音专线", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "ZX_FLAG" },
+          { name: "账单产品大类", description: "账单产品大类", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "OFFER_FLAG" },
+          { name: "条数", dataType: "INTEGER", required: false, unique: false, indexed: false, sourceField: "ZX_COUNT" },
+        ],
+        sources: [{ id: "primary", dataSourceId: 线路资源, schema: "GISTOOLS", view: 线路表, primaryKey: ["CUST_ID"], titleField: "CUST_NAME" }],
+      },
+    ],
+  } as unknown as OntologyDefinition;
+}
+
+describe("search_schema v2：落点字段、取值命中与配额", () => {
+  it("属性的说明进检索面，命中时给出落点（哪张表、哪一列）", () => {
+    const ranked = rankSchemaConcepts(schemaConcepts(profiledDefinition(), runtimeTypes), "互联网专线", 20);
+    const hit = ranked.find((item) => item.name === "专业线产品用户.专线类型");
+    expect(hit).toBeTruthy();
+    // 口径写在属性的说明里，不是名字里 —— matched 要如实说"是描述命中"。
+    expect(hit!.matched).toBe("description");
+    expect(hit!.bound_table).toBe(`GISTOOLS.${线路表}`);
+    expect(hit!.source_column).toBe("ZX_FLAG");
+    expect(hit!.object_type).toBe("专业线产品用户");
+  });
+
+  it("取值命中单独一档：列画像里的码值能被搜到，并给出落点", () => {
+    const index: ColumnValueIndex = new Map([
+      [profileTableKey("GISTOOLS", 线路表), new Map([["OFFER_FLAG", ["短彩信", "专线", "5G"]]])],
+    ]);
+    const ranked = rankSchemaConcepts(schemaConcepts(profiledDefinition(), runtimeTypes, [], index), "短彩信", 20);
+    const hit = ranked.find((item) => item.source_column === "OFFER_FLAG");
+    expect(hit?.matched).toBe("value");
+    expect(hit?.bound_table).toBe(`GISTOOLS.${线路表}`);
+  });
+
+  it("kinds 只看指定类型；object_type 只看挂在某个对象类型下的概念", () => {
+    const concepts = schemaConcepts(profiledDefinition(), runtimeTypes);
+    const onlyTypes = rankSchemaConcepts(concepts, "用户", 20, { kinds: ["OBJECT_TYPE"] });
+    expect(onlyTypes.length).toBeGreaterThan(0);
+    expect(onlyTypes.every((item) => item.kind === "OBJECT_TYPE")).toBe(true);
+
+    const scoped = rankSchemaConcepts(concepts.filter((item) => item.references?.includes("专业线产品用户")), "条数", 20);
+    expect(scoped.every((item) => item.name.includes("专业线产品用户") || item.kind === "METRIC")).toBe(true);
+    expect(scoped.some((item) => item.name === "订单")).toBe(false);
+  });
+
+  it("不传 kinds 时类型类概念保底占一半名额，不会被属性刷屏", () => {
+    const ranked = rankSchemaConcepts(schemaConcepts(definition(), runtimeTypes), "用户", 5);
+    const typeish = ranked.filter((item) => item.kind === "OBJECT_TYPE" || item.kind === "RELATION_TYPE" || item.kind === "METRIC");
+    expect(typeish.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("指标是一类独立概念，能被检索、能被 get_object_type 与 list_metrics 取到", async () => {
+    const def = profiledDefinition();
+    const ranked = rankSchemaConcepts(schemaConcepts(def, runtimeTypes), "互联网专线条数", 20);
+    expect(ranked[0]).toMatchObject({ kind: "METRIC", name: "互联网专线条数", matched: "name" });
+
+    const detail = await runReasoningTool("get_object_type", { type_name: "专业线产品用户" }, { store: {} as never, definition: def, runtimeTypes });
+    expect((detail.payload as { metrics: { name: string }[] }).metrics.map((item) => item.name)).toEqual(["互联网专线条数"]);
+
+    const outcome = await runReasoningTool("list_metrics", {}, { store: {} as never, definition: def, runtimeTypes });
+    const payload = outcome.payload as { metrics: { name: string; aggregation: string; property: string; unit: string; scope_object_type: string; filters: { property: string; value: string }[] }[] };
+    expect(payload.metrics[0]).toMatchObject({ name: "互联网专线条数", aggregation: "SUM", property: "条数", unit: "条", scope_object_type: "专业线产品用户" });
+    expect(payload.metrics[0].filters[0]).toMatchObject({ property: "专线类型", value: "2" });
+    expect(outcome.evidence.map((item) => item.kind)).toEqual(["METRIC"]);
+  });
+
+  it("工具层：没连平台库也能检索（取值索引取不到就跳过），并明确「表只能通过对象类型到达」", async () => {
+    const outcome = await runReasoningTool("search_schema", { query: "专线", max_concepts: 20 }, { store: {} as never, definition: definition(), runtimeTypes });
+    const payload = outcome.payload as { matches: { name: string }[]; note: string };
+    expect(payload.matches.some((item) => item.name === "专业线产品用户")).toBe(true);
+    expect(payload.note).toContain("表只能通过对象类型到达");
+  });
+});
+
+describe("数量关系（cardinality）在工具里的说法", () => {
+  const context = { store: {} as never, definition: chainDefinition(), runtimeTypes };
+  type Neighbor = { relation: string; name: string; cardinality?: string; cardinality_label?: string; cardinality_from_here?: string };
+  type OneHop = { outgoing: Neighbor[]; incoming: Neighbor[] };
+
+  it("get_object_type：出边给「从我看过去」的说法，入边把基数翻过来说", async () => {
+    // chainDefinition 里「客户拥有用户」声明的是客户(起点) 一对多 用户(终点)。
+    const 客户 = (await runReasoningTool("get_object_type", { type_name: "客户" }, context)).payload as { one_hop: OneHop };
+    const out = 客户.one_hop.outgoing.find((item) => item.relation === "客户拥有用户")!;
+    expect(out).toMatchObject({ cardinality: "ONE_TO_MANY", cardinality_label: "一对多" });
+    expect(out.cardinality_from_here).toBe("一个「客户」→ 多个「用户」");
+
+    const 用户 = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as { one_hop: OneHop };
+    const back = 用户.one_hop.incoming.find((item) => item.relation === "客户拥有用户")!;
+    // 声明原样保留，但从用户这一侧看要翻过来说：多个用户 → 一个客户。
+    expect(back.cardinality).toBe("ONE_TO_MANY");
+    expect(back.cardinality_from_here).toBe("多个「用户」→ 一个「客户」");
+  });
+
+  it("没标注的关系类型不带 cardinality 字段（不是「多对多」）", async () => {
+    const 用户 = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as { one_hop: OneHop };
+    const 未标注 = 用户.one_hop.outgoing.find((item) => item.relation === "用户产生应收")!;
+    expect(未标注.cardinality).toBeUndefined();
+    expect(未标注.cardinality_from_here).toBeUndefined();
+  });
+
+  it("traverse_object_types：边也带上基数", async () => {
+    const outcome = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 1 }, context);
+    const edges = (outcome.payload as { edges: { relation: string; cardinality?: string }[] }).edges;
+    expect(edges.find((edge) => edge.relation === "客户拥有用户")?.cardinality).toBe("ONE_TO_MANY");
+    expect(edges.filter((edge) => edge.relation !== "客户拥有用户").every((edge) => edge.cardinality === undefined)).toBe(true);
+  });
+
+  it("search_schema：关系类型的 detail 里写出基数", () => {
+    const ranked = rankSchemaConcepts(schemaConcepts(chainDefinition(), runtimeTypes), "客户拥有用户", 10);
+    const hit = ranked.find((item) => item.kind === "RELATION_TYPE" && item.name === "客户拥有用户")!;
+    expect(hit.detail).toContain("基数 一对多");
+  });
+});
+
+describe("objectTypesBoundTo（get_table_ddl 的反向引用）", () => {
+  it("给出这张表被哪些对象类型绑定、各映射了哪几列；表名大小写不敏感", () => {
+    const bound = objectTypesBoundTo(profiledDefinition(), 线路资源, "GISTOOLS", 线路表);
+    expect(bound).toHaveLength(1);
+    expect(bound[0]).toMatchObject({ object_type: "专业线产品用户", source_role: expect.stringContaining("来源") });
+    expect(bound[0].mapped_columns.sort()).toEqual(["CUST_NAME", "OFFER_FLAG", "ZX_COUNT", "ZX_FLAG"]);
+    expect(bound[0].mapped_column_count).toBe(4);
+    expect(objectTypesBoundTo(profiledDefinition(), 线路资源, "gistools", "tb_mk_grp_line_list_day")).toHaveLength(1);
+  });
+
+  it("没被任何对象类型绑定的表返回空 —— 这正是模型排查「表名是不是写错了」的线索", () => {
+    expect(objectTypesBoundTo(profiledDefinition(), 线路资源, "GISTOOLS", "TB_OTHER")).toEqual([]);
+    expect(objectTypesBoundTo(profiledDefinition(), "00000000-0000-4000-8000-000000000000", "GISTOOLS", 线路表)).toEqual([]);
   });
 });

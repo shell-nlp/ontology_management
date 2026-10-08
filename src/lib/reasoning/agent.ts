@@ -26,6 +26,22 @@ import type { ReasoningAttachment, ReasoningEvidence, ReasoningRun, ReasoningSte
 const MAX_STEPS_CEILING = 100;
 
 /**
+ * 一步工具结果最多存多少字符。
+ *
+ * 这个上限管的是**持久化与历史回放**（`steps[].result` 既是界面展开时的返回，也是下一轮
+ * 当 tool-result 回灌给模型的那份内容），不是给模型看的结果上限 —— 那个由「工具结果上限」
+ * （`toolResultLimit`）单独管。60k 远大于任何单个工具的正常返回（最长的 `get_object_type`
+ * 在 66 个属性时约 1.7 万字符），正常情况一次都碰不到。
+ */
+export const TOOL_RESULT_STORE_LIMIT = 60_000;
+
+/** 超长就截断，并**写明原长与截到哪里** —— 半截 JSON 会被模型当成完整数据。 */
+export function truncateForHistory(text: string, limit = TOOL_RESULT_STORE_LIMIT): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n…（结果过长，这里只保留了前 ${limit} 字符，原始返回共 ${text.length} 字符；不要把它当成完整数据，需要完整的请缩小查询范围再调一次。）`;
+}
+
+/**
  * 被叫停、而模型还没写出任何结论时的兜底文案（存进对话历史的就是它）。
  * 单独拎出来是为了让上层认得出"这句不是结论"：什么都没跑出来的一轮不该占历史的位置。
  */
@@ -192,7 +208,14 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
             index,
             tool: part.toolName,
             arguments: current?.args ?? {},
-            result: JSON.stringify(part.output, null, 1).slice(0, 8000),
+            /*
+             * 这里存的不只是"给界面看的展示串"，它还会被 `history.ts` 当成 tool-result **回放给模型**
+             * （下一轮追问时读它）。以前截在 8000 字符，而一个 66 属性的对象类型光定义就有 1.7 万字符，
+             * 于是模型在追问里说"one_hop 被截断了、看不到某个字段" —— 它看到的是半截 JSON。
+             * 现在放到 60k（远大于任何单个工具的正常返回），真超了也**写明截了多少**，
+             * 让模型知道这是"没给全"而不是"数据就这些"。
+             */
+            result: truncateForHistory(JSON.stringify(part.output, null, 1)),
             ok: true,
             elapsedMs: Date.now() - (current?.startedAt ?? Date.now()),
             evidence: recorded,

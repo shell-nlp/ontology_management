@@ -162,3 +162,19 @@ export class ObjectEntryEntity {
   @Column("text", { name: "version_id", nullable: true }) versionId!: string | null;
   @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
 }
+
+/**
+ * 列画像缓存（采样结果，按天复用）。见 `@/lib/column-profile`。
+ *
+ * 主键是 `(数据资源, 模式.表)`：同一个数据资源下换表就换一行；建表在迁移 0003。
+ * 画像本体（每列的取值 / 空值率）整个存 jsonb —— 它是一份快照，按列拆表反而要 join 才能读回一份。
+ */
+@Entity({ schema: "ontology_platform", name: "column_profiles" })
+export class ColumnProfileEntity {
+  @PrimaryColumn("text", { name: "source_id" }) sourceId!: string;
+  @PrimaryColumn("text", { name: "table_key" }) tableKey!: string;
+  @Column("text", { name: "schema_name" }) schemaName!: string;
+  @Column("text", { name: "table_name" }) tableName!: string;
+  @Column("jsonb") profile!: JsonColumn;
+  @Column("timestamptz", { name: "sampled_at" }) sampledAt!: Date;
+}

@@ -11,7 +11,9 @@ import {
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
 import { keyMappingLabel, keyMappingRows } from "@/lib/relationship-keys";
+import { cardinalityLabel, cardinalityPhrase } from "@/lib/relationship-cardinality";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
+import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, profileTableKey, type ColumnValueIndex } from "@/lib/column-profile";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
 import { getObject, queryObjects } from "@/lib/object-service";
@@ -51,23 +53,47 @@ export type ToolContext = {
   sqlRowLimit?: number;
 };
 
-type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY" | "INTERFACE";
+type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY" | "INTERFACE" | "METRIC";
+
+/** 允许在 search_schema 的 kinds 里出现的取值（从类型定义里取一份运行时白名单）。 */
+const CONCEPT_KINDS: ConceptKind[] = ["OBJECT_TYPE", "RELATION_TYPE", "ACTION", "PROPERTY", "INTERFACE", "METRIC"];
 
 export type SchemaConcept = {
   kind: ConceptKind;
   name: string;
   haystack: string;
+  /**
+   * 低基数列的取值画像（采样来的码值），单独一档打分。
+   *
+   * 为什么要分开：模型常搜的是**码值**（「互联网专线」是 `ZX_FLAG='2'` 的意思），
+   * 它既不是对象类型名也不是属性名，只在取值里出现。与描述混在一根 haystack 里，
+   * 就没法区分"名字/描述里提到"和"某列真有这个取值"——后者才是能直接拿去过滤的落点。
+   */
+  values?: string;
   detail: string;
   /** 对象类型的实例数 / 关系类型的条数，用于无命中时的兜底排序。 */
   weight: number;
+  /** 命中后模型下一步要用的落点：描述、绑定的表、来源列。 */
+  description?: string;
+  boundTable?: string;
+  sourceColumn?: string;
+  /** 这条概念挂在哪些对象类型上（属性 / 指标是它自己的类型；关系类型是两个端点）。object_type 过滤用它。 */
+  references?: string[];
 };
 
 export type SchemaMatch = {
   kind: ConceptKind;
   name: string;
   score: number;
+  /** 靠什么命中的：名字 / 取值 / 描述 / 兜底。模型据此知道该拿这个结果干什么。 */
+  matched: "name" | "value" | "description" | "fallback";
   reason: string;
   detail: string;
+  /** 下面几项是落点：取值命中时 bound_table + source_column 就是"拿哪张表的哪一列去过滤"。 */
+  description?: string;
+  bound_table?: string;
+  source_column?: string;
+  object_type?: string;
 };
 
 /** 「取数行数上限」留空时的兜底：一次最多取这么多行，防止一条语句把内存拉爆。 */
@@ -84,12 +110,20 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按自然语言检索对象类型、关系类型、动作与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。",
+      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "用户问题或关键词，原样传进来即可" },
-        max_concepts: { type: "integer", description: "最多返回多少个候选，默认 8，上限 30" },
+        max_concepts: { type: "integer", description: "最多返回多少个候选，默认 20，上限 50" },
+        limit: { type: "integer", description: "max_concepts 的别名，二选一即可" },
+        kinds: {
+          type: "array",
+          items: { type: "string", enum: ["OBJECT_TYPE", "RELATION_TYPE", "ACTION", "PROPERTY", "INTERFACE", "METRIC"] },
+          description: "只看这几类概念。只找类型时传 [\"OBJECT_TYPE\",\"METRIC\"]；不传就是都看（结果里对象类型 / 指标 / 关系类型保底占一半名额，不会被属性刷屏）",
+        },
+        object_type: { type: "string", description: "只看挂在这个对象类型下的概念（它的属性、指标、关系类型）。问「X 有哪些字段 / 指标」时传它" },
+        include_values: { type: "boolean", description: "是否用已缓存的列画像做取值检索，默认 true。列画像是按天缓存的采样结果，不会为了一次检索去扫表" },
       },
       required: ["query"],
     },
@@ -134,12 +168,13 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL：列、类型、可空、主键、注释。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
         data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
         table: { type: "string", description: "表或视图名，写全「模式.表」（如 GISTOOLS.TB_DIC_AREA_CODE）；大小写不敏感" },
+        refresh: { type: "boolean", description: "重新采一次列画像（默认 false：用当天缓存的那一份）。只在确实怀疑数据分布变了时才传 true" },
       },
       required: ["data_source", "table"],
     },
@@ -147,7 +182,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_sql",
     description:
-      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。SQL 里的表名同样写全「模式.表」（如 SELECT * FROM GISTOOLS.TB_DIC_AREA_CODE），别依赖连接用户的默认模式。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。写查询前先用 get_table_ddl 确认字段名。",
+      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。SQL 里的表名同样写全「模式.表」（如 SELECT * FROM GISTOOLS.TB_DIC_AREA_CODE），别依赖连接用户的默认模式。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。**一次调用可以带多个 CTE / 子查询**：把「探码值 + 汇总 + 校验」合并成一条语句比来回查省得多；返回里的 elapsed_ms 就是这条语句实际花了多久，可以据此判断哪次查询贵。写查询前先用 get_table_ddl 确认字段名与码值。",
     parameters: {
       type: "object",
       properties: {
@@ -200,6 +235,18 @@ export const REASONING_TOOLS: ToolSpec[] = [
       properties: { type_name: { type: "string", description: "可选，只看作用在这个对象类型上的动作" } },
     },
   },
+  {
+    name: "list_metrics",
+    description:
+      "列出本体里定义的**指标**（业务口径）：每个指标量的是什么、作用在哪个对象类型上、按哪个属性怎么聚合、固定过滤（口径边界）、可按哪些维度分组、单位。问「某某条数 / 金额怎么算」「有没有现成的口径」时调它；不要自己从列注释里猜口径，先用这里的定义。指标只描述「怎么算」，不是某一次查询的结果。",
+    parameters: {
+      type: "object",
+      properties: {
+        type_name: { type: "string", description: "可选，只看作用在这个对象类型上的指标" },
+        name: { type: "string", description: "可选，按名字精确找一条指标" },
+      },
+    },
+  },
 ];
 
 function normalize(text: string) {
@@ -236,7 +283,7 @@ export function longestCommonSubstring(a: string, b: string): number {
   return best;
 }
 
-export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null, dataSources: DataSourceRecord[] = []): SchemaConcept[] {
+export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null, dataSources: DataSourceRecord[] = [], valueIndex: ColumnValueIndex | null = null): SchemaConcept[] {
   const resourceNameById = new Map(dataSources.map((item) => [item.id, item.name]));
   /*
    * 对象数只用来给"完全没命中时的兜底排序"加一点权重，**不进给模型看的文案**：
@@ -252,16 +299,29 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   for (const entity of definition.entityTypes) {
     const properties = entity.properties;
     const group = groupNameById.get(entity.groupId ?? "") ?? "";
+    const sourced = entitySources(entity);
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
-    const tables = entitySources(entity).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
-    const resources = [...new Set(entitySources(entity).map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
+    const tables = sourced.map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
+    const boundTable = tables[0] ?? "";
+    const resources = [...new Set(sourced.map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
     // 实现了哪些接口也进检索面：问「谁实现了设施接口」能直接命中这些对象类型。
     const implemented = (entity.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
+    /*
+     * 取值画像：把这张表上映射列的低基数取值拼成一根字符串，单独一档打分。
+     * 只取已缓存的画像（按天采样），检索本身不回源库 —— 见 @/lib/column-profile。
+     */
+    const values = [...new Set(sourced.flatMap((source) =>
+      properties
+        .filter((property) => property.sourceField && (!property.sourceId || property.sourceId === source.id))
+        .flatMap((property) => columnValueOf(valueIndex, source.schema, source.view, property.sourceField ?? "")),
+    ))].slice(0, 400);
     concepts.push({
       kind: "OBJECT_TYPE",
       name: entity.name,
       // 概念分组也进检索面：问「客户域里有什么」时，该组的成员会被搜出来。
-      haystack: normalize([entity.name, entity.description, group, ...tables, ...properties.map((property) => property.name), ...implemented].join(" ")),
+      // 属性说明也进检索面（截 120 字）：业务口径多半写在列的注释里。
+      haystack: normalize([entity.name, describeBriefly(entity.description, 200), group, ...tables, ...properties.map((property) => property.name), ...properties.map((property) => describeBriefly(property.description ?? "", 120)), ...implemented].join(" ")),
+      values: normalize(values.join(" ")),
       detail: [
         group ? `分组 ${group}` : "",
         implemented.length ? `实现接口 ${implemented.join("、")}` : "",
@@ -269,14 +329,24 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
       weight: objectCount.get(entity.name) ?? 0,
+      description: entity.description,
+      boundTable,
+      references: [entity.name],
     });
     for (const property of properties) {
+      // 属性的落点就是"哪张表的哪一列"：模型拿到它不用再猜，也不用再调一次 get_object_type。
+      const source = sourced.find((item) => !property.sourceId || item.id === property.sourceId) ?? sourced[0];
       concepts.push({
         kind: "PROPERTY",
         name: `${entity.name}.${property.name}`,
-        haystack: normalize(`${entity.name} ${property.name} ${property.dataType}`),
-        detail: `${property.dataType}${property.required ? "，必填" : ""}`,
+        haystack: normalize([entity.name, property.name, property.dataType, describeBriefly(property.description ?? "", 120)].join(" ")),
+        values: normalize(columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", property.sourceField ?? "").join(" ")),
+        detail: `${property.dataType}${property.required ? "，必填" : ""}${property.sourceField ? `，取自 ${property.sourceField}` : ""}`,
         weight: 0,
+        description: property.description ?? "",
+        boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : boundTable,
+        sourceColumn: property.sourceField ?? "",
+        references: [entity.name],
       });
     }
   }
@@ -289,7 +359,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     concepts.push({
       kind: "INTERFACE",
       name: item.name,
-      haystack: normalize([item.name, item.description, ...properties.map((property) => property.name), ...implementers, ...inherited].join(" ")),
+      haystack: normalize([item.name, describeBriefly(item.description, 200), ...properties.map((property) => property.name), ...properties.map((property) => describeBriefly(property.description ?? "", 120)), ...implementers, ...inherited].join(" ")),
       detail: [
         "接口（抽象契约，不绑数据、不能直接实例化）",
         inherited.length ? `继承 ${inherited.join("、")}` : "",
@@ -297,6 +367,8 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
         implementers.length ? `${implementers.length} 个实现：${implementers.join("、")}` : "还没有对象类型实现它",
       ].filter(Boolean).join("；"),
       weight: 0,
+      description: item.description,
+      references: implementers,
     });
   }  for (const relationship of definition.relationshipTypes) {
     const source = typeNameById.get(relationship.sourceEntityTypeId) ?? "";
@@ -304,10 +376,12 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     concepts.push({
       kind: "RELATION_TYPE",
       name: relationship.name,
-      haystack: normalize([relationship.name, source, target].join(" ")),
+      haystack: normalize([relationship.name, describeBriefly(relationship.description ?? "", 200), source, target].join(" ")),
       // 双向关系类型只写一条定义：用 ↔ 表示两个方向都能走，别让人以为反向要再来一条。
-      detail: `${source || "未指定"} ↔ ${target || "未指定"}`,
+      detail: `${source || "未指定"} ↔ ${target || "未指定"}${relationship.cardinality ? `；基数 ${cardinalityLabel(relationship.cardinality)}（起点 → 终点）` : ""}`,
       weight: relationshipCount.get(relationship.name) ?? 0,
+      description: relationship.description ?? "",
+      references: [source, target].filter(Boolean),
     });
   }
 
@@ -316,56 +390,173 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     concepts.push({
       kind: "ACTION",
       name: action.name,
-      haystack: normalize([action.name, action.code, action.description, scope, ...action.params.map((param) => param.name)].join(" ")),
+      haystack: normalize([action.name, action.code, describeBriefly(action.description, 200), scope, ...action.params.map((param) => param.name)].join(" ")),
       detail: `作用于 ${scope || "未指定"}；入参 ${action.params.map((param) => param.name).join("、") || "无"}`,
       weight: 0,
+      description: action.description,
+      references: scope ? [scope] : [],
+    });
+  }
+
+  /*
+   * 指标（业务口径）也是一等可检索概念：问「短彩信欠费金额怎么算」时，
+   * 现成的口径定义比让模型从列注释里反推可靠得多。
+   */
+  for (const metric of definition.metrics ?? []) {
+    const scopeType = definition.entityTypes.find((item) => item.id === metric.entityTypeId) ?? null;
+    const scope = scopeType?.name ?? "";
+    const source = scopeType ? entitySources(scopeType)[0] : undefined;
+    const column = scopeType?.properties.find((item) => item.name === metric.property)?.sourceField ?? "";
+    concepts.push({
+      kind: "METRIC",
+      name: metric.name,
+      haystack: normalize([
+        metric.name,
+        describeBriefly(metric.description, 200),
+        scope,
+        metric.property,
+        metric.aggregation,
+        ...metric.dimensions,
+        ...metric.filters.map((filter) => `${filter.property} ${filter.value}`),
+        metric.timeProperty,
+        ...metric.tags,
+      ].join(" ")),
+      values: normalize(columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", column).join(" ")),
+      detail: [
+        `${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"}`,
+        scope ? `作用 ${scope}` : "还没选作用的对象类型",
+        metric.filters.length ? `口径 ${metric.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
+        metric.dimensions.length ? `维度 ${metric.dimensions.join("、")}` : "",
+        metric.unit ? `单位 ${metric.unit}` : "",
+      ].filter(Boolean).join("；"),
+      weight: 0,
+      description: metric.description,
+      boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : "",
+      sourceColumn: column,
+      references: scope ? [scope] : [],
     });
   }
 
   return concepts;
 }
 
+export type RankSchemaOptions = {
+  /** 只看这几类概念（不传 = 全都看）。 */
+  kinds?: ConceptKind[];
+  /**
+   * 类型类概念（对象类型 / 指标 / 关系类型）保底占一半名额，默认开。
+   *
+   * 为什么：属性数量是对象类型的几十倍，光按分排，「订单」这种查询会被
+   * 「订单.编号」「订单.金额」刷屏，模型拿不到真正能往下走的那一层。只在**有命中**时生效。
+   */
+  typeQuota?: boolean;
+};
+
+type ScoredConcept = { concept: SchemaConcept; score: number; reason: string; matched: SchemaMatch["matched"] };
+
+/** 类型类概念：这些是模型能接着往下走的东西（属性只能拿去过滤，走不了关系）。 */
+const TYPE_KINDS = new Set<ConceptKind>(["OBJECT_TYPE", "RELATION_TYPE", "METRIC"]);
+
 /**
- * 排序规则刻意可解释：先看名字对不对得上，再看描述/属性里有没有提到，
- * 全都没命中时按实例数量兜底 —— 至少让模型知道这个本体里最"重"的概念是什么。
+ * 排序规则刻意可解释，分三档、**每档一个固定分**：
+ * 1. 名字：完全一致 100 / 包含 70 / 有 ≥2 个字重合 20+6n；
+ * 2. 取值命中（列画像里的码值）45 —— 这是"业务黑话其实是一个码值"的情况，落点最实在；
+ * 3. 描述 / 属性命中 30 —— 覆盖"口径写在列注释里"的情况。
+ * 名字已经对上（≥70）时不再叠加后两档：否则一个啰嗦的描述会把真正的名字命中比下去。
+ * 全都没命中时按实例数量兜底，至少让模型知道这个本体里最"重"的概念是什么。
  */
-export function rankSchemaConcepts(concepts: readonly SchemaConcept[], query: string, maxConcepts: number): SchemaMatch[] {
+export function rankSchemaConcepts(concepts: readonly SchemaConcept[], query: string, maxConcepts: number, options: RankSchemaOptions = {}): SchemaMatch[] {
+  const kinds = options.kinds?.length ? new Set(options.kinds) : null;
   const needle = normalize(query);
   const tokens = queryTokens(query);
-  const scored = concepts.map((concept) => {
-    const name = normalize(concept.name);
-    let score = 0;
-    let reason = "";
-    if (needle && name === needle) { score = 100; reason = "名称完全一致"; }
-    else if (needle && (name.includes(needle) || needle.includes(name))) { score = 70; reason = "名称包含查询词"; }
-    else {
-      const common = needle ? longestCommonSubstring(needle, name) : 0;
-      if (common >= 2) { score = 20 + common * 6; reason = `名称与查询词有 ${common} 个字重合`; }
-    }
-    const tokenHits = tokens.filter((token) => token.length >= 2 && concept.haystack.includes(token));
-    if (tokenHits.length) {
-      score += tokenHits.length * 8;
-      if (!reason) reason = `描述/属性命中：${tokenHits.slice(0, 3).join("、")}`;
-    }
-    return { concept, score: score + Math.min(10, concept.weight), reason };
-  });
+  const scored: ScoredConcept[] = concepts
+    .filter((concept) => !kinds || kinds.has(concept.kind))
+    .map((concept) => {
+      const name = normalize(concept.name);
+      let score = 0;
+      let reason = "";
+      let matched: SchemaMatch["matched"] = "fallback";
+      if (needle && name === needle) { score = 100; reason = "名称完全一致"; matched = "name"; }
+      else if (needle && (name.includes(needle) || needle.includes(name))) { score = 70; reason = "名称包含查询词"; matched = "name"; }
+      // 名字已经对上就不再叠加后两档：否则一个啰嗦的描述会把真正的名字命中比下去。
+      if (score < 70) {
+        const valueHit = needle.length >= 2 && Boolean(concept.values) && (concept.values ?? "").includes(needle);
+        const textHit = needle.length >= 2 && concept.haystack.includes(needle);
+        if (valueHit) {
+          score += 45;
+          matched = "value";
+          reason = `取值命中：有列的取值包含「${query.trim()}」`;
+        } else if (textHit) {
+          score += 30;
+          matched = "description";
+          reason = "描述 / 属性里提到了查询词";
+        } else {
+          // 名字只有零星几个字重合，是弱信号；它排在取值 / 描述命中之后。
+          const common = needle ? longestCommonSubstring(needle, name) : 0;
+          if (common >= 2) { score = 20 + common * 6; reason = `名称与查询词有 ${common} 个字重合`; matched = "name"; }
+          // 长问题（"统计互联网专线带宽≥100的条数"）整体不会出现在任何描述里，退回按词命中，最多算 3 个词。
+          const hits = tokens.filter((token) => token.length >= 2 && token !== needle && concept.haystack.includes(token)).slice(0, 3);
+          if (hits.length) {
+            score += hits.length * 8;
+            if (matched !== "name") matched = "description";
+            if (!reason) reason = `描述 / 属性命中：${hits.join("、")}`;
+          }
+        }
+      }
+      return { concept, score: score + Math.min(10, concept.weight), reason, matched };
+    });
 
   const matched = scored.filter((item) => item.score > 0);
-  /*
-   * 都没命中时兜底给一批概念，而不是空手而归 —— 注意这里**不再按"有实例的才有资格"筛**：
-   * 一个刚建好、图库还是空的本体，那样会一条都返回不了。weight 只影响排序，不影响有没有。
-   */
-  const pool = matched.length ? matched : scored;
-  return pool
-    .sort((a, b) => b.score - a.score || a.concept.name.localeCompare(b.concept.name, "zh-CN"))
-    .slice(0, maxConcepts)
-    .map((item) => ({
-      kind: item.concept.kind,
-      name: item.concept.name,
-      score: item.score,
-      reason: item.reason || "没命中关键词，按本体概念清单兜底推荐",
-      detail: item.concept.detail,
-    }));
+  if (!matched.length) {
+    /*
+     * 都没命中时兜底给一批概念，而不是空手而归 —— 注意这里**不再按"有实例的才有资格"筛**：
+     * 一个刚建好、图库还是空的本体，那样会一条都返回不了。weight 只影响排序，不影响有没有。
+     */
+    return scored
+      .sort(compareScored)
+      .slice(0, maxConcepts)
+      .map((item) => toMatch(item, "fallback"));
+  }
+  return applyTypeQuota(matched.sort(compareScored), maxConcepts, options.typeQuota !== false).map((item) => toMatch(item));
+}
+
+function compareScored(a: ScoredConcept, b: ScoredConcept) {
+  return b.score - a.score || a.concept.name.localeCompare(b.concept.name, "zh-CN");
+}
+
+function toMatch(item: ScoredConcept, forced?: SchemaMatch["matched"]): SchemaMatch {
+  return {
+    kind: item.concept.kind,
+    name: item.concept.name,
+    score: item.score,
+    matched: forced ?? item.matched,
+    reason: item.reason || "没命中关键词，按本体概念清单兜底推荐",
+    detail: item.concept.detail,
+    ...(item.concept.description ? { description: describeBriefly(item.concept.description, 300) } : {}),
+    ...(item.concept.boundTable ? { bound_table: item.concept.boundTable } : {}),
+    ...(item.concept.sourceColumn ? { source_column: item.concept.sourceColumn } : {}),
+    ...(item.concept.kind === "PROPERTY" || item.concept.kind === "METRIC" ? { object_type: item.concept.references?.[0] ?? "" } : {}),
+  };
+}
+
+/**
+ * 类型类概念（对象类型 / 指标 / 关系类型）保底占一半名额：**从尾部换掉分数最低的属性类命中**，
+ * 不重排、不插队，已经被名字命中的东西位置不动。
+ */
+function applyTypeQuota(ordered: ScoredConcept[], maxConcepts: number, enabled: boolean): ScoredConcept[] {
+  const head = ordered.slice(0, maxConcepts);
+  if (!enabled || head.length < 2) return head;
+  const wanted = Math.ceil(head.length / 2);
+  const kept = head.filter((item) => TYPE_KINDS.has(item.concept.kind)).length;
+  if (kept >= wanted) return head;
+  const extra = ordered.slice(maxConcepts).filter((item) => TYPE_KINDS.has(item.concept.kind));
+  const out = [...head];
+  for (let i = 0; i < wanted - kept && i < extra.length; i += 1) {
+    for (let j = out.length - 1; j >= 0; j -= 1) {
+      if (!TYPE_KINDS.has(out[j].concept.kind)) { out[j] = extra[i]; break; }
+    }
+  }
+  return out;
 }
 
 function titleOf(definition: OntologyDefinition, node: EntityRecord) {
@@ -409,6 +600,37 @@ function businessProperties(node: EntityRecord) {
   return Object.fromEntries(Object.entries(node.properties).filter(([key]) => key !== "fx" && key !== "fy"));
 }
 
+/**
+ * 一张表被哪些对象类型绑着、各自映射了哪些列。
+ *
+ * 为什么要有它：表的可达路径一直是"对象类型 → 它绑的表"，模型拿一张表名进来时
+ * **查不到这张表是什么**（清单里没有"枚举库表"这种能力，也不该有）。
+ * 反过来给一份"这张表被谁用、哪几列被映射了"，模型立刻能判断"是不是表名写错了 / 该看哪个对象类型"。
+ * 纯函数：只读定义，不连库。
+ */
+export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string) {
+  const wanted = profileTableKey(schema, table);
+  const bindings: { object_type: string; source_role: string; primary_key: string[]; mapped_columns: string[]; mapped_column_count: number }[] = [];
+  for (const entity of definition.entityTypes) {
+    entitySources(entity).forEach((source, index) => {
+      if (source.dataSourceId !== dataSourceId) return;
+      if (profileTableKey(source.schema || schema, source.view) !== wanted) return;
+      const columns = [...new Set(entity.properties
+        .filter((property) => property.sourceField && (!property.sourceId || property.sourceId === source.id))
+        .map((property) => property.sourceField as string))];
+      bindings.push({
+        object_type: entity.name,
+        source_role: sourceRoleLabel(index),
+        primary_key: source.primaryKey.filter(Boolean),
+        // 一列一个名字就够模型对上，不用把整张表复述一遍；太长的截到 30 个并给出总数。
+        mapped_columns: columns.slice(0, 30),
+        mapped_column_count: columns.length,
+      });
+    });
+  }
+  return bindings;
+}
+
 function clamp(value: unknown, fallback: number, max: number) {
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric) || numeric < 1) return fallback;
@@ -433,7 +655,8 @@ export type TypeGraphNode = {
  * 一条边（关系类型）。`from` / `to` 是定义里的起点与终点；两个方向都能走，所以它同时表示反向那条。
  * `via_interface` 只在"这条关系是接口带出来的"时出现 —— 见 `interfaceDerivedLinks`。
  */
-export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number; via_interface?: string };
+/** 边的基数只在"这条边来自关系类型本身"时才有：接口承接的关系由接口约束描述，不带这一项。 */
+export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number; via_interface?: string; cardinality?: string };
 
 /**
  * 接口带来的关系（Palantir 的 interface link type 语义）：对象类型实现了接口，
@@ -526,7 +749,7 @@ export function traverseTypeGraph(
    * 只认前者的话，实现了接口的对象类型会显得孤立 —— 恰好是模型最容易答错的地方。
    */
   const links = [
-    ...definition.relationshipTypes.map((item) => ({ name: item.name, fromId: item.sourceEntityTypeId, toId: item.targetEntityTypeId, viaInterface: "" })),
+    ...definition.relationshipTypes.map((item) => ({ name: item.name, fromId: item.sourceEntityTypeId, toId: item.targetEntityTypeId, viaInterface: "", cardinality: item.cardinality ?? "" })),
     ...interfaceDerivedLinks(definition),
   ];
   const relationNames = new Set(links.map((item) => item.name));
@@ -590,7 +813,15 @@ export function traverseTypeGraph(
       const toHop = hopOf.get(to);
       if (fromHop === undefined || toHop === undefined) return null;
       if (allowedRelations.size && !allowedRelations.has(link.name)) return null;
-      return { relation: link.name, from, to, hop: Math.max(fromHop, toHop), ...(link.viaInterface ? { via_interface: link.viaInterface } : {}) };
+      return {
+        relation: link.name,
+        from,
+        to,
+        hop: Math.max(fromHop, toHop),
+        ...(link.viaInterface ? { via_interface: link.viaInterface } : {}),
+        // 基数：这条边起点端 → 终点端 是一对一 / 一对多 / ……；没标注就不带这一项。
+        ...("cardinality" in link && link.cardinality ? { cardinality: link.cardinality } : {}),
+      };
     })
     .filter((edge): edge is TypeGraphEdge => edge !== null);
 
@@ -654,20 +885,38 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
   switch (name) {
     case "search_schema": {
       const query = typeof args.query === "string" ? args.query : "";
-      const maxConcepts = clamp(args.max_concepts, 8, 30);
-      const matches = rankSchemaConcepts(schemaConcepts(definition, runtimeTypes, context.dataSources ?? []), query, maxConcepts);
+      // 默认给宽一点（用户口径：默认可以大一点）：属性多的时候 8 条不够模型看清有哪些类型。
+      const maxConcepts = clamp(args.max_concepts ?? args.limit, 20, 50);
+      const requested = Array.isArray(args.kinds) ? args.kinds.map((item) => String(item).trim().toUpperCase()) : [];
+      const kinds = requested.filter((item): item is ConceptKind => (CONCEPT_KINDS as string[]).includes(item));
+      const scopeType = typeof args.object_type === "string" && args.object_type.trim() ? args.object_type.trim() : "";
+      const includeValues = args.include_values !== false;
+      /** 取值索引只读平台库里已缓存的画像；取不到（没建库 / 还没采过）就当没有，不让检索失败。 */
+      const valueIndex = includeValues ? await cachedColumnValueIndex(definition).catch(() => null) : null;
+      let concepts = schemaConcepts(definition, runtimeTypes, context.dataSources ?? [], valueIndex);
+      if (scopeType) {
+        if (!definition.entityTypes.some((item) => item.name === scopeType)) throw new Error(`本体里没有对象类型「${scopeType}」。先用 search_schema 确认名字。`);
+        concepts = concepts.filter((item) => item.references?.includes(scopeType));
+      }
+      const matches = rankSchemaConcepts(concepts, query, maxConcepts, { kinds });
+      const valueTables = valueIndex?.size ?? 0;
       return {
         payload: {
           query,
           matches,
           hint: matches.length
-            ? "这些名字是本体里的真实定义，后续查询只能用它们。要字段级细节就调 get_object_type。"
+            ? "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。"
             : "没有命中任何概念，换一个说法或先用更宽的关键词再试。",
+          // 表只能通过对象类型到达：明确写出来，免得模型退回"直接枚举数据源里的表"。
+          note: "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
+          ...(includeValues && !valueTables
+            ? { values_note: "还没有任何列的取值画像（列画像是按天缓存的采样结果）：想按业务码值（例如「互联网专线」）检索，先对相关对象类型绑定的表调一次 get_table_ddl，画像会随表结构一起给出。" }
+            : {}),
         },
-        // 属性不是可寻址的实体，不做证据；类型与动作才是。
+        // 属性不是可寻址的实体，不做证据；类型、动作、接口、指标才是。
         evidence: matches
           .filter((match) => match.kind !== "PROPERTY")
-          .map((match) => ({ kind: match.kind as "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "INTERFACE", id: match.name, label: match.name })),
+          .map((match) => ({ kind: match.kind as "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "INTERFACE" | "METRIC", id: match.name, label: match.name })),
       };
     }
 
@@ -722,12 +971,23 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         return { source, target };
       };
       /*
+       * 数量关系：声明的是「起点 → 终点」。入边是从终点这一侧看过去的，要**翻过来说**
+       * （否则模型会把"一个客户有多个专线"读成"一个专线属于多个客户"，聚合就重复计数了）。
+       */
+      const cardinalityOf = (relation: (typeof touching)[number], reversed: boolean) => {
+        const value = relation.cardinality ?? "";
+        if (!value) return {};
+        const from = typeNameById.get(reversed ? relation.targetEntityTypeId : relation.sourceEntityTypeId) ?? "";
+        const to = typeNameById.get(reversed ? relation.sourceEntityTypeId : relation.targetEntityTypeId) ?? "";
+        return { cardinality: value, cardinality_label: cardinalityLabel(value), cardinality_from_here: cardinalityPhrase(value, from, to, { reversed }) };
+      };
+      /*
        * 一跳关系：出边、入边分开列。模型问"A 一圈都连着谁"是最常见的追问，
        * 提前给到就省掉一次遍历；要多跳再走 traverse_object_types（最多 5 跳）。
        */
       const oneHop = {
-        outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.targetEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}) }; }),
-        incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.sourceEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}) }; }),
+        outgoing: touching.filter((item) => item.sourceEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.targetEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}), ...cardinalityOf(item, false) }; }),
+        incoming: touching.filter((item) => item.targetEntityTypeId === type.id).map((item) => { const keyMapping = keyMappingsOf(item); return { relation: item.name, ...neighbor(item.sourceEntityTypeId), ...(keyMapping ? { key_mapping: keyMapping } : {}), ...cardinalityOf(item, true) }; }),
         /*
          * 接口带来的关系：实现接口就承接接口的关系约束（Palantir 语义），
          * 所以"实现方一跳能到谁"必须把它算进来 —— 否则实现方看着像孤立的类型。
@@ -735,11 +995,27 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         via_interfaces: interfaceDerivedLinks(definition)
           .filter((link) => link.fromId === type.id || link.toId === type.id)
           .map((link) => ({ relation: link.name, via_interface: link.viaInterface, ...neighbor(link.fromId === type.id ? link.toId : link.fromId) })),
-        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。key_mapping 是这条关系类型声明过的键映射（连接属性 → 该端对象类型的属性，`外键 X` 表示连接键长在对象类型上），它说明两类对象在数据上按哪几个字段对得上；没配的关系类型不带这一项，那只是还没填，不代表连不上。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
+        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。key_mapping 是这条关系类型声明过的键映射（连接属性 → 该端对象类型的属性，`外键 X` 表示连接键长在对象类型上），它说明两类对象在数据上按哪几个字段对得上；没配的关系类型不带这一项，那只是还没填，不代表连不上。cardinality / cardinality_from_here 是这条关系的**数量关系**：前者是声明原样（起点 → 终点），后者是「从当前这个对象类型看过去」的说法 —— 按某个类型聚合时先看它，1:N 就说明走一次会放大，别重复计数；没标注就不带这两项。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
       };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
         .map((item) => ({ name: item.name, code: item.code, params: item.params.map((param) => `${param.name}:${param.dataType}`) }));
+      /*
+       * 指标：这个对象类型上定义的业务口径。模型答"这类数怎么算 / 有没有现成口径"时直接引用它，
+       * 不用再从列注释里反推 —— 单位、红冲这些边界就写在 filters / unit 里。
+       */
+      const metrics = (definition.metrics ?? [])
+        .filter((item) => item.entityTypeId === type.id)
+        .map((item) => ({
+          name: item.name,
+          description: describeBriefly(item.description, 120),
+          aggregation: item.aggregation,
+          property: item.property,
+          filters: item.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`),
+          dimensions: item.dimensions,
+          time_property: item.timeProperty,
+          unit: item.unit,
+        }));
       /*
        * 被提取成接口的对象类型仍然留在定义里（影子），名字和接口**同名**。
        * 不点破这一点，模型会把"对象类型客户"和"接口客户"当成两个不相干的同名概念。
@@ -756,6 +1032,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           properties,
           one_hop: oneHop,
           actions,
+          metrics,
+          ...(metrics.length ? { metrics_note: "metrics 是这个对象类型上定义的指标（业务口径）：aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
           sources: sources.map((source, index) => ({
             role: sourceRoleLabel(index),
             data_source: resourceNameById.get(source.dataSourceId) ?? "",
@@ -934,21 +1212,56 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const record = resolveDataSource(context, String(args.data_source ?? ""));
       const table = String(args.table ?? "").trim();
       if (!table) throw new Error("table 不能为空。");
+      const startedAt = Date.now();
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
       if (!connector.describeTableDdl) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持查看表结构。`);
       const ddl = await connector.describeTableDdl({ name: table, schema: record.schema_name || undefined });
+      /*
+       * 列画像：只对**被对象类型绑定的表**做，按天缓存、采样而非全表统计。
+       * 画像失败（大表超时、没绑定、驱动不支持）不能连带把表结构也搞失败 —— 它只是加分项。
+       */
+      let profile: Awaited<ReturnType<typeof ensureColumnProfile>> | null = null;
+      try {
+        profile = await ensureColumnProfile({ definition, record, view: { schema: ddl.schema || record.schema_name, name: ddl.name }, refresh: args.refresh === true });
+      } catch (error) {
+        profile = { profile: null, cached: false, warning: `列画像没取到（表结构照常可用）：${error instanceof Error ? error.message : "未知错误"}` };
+      }
+      /*
+       * 反向引用：这张表被哪些对象类型绑着、各映射了哪几列。
+       * 表只能通过对象类型到达，所以"某个表名没人认领"时这就是唯一的排错线索。
+       */
+      const objectKind = ddl.schema || record.schema_name;
+      const boundObjectTypes = objectTypesBoundTo(definition, record.id, objectKind, ddl.name);
       return {
         payload: {
           data_source: record.name,
           data_source_kind: record.kind,
+          // 这一步常常要几秒（远端 Oracle 读数据字典 + 采样），如实给出来让模型知道贵不贵。
+          elapsed_ms: Date.now() - startedAt,
           schema: ddl.schema,
           table: ddl.name,
           object_kind: ddl.kind,
           ddl_source: ddl.source,
           ddl: ddl.ddl,
           notes: ddl.notes,
+          bound_object_types: boundObjectTypes,
+          bound_object_types_note: boundObjectTypes.length
+            ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。要字段细节与关系用 get_object_type。"
+            : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",
           ...(ddl.truncatedAt ? { truncated_at: ddl.truncatedAt, truncated_note: `原始语句超过 ${ddl.truncatedAt} 字符，上面是截断后的。` } : {}),
+          ...(profile?.profile
+            ? {
+              column_profile: {
+                sampled_at: profile.profile.sampledAt,
+                cached: profile.cached,
+                sample_size: profile.profile.sampleSize,
+                columns: profile.profile.columns,
+                note: `列画像是**采样**结果（前 ${profile.profile.sampleSize} 行，按天缓存），distinct 是采样里的取值种数、不是全表精确统计；high_cardinality=true 的列没存取值。写 WHERE 时用它确认码值，别拿它当精确基数。`,
+              },
+            }
+            : {}),
+          ...(profile?.warning ? { column_profile_warning: profile.warning } : {}),
         },
         // 表结构不是可寻址的本体实体，不做证据。
         evidence: [],
@@ -962,6 +1275,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       // 模型自己给的行数；「问答配置」里设了取数上限就再夹一道，没设就用兜底上限。
       const ceiling = context.sqlRowLimit ?? SQL_ROW_CEILING;
       const limit = Math.min(clamp(args.limit, DEFAULT_SQL_ROWS, SQL_ROW_CEILING), ceiling);
+      const startedAt = Date.now();
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
       if (!connector.runReadOnlyQuery) throw new Error(`数据资源「${record.name}」是 ${record.kind}，不支持 SQL 查询。`);
@@ -970,6 +1284,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         payload: {
           data_source: record.name,
           data_source_kind: record.kind,
+          // 这次查询实际花了多久：模型据此判断"这条语句贵不贵、下次要不要合并成一条 CTE"。
+          elapsed_ms: Date.now() - startedAt,
           schema: record.schema_name || "",
           statement: result.statement,
           returned: result.rows.length,
@@ -1160,6 +1476,34 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           note: "这些是本体里已定义的动作。本次推理是只读的，不会真的执行动作；要执行请到「动作」页由人确认后运行。",
         },
         evidence: actions.map((action) => ({ kind: "ACTION" as const, id: action.id, label: action.name })),
+      };
+    }
+
+    case "list_metrics": {
+      const typeName = typeof args.type_name === "string" && args.type_name.trim() ? args.type_name.trim() : null;
+      const metricName = typeof args.name === "string" && args.name.trim() ? args.name.trim() : null;
+      const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
+      const metrics = (definition.metrics ?? [])
+        .filter((item) => (!typeName || typeNameById.get(item.entityTypeId) === typeName) && (!metricName || item.name === metricName))
+        .map((item) => ({
+          name: item.name,
+          description: item.description,
+          scope_object_type: typeNameById.get(item.entityTypeId) ?? "",
+          aggregation: item.aggregation,
+          property: item.property,
+          /** 口径边界：一条指标"算哪些行"由它决定（例如只看互联网专线、排除红冲）。 */
+          filters: item.filters.map((filter) => ({ property: filter.property, operator: filter.operator, value: filter.value })),
+          dimensions: item.dimensions,
+          time_property: item.timeProperty,
+          unit: item.unit,
+          tags: item.tags,
+        }));
+      return {
+        payload: {
+          metrics,
+          note: "指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL 走 run_sql；scope_object_type 是它作用的对象类型，绑定的表在 get_object_type 里。",
+        },
+        evidence: metrics.map((metric) => ({ kind: "METRIC" as const, id: metric.name, label: metric.name })),
       };
     }
 

@@ -44,6 +44,8 @@ export type RelationType = {
   id: string;
   name: string;
   description?: string;
+  /** 数量关系（起点 → 终点）：ONE_TO_ONE / ONE_TO_MANY / MANY_TO_ONE / MANY_TO_MANY；空串 = 未标注。 */
+  cardinality?: OntologyDefinition["relationshipTypes"][number]["cardinality"];
   sourceEntityTypeId: string;
   targetEntityTypeId: string;
   /** 这条关系在数据上怎么把两端接起来：连接属性 → 该端对象类型的属性。多条就是复合键；不配也能发布。 */
@@ -65,8 +67,10 @@ export type OntologyRule = OntologyDefinition["rules"][number];
 export type ConceptGroup = ConceptGroupDefinition;
 /** 接口：抽象契约，只描述属性与关系约束，不绑数据、不能被实例化。 */
 export type InterfaceType = InterfaceTypeDefinition;
+/** 指标（业务口径）：怎么聚合、口径过滤、可用维度、单位。见 @/lib/metrics 的发布前检查。 */
+export type Metric = OntologyDefinition["metrics"][number];
 export type InterfaceLinkConstraint = InterfaceTypeDefinition["linkConstraints"][number];
-export type Definition = { groups: ConceptGroup[]; interfaces: InterfaceType[]; entityTypes: EntityType[]; relationshipTypes: RelationType[]; actionTypes: ActionType[]; rules: OntologyRule[] };
+export type Definition = { groups: ConceptGroup[]; interfaces: InterfaceType[]; metrics: Metric[]; entityTypes: EntityType[]; relationshipTypes: RelationType[]; actionTypes: ActionType[]; rules: OntologyRule[] };
 
 export const propertyTypeOptions: PropertyDataType[] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
 

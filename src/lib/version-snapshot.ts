@@ -10,6 +10,7 @@ import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontolog
 import { validateEntitySources } from "@/lib/ontology-sources";
 import { relationshipKeyViolations } from "@/lib/relationship-keys";
 import { linkSourceViolations } from "@/lib/link-source";
+import { metricViolations } from "@/lib/metrics";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/action-engine";
 import { parsePropertyValues } from "@/lib/instance-property-editor";
@@ -621,6 +622,8 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
   for (const item of relationshipKeyViolations(snapshot.definition)) violations.push(item);
   // 关系类型的数据来源（D2）：配了但取不出实例的话，图上看不到边，这里提醒一句（不挡发布）。
   for (const item of linkSourceViolations(snapshot.definition)) violations.push(item);
+  // 指标：指向不存在的对象类型 / 属性就是悬空引用，模型拿着它也算不出数。
+  for (const item of metricViolations(snapshot.definition)) violations.push(item);
   const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));

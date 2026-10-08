@@ -37,6 +37,8 @@ const EDIT_OPS = ["CREATE_ENTITY", "SET_PROPERTY", "CREATE_RELATIONSHIP"];
 const REF_KINDS = ["SUBJECT", "PARAM", "EDIT"];
 const VALUE_KINDS = ["PARAM", "CONST", "NOW"];
 const OPERATORS = ["EQUALS", "NOT_EQUALS", "IS_TRUTHY", "IS_FALSY", "IS_EMPTY", "IS_NOT_EMPTY"];
+const AGGREGATIONS = ["SUM", "COUNT", "COUNT_DISTINCT", "AVG", "MIN", "MAX"];
+const METRIC_OPERATORS = ["EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NOT_IN", "CONTAINS", "IS_NULL", "NOT_NULL"];
 
 /** UUID：优先用 Node 自带的，老版本退回自己拼 v4。 */
 function newId() {
@@ -179,6 +181,12 @@ function compile(blueprint) {
     priority: Number.isFinite(item?.priority) ? item.priority : 0, enabled: item?.enabled !== false,
     conditions: asArray(item?.conditions), message: text(item?.message),
   }));
+  const metrics = asArray(blueprint.metrics).map((item) => ({
+    id: "", name: text(item?.name), description: text(item?.description), scope: text(item?.scope),
+    aggregation: text(item?.aggregation), property: text(item?.property), filters: asArray(item?.filters),
+    dimensions: asArray(item?.dimensions), timeProperty: text(item?.timeProperty),
+    unitType: text(item?.unitType), unit: text(item?.unit), tags: asArray(item?.tags),
+  }));
   const dataSources = asArray(blueprint.dataSources).map((item) => ({
     id: "", name: text(item?.name), kind: text(item?.kind).toUpperCase(),
     host: text(item?.host), port: Number(item?.port) || 0,
@@ -191,6 +199,8 @@ function compile(blueprint) {
   const relationTypeByName = index(relationTypes, "关系类型");
   const actionTypeByName = index(actionTypes, "动作");
   const ruleByName = index(rules, "规则");
+  // 指标之间不互相引用，但要走同一个 index()：这样它们才拿得到 id，重名也会当场报出来。
+  const metricByName = index(metrics, "指标");
   const dataSourceByName = index(dataSources, "数据资源");
 
   /** 解析一个"按名字引用"的字段：解析不到就报错，并把可选项列出来（模型据此自己改对）。 */
@@ -448,6 +458,49 @@ function compile(blueprint) {
     };
   });
 
+  // ---- 指标（业务口径）----
+  /*
+   * 指标引用对象类型与属性，都用**名字**写清单，这里翻成 id 并当场校验"属不属于这个对象类型"。
+   * 指错了在这里就报错，别等平台发布前校验再拦 —— 同一个错，越早发现越省事。
+   */
+  const compiledMetrics = metrics.map((item) => {
+    const where = `指标「${item.name}」`;
+    if (!item.name) fail("有个指标没写 name。");
+    const scopeType = item.scope ? objectTypeByName.get(key(item.scope)) : null;
+    if (item.scope && !scopeType) {
+      const available = [...objectTypeByName.values()].map((type) => type.name).join("、") || "（清单里一个都没有）";
+      fail(`${where}的 scope 指向了不存在的对象类型「${item.scope}」。当前清单里有：${available}。`);
+    }
+    const propertyNames = new Set(asArray(scopeType?.properties).map((property) => key(property?.name)).filter(Boolean));
+    const checkProperty = (name, what) => {
+      if (!name || !scopeType) return;
+      if (!propertyNames.has(key(name))) fail(`${where}的${what}用了「${name}」，但对象类型「${scopeType.name}」里没有这个属性。`);
+    };
+    const aggregation = item.aggregation.toUpperCase() || "COUNT";
+    if (!AGGREGATIONS.includes(aggregation)) fail(`${where}的 aggregation 不认识：${item.aggregation || "（空）"}（可选：${AGGREGATIONS.join(" / ")}）。`);
+    checkProperty(item.property, "聚合属性");
+    return {
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      entityTypeId: scopeType?.id ?? "",
+      aggregation,
+      property: item.property,
+      filters: item.filters.map((filter) => {
+        const operator = text(filter?.operator).toUpperCase() || "EQ";
+        if (!METRIC_OPERATORS.includes(operator)) fail(`${where}的过滤 operator 不认识：${text(filter?.operator)}（可选：${METRIC_OPERATORS.join(" / ")}）。`);
+        const property = text(filter?.property);
+        checkProperty(property, "过滤条件");
+        return { property, operator, value: text(filter?.value) };
+      }),
+      dimensions: item.dimensions.map(text).filter(Boolean).map((property) => { checkProperty(property, "可用维度"); return property; }),
+      timeProperty: item.timeProperty,
+      unitType: item.unitType,
+      unit: item.unit,
+      tags: item.tags.map(text).filter(Boolean),
+    };
+  });
+
   // ---- 数据资源 ----
   const compiledDataSources = dataSources.map((item) => {
     if (!DATA_SOURCE_KINDS.includes(item.kind)) fail(`数据资源「${item.name}」的 kind 不认识：${item.kind || "（空）"}（可选：${DATA_SOURCE_KINDS.join(" / ")}）。`);
@@ -479,6 +532,7 @@ function compile(blueprint) {
     definition: {
       groups: groups.map((group) => ({ id: group.id, name: group.name, color: group.color })),
       interfaces: compiledInterfaces,
+      metrics: compiledMetrics,
       entityTypes: compiledObjectTypes,
       relationshipTypes: compiledRelationTypes,
       actionTypes: compiledActionTypes,
@@ -487,6 +541,7 @@ function compile(blueprint) {
   };
 
   void ruleByName; // 规则目前不互相引用；留着索引是为了以后加"规则依赖"时直接可用。
+  void metricByName; // 同上：索引的副作用是给指标发 id 并查重名。
   return { bundle, errors, warnings };
 }
 

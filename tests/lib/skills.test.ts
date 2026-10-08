@@ -45,7 +45,7 @@ describe("本体技能目录", () => {
     expect(bundleSkill!.content).toContain("导入本体包");
     const format = await readSkillFile("ontology-bundle", "references/bundle-format.md");
     // 字段名与枚举是契约的一部分：改了定义就要改文档，这里挡住"只改代码不改文档"。
-    for (const token of ["entityTypes", "relationshipTypes", "interfaces", "actionTypes", "rules", "formatVersion", "scopeEntityTypeId", "dataType", "sourceKeyMappings", "targetKeyMappings", "linkProperty"]) {
+    for (const token of ["entityTypes", "relationshipTypes", "interfaces", "metrics", "actionTypes", "rules", "formatVersion", "scopeEntityTypeId", "dataType", "sourceKeyMappings", "targetKeyMappings", "linkProperty"]) {
       expect(format!.content, `bundle-format.md 少了 ${token}`).toContain(token);
     }
     expect(format!.content).toContain("TEXT_ARRAY");

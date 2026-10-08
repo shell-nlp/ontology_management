@@ -62,6 +62,22 @@
         ]
       }
     ],
+    "metrics": [
+      {
+        "id": "d9000000-0000-4000-8000-000000000001",
+        "name": "专线产品月费合计",
+        "description": "目录里所有专线产品的月功能费合计，单位：元。",
+        "entityTypeId": "b1000000-0000-4000-8000-000000000003",
+        "aggregation": "SUM",
+        "property": "MONTHLY_FEE",
+        "filters": [],
+        "dimensions": ["OFFER_NAME"],
+        "timeProperty": "",
+        "unitType": "",
+        "unit": "元",
+        "tags": ["计费"]
+      }
+    ],
     "entityTypes": [
       {
         "id": "b1000000-0000-4000-8000-000000000001",
@@ -135,6 +151,7 @@
       {
         "id": "d1000000-0000-4000-8000-000000000001",
         "name": "客户拥有专线产品用户",
+        "cardinality": "ONE_TO_MANY",
         "description": "一个有专线的客户可能对应多个专线产品用户。",
         "sourceEntityTypeId": "b1000000-0000-4000-8000-000000000001",
         "targetEntityTypeId": "b1000000-0000-4000-8000-000000000002",

@@ -5,6 +5,7 @@ import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyR
 import { api } from "@/lib/api-client";
 import { effectiveInterfaceProperties } from "@/lib/interfaces";
 import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/relationship-keys";
+import { CARDINALITY_OPTIONS } from "@/lib/relationship-cardinality";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
 import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
@@ -42,6 +43,8 @@ export type TypeEditPayload = {
   targetKeyMappings?: KeyMapping[];
   /** 关系实例从哪儿读（D2）；只有关系类型带这一项。 */
   linkSource?: RelationshipSource;
+  /** 数量关系（起点 → 终点）：ONE_TO_ONE / ONE_TO_MANY / MANY_TO_ONE / MANY_TO_MANY；空串 = 未标注。 */
+  cardinality?: RelationType["cardinality"];
   properties: Property[];
   /** 类的数据来源清单，第 0 份是主来源；关系类型不带这一项。 */
   sources?: EntitySource[];
@@ -76,6 +79,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [implementsList, setImplementsList] = useState<string[]>(kind === "entity" ? entity?.implements ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
   const [target, setTarget] = useState(relation?.targetEntityTypeId ?? "");
+  // 数量关系（起点 → 终点）：不改变"关系类型是双向的"，只说清走一次会放大几倍。
+  const [cardinality, setCardinality] = useState<RelationType["cardinality"]>(() => (kind === "relation" ? relation?.cardinality ?? "" : ""));
   // 两端的键映射：关系类型这一侧的连接属性 → 该侧对象类型的属性。多条就是复合键。
   const [sourceKeys, setSourceKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).source : []));
   const [targetKeys, setTargetKeys] = useState<KeyMapping[]>(() => (kind === "relation" ? relationKeyMappings(relation).target : []));
@@ -337,7 +342,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     try {
       await onSave(kind === "entity"
         ? { name, description, displayProperty, groupName, implements: implementsList, properties, sources: normalizedSources }
-        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys), linkSource });
+        : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, cardinality, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys), linkSource });
       onClose();
     } finally {
       setBusy(false);
@@ -478,6 +483,13 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                     </select>
                   </label>
                 </div>
+                <label className="ted-field">
+                  <span>数量关系（起点 → 终点）</span>
+                  <select className="ted-select" value={cardinality} onChange={(event) => setCardinality(event.target.value as RelationType["cardinality"])}>
+                    {CARDINALITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <small>{CARDINALITY_OPTIONS.find((option) => option.value === cardinality)?.hint}它只说明数据上的数量关系，不影响「关系类型是双向的」 —— 两个方向照样都能走。</small>
+                </label>
                 <section className="ted-section">
                   <div className="ted-section-head">
                     <h3><Database size={13} />关系的数据来源</h3>

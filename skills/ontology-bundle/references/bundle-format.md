@@ -24,7 +24,7 @@
 
 ### 2.0 一条总规则：id 是 UUID，引用靠 id
 
-`groups` / `interfaces` / `entityTypes` / `relationshipTypes` / `actionTypes` / `rules`
+`groups` / `interfaces` / `metrics` / `entityTypes` / `relationshipTypes` / `actionTypes` / `rules`
 以及接口的关系约束 `linkConstraints[]`，**每一个元素都要有 `id`，且必须是 UUID 字符串**
 （形如 `xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx`）。不能用中文、序号、表名当 id。
 
@@ -40,6 +40,7 @@ actionTypes[].scopeEntityTypeId      → entityTypes[].id
 actionTypes[].params[].entityTypeId  → entityTypes[].id（kind = ENTITY_REF 时）
 actionTypes[].edits[].entityTypeId / relationshipTypeId → entityTypes[].id / relationshipTypes[].id
 rules[].actionId                     → actionTypes[].id
+metrics[].entityTypeId               → entityTypes[].id
 ```
 
 导入时平台会给这些 id **全部重发新号**，所以不用担心和已有本体撞号；但**引用必须指得到东西**，
@@ -119,6 +120,8 @@ rules[].actionId                     → actionTypes[].id
 | `properties[]` | **这条关系自己的事实**（订购时间、角色…），结构同 2.3 的属性 |
 | `sourceKeyMappings[]` | 起点侧的键映射（见下），空数组 = 还没配 |
 | `targetKeyMappings[]` | 终点侧的键映射（见下），空数组 = 还没配 |
+| `cardinality` | 数量关系：`ONE_TO_ONE` / `ONE_TO_MANY` / `MANY_TO_ONE` / `MANY_TO_MANY`；空串 = 未标注。说的是**起点端 → 终点端**，只描述数据上的数量（"走一次会放大几倍"），**不改变「关系类型双向」** | 
+| `linkSource` | 关系实例（边）从哪读：连接表式 / 外键式；不配 = 只建模、不取实例（见 3.1） |
 
 #### 键映射（`sourceKeyMappings` / `targetKeyMappings`）
 
@@ -152,6 +155,10 @@ rules[].actionId                     → actionTypes[].id
 关系类型是**双向**的：一条关系类型只有一个定义、两个端点，建好之后两个方向都能走 ——
 不要为了"反向"再建一条关系类型（Palantir 的 link type 也是这样：一条 link type 两侧都能走）。
 两条并列的关系类型表示的是两个不同的现实关系（「执飞」与「检修记录」），不是正反向。
+
+**数量关系（`cardinality`）是另一件事**：它说"一个起点端对应几个终点端"（1:1 / 1:N / N:1 / N:N），
+用来判断跨表聚合会不会放大 —— 一个客户有 141 条专线，按客户分组求和就会重复计数。
+它**不是**正向 / 反向名字：两侧都能走这一点不变，`cardinality` 只是把"走一次放大几倍"写清楚；不确定就留空串。
 
 ### 2.5 `actionTypes[]`（动作）
 
@@ -195,6 +202,47 @@ rules[].actionId                     → actionTypes[].id
 
 - `HIDE` 规则**必须**绑定具体动作（隐藏是"动作在这个对象上出不出得来"），条件也只能看主对象自身属性。
 - 条件里 `subject.kind` 不是 `SUBJECT` 时，`code` 不能为空。
+
+### 2.7 `metrics[]`（指标）
+
+指标是**业务口径**：把「这个数怎么算」固化成定义，而不是让它散落在列注释里。
+它只描述怎么算，**不是某一次查询的结果**；出数仍然由模型按这份定义落成只读 SQL。
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | UUID |
+| `name` | 1–100；同名指标会被拦 |
+| `description` | ≤500，写清量的是什么、边界在哪 |
+| `entityTypeId` | 作用的对象类型 id；留空串表示还没选（**提示，不拦**，但模型看不出它算的是谁） |
+| `aggregation` | `SUM` / `COUNT` / `COUNT_DISTINCT` / `AVG` / `MIN` / `MAX`，默认 `COUNT` |
+| `property` | 被聚合的属性名；`COUNT` 且留空 = 数行数 |
+| `filters[]` | 固定口径：`{ property, operator, value }`，`operator` 见下 |
+| `dimensions[]` | 可以按哪些属性分组看（属性名数组，≤20 个） |
+| `timeProperty` | 时间维度属性名；留空表示不是时序指标 |
+| `unitType` / `unit` | 单位类型与单位（例如 `unit: "条"` / `"元"` / `"分"`） |
+| `tags[]` | 标签，≤12 个 |
+
+`filters[].operator` 只能是：`EQ` / `NE` / `GT` / `GTE` / `LT` / `LTE` / `IN` / `NOT_IN` / `CONTAINS` / `IS_NULL` / `NOT_NULL`。
+
+硬约束（写错会在导入/发布前被拦）：`entityTypeId`、`property`、`filters[].property`、`dimensions[]`、
+`timeProperty` 都必须指向**真实存在**的对象类型与属性；`SUM` / `AVG` / `MIN` / `MAX` 用在非数值属性上只提示、不拦。
+
+```json
+{
+  "id": "d9000000-0000-4000-8000-000000000001",
+  "name": "专线产品月费合计",
+  "description": "目录里所有专线产品的月功能费合计，单位：元。",
+  "entityTypeId": "b1000000-0000-4000-8000-000000000003",
+  "aggregation": "SUM",
+  "property": "MONTHLY_FEE",
+  "filters": [],
+  "dimensions": ["OFFER_NAME"],
+  "timeProperty": "",
+  "unitType": "",
+  "unit": "元",
+  "tags": ["计费"]
+}
+```
 
 ## 3. `dataSources` 与来源绑定
 
@@ -268,6 +316,9 @@ rules[].actionId                     → actionTypes[].id
 | 动作赋值的属性不存在 | 动作「X」给「Y」赋值的属性「Z」不存在 |
 | 规则没条件 / 绑了不存在的动作 | 规则「X」还没有配置条件 / 绑定的动作不存在 |
 | `HIDE` 规则没绑动作 | 规则「X」的处置是「隐藏」，需要绑定到一个具体动作 |
+| 指标重名 / 没选作用对象类型 | 指标「X」重名了 / 还没有选作用的对象类型（**提示，不拦**） |
+| 指标指向不存在的属性 | 指标「X」要聚合的属性「Y」在对象类型「Z」里不存在（过滤、维度、时间维度同理） |
+| 指标聚合方式与属性类型不匹配 | 指标「X」用的是 SUM，但属性「Y」是 TEXT（**提示，不拦**） |
 | 唯一属性值超长（> 8KB） | 唯一属性「X」有 N 个值的长度超过 8191 字节，不适合当唯一键 |
 | 关系端点不符合契约 | 关系端点不符合草稿中的对象类型契约（关系两端对象的类型必须是关系类型声明的类型） |
 
@@ -283,6 +334,7 @@ rules[].actionId                     → actionTypes[].id
   "definition": {
     "groups": [],
     "interfaces": [],
+    "metrics": [],
     "entityTypes": [],
     "relationshipTypes": [],
     "actionTypes": [],

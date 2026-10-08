@@ -23,7 +23,7 @@ const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module
 
 export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
 /** 关系类型：一条定义、两个端点；它是双向的，不用再建反向的那一条。 */
-export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; sourceKeyMappings?: RelationType["sourceKeyMappings"]; targetKeyMappings?: RelationType["targetKeyMappings"]; linkSource?: RelationType["linkSource"]; properties: RelationType["properties"] };
+export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; /** 数量关系（起点 → 终点）；空串 = 未标注。它不影响「关系类型双向」。 */ cardinality?: RelationType["cardinality"]; sourceKeyMappings?: RelationType["sourceKeyMappings"]; targetKeyMappings?: RelationType["targetKeyMappings"]; linkSource?: RelationType["linkSource"]; properties: RelationType["properties"] };
 
 type Selection = { kind: "entity"; id: string } | { kind: "interface"; id: string } | { kind: "relation"; id: string } | null;
 /** 接口的编辑走对话框（和「编辑对象类型」同一个壳），所以单独一个状态。 */

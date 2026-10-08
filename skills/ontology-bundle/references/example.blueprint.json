@@ -46,6 +46,18 @@
       ]
     }
   ],
+  "metrics": [
+    {
+      "name": "专线产品月费合计",
+      "description": "目录里所有专线产品的月功能费合计，单位：元。",
+      "scope": "专线产品",
+      "aggregation": "SUM",
+      "property": "MONTHLY_FEE",
+      "dimensions": ["OFFER_NAME"],
+      "unit": "元",
+      "tags": ["计费"]
+    }
+  ],
   "objectTypes": [
     {
       "name": "客户",
@@ -109,6 +121,7 @@
   "relationTypes": [
     {
       "name": "客户拥有专线产品用户",
+      "cardinality": "ONE_TO_MANY",
       "description": "一个有专线的客户可能对应多个专线产品用户。",
       "source": "客户",
       "target": "专线产品用户",

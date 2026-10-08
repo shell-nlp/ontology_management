@@ -62,6 +62,7 @@
 - [数据资源](#数据资源)
 - [目录结构](#目录结构)
 - [开发约定](#开发约定)
+- [功能实现记录](docs/功能实现记录.md)
 
 ## 能力概览
 
@@ -668,6 +669,7 @@ ontology_management/
 - 改动版本快照 / 发布流程时，同步关注 `src/lib/version-snapshot.ts` 与相关 ADR
 - 改 `src/lib/ontology.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
 - 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建
+- **每完成一批功能，在 [`docs/功能实现记录.md`](docs/功能实现记录.md) 追加一条**（做了什么 / 入口 / 限制 / 怎么验证）—— 那是给人看的功能账本
 
 ## 许可证
 

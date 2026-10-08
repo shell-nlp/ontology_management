@@ -213,7 +213,7 @@ function mapDataSources(bundle: OntologyBundle, localSources: LocalSourceRef[], 
   return map;
 }
 
-/** 收集定义里出现过的全部 id（含接口、端点、动作作用域与规则引用）。 */
+/** 收集定义里出现过的全部 id（含接口、指标、端点、动作作用域与规则引用）。 */
 function collectDefinitionIds(definition: OntologyDefinition) {
   const ids = new Set<string>();
   // 概念分组与接口的 id 和对象类型共用一套 id 空间：导入时要一起换新，`groupId` / `implements` 才能跟着指对。
@@ -223,6 +223,10 @@ function collectDefinitionIds(definition: OntologyDefinition) {
     for (const constraint of item.linkConstraints) if (constraint.targetId) ids.add(constraint.targetId);
   }
   for (const group of definition.groups) if (group.id) ids.add(group.id);
+  for (const metric of definition.metrics) {
+    if (metric.id) ids.add(metric.id);
+    if (metric.entityTypeId) ids.add(metric.entityTypeId);
+  }
   for (const type of definition.entityTypes) {
     if (type.id) ids.add(type.id);
     if (type.groupId) ids.add(type.groupId);
@@ -266,6 +270,11 @@ export function relinkDefinitionIds(
       promotedFromEntityTypeId: item.promotedFromEntityTypeId ? id(item.promotedFromEntityTypeId) : item.promotedFromEntityTypeId,
       extends: item.extends.map(id),
       linkConstraints: item.linkConstraints.map((constraint) => ({ ...constraint, targetId: id(constraint.targetId) })),
+    })),
+    metrics: definition.metrics.map((metric) => ({
+      ...metric,
+      id: id(metric.id),
+      entityTypeId: id(metric.entityTypeId),
     })),
     entityTypes: definition.entityTypes.map((type) => ({
       ...type,

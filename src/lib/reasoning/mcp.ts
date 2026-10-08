@@ -44,6 +44,7 @@ const TOOL_GROUP: Record<string, string> = {
   list_interfaces: "model",
   traverse_object_types: "model",
   list_actions: "model",
+  list_metrics: "model",
   get_table_ddl: "data",
   run_sql: "data",
   query_object_instance: "query",
@@ -58,6 +59,7 @@ const TOOL_TITLES: Record<string, string> = {
   list_interfaces: "接口",
   traverse_object_types: "对象类型多跳查询",
   list_actions: "动作定义",
+  list_metrics: "指标定义",
   // 不叫「建表语句」：视图走的是视图定义，还原那条也不是库里的原始 CREATE，叫表结构才名实相符。
   get_table_ddl: "表结构",
   run_sql: "只读查询",

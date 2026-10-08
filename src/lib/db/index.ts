@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { DataSource, type EntityManager, type EntityTarget, type ObjectLiteral, type QueryRunner, type Repository } from "typeorm";
 import {
   AuditEntryEntity,
+  ColumnProfileEntity,
   ConversationEntity,
   ConversationMessageEntity,
   DataSourceEntity,
@@ -56,6 +57,7 @@ export const PLATFORM_ENTITIES = [
   ConversationEntity,
   ConversationMessageEntity,
   ObjectEntryEntity,
+  ColumnProfileEntity,
 ];
 
 type PlatformCache = {

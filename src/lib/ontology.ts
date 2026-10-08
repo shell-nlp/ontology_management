@@ -341,6 +341,11 @@ export const ontologyDefinitionSchema = z.object({
    * 加这一项之前的老快照读出来是空数组。
    */
   interfaces: z.array(interfaceTypeSchema).default([]),
+  /**
+   * 指标清单（业务口径）。加这一项之前的老快照读出来是空数组。
+   * 指标挂在某个对象类型上，只描述"怎么算"，不等于某一次查询的结果。
+   */
+  metrics: z.array(metricSchema).default([]),
   entityTypes: z.array(z.object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(100),
@@ -392,6 +397,13 @@ export const ontologyDefinitionSchema = z.object({
     targetKeyMappings: z.array(relationshipKeyMappingSchema).default([]),
     /** 关系实例的数据来源；没配就是"只建模、不取实例"。 */
     linkSource: relationshipSourceSchema.default(EMPTY_LINK_SOURCE),
+    /**
+     * 数量关系（Palantir 的 link type cardinality）：起点端 → 终点端 是 1:1 / 1:N / N:1 / N:N。
+     * 空串 = 还没标注（不标不影响发布）。它只说数据上的数量，
+     * **不改变「关系类型是双向的」**：两个方向都能走，它回答的是"走一次会放大几倍"。
+     * 加这一项之前的老快照读出来是空串。
+     */
+    cardinality: z.union([z.enum(["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY"]), z.literal("")]).default(""),
   })).default([]),
   actionTypes: z.array(actionTypeSchema).default([]),
   rules: z.array(ontologyRuleSchema).default([]),
@@ -402,6 +414,7 @@ export type OntologyDefinition = z.infer<typeof ontologyDefinitionSchema>;
 export type EntitySource = z.infer<typeof entitySourceSchema>;
 export type ConceptGroup = z.infer<typeof conceptGroupSchema>;
 export type InterfaceType = z.infer<typeof interfaceTypeSchema>;
+export type Metric = z.infer<typeof metricSchema>;
 export type InterfaceLinkConstraint = z.infer<typeof interfaceLinkConstraintSchema>;
 export type InterfaceActionConstraint = z.infer<typeof interfaceActionConstraintSchema>;
 export type RelationshipKeyMapping = z.infer<typeof relationshipKeyMappingSchema>;

@@ -27,7 +27,7 @@ export function toolResultSummary(tool: string, output: unknown): string {
     }
     case "list_interfaces": {
       const count = asNumber(payload?.interface_count) ?? sizeOf(payload?.interfaces);
-      return count === null ? "已返回" : ` 个接口`;
+      return count === null ? "已返回" : `${count} 个接口`;
     }
     case "traverse_object_types": {
       const nodes = asNumber(payload?.node_count) ?? sizeOf(payload?.nodes);
@@ -38,7 +38,8 @@ export function toolResultSummary(tool: string, output: unknown): string {
     case "get_table_ddl": {
       if (!payload) return "已返回";
       // DDL 从哪来是要紧的信息：库里原始语句、还是按列元数据还原。
-      return `表结构 · ${payload.ddl_source === "native" ? "原始 DDL" : "按列元数据还原"}`;
+      // 带列画像时明说：低基数列的取值清单是这一步最值钱的部分。
+      return `表结构 · ${payload.ddl_source === "native" ? "原始 DDL" : "按列元数据还原"}${payload.column_profile ? " · 列画像" : ""}`;
     }
     case "run_sql": {
       const rows = asNumber(payload?.returned);
@@ -48,6 +49,10 @@ export function toolResultSummary(tool: string, output: unknown): string {
     case "list_actions": {
       const count = sizeOf(payload?.actions);
       return count === null ? "已返回" : `${count} 个动作`;
+    }
+    case "list_metrics": {
+      const count = sizeOf(payload?.metrics);
+      return count === null ? "已返回" : `${count} 个指标`;
     }
     case "query_object_instance": {
       const count = asNumber(payload?.returned) ?? sizeOf(payload?.instances);
