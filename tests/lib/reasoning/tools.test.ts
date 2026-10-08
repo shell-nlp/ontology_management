@@ -151,7 +151,6 @@ describe("list_concept_groups", () => {
       group_count: number;
       groups: { name: string; object_types: string[]; object_type_count: number }[];
       ungrouped_object_types?: string[];
-      note: string;
     };
     expect(payload.group_count).toBe(2);
     expect(payload.groups).toEqual([
@@ -161,7 +160,9 @@ describe("list_concept_groups", () => {
     ]);
     // groupId 指向已删除的分组（或压根没填）的，都算未归组
     expect(payload.ungrouped_object_types).toEqual(["订单"]);
-    expect(payload.note).toContain("不影响对象类型的定义");
+    // 这句以前每次返回都带上；现在只在工具说明里说一次 —— 对只看得到工具说明的 MCP 客户端同样成立。
+    expect(payload).not.toHaveProperty("note");
+    expect(REASONING_TOOLS.find((item) => item.name === "list_concept_groups")!.description).toContain("不影响对象类型的定义");
     expect(outcome.evidence.map((item) => [item.kind, item.label])).toEqual([["GROUP", "客户域"], ["GROUP", "账务域"]]);
   });
 
@@ -194,14 +195,17 @@ describe("概念分组进检索面", () => {
 
 describe("get_object_type 的一跳信息", () => {
   const context = { store: {} as never, definition: chainDefinition(), runtimeTypes };
-  type Neighbor = { relation: string; name: string; group: string; description: string; bound_tables: string[] };
-  type OneHop = { outgoing: Neighbor[]; incoming: Neighbor[]; note: string };
+  // 没归组时 group 缺席（结果里不再回默认值）；下面几段说明只在对应字段真出现时才给。
+  type Neighbor = { relation: string; name: string; group?: string; description?: string; bound_tables?: string[] };
+  type OneHop = { outgoing: Neighbor[]; incoming: Neighbor[]; key_mapping_note?: string; cardinality_note?: string; via_interfaces_note?: string };
 
   it("出边、入边分开列，带上对方的分组与绑表", async () => {
     const 用户 = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as { one_hop: OneHop };
-    expect(用户.one_hop.outgoing.map((item) => `${item.relation}→${item.name}@${item.group}`)).toEqual(["用户产生应收→应收@", "用户拥有订购关系→订购关系@"]);
-    expect(用户.one_hop.incoming.map((item) => `${item.relation}←${item.name}@${item.group}`)).toEqual(["客户拥有用户←客户@客户域"]);
-    expect(用户.one_hop.note).toContain("traverse_object_types");
+    expect(用户.one_hop.outgoing.map((item) => `${item.relation}→${item.name}@${item.group ?? ""}`)).toEqual(["用户产生应收→应收@", "用户拥有订购关系→订购关系@"]);
+    expect(用户.one_hop.incoming.map((item) => `${item.relation}←${item.name}@${item.group ?? ""}`)).toEqual(["客户拥有用户←客户@客户域"]);
+    // 这些关系类型没有键映射 / 基数 / 接口承接，那几段说明就不出现（有才解释）。
+    expect(用户.one_hop).not.toHaveProperty("key_mapping_note");
+    expect(用户.one_hop).not.toHaveProperty("cardinality_note");
 
     const 应收 = (await runReasoningTool("get_object_type", { type_name: "应收" }, context)).payload as { one_hop: OneHop };
     expect(应收.one_hop.outgoing).toEqual([]);
@@ -449,36 +453,38 @@ describe("traverse_object_types", () => {
       starts: string[];
       node_count: number;
       edge_count: number;
-      nodes: { name: string; hop: number; group: string }[];
-      edges: { relation: string; from: string; to: string; hop: number }[];
-      note: string;
+      // 列序固定：nodes = [对象类型名, 分组, 跳数, 描述, [绑定的表]]
+      nodes: [string, string, number, string, string[]][];
+      edges: [string, string, string, number, string, string][];
     };
     expect(payload.hops).toBe(2);
     expect(payload.starts).toEqual(["客户"]);
     expect(payload.node_count).toBe(4);
-    expect(payload.nodes).toContainEqual(expect.objectContaining({ name: "应收", hop: 2 }));
+    expect(payload.nodes).toContainEqual(["应收", "", 2, expect.any(String), expect.any(Array)]);
     expect(payload.edge_count).toBe(4);
-    expect(payload.note).toContain("get_object_type");
+    // 列序写在工具说明里（模型要靠它读数组）—— 别让说明和实现对不上。
+    expect(REASONING_TOOLS.find((item) => item.name === "traverse_object_types")!.description).toContain("[对象类型名, 分组, 跳数, 描述, [绑定的表]]");
     expect(outcome.evidence.some((item) => item.kind === "OBJECT_TYPE" && item.label === "应收")).toBe(true);
     expect(outcome.evidence.some((item) => item.kind === "RELATION_TYPE" && item.label === "用户产生应收")).toBe(true);
   });
 
   it("参数照传：关系类型限定、跳数上限", async () => {
     const limited = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 9, relationship_types: ["客户拥有用户"] }, context);
-    const payload = limited.payload as { hops: number; filters: { relationship_types: string[] }; edges: { relation: string }[] };
+    const payload = limited.payload as { hops: number; filters: { relationship_types: string[] }; edges: [string, string, string, number, string, string][] };
     expect(payload.hops).toBe(5);
     expect(payload.filters.relationship_types).toEqual(["客户拥有用户"]);
-    expect(payload.edges.map((edge) => edge.relation)).toEqual(["客户拥有用户"]);
+    expect(payload.edges.map((edge) => edge[0])).toEqual(["客户拥有用户"]);
   });
 
-  it("direction 照传，note 里说明本次方向；不认识的取值回落 both", async () => {
+  it("direction 照传（结果里不再重复一段说明）；不认识的取值回落 both", async () => {
     const backward = await runReasoningTool("traverse_object_types", { start_type: "客户", direction: "backward" }, context);
-    const payload = backward.payload as { direction: string; node_count: number; edges: { relation: string }[]; note: string };
+    const payload = backward.payload as { direction: string; node_count: number; edges: unknown[] };
     expect(payload.direction).toBe("backward");
     // 客户只有出边，只往回走就只剩起点
     expect(payload.node_count).toBe(1);
     expect(payload.edges).toEqual([]);
-    expect(payload.note).toContain("只沿终点→起点");
+    // 本次方向只在 direction 字段里说一次，不额外回一段说明。
+    expect(payload).not.toHaveProperty("note");
 
     const fallback = await runReasoningTool("traverse_object_types", { start_type: "客户", direction: "sideways" }, context);
     expect((fallback.payload as { direction: string }).direction).toBe("both");
@@ -600,9 +606,13 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
 
   it("工具层：没连平台库也能检索（取值索引取不到就跳过），并明确「表只能通过对象类型到达」", async () => {
     const outcome = await runReasoningTool("search_schema", { query: "专线", max_concepts: 20 }, { store: {} as never, definition: definition(), runtimeTypes });
-    const payload = outcome.payload as { matches: { name: string }[]; note: string };
+    const payload = outcome.payload as { matches: { name: string }[]; note?: string; hint?: string };
     expect(payload.matches.some((item) => item.name === "专业线产品用户")).toBe(true);
-    expect(payload.note).toContain("表只能通过对象类型到达");
+    // 这句约束以前每次检索都回一遍，现在只写在工具说明里（MCP 客户端也只认说明）——约束本身不能丢。
+    expect(payload).not.toHaveProperty("note");
+    expect(REASONING_TOOLS.find((item) => item.name === "search_schema")!.description).toContain("表只能通过对象类型到达");
+    // 有命中就不必再回那句"没命中怎么办"。
+    expect(payload).not.toHaveProperty("hint");
   });
 });
 
@@ -634,9 +644,10 @@ describe("数量关系（cardinality）在工具里的说法", () => {
 
   it("traverse_object_types：边也带上基数", async () => {
     const outcome = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 1 }, context);
-    const edges = (outcome.payload as { edges: { relation: string; cardinality?: string }[] }).edges;
-    expect(edges.find((edge) => edge.relation === "客户拥有用户")?.cardinality).toBe("ONE_TO_MANY");
-    expect(edges.filter((edge) => edge.relation !== "客户拥有用户").every((edge) => edge.cardinality === undefined)).toBe(true);
+    // edges 的列序：[关系类型名, 起点, 终点, 跳数, 经哪个接口, 基数]
+    const edges = (outcome.payload as { edges: [string, string, string, number, string, string][] }).edges;
+    expect(edges.find((edge) => edge[0] === "客户拥有用户")?.[5]).toBe("ONE_TO_MANY");
+    expect(edges.filter((edge) => edge[0] !== "客户拥有用户").every((edge) => edge[5] === "")).toBe(true);
   });
 
   it("search_schema：关系类型的 detail 里写出基数", () => {
