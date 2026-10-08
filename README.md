@@ -332,6 +332,27 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 - `primary_keys` 落到来源绑定的主键上；没有数据来源的类，主键改记成"必填 + 唯一"并给出提醒；
 - bkn 只写 `SCHEMA.TABLE`、不带数据库连接，所以来源资源要导入后自己在类型编辑里选一次。
 
+### 命令行导入（大文件推荐）
+
+界面上传适合小包；一个几百 KB 的 bkn 知识网络（几十个对象类型、上千个属性）**建议走命令行**：
+一条命令、一个请求，服务端一次解析 + 绑定 + 落草稿。
+
+```bash
+# 先干跑一遍：只解析不落库，看清文件里到底有什么、会丢什么（几十毫秒）
+node scripts/import-ontology.mjs "你的文件.json" --dry-run --email admin@example.com --password '******'
+
+# 确认后正式导入（默认停在草稿，和界面导入一致）
+node scripts/import-ontology.mjs "你的文件.json" --storage-target "内置类型图" --name "客户账务网络 v6"
+
+# 想一步到位（会真正重建图数据）
+node scripts/import-ontology.mjs "你的文件.json" --publish
+```
+
+- 账号也能用环境变量给：`ONTOLOGY_EMAIL` / `ONTOLOGY_PASSWORD`（或直接给 `--cookie` 跳过登录）。
+- `--storage-target` 省略时，若只剩一个没被占用的存储就自动用它；多个候选会把名字列出来。
+- 导入响应里带 `timings`（解析 / 规划 / 绑定 / 建快照），慢的时候一眼看出慢在哪。
+- 三种输入都支持：bkn 知识网络、平台自己的 `ontology.bundle`、以及工具导出的本体包。
+
 ## 智能问答与 MCP
 
 「能力验证」这一组是同一个能力的两种用法：**平台内的问答**与**对外的 MCP 服务**共用同一套只读工具，

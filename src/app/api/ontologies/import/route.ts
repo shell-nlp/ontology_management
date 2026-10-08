@@ -30,20 +30,33 @@ const importInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   /** 手动绑定：`对象类型id/sourceId` -> 数据资源 id（导入弹窗里选了之后回传）。 */
   bindings: z.record(z.string(), z.string().uuid()).optional(),
+  /**
+   * 只算不写（命令行脚本用）：解析、转换、绑定、校验全跑一遍，返回清单与警告，但**不建本体、不写草稿**。
+   * 为什么要有它：一个几百 KB 的 bkn 文件导一次要建几十个类型，先 dry-run 一遍能确认"这个文件里到底有什么、
+   * 会丢什么"，而不用先落一个本体再删。
+   */
+  dryRun: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole("ADMIN");
     const input = importInput.parse(await request.json());
+    // 各阶段耗时随响应带出去：导入慢的时候能一眼看出是解析、绑定还是建快照慢。
+    const startedAt = Date.now();
+    const timings: Record<string, number> = {};
+    let step = startedAt;
+    const mark = (key: string) => { timings[key] = Date.now() - step; step = Date.now(); };
     const raw = typeof input.bundle === "string" ? (JSON.parse(input.bundle) as unknown) : input.bundle;
     const converted = isBknKnowledgeNetwork(raw) ? fromBknKnowledgeNetwork(raw) : null;
     const bundle = converted ? converted.bundle : readOntologyBundle(raw);
+    mark("parse_ms");
 
     const storage = await getTarget(input.storageTargetId);
     if (!storage) return NextResponse.json({ error: "存储资源不存在。" }, { status: 404 });
 
     const plan = planBundleImport(bundle, await listDataSources());
+    mark("plan_ms");
     // 转换阶段丢的内容排在前面：那些是"文件里有、平台装不下"，比资源匹配更要紧。
     const warnings = [...(converted?.warnings ?? []), ...plan.warnings];
     /*
@@ -58,6 +71,34 @@ export async function POST(request: NextRequest) {
     if (bindingPlan.bindings.size) {
       warnings.push(`已按表名自动绑定 ${bindingPlan.bindings.size} 个数据来源。`);
     }
+    mark("bind_ms");
+
+    if (input.dryRun) {
+      return NextResponse.json({
+        dryRun: true,
+        sourceFormat: converted ? "bkn-knowledge-network" : "ontology.bundle",
+        ontology: {
+          name: input.name?.trim() || bundle.ontology.name,
+          identifier: bundle.ontology.identifier,
+          description: bundle.ontology.description,
+          tags: bundle.ontology.tags,
+        },
+        counts: {
+          groups: resolved.groups.length,
+          interfaces: resolved.interfaces.length,
+          metrics: resolved.metrics.length,
+          objectTypes: resolved.entityTypes.length,
+          properties: resolved.entityTypes.reduce((total, entity) => total + entity.properties.length, 0),
+          relationTypes: resolved.relationshipTypes.length,
+          actionTypes: resolved.actionTypes.length,
+          rules: resolved.rules.length,
+        },
+        warnings,
+        pendingSources,
+        timings: { ...timings, total_ms: Date.now() - startedAt },
+      });
+    }
+
     const ontology = await createOntology(
       {
         name: input.name?.trim() || bundle.ontology.name,
@@ -86,6 +127,7 @@ export async function POST(request: NextRequest) {
       await deleteOntology(ontology.id).catch(() => {});
       throw error;
     }
+    mark("create_ms");
 
     await writeAuditEntry({
       actorId: user.id,
@@ -106,7 +148,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ ontology, versionId, entityCount, relationshipCount, warnings, pendingSources }, { status: 201 });
+    return NextResponse.json(
+      { ontology, versionId, entityCount, relationshipCount, warnings, pendingSources, timings: { ...timings, total_ms: Date.now() - startedAt } },
+      { status: 201 },
+    );
   } catch (error) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "无法导入本体。");
     return NextResponse.json({ error: message }, { status: apiErrorStatus(error, 400) });

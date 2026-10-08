@@ -206,6 +206,28 @@
 - **`run_sql` / `get_table_ddl` 的 `elapsed_ms`**：让模型知道哪次查询贵、下次要不要合并成一条 CTE。
   `run_sql` 的工具说明里也写了"一次调用可以带多个 CTE"。没做 `scanned_rows`（Oracle 要 `EXPLAIN`，不稳）与结果缓存。
 
+## 本体导入的两条路（2026-10-08）
+
+用户口径：「前面已经导入过这个数据了，当时导入太久，能否实现一个脚本，方便这种格式的导入」。
+
+- **服务端只有一条导入链路**：`POST /api/ontologies/import`（`src/app/api/ontologies/import/route.ts`）。
+  它认三种输入：bkn 知识网络（`isBknKnowledgeNetwork` → `fromBknKnowledgeNetwork`）、
+  平台自己的 `ontology.bundle`、以及「结构化清单编译出来的包」。转换、换 id、按表名接数据资源、
+  写草稿全在这一条链路上 —— **不要给脚本另写一条导入路径**（两条路一定会漂移）。
+- **`dryRun: true`**：解析 + 转换 + 绑定 + 统计跑完就返回，**不建本体、不写草稿**，并带
+  `counts` / `warnings` / `pendingSources` / `timings`。回答"这个文件里到底有什么、会丢什么"用它，
+  别为了看一眼先落一个本体再删。真导入的响应也带 `timings`（解析 / 规划 / 绑定 / 建快照）。
+- **`scripts/import-ontology.mjs`**（Node 内置模块、无依赖）：登录 → 挑存储 → 一次请求导入；
+  可选 `--dry-run` / `--publish` / `--name` / `--storage-target`，账号可走环境变量。
+  两条实现约束别改回去：
+  1. **候选存储要排除已被别的本体占用的**（`/api/targets` 与 `/api/ontologies` 一减）——
+     每个本体在自己的 `graph_targets` 行上占位，拿别人的存储再导入会撞唯一键；
+  2. **不要用 `process.exit()`**：Windows + Node 24 下 fetch 还挂着连接时硬退会撞 libuv 的
+     `!(handle->flags & UV_HANDLE_CLOSING)` 断言（进程崩掉、退出码也不对），统一用 `process.exitCode`。
+  契约测试在 `tests/lib/import-script.test.ts`（只跑不联网的那几条路径）。
+- 实测（2026-10-08）：1MB 的 V5 bkn 文件 `--dry-run` 服务端 **0.05s**（解析 0.01 / 规划 0.01 / 绑定 0.03），
+  真导入 **0.09s**（含建快照）。所以"导入很久"从来不是服务端慢 —— 是当时靠对话一步步建类型。
+
 ## 功能实现记录（2026-10-08 用户要求）
 
 用户原话：「实现的功能都要记录下来，因为都是 AI 写的，记下来，后面我也知道都实现了什么」。
