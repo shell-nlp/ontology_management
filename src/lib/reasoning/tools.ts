@@ -168,7 +168,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列]。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数]（列只列前 30 个，总数才是真实值，别把两者当成一回事）。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
@@ -1250,8 +1250,12 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           ddl_source: ddl.source,
           ddl: ddl.ddl,
           notes: ddl.notes,
-          // 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列]。
-          bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key]),
+          /*
+           * 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列, 映射列总数]。
+           * 第 5 项别省：mapped_columns 只列前 30 个，总数是**另一个数**（真实 37 列也只会列 30 个），
+           * 少了它就看不出一列被截断了。见 AGENTS.md「能推出 ≠ 可删」。
+           */
+          bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key, item.mapped_column_count]),
           bound_object_types_note: boundObjectTypes.length
             ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。要字段细节与关系用 get_object_type。"
             : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",

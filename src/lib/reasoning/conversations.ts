@@ -1,5 +1,5 @@
-import type { SelectQueryBuilder } from "typeorm";
-import { In } from "typeorm";
+import type { FindOptionsWhere, SelectQueryBuilder } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { ConversationEntity, ConversationMessageEntity, jsonValue, platformRepo, repoIn, withPlatformTransaction } from "@/lib/db";
 import type { HistoryTurn } from "@/lib/reasoning/history";
 import { conversationTitle } from "@/lib/reasoning/conversation-view";
@@ -114,10 +114,20 @@ export async function getConversation(scope: ConversationScope, userId: string, 
 export async function deleteConversation(scope: ConversationScope, userId: string, conversationId: string): Promise<boolean> {
   // 消息靠外键 ON DELETE CASCADE 一起走，不必手动清。
   const repo = await platformRepo(ConversationEntity);
-  const result = await scopedConversations(repo.createQueryBuilder("c"), scope, userId)
-    .andWhere("c.id = :conversationId", { conversationId })
-    .delete()
-    .execute();
+  /*
+   * 归属条件这里**不能复用 `scopedConversations`**：它写的是 SELECT 的别名 `c`，
+   * 挂到 `.delete()` 上会生成 `DELETE FROM … WHERE c.created_by = …`，而 DELETE 语句里没有这个别名，
+   * PostgreSQL 直接报 `missing FROM-clause entry for table "c"`（2026-10-08 用户点「删除历史」报的）。
+   * 删除用 FindOptionsWhere 表达：列名交给实体映射，不手写别名，也不会漏掉归属校验。
+   */
+  const where: FindOptionsWhere<ConversationEntity> = { id: conversationId, createdBy: userId };
+  if (scope.ontologyId) {
+    where.ontologyId = scope.ontologyId;
+  } else {
+    where.ontologyId = IsNull();
+    where.targetId = scope.targetId;
+  }
+  const result = await repo.delete(where);
   return (result.affected ?? 0) > 0;
 }
 

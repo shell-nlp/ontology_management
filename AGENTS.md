@@ -68,6 +68,14 @@
 - 做 B 之前先写死列序（工具 `description`），并在单测里断言"说明里含这个列序"——说明与实现对不上就是真丢信息。
 - 做 A 时"能推出"≠"不重要"：`bound_object_types` 的 `primary_key`、边上的 `cardinality` 这类附属信息
   **不能顺手删**（2026-10-08 是测试先发现了这两个漏项）。
+- **"能由别的字段推出"要先验证，不能凭感觉**：`bound_object_types.mapped_column_count` 看着像
+  `mapped_columns.length`，实际不是 —— 列清单只列前 30 个、总数是真实值（37 vs 30），删了就是真丢信息。
+  2026-10-08 用**对拍**抓到的：把 tools.ts 临时切回改动前的提交采一份输出，再切回改后版本采一份，
+  用脚本把位置数组还原成对象做逐字段深比较，唯一对不上的一项就是它。
+  **对拍做法（值得复用）**：`git show <改动前的提交>:src/lib/reasoning/tools.ts` 写到文件 →
+  调 MCP 采整数份 `old-*.json` → 还原自己的版本再采 `new-*.json` → 脚本里按列序把数组还原成对象后深比。
+  最终只剩这三类"预期差异"才算通过：运行时字段（`elapsed_ms`）、新增字段、以及 A 类里明确不改写就不回显的字段
+  （`statement` / `read_only_transaction`，且要有测试证明改写时它们会回来）。
 - 删任何东西之前先找到新家；改完逐条列一遍「删了什么、现在在哪」。
 - 有争议就不做：自创紧凑编码（`k:n;s:45`）一律禁止 —— 优化方向是"少说重复的话"，不是"换一种说法"。
 
@@ -603,6 +611,13 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   现在的做法是**不联表**：主表按条件查出来，再拿 `In(actorIds)` 补一次操作人邮箱在内存里合
   （`listAuditEntries`）。真要联表就先把关系（`@ManyToOne` + `@JoinColumn`）声明到实体上，
   然后 `leftJoinAndSelect("a.actor", "u")`，别再试上面两种写法。
+- **`.delete()` 不能接带别名的 where**（2026-10-08 用户点「删除历史」报
+  `missing FROM-clause entry for table "c"`）：`scopedConversations(repo.createQueryBuilder("c"), …)`
+  是给 SELECT 用的，条件里带别名 `c`；直接 `…delete().execute()` 会生成
+  `DELETE FROM … WHERE c.created_by = …`，而 DELETE 里没有这个别名。删除要单独用
+  `repo.delete({ id, createdBy, ontologyId })`（无本体的那支用 `IsNull()`）—— 条件用
+  `FindOptionsWhere` 表达，列名交给实体映射。**归属校验一条都不能少**：删除、读取、列表三处的
+  范围条件必须一致，否则会出现"能删别人的记录"。
 
 **业务数据源**：对象服务不拼 SQL，只声明"要哪些列、什么条件"。接缝是连接器的
 `selectRows` / `countRows`（`DataSourceRowQuery`），实现里用 TypeORM 的 **QueryBuilder**：
