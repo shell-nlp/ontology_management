@@ -212,6 +212,17 @@ export async function writePlatformSetting<T>(key: string, value: T, updatedBy?:
 }
 
 /**
+ * 删掉一条平台设置（不存在就当删成功）。
+ *
+ * 用在"覆盖 → 回到继承"这种语义上：例如某个本体的工具开关覆盖要撤销、
+ * 让它重新跟着全局走 —— 写一个空值做不到这件事（空值是"这个本体明确什么都不关"）。
+ */
+export async function deletePlatformSetting(key: string): Promise<void> {
+  const repo = await platformRepo(PlatformSettingEntity);
+  await repo.delete({ key });
+}
+
+/**
  * 数据资源的**结构缓存**，落在 `data_sources.catalog` 这一列（用户要求复用这张表）。
  *
  * 两个桶：

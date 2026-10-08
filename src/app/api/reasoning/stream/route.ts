@@ -152,7 +152,8 @@ export async function POST(request: NextRequest) {
           },
         });
         // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
-        const policy = await loadToolPolicy();
+        // 按本体分（2026-10-08）：这个本体有自己的覆盖就按覆盖，没有就跟着全局默认。
+        const policy = await loadToolPolicy(scope.ontologyId);
         const run = await runReasoning({
           question,
           attachments: input.attachments,

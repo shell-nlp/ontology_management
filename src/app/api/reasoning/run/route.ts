@@ -3,6 +3,7 @@ import { z } from "zod";
 import { apiErrorMessage, requireRole } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
+import { getOntologyByTargetId } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getPublishedOntology } from "@/lib/published-ontology";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
@@ -52,7 +53,8 @@ export async function POST(request: NextRequest) {
     // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
     const dataSources = await listDataSources().catch(() => []);
     // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
-    const policy = await loadToolPolicy();
+    // 按本体分（2026-10-08）：这个本体有自己的覆盖就按覆盖，没有就跟着全局默认。
+    const policy = await loadToolPolicy((await getOntologyByTargetId(target.id))?.id ?? null);
     const run = await runReasoning({
       question,
       attachments: input.attachments,

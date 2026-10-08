@@ -206,6 +206,38 @@
 - **`run_sql` / `get_table_ddl` 的 `elapsed_ms`**：让模型知道哪次查询贵、下次要不要合并成一条 CTE。
   `run_sql` 的工具说明里也写了"一次调用可以带多个 CTE"。没做 `scanned_rows`（Oracle 要 `EXPLAIN`，不稳）与结果缓存。
 
+## 工具开关按本体分 + MCP 的两个地址（2026-10-08）
+
+用户先问「工具的开关配置会根据不同的本体而不同吗」（当时是**平台级一份**），确认后要求「要做」；
+紧接着指出「MCP 配置没区分这是哪个本体的，因为不同的本体，mcp 工具查的内容也不同」—— 两件一起做了。
+
+### 工具开关：两层，覆盖优先
+
+- 存储：`platform_settings` 表两行 —— 全局默认 `reasoning.toolPolicy`；本体覆盖 `reasoning.toolPolicy:<ontologyId>`。
+- 规则（`resolveToolPolicy`，纯函数有单测）：**有覆盖行就按覆盖**（哪怕覆盖写的是空列表，也代表"这个本体明确什么都不关"），
+  没有就跟着全局默认，两层都没有 = 全开。**别把"覆盖为空"当成"没配"**回落到全局。
+- 读的地方必须带本体 id，否则就退化成全局：智能问答两处（`/api/reasoning/stream` 用 `scope.ontologyId`、
+  `/api/reasoning/run` 用 `getOntologyByTargetId(target.id)`）、MCP 两处（见下）。
+- 接口：`GET/PUT /api/reasoning/tools`（带 `ontologyId` = 改本体覆盖；带 `reset: true` = 撤销覆盖回到跟随全局）、
+  `GET /api/mcp/info?ontologyId=`（回 `disabledTools` + `toolPolicySource` + `globalDisabledTools` + `overrideDisabledTools`）。
+  界面（`mcp-studio.tsx`）据此显示「跟随全局默认 / 本体 X 单独配置」并给「跟随全局」按钮。
+- 界面的 `ontologyId` 是**当前选中的本体**（由 `functional-workbench` 传进来）。以前它取的是 `ontologies[0]`
+  ——多本体平台下会指向第一个本体，2026-10-08 一起修了。
+
+### MCP：平台级 + 本体级两个地址
+
+- 协议实现只有一份：`src/lib/reasoning/mcp-endpoint.ts`（`handleMcpRequest`）。两个路由都是薄壳：
+  `src/app/api/mcp/route.ts`（平台级）与 `src/app/api/mcp/[ontologyId]/route.ts`（本体级）。
+  **不要再复制一份协议实现**。
+- **平台级** `/api/mcp`：一个端点覆盖所有本体。`tools/list` 按**全局默认**过滤（客户端连接时还没有本体上下文），
+  `tools/call` 按**参数里的 `ontology_id`** 取那个本体生效的策略；没带 id 就退回全局。
+- **本体级** `/api/mcp/<ontologyId>`：`tools/list` 按**这个本体**的策略过滤；`tools/call`
+  **强制注入** `ontology_id`（客户端传了别的也以 URL 为准，`applyPinnedOntology` 有单测）；
+  `initialize` 的 instructions 里写明绑定的本体名与 id。本体不存在 → 404 + 一句"到 MCP 调试页复制地址"。
+- 路径段与静态路由 `/api/mcp/info` 并存：Next 优先匹配静态段，本体 id 是 UUID，不会撞。
+- 界面「MCP 接入」档有一个作用域切换：**默认「当前本体」**（配置片段带上 `/api/mcp/<id>`，服务名带 id 前缀），
+  也可以切到「平台级（全部本体）」。调试页的「运行」走的就是当前选中的那条地址（响应里会打出 `POST <路径>`）。
+
 ## 本体导入的两条路（2026-10-08）
 
 用户口径：「前面已经导入过这个数据了，当时导入太久，能否实现一个脚本，方便这种格式的导入」。

@@ -32,11 +32,30 @@ type McpInfo = {
   groups: { key: string; label: string; description: string; disabled?: boolean }[];
   /** 被关掉的工具名：关掉之后模型与外部客户端都拿不到它。 */
   disabledTools: string[];
+  /** 这份开关是从哪来的：当前本体自己的覆盖 / 全局默认 / 谁都没配。 */
+  toolPolicySource: "ONTOLOGY" | "GLOBAL" | "DEFAULT";
+  /** 全局默认那一份（界面上用来说明"继承的是什么"）。 */
+  globalDisabledTools: string[];
+  /** 当前本体自己的覆盖；null = 跟随全局。 */
+  overrideDisabledTools: string[] | null;
+  /** 服务端认的当前本体（回显用）。 */
+  ontologyId: string | null;
   tools: McpTool[];
+};
+
+/** `/api/reasoning/tools` 的响应：只管开关状态，没有地址与工具目录。 */
+type ToolPolicyState = {
+  ontologyId: string | null;
+  disabledTools: string[];
+  toolPolicySource: "ONTOLOGY" | "GLOBAL" | "DEFAULT";
+  globalDisabledTools: string[];
+  overrideDisabledTools: string[] | null;
 };
 
 type Props = {
   ontologies: OntologySummary[];
+  /** 当前选中的本体：工具开关按它读/写，MCP 地址也按它拼。 */
+  ontologyId?: string;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
 };
@@ -116,8 +135,8 @@ type ConnectTab = { key: string; label: string; hint: string; blocks: ConnectBlo
  * 通用 mcp.json"）。它是各客户端共用的那一段，先给最通用的，别让人先看到某个专有的写法。
  * 与「本体技能」页的 MCP 接入档口径一致。
  */
-function connectTabs(url: string): ConnectTab[] {
-  const config = (entry: Record<string, unknown>) => JSON.stringify({ mcpServers: { [SERVER_NAME]: entry } }, null, 2);
+function connectTabs(url: string, serverName: string = SERVER_NAME): ConnectTab[] {
+  const config = (entry: Record<string, unknown>) => JSON.stringify({ mcpServers: { [serverName]: entry } }, null, 2);
   const withToken = { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } };
   return [
     {
@@ -141,7 +160,7 @@ function connectTabs(url: string): ConnectTab[] {
           label: "CLI 一行接入",
           note: "--scope user 是「所有项目都能用」，去掉就只对当前项目生效。",
           code: [
-            `claude mcp add --transport http ${SERVER_NAME} ${url} \\`,
+            `claude mcp add --transport http ${serverName} ${url} \\`,
             `  --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}" \\`,
             "  --scope user",
           ].join("\n"),
@@ -168,7 +187,7 @@ function connectTabs(url: string): ConnectTab[] {
   ];
 }
 
-export function McpStudio({ ontologies, notify, fail }: Props) {
+export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, fail }: Props) {
   const [info, setInfo] = useState<McpInfo | null>(null);
   const [activeName, setActiveName] = useState("search_schema");
   const [argumentsText, setArgumentsText] = useState("{}");
@@ -178,24 +197,44 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
   const [showDoc, setShowDoc] = useState(false);
   const [view, setView] = useState<McpView>("tools");
   const [connectTab, setConnectTab] = useState("generic");
+  /**
+   * 复制的配置用哪条地址：
+   * - `ontology`（默认）：**本体级**端点 `/api/mcp/<本体 id>`，配置片段一眼看出查的是谁；
+   * - `platform`：平台级端点 `/api/mcp`，一个端点覆盖所有本体（每次调用带 ontology_id）。
+   */
+  const [scope, setScope] = useState<"ontology" | "platform">("ontology");
   const [dataSourceNames, setDataSourceNames] = useState<string[]>([]);
-  const ontologyId = ontologies[0]?.id ?? "";
+  // 用**当前选中的本体**，不是列表里的第一个（2026-10-08 修：以前多本体平台下会指向第一个本体）。
+  const ontologyId = (selectedOntologyId || ontologies[0]?.id || "").trim();
+  const ontologyName = ontologies.find((item) => item.id === ontologyId)?.name ?? ontologyId;
   const defaultDataSource = dataSourceNames[0] ?? "";
   const absoluteUrl = info?.absoluteUrl ?? "";
-  const tabs = useMemo(() => connectTabs(absoluteUrl), [absoluteUrl]);
+  /*
+   * 两条地址：
+   * - 平台级：`/api/mcp`（一个端点覆盖所有本体，每次调用带 ontology_id）；
+   * - 本体级：`/api/mcp/<本体 id>`（钉死在本体上，模型不用自己填 id，工具清单也按这个本体的开关给）。
+   * 默认给**本体级** —— 用户口径：「不同的本体，mcp 工具查的内容也不同」，配置片段要一眼看出查的是谁。
+   */
+  const platformUrl = absoluteUrl;
+  const pinnedUrl = ontologyId && absoluteUrl ? `${absoluteUrl.replace(/\/api\/mcp\/?$/, "")}/api/mcp/${ontologyId}` : absoluteUrl;
+  const scopeUrl = scope === "ontology" && ontologyId ? pinnedUrl : platformUrl;
+  const scopePath = scope === "ontology" && ontologyId ? `/api/mcp/${ontologyId}` : "/api/mcp";
+  const scopeServerName = scope === "ontology" && ontologyId ? `${SERVER_NAME}-${ontologyId.slice(0, 8)}` : SERVER_NAME;
+  const tabs = useMemo(() => connectTabs(scopeUrl, scopeServerName), [scopeUrl, scopeServerName]);
   const activeTab = tabs.find((tab) => tab.key === connectTab) ?? tabs[0];
 
   useEffect(() => {
-    void api<McpInfo>("/api/mcp/info").then((data) => {
+    // 工具开关按本体分：带上当前本体，服务端会给"这个本体最终生效的那一份"与它的来源。
+    void api<McpInfo>(`/api/mcp/info${ontologyId ? `?ontologyId=${encodeURIComponent(ontologyId)}` : ""}`).then((data) => {
       // 地址以**浏览器当前地址**为准，覆盖服务端拼的那份：服务端在 dev / 容器 / 转发后面
       // 有可能只认得到自己的 localhost，复制出去换台机器就废了（2026-09-18 用户报的）。
       setInfo({ ...data, absoluteUrl: `${window.location.origin}${data.endpoint}` });
       const first = data.tools.find((tool) => tool.name === "search_schema") ?? data.tools[0];
       if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId), null, 2)); }
     }).catch(fail);
-    // 只在挂载时取一次；换了工具 / 本体 / 数据资源时由 select 按最新依赖重填示例参数。
+    // 只在挂载 / 换本体时取一次；换了工具 / 数据资源时由 select 按最新依赖重填示例参数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ontologyId]);
 
   // 数据资源名要填进示例参数里（名字猜不出来），开机就先拿一份 —— 列表接口只回公开字段，没有密文。
   useEffect(() => {
@@ -206,15 +245,29 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
 
   const active = useMemo(() => info?.tools.find((tool) => tool.name === activeName) ?? null, [info, activeName]);
 
-  /** 开关一个工具：写完立刻刷新清单，因为「运行」与外部客户端看到的都是服务端那一份。 */
+  /** 开关一个工具：写到**当前本体**（没有本体就写全局）。写完立刻刷新，界面与外部客户端看到的都是服务端那一份。 */
   const toggleTool = async (name: string, enabled: boolean) => {
     if (!info) return;
     const next = enabled ? info.disabledTools.filter((item) => item !== name) : [...info.disabledTools, name];
     try {
-      const saved = await api<{ disabledTools: string[] }>("/api/reasoning/tools", { method: "PUT", body: JSON.stringify({ disabledTools: next }) });
-      setInfo({ ...info, disabledTools: saved.disabledTools });
+      const saved = await api<ToolPolicyState>("/api/reasoning/tools", { method: "PUT", body: JSON.stringify({ disabledTools: next, ...(ontologyId ? { ontologyId } : {}) }) });
+      setInfo({ ...info, disabledTools: saved.disabledTools, toolPolicySource: saved.toolPolicySource, globalDisabledTools: saved.globalDisabledTools, overrideDisabledTools: saved.overrideDisabledTools });
       const label = info.tools.find((tool) => tool.name === name)?.title ?? name;
-      notify(enabled ? `已开启「${label}」，模型与外部客户端都能用它。` : `已关闭「${label}」，模型不再使用它。`);
+      notify(enabled
+        ? `已在${ontologyId ? `本体「${ontologyName}」` : "全局默认"}开启「${label}」，模型与外部客户端都能用它。`
+        : `已在${ontologyId ? `本体「${ontologyName}」` : "全局默认"}关闭「${label}」，模型不再使用它。`);
+    } catch (reason) {
+      fail(reason);
+    }
+  };
+
+  /** 撤销当前本体的覆盖，回到跟随全局默认。 */
+  const resetPolicy = async () => {
+    if (!info || !ontologyId) return;
+    try {
+      const saved = await api<ToolPolicyState>("/api/reasoning/tools", { method: "PUT", body: JSON.stringify({ disabledTools: [], ontologyId, reset: true }) });
+      setInfo({ ...info, disabledTools: saved.disabledTools, toolPolicySource: saved.toolPolicySource, globalDisabledTools: saved.globalDisabledTools, overrideDisabledTools: saved.overrideDisabledTools });
+      notify(`本体「${ontologyName}」的工具开关已回到跟随全局默认。`);
     } catch (reason) {
       fail(reason);
     }
@@ -246,13 +299,14 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
         method: "tools/call" as const,
         params: { name: active.name, arguments: parsed },
       };
-      const res = await fetch("/api/mcp", {
+      // 调试用的地址跟「MCP 接入」里选的那条一致：默认是本体级端点，能看到"钉死本体"的真实行为。
+      const res = await fetch(scopePath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(envelope),
       });
       const body = await res.json();
-      const elapsed = `${Date.now() - started}ms`;
+      const elapsed = `POST ${scopePath} · ${Date.now() - started}ms`;
       if (body.error) {
         setOk(false);
         setResponse(`HTTP ${res.status} · ${elapsed}\n\n${JSON.stringify(body.error, null, 2)}`);
@@ -270,7 +324,7 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [active, argumentsText, fail]);
+  }, [active, argumentsText, fail, scopePath]);
 
   if (!info) return <section className="stack"><div className="panel functional-panel">正在读取 MCP 信息…</div></section>;
 
@@ -314,8 +368,28 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
           </span>
         </div>
         <div className="mcp-connect-row">
-          <code>{info.absoluteUrl}</code>
-          <CopyButton value={info.absoluteUrl} label="地址" notify={notify} />
+          <code>{scopeUrl}</code>
+          <CopyButton value={scopeUrl} label="地址" notify={notify} />
+        </div>
+        {/*
+         * 这个端点查哪个本体（2026-10-08 用户口径：「不同的本体，mcp 工具查的内容也不同」）：
+         * 默认给本体级地址，配置片段因此自带本体信息；平台级端点作为另一种用法留在这里。
+         */}
+        <div className="mcp-scope">
+          <span className="eyebrow">这条配置查哪个本体</span>
+          <div>
+            <button type="button" className={scope === "ontology" ? "active" : ""} disabled={!ontologyId} onClick={() => setScope("ontology")}>
+              当前本体{ontologyId ? `：${ontologyName}` : "（还没选本体）"}
+            </button>
+            <button type="button" className={scope === "platform" ? "active" : ""} onClick={() => setScope("platform")}>
+              平台级（全部本体）
+            </button>
+          </div>
+          <p className="mcp-scope-note">
+            {scope === "ontology"
+              ? "钉死在这个本体：工具清单按它自己的开关给，调工具时自动用它的 ontology_id —— 模型不用也不该自己填，避免查错本体。"
+              : "一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁，客户端先调 list_ontologies 拿 id。"}
+          </p>
         </div>
         <p className="mcp-connect-note">
           外部客户端用 <code>Authorization: Bearer &lt;MCP_API_TOKEN&gt;</code> 连接（令牌在 <code>.env.local</code> 里）；
@@ -381,6 +455,22 @@ export function McpStudio({ ontologies, notify, fail }: Props) {
               {info.disabledTools.length > 0 && <em>{info.disabledTools.length} 个已关闭</em>}
               {info.tools.some((tool) => tool.disabled) && <em>{info.tools.filter((tool) => tool.disabled).length} 个暂不使用</em>}
             </span>
+          </div>
+          {/*
+           * 开关是按本体存的：先说清这一屏的开关管的是谁，再给「跟随全局」的出口 ——
+           * 否则用户会以为改了这里所有本体都跟着变（2026-10-08 用户报的疑问）。
+           */}
+          <div className="mcp-policy" title={info.globalDisabledTools.length ? `全局默认关掉的工具：${info.globalDisabledTools.join("、")}` : "全局默认没有关掉任何工具"}>
+            <span>
+              工具开关：
+              {info.toolPolicySource === "ONTOLOGY"
+                ? <>本体「{ontologyName}」<b>单独配置</b></>
+                : <>跟随全局默认</>}
+              {info.globalDisabledTools.length > 0 && <em>全局关了 {info.globalDisabledTools.length} 个</em>}
+            </span>
+            {info.toolPolicySource === "ONTOLOGY" && (
+              <button type="button" onClick={() => void resetPolicy()} title="删掉这个本体的覆盖，重新跟着全局默认走">跟随全局</button>
+            )}
           </div>
           {info.groups.map((group) => {
             const tools = info.tools.filter((tool) => tool.group === group.key);
