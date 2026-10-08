@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 
 import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/data-source/sql-guard";
-import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, splitObjectName } from "@/lib/data-source/object-name";
+import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, quoteLiteral, splitObjectName } from "@/lib/data-source/object-name";
+import { ddlFromColumns, typeWithSize } from "@/lib/data-source/ddl";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,
@@ -288,10 +289,6 @@ export function buildConnectionOptions(kind: DataSourceKind, record: DataSourceR
 export { qualifiedName, quoteIdentifier };
 
 /** 字符串字面量；只用于把已经来自登记信息或库元数据的名字拼进系统表查询。 */
-function quoteLiteral(value: string) {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
 /**
  * 预览语句。Oracle 没有 LIMIT，用 ROWNUM 包一层（FETCH FIRST 要 12c 起，旧库不认）；
  * 行数先夹到安全范围再拼，拼进去的一定是整数，标识符已经引号包裹。
@@ -559,6 +556,8 @@ async function readColumnsFromOracle(connection: DataSource, container: string, 
   const name = quoteLiteral(objectName);
   const rows = (await connection.query(`
     SELECT c.column_name AS "name", c.data_type AS "type", c.nullable AS "nullable", c.column_id AS "position",
+           c.char_length AS "char_length", c.data_length AS "data_length",
+           c.data_precision AS "precision", c.data_scale AS "scale",
            cc.comments AS "comment",
            CASE WHEN pk.column_name IS NULL THEN 0 ELSE 1 END AS "is_primary"
       FROM all_tab_columns c
@@ -574,6 +573,12 @@ async function readColumnsFromOracle(connection: DataSource, container: string, 
   return (Array.isArray(rows) ? rows : []).map((row, index) => ({
     name: String(row.name ?? row.NAME ?? ""),
     dataType: String(row.type ?? row.TYPE ?? ""),
+    // Oracle 的字典把长度拆在 char_length / data_length 里：VARCHAR2 用字符数，RAW 用字节数。
+    typeDetail: typeWithSize(String(row.type ?? row.TYPE ?? ""), {
+      length: row.char_length ?? row.CHAR_LENGTH ?? row.data_length ?? row.DATA_LENGTH,
+      precision: row.precision ?? row.PRECISION,
+      scale: row.scale ?? row.SCALE,
+    }),
     nullable: String(row.nullable ?? row.NULLABLE ?? "Y").toUpperCase() === "Y",
     primaryKey: Number(row.is_primary ?? row.IS_PRIMARY ?? 0) === 1,
     // 唯一约束要再连一张字典表，管理界面暂时只标主键，不猜。
@@ -625,38 +630,6 @@ async function nativeDdl(connection: DataSource, kind: DataSourceKind, hit: Cata
     return { ddl: null, error: error instanceof Error ? error.message.split("\n")[0] : String(error) };
   }
   return { ddl: null };
-}
-
-/**
- * 按列元数据还原一份表结构（DDL）。注释的写法按库分：MySQL 写在列后面，PG / Oracle 用 COMMENT ON。
- * 视图还原不出 SELECT 定义（那不在列元数据里），就老实把列清单列成注释，别编一个假的 CREATE VIEW。
- */
-function ddlFromColumns(kind: DataSourceKind, schema: string, name: string, objectKind: CatalogObject["kind"], columns: DataViewField[]) {
-  const target = qualifiedName(kind, schema, name);
-  if (objectKind === "view") {
-    return [
-      `-- 视图 ${target}：下面是它对外暴露的列。`,
-      "-- 视图的 SELECT 定义不在列元数据里，用数据库自带的工具看（或这个数据源上改用能取到原始 DDL 的库）。",
-      ...columns.map((column) => `--   ${quoteIdentifier(kind, column.name)} ${column.dataType || "TEXT"}${column.nullable ? "" : " NOT NULL"}`),
-    ].join("\n");
-  }
-
-  const lines = columns.map((column) => {
-    const parts = [`  ${quoteIdentifier(kind, column.name)} ${column.dataType || "TEXT"}`];
-    if (!column.nullable) parts.push("NOT NULL");
-    if (column.comment && kind === "MYSQL") parts.push(`COMMENT ${quoteLiteral(column.comment)}`);
-    return parts.join(" ");
-  });
-  const primary = columns.filter((column) => column.primaryKey).map((column) => quoteIdentifier(kind, column.name));
-  if (primary.length) lines.push(`  PRIMARY KEY (${primary.join(", ")})`);
-
-  const statements = [`CREATE TABLE ${target} (\n${lines.join(",\n")}\n);`];
-  if (kind !== "MYSQL") {
-    for (const column of columns) {
-      if (column.comment) statements.push(`COMMENT ON COLUMN ${target}.${quoteIdentifier(kind, column.name)} IS ${quoteLiteral(column.comment)};`);
-    }
-  }
-  return statements.join("\n");
 }
 
 /** LIKE 里的 % 与 _ 是通配符：用户输入的它们应当按字面匹配。 */
@@ -837,6 +810,8 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       return table.columns.map((column, index) => ({
         name: column.name,
         dataType: column.type ?? "",
+        // ORM 已经把长度 / 精度单独取出来了（PG 的 character varying、MySQL 的 decimal 都靠它补全）。
+        typeDetail: typeWithSize(column.type ?? "", { length: column.length, precision: column.precision, scale: column.scale }),
         nullable: column.isNullable,
         primaryKey: column.isPrimary,
         unique: column.isUnique,

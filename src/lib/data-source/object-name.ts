@@ -21,6 +21,14 @@ export function qualifiedName(kind: DataSourceKind, schema: string | undefined, 
 }
 
 /**
+ * 字符串字面量：单引号翻倍。拼进 SQL 的**值**（不是标识符）都用它，
+ * 表名走 `quoteIdentifier` / `qualifiedName`，两者不要混。
+ */
+export function quoteLiteral(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
  * 拆「模式.表」：`GISTOOLS.TB_X`、`"GISTOOLS"."TB_X"`、`` `库`.`表` ``、`[库].[表]` 都认。
  * 段数超过两段时取最后两段（前面的当库名一类的限定，用不到）；只有一段就是裸对象名。
  */

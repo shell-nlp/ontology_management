@@ -93,7 +93,11 @@ async function handleMessage(
         jsonrpc: "2.0" as const,
         id: id ?? null,
         result: {
-          content: [{ type: "text", text: JSON.stringify(outcome.payload, null, 2) }],
+          /*
+           * 紧凑 JSON，不缩进：工具结果是喂给模型的，缩进只占 token 不含信息。
+           * 实测 get_table_ddl 一张 36 列的表：缩进版 16,276 字符、紧凑版 10,536 —— 白多 35%。
+           */
+          content: [{ type: "text", text: JSON.stringify(outcome.payload) }],
           structuredContent: outcome.payload,
           isError: false,
         },

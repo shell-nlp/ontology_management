@@ -206,6 +206,14 @@ export type DataViewSummary = {
 export type DataViewField = {
   name: string;
   dataType: string;
+  /**
+   * 带长度 / 精度的完整类型：`VARCHAR2(200)`、`NUMBER(15,2)`。
+   *
+   * 数据字典里的 `dataType` 常常只有基类型（Oracle 的 `VARCHAR2`、`NUMBER` 都不带括号），
+   * 长度和精度在另外几个字段里。管理层显示用 `dataType`，**渲染 DDL 用这个** ——
+   * 不带长度的 `VARCHAR2` 让模型没法判断这一列能放多少字。取不到就退回 `dataType`。
+   */
+  typeDetail?: string;
   nullable: boolean;
   primaryKey: boolean;
   unique: boolean;
