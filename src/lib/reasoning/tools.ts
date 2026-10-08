@@ -12,6 +12,7 @@ import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
 import { keyMappingLabel, keyMappingRows } from "@/lib/relationship-keys";
 import { cardinalityLabel, cardinalityPhrase } from "@/lib/relationship-cardinality";
+import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
 import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, profileTableKey, type ColumnValueIndex } from "@/lib/column-profile";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -99,37 +100,6 @@ export type SchemaMatch = {
 const SQL_ROW_CEILING = 5000;
 
 /**
- * 去掉"没信息"的字段：空串、false、null、undefined、空数组。
- *
- * 工具结果里最贵的不是数据，是**重复的键名与默认值**。实测 `get_object_type` 的 37 个属性里，
- * `"display_name":"","required":false,"unique":false` 这类空值占了一半以上字符。
- * 约定是「**字段缺席 = 默认值**（false / 空 / 无）」，所以每个工具说明里都要写清这一点；
- * 数字 0 与 `hop: 0` 这类有信息的值不能删，所以只滤上面那几种。
- */
-export function compact<T extends Record<string, unknown>>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (item === "" || item === false || item === null || item === undefined) continue;
-    if (Array.isArray(item) && !item.length) continue;
-    out[key] = item;
-  }
-  return out as T;
-}
-
-/**
- * 概念清单里的属性预览：**只给前几个**。
- *
- * 这里曾经把对象类型的属性名全列一遍 —— 实测 20 条命中里，「属性 …」这一项就占 9,647 字符，
- * 而模型看完命中几乎必然再调 get_object_type，那份完整属性表（带描述、类型、映射列）又要重发一遍。
- * 完整清单只留在 get_object_type 一处，这里只给"大概有哪些列"。
- */
-export function propertyPreview(names: readonly string[], previewSize = 6): string {
-  if (!names.length) return "暂无属性";
-  const head = names.slice(0, previewSize).join("、");
-  return names.length > previewSize ? `属性 ${head}…（共 ${names.length} 个，完整定义用 get_object_type）` : `属性 ${head}`;
-}
-
-/**
  * run_sql 自己的默认行数（模型不传 limit 时用它）。
  * 与连接器的 `DEFAULT_QUERY_ROWS` 保持一致：**默认 100 行**，
  * 超过就靠多取一行判出来，返回里标 `truncated: true` 并附一段人话提示。
@@ -140,7 +110,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。命中类型的 detail 里属性只给前几个（完整定义用 get_object_type）；本体里的表只能通过对象类型到达，不要枚举数据源里的表。",
+      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
@@ -161,7 +131,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_object_type",
     description:
-      "读取一个对象类型的完整定义：属性（映射到哪一列也会带上）、实现了哪些接口、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。**字段读法**：properties 里没出现的字段按默认值理解（required / unique 缺席 = false，display_name / source_field 缺席 = 未设置，空数组 = 没有）；one_hop 的 outgoing / incoming 是**两个方向各列一次**（关系类型双向，不用另建反向关系），via_interfaces 是这个类型**实现接口**承接来的关系（回答连通性要算上），key_mapping 说明这条关系的两端按哪几列对得上，cardinality / cardinality_from_here 是数量关系（按类型聚合时先看后者，1:N 走一次会放大）。metrics 是这个类型上的指标口径，引用口径以它为准，不要自己从列注释里另立一套。",
+      "读取一个对象类型的完整定义：属性（映射到哪一列也会带上）、实现了哪些接口、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。",
     parameters: {
       type: "object",
       properties: { type_name: { type: "string", description: "对象类型名称，必须来自 search_schema 的结果" } },
@@ -171,19 +141,19 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "list_concept_groups",
     description:
-      "列出本体里的**概念分组**（业务域），以及每个分组下有哪些对象类型。问「有哪些概念分组」「某个分组里有什么对象类型」时调它；还没归组的对象类型会单独列出来（ungrouped_object_types）。分组只是展示与检索用的归类，不影响对象类型的定义；要看某个类型本身用 get_object_type。",
+      "列出本体里的**概念分组**（业务域），以及每个分组下有哪些对象类型。问「有哪些概念分组」「某个分组里有什么对象类型」时调它；还没归组的对象类型会单独列出来。",
     parameters: { type: "object", properties: {} },
   },
   {
     name: "list_interfaces",
     description:
-      "列出本体里的**接口**（抽象契约）以及每个接口的实现情况：接口属性、继承的接口、关系约束、哪些对象类型实现了它。问「有哪些接口」「这个接口谁实现了」时调它；「这个对象类型实现了哪些接口」在 get_object_type 里也能看到。接口不能被实例化、也不绑数据，它只描述「实现它的对象类型必须有哪些属性与关系」；inherited_implementers 是通过子接口间接实现的那些类型（按这个接口消费时同样算数）。",
+      "列出本体里的**接口**（抽象契约）以及每个接口的实现情况：接口属性、继承的接口、关系约束、哪些对象类型实现了它。问「有哪些接口」「这个接口谁实现了」时调它；「这个对象类型实现了哪些接口」在 get_object_type 里也能看到。",
     parameters: { type: "object", properties: {} },
   },
   {
     name: "traverse_object_types",
     description:
-      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。关系类型是**双向**的（一条关系类型两侧都能走，不用另建反向关系），所以默认两个方向都算连通；要只往外或只往回，用 direction 收窄。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。**返回的列序**：nodes 每项是 [对象类型名, 分组, 跳数, 描述, [绑定的表]]，edges 每项是 [关系类型名, 起点对象类型, 终点对象类型, 跳数, 经哪个接口, 基数]（不是经接口拿到的边、没标基数的边，对应位置是空串；基数是声明原样「起点 → 终点」，按类型聚合时 1:N 会放大）；hop 是离起点的**最短**跳数（起点是 0），edges 的 hop 取两端里更远的那个。标了「经哪个接口」的边是实现接口拿到的关系（接口的关系约束由实现方落地），这类路径要算在连通性里。只看一层的关系类型与属性定义用 get_object_type。",
+      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。关系类型是**双向**的（一条关系类型两侧都能走，不用另建反向关系），所以默认两个方向都算连通；要只往外或只往回，用 direction 收窄。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。**返回的列序**：nodes 每项是 [对象类型名, 分组, 跳数, 描述, [绑定的表]]，edges 每项是 [关系类型名, 起点对象类型, 终点对象类型, 跳数, 经哪个接口, 基数]（不是经接口拿到的边、没标基数的边，对应位置是空串）。",
     parameters: {
       type: "object",
       properties: {
@@ -198,7 +168,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达；没绑定任何对象类型时会给一句提示）。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，其中**高基数列没有第 4 项**（取值太多没存，别当成「这一列没有取值」）；取值种数是**采样**值、不是全表精确统计。bound_object_types 每项是 [对象类型名, 它映射到这张表的列, 来源角色]（来源角色分主来源与补充来源；要字段细节与关系用 get_object_type）。data_source_kind / ddl_source（native=库里原始语句，metadata=按列元数据还原）说明这份结构是哪来的。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列]。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
@@ -212,7 +182,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_sql",
     description:
-      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。SQL 里的表名同样写全「模式.表」（如 SELECT * FROM GISTOOLS.TB_DIC_AREA_CODE），别依赖连接用户的默认模式。语句必须以上面那些关键字开头、不含写操作关键字，执行时还会包在库的只读事务里；写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝。**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出 truncation_note（要更多就传 limit，或用更精确的 WHERE / 聚合）。**返回的列序**：rows 是**二维数组**，每行按 columns 的顺序排列（列名只在 columns 里出现一次）；只有语句被平台改写时才回显 executed_statement（与入参一致时省略）；只读事务没起得来时会带 read_only_transaction=false 与一段 warning。**一次调用可以带多个 CTE / 子查询**：把「探码值 + 汇总 + 校验」合并成一条语句比来回查省得多；返回里的 elapsed_ms 就是这条语句实际花了多久，可以据此判断哪次查询贵。写查询前先用 get_table_ddl 确认字段名与码值。",
+      "在数据资源上执行**只读** SQL 查询（SELECT / WITH / SHOW / EXPLAIN），用来核对对象类型绑定的表里到底是什么数据。SQL 里的表名同样写全「模式.表」（如 SELECT * FROM GISTOOLS.TB_DIC_AREA_CODE），别依赖连接用户的默认模式。写操作（INSERT / UPDATE / DELETE / DROP 等）和多语句会被直接拒绝；**默认最多返回 100 行**，超过就在结果里标 truncated=true 并给出提示（要更多就传 limit，或用更精确的 WHERE / 聚合）。**一次调用可以带多个 CTE / 子查询**：把「探码值 + 汇总 + 校验」合并成一条语句比来回查省得多；返回里的 elapsed_ms 就是这条语句实际花了多久，可以据此判断哪次查询贵。**返回的列序**：rows 是二维数组，每行按 columns 的顺序排列（列名只在 columns 里出现一次）；只有语句被平台改写时才回显 executed_statement；只读事务没起得来时会带 read_only_transaction=false 与 warning。写查询前先用 get_table_ddl 确认字段名与码值。",
     parameters: {
       type: "object",
       properties: {
@@ -356,7 +326,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
         group ? `分组 ${group}` : "",
         implemented.length ? `实现接口 ${implemented.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
-        propertyPreview(properties.map((property) => property.name)),
+        properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
       weight: objectCount.get(entity.name) ?? 0,
       description: entity.description,
@@ -393,7 +363,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       detail: [
         "接口（抽象契约，不绑数据、不能直接实例化）",
         inherited.length ? `继承 ${inherited.join("、")}` : "",
-        `接口属性 ${propertyPreview(properties.map((property) => property.name)).replace(/^属性 /, "")}`,
+        properties.length ? `接口属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
         implementers.length ? `${implementers.length} 个实现：${implementers.join("、")}` : "还没有对象类型实现它",
       ].filter(Boolean).join("；"),
       weight: 0,
@@ -934,10 +904,13 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         payload: {
           query,
           matches,
-          // 命中为空时才解释一句；有命中时 matched 的语义写在工具说明里，不必每次重复。
-          ...(matches.length ? {} : { hint: "没有命中任何概念，换一个说法或先用更宽的关键词再试。" }),
+          hint: matches.length
+            ? "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。"
+            : "没有命中任何概念，换一个说法或先用更宽的关键词再试。",
+          // 表只能通过对象类型到达：明确写出来，免得模型退回"直接枚举数据源里的表"。
+          note: "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
           ...(includeValues && !valueTables
-            ? { values_note: "还没有任何列的取值画像：想按码值（例如「互联网专线」）检索，先对相关对象类型绑定的表调一次 get_table_ddl。" }
+            ? { values_note: "还没有任何列的取值画像（列画像是按天缓存的采样结果）：想按业务码值（例如「互联网专线」）检索，先对相关对象类型绑定的表调一次 get_table_ddl，画像会随表结构一起给出。" }
             : {}),
         },
         // 属性不是可寻址的实体，不做证据；类型、动作、接口、指标才是。
@@ -962,11 +935,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const group = (definition.groups ?? []).find((item) => item.id === (type.groupId ?? "")) ?? null;
       const resourceNameById = new Map((context.dataSources ?? []).map((item) => [item.id, item.name]));
       const sourceRoleById = new Map(sources.map((source, index) => [source.id, sourceRoleLabel(index)]));
-      /*
-       * 每条属性只留"有值"的字段（见 compact）：`"display_name":"","required":false,"unique":false`
-       * 这类默认值以前占掉一半字符。约定「缺席 = 默认值」，工具说明里已写明。
-       */
-      const properties = type.properties.map((property) => compact({
+      const properties = type.properties.map((property) => ({
         name: property.name,
         display_name: property.displayName ?? "",
         description: property.description ?? "",
@@ -982,12 +951,12 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       /** 一跳邻居的简介：名字 + 分组 + 一句话 + 绑的表（模型常接着问"那它呢"）。 */
       const neighbor = (id: string) => {
         const other = definition.entityTypes.find((item) => item.id === id);
-        return compact({
+        return {
           name: other?.name ?? "",
           group: groupNameById.get(other?.groupId ?? "") ?? "",
           description: describeBriefly(other?.description ?? "", 60),
           bound_tables: other ? entitySources(other).map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean) : [],
-        });
+        };
       };
       const touching = definition.relationshipTypes.filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id);
       /*
@@ -1026,23 +995,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         via_interfaces: interfaceDerivedLinks(definition)
           .filter((link) => link.fromId === type.id || link.toId === type.id)
           .map((link) => ({ relation: link.name, via_interface: link.viaInterface, ...neighbor(link.fromId === type.id ? link.toId : link.fromId) })),
-      };
-      /*
-       * one_hop 的字段说明以前是常驻的（一次 600 字符）。现在**只在对应字段真出现时**给一句，
-       * 字段没出现就不解释 —— 这正是"工具输出里最贵的是重复的话"的一个正面例子。
-       */
-      const hasKeyMapping = [...oneHop.outgoing, ...oneHop.incoming].some((item) => "key_mapping" in item);
-      const hasCardinality = [...oneHop.outgoing, ...oneHop.incoming].some((item) => "cardinality" in item);
-      const oneHopNotes = {
-        ...(hasKeyMapping
-          ? { key_mapping_note: "key_mapping 是这条关系类型声明过的键映射（连接属性 → 该端对象类型的属性，「外键 X」表示连接键长在对象类型上）：两类对象在数据上按哪几个字段对得上。没配的关系类型不带这一项，不代表连不上。" }
-          : {}),
-        ...(hasCardinality
-          ? { cardinality_note: "cardinality 是声明原样（起点 → 终点），cardinality_from_here 是「从这个对象类型看过去」的说法：按某个类型聚合时先看它，1:N 说明走一次会放大，别重复计数。" }
-          : {}),
-        ...(oneHop.via_interfaces.length
-          ? { via_interfaces_note: "via_interfaces 是这个对象类型**实现接口**拿到的关系（接口的关系约束由实现方落地）：回答连通性时要算上。看两跳及以上用 traverse_object_types。" }
-          : {}),
+        note: "这里只列一跳，两个方向都列（关系类型是双向的，不用另建反向关系）。via_interfaces 是这个对象类型**实现接口**拿到的关系：接口的关系约束由实现方落地，对端就是约束里那个对象类型，回答连通性时要算上。key_mapping 是这条关系类型声明过的键映射（连接属性 → 该端对象类型的属性，`外键 X` 表示连接键长在对象类型上），它说明两类对象在数据上按哪几个字段对得上；没配的关系类型不带这一项，那只是还没填，不代表连不上。cardinality / cardinality_from_here 是这条关系的**数量关系**：前者是声明原样（起点 → 终点），后者是「从当前这个对象类型看过去」的说法 —— 按某个类型聚合时先看它，1:N 就说明走一次会放大，别重复计数；没标注就不带这两项。看两跳及以上用 traverse_object_types（最多 5 跳，可限定对象类型、关系类型与方向）。",
       };
       const actions = definition.actionTypes
         .filter((item) => item.scopeEntityTypeId === type.id)
@@ -1078,9 +1031,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           implements: (type.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean),
           properties,
           one_hop: oneHop,
-          ...oneHopNotes,
           actions,
           metrics,
+          ...(metrics.length ? { metrics_note: "metrics 是这个对象类型上定义的指标（业务口径）：aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
           sources: sources.map((source, index) => ({
             role: sourceRoleLabel(index),
             data_source: resourceNameById.get(source.dataSourceId) ?? "",
@@ -1089,8 +1042,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             primary_key: source.primaryKey,
             title_field: source.titleField,
           })),
+          // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
           data_source_note: sources.length
-            ? "sources 是这个对象类型的来源表；属性的 source_field 是它在源表里的列名。要看真实数据用 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」。"
+            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据就调 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。"
             : "这个对象类型还没有绑定数据资源，本体里只有定义。",
           // 实现的接口：Palantir 里对象类型靠接口被通用地消费，模型要能顺着接口理解它。
           interfaces: implementsIdsOf(type).map((interfaceId) => {
@@ -1126,10 +1080,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
               missing_actions: check?.missingActions ?? [],
             };
           }),
-          // 没实现接口就别说了；实现了才解释 mapped 的读法。
-          ...(implementsIdsOf(type).length
-            ? { interface_note: "mapped=false 的接口属性还没映射到对象类型自己的属性上，会挡住发布。" }
-            : {}),
+          interface_note: implementsIdsOf(type).length
+            ? "interfaces 是这个对象类型实现的接口（抽象契约）：接口属性按同名映射到对象类型自己的属性上，mapped=false 表示还没对上，缺失会挡住发布。"
+            : "这个对象类型没有实现任何接口。接口是抽象契约，用来让不同的对象类型被同一套应用按同一个形状消费。",
           display_property: type.displayProperty ?? "",
           ...(promotedInterface
             ? { promoted_interface: promotedInterface.name, promoted_interface_note: `这个对象类型已经被提取为接口「${promotedInterface.name}」：画布上它以接口节点出现，接口的关系约束与实现方见 list_interfaces。它自己仍然是这几条关系类型（one_hop）的实际端点，名字和那个接口一样，别当成两个不同的东西。` }
@@ -1161,6 +1114,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           })),
           // 空分组也照样列出来（object_types 是空数组）——"建了组还没归类型"本身是要说清楚的状态。
           ...(ungrouped.length ? { ungrouped_object_types: ungrouped } : {}),
+          note: "概念分组只是展示与检索用的归类，不影响对象类型的定义；要细节就用 get_object_type 看某一个类型。",
         },
         evidence: groups.map((group) => ({ kind: "GROUP" as const, id: group.id, label: group.name })),
       };
@@ -1205,6 +1159,9 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
               inherited_implementers: implementers.filter((entry) => !entry.direct).map((entry) => entry.name),
             };
           }),
+          note: interfaces.length
+            ? "接口是抽象契约：不能被实例化，也不绑数据；它只描述「实现它的对象类型必须有哪些属性与关系」。要看某个对象类型的完整定义与它实现的接口，用 get_object_type。"
+            : "这个本体还没有定义接口。",
         },
         evidence: interfaces.map((item) => ({ kind: "INTERFACE" as const, id: item.id, label: item.name })),
       };
@@ -1231,21 +1188,23 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           /*
            * 每项按固定列序：
            * nodes = [对象类型名, 分组, 跳数, 描述, [绑定的表]]；
-           * edges = [关系类型名, 起点, 终点, 跳数, 经哪个接口, 基数]（没经接口、没标基数就是空串）。
-           * 基数在边上是"声明原样"（起点 → 终点）；按类型聚合时要注意 1:N 会放大。
+           * edges = [关系类型名, 起点, 终点, 跳数, 经哪个接口, 基数]（没有经接口 / 没标基数就是空串）。
            */
           nodes: traversal.nodes.map((node) => [node.name, node.group, node.hop, node.description, node.bound_tables]),
           edges: traversal.edges.map((edge) => [edge.relation, edge.from, edge.to, edge.hop, edge.via_interface ?? "", edge.cardinality ?? ""]),
           // 实现接口带来的那些边单独点一句：模型要能解释"这条路是接口契约给的"。
           ...(interfaceLinks.length
             ? {
-              interface_note: `标了 via_interface 的边不是直接建在对象类型上的关系类型，而是它**实现接口**拿到的（接口「X」的关系约束由实现方落地）：这类路径要算在连通性里。本结果共 ${interfaceLinks.length} 条。`,
+              interface_note: `标了 via_interface 的边不是直接建在对象类型上的关系类型，而是它**实现接口**拿到的：接口「X」的关系约束由实现方落地，所以实现方能沿这个关系走到对端。${interfaceLinks.length} 条这样的边（例如 ${interfaceLinks.slice(0, 3).map((edge) => `${edge.from}—${edge.relation}—${edge.to}（经接口「${edge.via_interface}」）`).join("；")}）。回答"A 能不能到 B"时，这类路径要算在内。`,
             }
             : {}),
           // 名字对不上就照实说，别让模型以为"限定生效了"。
           ...(traversal.unknown_names.length
             ? { unknown_names: traversal.unknown_names, unknown_note: "这些名字本体里没有，已忽略；先用 search_schema 确认真实名字。" }
             : {}),
+          note: !startName
+            ? "没有指定起点，所以是整张类型图（每个对象类型都是 0 跳）：nodes 是全部对象类型，edges 是它们之间全部的关系（关系类型双向，每条边两个方向都能走）。想从某个类型往外看，传 start_type。要看某个类型的属性、来源与动作，用 get_object_type。"
+            : `hop 是离起点的最短跳数（起点是 0）；edges 是这些对象类型之间全部的关系，hop 取两端里更远的那个。direction 是本次生效的方向（${traversal.direction === "both" ? "两个方向都走" : traversal.direction === "forward" ? "只沿起点→终点" : "只沿终点→起点"}）。要看某个类型的属性、来源与动作，用 get_object_type。`,
         },
         evidence: [
           ...traversal.nodes.map((node) => ({ kind: "OBJECT_TYPE" as const, id: node.name, label: node.name })),
@@ -1292,9 +1251,10 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           ddl: ddl.ddl,
           notes: ddl.notes,
           // 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列]。
-          ...(boundObjectTypes.length
-            ? { bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key]) }
-            : { bound_object_types_note: "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。" }),
+          bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key]),
+          bound_object_types_note: boundObjectTypes.length
+            ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。要字段细节与关系用 get_object_type。"
+            : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",
           ...(ddl.truncatedAt ? { truncated_at: ddl.truncatedAt, truncated_note: `原始语句超过 ${ddl.truncatedAt} 字符，上面是截断后的。` } : {}),
           ...(profile?.profile
             ? {
@@ -1302,11 +1262,12 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
                 sampled_at: profile.profile.sampledAt,
                 cached: profile.cached,
                 sample_size: profile.profile.sampleSize,
-                // 每列按固定列序：[列名, 取值种数, 空值比例, 取值清单]；高基数列没有第 4 项。
+                // 每列按固定列序：[列名, 取值种数, 空值比例, 取值清单]；高基数列没有第 4 项（没存取值）。
                 columns: profile.profile.columns.map((column) => (column.highCardinality
                   ? [column.name, column.distinct, column.nullRate]
                   : [column.name, column.distinct, column.nullRate, column.values])),
                 distinct_basis: "采样（非全表精确值）",
+                note: `列画像是**采样**结果（前 ${profile.profile.sampleSize} 行，按天缓存），distinct 是采样里的取值种数、不是全表精确统计；high_cardinality=true 的列没存取值。写 WHERE 时用它确认码值，别拿它当精确基数。`,
               },
             }
             : {}),
@@ -1336,13 +1297,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           // 这次查询实际花了多久：模型据此判断"这条语句贵不贵、下次要不要合并成一条 CTE"。
           elapsed_ms: Date.now() - startedAt,
           schema: record.schema_name || "",
+          // 语句被平台改写过（去尾分号、套行数上限）才回显；与入参一致时不必重复模型自己刚发的东西。
+          ...(result.statement.trim() === sql.trim() ? {} : { executed_statement: result.statement }),
           returned: result.rows.length,
           row_limit: result.rowLimit,
           columns: result.columns,
           /*
-           * rows 是**二维数组**，每行按 columns 的顺序排列（列名只在 columns 里出现一次）。
-           * 以前每行一个对象、每行重复一遍列名：实测 100 行 × 5 列时，rows 的 9,764 字符里
-           * 有 6,100 是重复的键名，改数组后 3,664（-62%）。
+           * rows 是**二维数组**，每行按 columns 的顺序排列 —— 列名只在 columns 里出现一次。
+           * 信息与"每行一个对象"完全等价，只是行里不再重复一遍键名（实测 100 行 × 5 列省 62%）。
            */
           rows: result.rows.map((row) => result.columns.map((column) => row[column])),
           truncated: result.truncated,
@@ -1351,9 +1313,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           ...(result.truncated
             ? { truncation_note: `结果已被截断：只返回了前 ${result.rows.length} 行（本次上限 ${result.rowLimit}），表里还有更多行。要全貌就用更精确的 WHERE、聚合或更强的取数上限重新查；把"前 ${result.rows.length} 行"当成全量会得出错误结论。` }
             : {}),
-          // 语句被平台改写过（去尾分号、套行数上限）才回显；与入参一致时不必重复模型自己刚发的东西。
-          ...(result.statement.trim() === sql.trim() ? {} : { executed_statement: result.statement }),
-          // 只读事务起没起得来要如实报：起不来时只剩语句检查在挡，不能让人以为库里有保险。
+          note: readOnlyPolicyNote(record.kind),
           // 只读事务起没起得来要如实报：起不来时只剩语句检查在挡，不能让人以为库里有保险。起得来就不必每次说。
           ...(result.readOnlyTransaction ? {} : { read_only_transaction: false, warning: "这个驱动起不了只读事务，本次只有语句检查在挡，请只读使用。" }),
         },

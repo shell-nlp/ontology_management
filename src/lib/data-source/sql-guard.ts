@@ -1,4 +1,4 @@
-import type { DataSourceKind } from "@/lib/data-source/types";
+import { dataSourceKindInfo, type DataSourceKind } from "@/lib/data-source/types";
 
 /**
  * 只读 SQL 的闸门。**纯函数，服务端与测试都用这一份**。
@@ -147,4 +147,9 @@ export function statementTimeoutStatements(kind: DataSourceKind, timeoutMs: numb
   if (kind === "POSTGRES") return { before: [] as string[], inside: [`SET LOCAL statement_timeout = ${ms}`] };
   if (kind === "MYSQL") return { before: [`SET SESSION MAX_EXECUTION_TIME = ${ms}`], inside: [] as string[] };
   return { before: [] as string[], inside: [] as string[] };
+}
+
+/** 一行说明"这条语句被允许到什么程度"，跟着查询结果一起给模型，省得它去猜。 */
+export function readOnlyPolicyNote(kind: DataSourceKind) {
+  return `只读查询：语句必须以 ${READ_ONLY_PREFIXES.join(" / ")} 开头，且不能含写操作关键字；执行时还会包在 ${dataSourceKindInfo(kind).label} 的只读事务里。`;
 }
