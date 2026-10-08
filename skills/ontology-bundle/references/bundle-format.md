@@ -99,7 +99,7 @@ rules[].actionId                     → actionTypes[].id
 | --- | --- |
 | `name` | 机器名，1–120；同一类型内不能重复。建议与数据列对齐 |
 | `displayName` | 给人看的中文名，≤120；留空退回 `name` |
-| `description` | 这是什么、口径怎么算，≤300 |
+| `description` | 这是什么、口径怎么算，≤2000 |
 | `dataType` | `TEXT` / `INTEGER` / `DECIMAL` / `BOOLEAN` / `DATE` / `DATETIME` / `TEXT_ARRAY` / `JSON` |
 | `required` | 必填 |
 | `unique` | 唯一（主键列必须写）。**值超过 8KB 的字段不要写 unique**，发布前会被拦 |

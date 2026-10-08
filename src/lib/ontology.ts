@@ -22,8 +22,12 @@ const propertySchema = z.object({
    * 数据列名往往是 STATIS_DATE 这种，显示名才是「统计日期」。留空就退回 name。
    */
   displayName: z.string().trim().max(120).default(""),
-  /** 这个属性是什么、口径怎么算。导入外部本体时会带上原文说明。 */
-  description: z.string().max(300).default(""),
+  /**
+   * 这个属性是什么、口径怎么算。导入外部本体时会带上原文说明 ——
+   * 外部文档里的取值枚举（例如产品分类的一长串编码）常常有几百字，所以上限放到 2000；
+   * 卡在 300 只能靠截断，那等于静默丢原文。
+   */
+  description: z.string().max(2000).default(""),
   dataType: propertyDataTypeSchema,
   required: z.boolean().default(false),
   unique: z.boolean().default(false),
@@ -128,6 +132,47 @@ export const conceptGroupSchema = z.object({
   name: z.string().trim().min(1).max(40),
   /** 分组框的强调色；留空就按它在清单里的位置取一个调色板色。 */
   color: z.string().trim().max(32).default(""),
+});
+
+/**
+ * 指标（对齐 Palantir 的 Metric）：把一条业务口径固化成定义，而不是让它散在列注释里。
+ *
+ * 一条指标回答「这个数怎么算」：作用在哪个对象类型上、按哪个属性聚合、固定过滤是什么、
+ * 能按哪些维度看、单位是什么。它**只描述口径、不存数** —— 真实数值由模型或应用按这份定义
+ * 去对象类型绑定的源表查（本体这一层不推理实例）。
+ *
+ * 为什么要有它：像「互联网专线条数」「短彩信欠费金额」这类问题，答案原来是让模型从
+ * 属性注释里反推（`ZX_COUNT` 要 SUM 还是 COUNT、欠费要不要含红冲）——口径读一次就定下来，
+ * 比每次重新推一遍靠谱。
+ */
+export const metricSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  /** 这条指标量的是什么、口径边界是什么。 */
+  description: z.string().max(500).default(""),
+  /** 作用的对象类型（Palantir 的 metric scope）；空串表示还没选。 */
+  entityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
+  /** 聚合方式。COUNT 且 property 为空 = 数行数。 */
+  aggregation: z.enum(["SUM", "COUNT", "COUNT_DISTINCT", "AVG", "MIN", "MAX"]).default("COUNT"),
+  /** 被聚合的属性名；COUNT 行数时留空。 */
+  property: z.string().trim().max(120).default(""),
+  /**
+   * 固定过滤：口径的一部分（例如「只看互联网专线」「排除红冲」）。
+   * 值一律按字符串存，怎么比较交给下游按属性的数据类型处理。
+   */
+  filters: z.array(z.object({
+    property: z.string().trim().min(1).max(120),
+    operator: z.enum(["EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NOT_IN", "CONTAINS", "IS_NULL", "NOT_NULL"]).default("EQ"),
+    value: z.string().max(500).default(""),
+  })).default([]),
+  /** 可以按哪些属性分组看（地市、产品、月份……）。 */
+  dimensions: z.array(z.string().trim().max(120)).max(20).default([]),
+  /** 时间维度：按哪个属性看趋势；留空表示不是时序指标。 */
+  timeProperty: z.string().trim().max(120).default(""),
+  /** 单位类型与单位，原样保留外部定义（bkn 的 unit_type / unit）。 */
+  unitType: z.string().trim().max(32).default(""),
+  unit: z.string().trim().max(32).default(""),
+  tags: z.array(z.string().trim().max(32)).max(12).default([]),
 });
 
 /**
