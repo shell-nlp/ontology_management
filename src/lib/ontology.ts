@@ -28,6 +28,15 @@ const propertySchema = z.object({
    * 卡在 300 只能靠截断，那等于静默丢原文。
    */
   description: z.string().max(2000).default(""),
+  /**
+   * 取值枚举（码值 + 含义）：把「1=全球通」这种只写在列注释里的口径搬到定义层。
+   * search_schema 会把 label 当取值命中，模型不用再猜码值；get_object_type 原样带给模型。
+   */
+  enumValues: z.array(z.object({
+    value: z.string().trim().min(1).max(200),
+    /** 给人看 / 给模型读的含义；只写码值不写含义也行。 */
+    label: z.string().trim().max(200).default(""),
+  })).max(200).optional(),
   dataType: propertyDataTypeSchema,
   required: z.boolean().default(false),
   unique: z.boolean().default(false),
@@ -172,6 +181,13 @@ export const metricSchema = z.object({
   /** 单位类型与单位，原样保留外部定义（bkn 的 unit_type / unit）。 */
   unitType: z.string().trim().max(32).default(""),
   unit: z.string().trim().max(32).default(""),
+  /**
+   * 状态位：verified = 已验收、可以直接引用；draft = 还没定稿（测试残留、配置示例、新口径都先落这里）。
+   * 模型靠它分辨「哪条口径可信」，不用每次把描述读完再自己判断。
+   */
+  status: z.enum(["draft", "verified"]).default("draft"),
+  /** 这条口径的负责人 / 责任团队：出数有疑问找谁。 */
+  owner: z.string().trim().max(120).default(""),
   tags: z.array(z.string().trim().max(32)).max(12).default([]),
 });
 

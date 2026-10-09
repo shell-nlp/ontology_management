@@ -3,6 +3,7 @@ import { getObjectIndex } from "@/lib/object-index";
 import { buildIndexEntries } from "@/lib/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
+import { listDataSources } from "@/lib/data-sources";
 import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, validateVersionSnapshot, withTargetLock, type VersionStatus } from "@/lib/version-snapshot";
 
 export async function publishVersionSnapshot(versionId: string, user: { id: string }, allowedStatuses: VersionStatus[]) {
@@ -19,7 +20,9 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     const target = await getTarget(version.target_id);
     if (!target) throw new Error("本体存储不存在。");
     const snapshot = await ensureVersionSnapshot(version.id, target);
-    const violations = validateVersionSnapshot(snapshot);
+    // 把本机登记的资源 id 传进去：来源「有表名、没资源」时才知道该不该提示补齐绑定（见 validateEntitySources）。
+    const knownSourceIds = await listDataSources().then((rows) => rows.map((row) => row.id)).catch(() => []);
+    const violations = validateVersionSnapshot(snapshot, knownSourceIds);
     // 只拦自相矛盾的配置；「还没配完」的提示留在 warnings 里，不挡发布。
     const blockers = violations.filter((violation) => violation.severity !== "WARN");
     const warnings = violations.filter((violation) => violation.severity === "WARN");

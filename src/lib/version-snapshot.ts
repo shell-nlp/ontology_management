@@ -603,7 +603,7 @@ const MAX_INDEXED_VALUE_BYTES = 8191;
 /** 发布前检查的一条结论：severity 为 WARN 的只是提醒，不挡发布。 */
 export type SnapshotViolation = { rule: string; message: string; count: number; severity?: "WARN" };
 
-export function validateVersionSnapshot(snapshot: VersionSnapshot) {
+export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceIds?: readonly string[]) {
   const violations: SnapshotViolation[] = [];
   /*
    * 对象身份是 (对象类型, 主键)：同一个对象类型里主键重复 = 本体里同一个对象存在两份，
@@ -617,7 +617,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot) {
     });
   }
   // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
-  for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity));
+  for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity, { knownSourceIds }));
   // 关系类型的键映射同理：它是定义层的声明，指向不存在的属性时换台机器导入就是悬空引用。
   for (const item of relationshipKeyViolations(snapshot.definition)) violations.push(item);
   // 关系类型的数据来源（D2）：配了但取不出实例的话，图上看不到边，这里提醒一句（不挡发布）。

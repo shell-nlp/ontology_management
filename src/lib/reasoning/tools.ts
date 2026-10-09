@@ -10,10 +10,10 @@ import {
 } from "@/lib/interfaces";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology-sources";
-import { keyMappingLabel, keyMappingRows } from "@/lib/relationship-keys";
+import { keyMappingLabel, keyMappingRows, type KeyMapping } from "@/lib/relationship-keys";
 import { cardinalityLabel, cardinalityPhrase } from "@/lib/relationship-cardinality";
 import { readOnlyPolicyNote } from "@/lib/data-source/sql-guard";
-import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, profileTableKey, type ColumnValueIndex } from "@/lib/column-profile";
+import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, enumProfileWarnings, sourceTableBinding, type ColumnValueIndex, type SourceTableBinding } from "@/lib/column-profile";
 import type { EntityRecord, GraphStore, RuntimeTypeSet } from "@/lib/graph/types";
 import type { OntologyDefinition } from "@/lib/ontology";
 import { getObject, queryObjects } from "@/lib/object-service";
@@ -76,6 +76,8 @@ export type SchemaConcept = {
   /** 命中后模型下一步要用的落点：描述、绑定的表、来源列。 */
   description?: string;
   boundTable?: string;
+  /** 这条落点所在的**数据资源名**（run_sql / get_table_ddl 要填的 data_source）；没绑 / 认不出就是空。 */
+  dataSource?: string;
   sourceColumn?: string;
   /** 这条概念挂在哪些对象类型上（属性 / 指标是它自己的类型；关系类型是两个端点）。object_type 过滤用它。 */
   references?: string[];
@@ -92,6 +94,7 @@ export type SchemaMatch = {
   /** 下面几项是落点：取值命中时 bound_table + source_column 就是"拿哪张表的哪一列去过滤"。 */
   description?: string;
   bound_table?: string;
+  data_source?: string;
   source_column?: string;
   object_type?: string;
 };
@@ -110,7 +113,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
+      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
@@ -153,7 +156,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "traverse_object_types",
     description:
-      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。关系类型是**双向**的（一条关系类型两侧都能走，不用另建反向关系），所以默认两个方向都算连通；要只往外或只往回，用 direction 收窄。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。**返回的列序**：nodes 每项是 [对象类型名, 分组, 跳数, 描述, [绑定的表]]，edges 每项是 [关系类型名, 起点对象类型, 终点对象类型, 跳数, 经哪个接口, 基数]（不是经接口拿到的边、没标基数的边，对应位置是空串）。",
+      "从对象类型出发沿关系类型走 1~5 跳，返回沿途的对象类型与关系类型。问「这个对象类型一圈都连着谁」「隔两跳能到哪些类型」「A 和 B 之间怎么连」时用它。关系类型是**双向**的（一条关系类型两侧都能走，不用另建反向关系），所以默认两个方向都算连通；要只往外或只往回，用 direction 收窄。hops 默认 3、上限 5；object_types / relationship_types 把范围限死在指定的类型上（不填就是不限定）；start_type 留空表示从本体的全部对象类型出发。只看一层的关系类型与属性定义用 get_object_type。**返回的列序**：nodes 每项是 [对象类型名, 分组, 跳数, 描述, [绑定的表]]，edges 每项是 [关系类型名, 起点对象类型, 终点对象类型, 跳数, 经哪个接口, 基数, 键映射]（不是经接口拿到的边、没标基数的边、没配键映射的边，对应位置是空串；键映射是 { source, target } 两端各自的连接属性，写 SQL 时按它连，别自己猜列名）。",
     parameters: {
       type: "object",
       properties: {
@@ -168,15 +171,15 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源）。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数]（列只列前 30 个，总数才是真实值，别把两者当成一回事）。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
-        data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」" },
+        data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」。**可以省略**：不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定" },
         table: { type: "string", description: "表或视图名，写全「模式.表」（如 GISTOOLS.TB_DIC_AREA_CODE）；大小写不敏感" },
         refresh: { type: "boolean", description: "重新采一次列画像（默认 false：用当天缓存的那一份）。只在确实怀疑数据分布变了时才传 true" },
       },
-      required: ["data_source", "table"],
+      required: ["table"],
     },
   },
   {
@@ -244,6 +247,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
       properties: {
         type_name: { type: "string", description: "可选，只看作用在这个对象类型上的指标" },
         name: { type: "string", description: "可选，按名字精确找一条指标" },
+        status: { type: "string", enum: ["draft", "verified"], description: "可选，按验收状态过滤。要拿现成口径出数就传 verified：draft 是还没定稿的（测试残留、配置示例都在这一档），别拿来当已验收口径用" },
       },
     },
   },
@@ -286,6 +290,23 @@ export function longestCommonSubstring(a: string, b: string): number {
 export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: RuntimeTypeSet | null, dataSources: DataSourceRecord[] = [], valueIndex: ColumnValueIndex | null = null): SchemaConcept[] {
   const resourceNameById = new Map(dataSources.map((item) => [item.id, item.name]));
   /*
+   * 没绑 / 绑飞了的来源：模式名唯一对得上一个资源时兜底给出资源名（与 get_object_type.sources 同一口径）。
+   * 有它模型才不用从 detail 的长句里人工抠资源名 —— search_schema 直接给 data_source 落点。
+   */
+  const resourceNamesBySchema = new Map<string, string[]>();
+  for (const item of dataSources) {
+    const key = (item.schema_name ?? "").trim().toUpperCase();
+    if (!key) continue;
+    resourceNamesBySchema.set(key, [...(resourceNamesBySchema.get(key) ?? []), item.name]);
+  }
+  const resourceNameOf = (source: { dataSourceId?: string; schema?: string } | undefined) => {
+    if (!source) return "";
+    const bound = resourceNameById.get(source.dataSourceId ?? "") ?? "";
+    if (bound) return bound;
+    const candidates = resourceNamesBySchema.get((source.schema ?? "").trim().toUpperCase()) ?? [];
+    return candidates.length === 1 ? candidates[0] : "";
+  };
+  /*
    * 对象数只用来给"完全没命中时的兜底排序"加一点权重，**不进给模型看的文案**：
    * 这一层不推理实例，就不该让模型看到实例层面的数字（否则它会据此下实例结论）。
    */
@@ -303,7 +324,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
     const tables = sourced.map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
     const boundTable = tables[0] ?? "";
-    const resources = [...new Set(sourced.map((source) => resourceNameById.get(source.dataSourceId) ?? "").filter(Boolean))];
+    const resources = [...new Set(sourced.map((source) => resourceNameOf(source)).filter(Boolean))];
     // 实现了哪些接口也进检索面：问「谁实现了设施接口」能直接命中这些对象类型。
     const implemented = (entity.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean);
     /*
@@ -331,6 +352,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       weight: objectCount.get(entity.name) ?? 0,
       description: entity.description,
       boundTable,
+      dataSource: resourceNameOf(sourced[0]),
       references: [entity.name],
     });
     for (const property of properties) {
@@ -340,11 +362,16 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
         kind: "PROPERTY",
         name: `${entity.name}.${property.name}`,
         haystack: normalize([entity.name, property.name, property.dataType, describeBriefly(property.description ?? "", 120)].join(" ")),
-        values: normalize(columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", property.sourceField ?? "").join(" ")),
+        // 属性声明的取值枚举（码值 + 中文含义）也进取值面：「全球通」要能命中 U_TYPE，而不是靠描述里碰巧出现。
+        values: normalize([
+          ...columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", property.sourceField ?? ""),
+          ...(property.enumValues ?? []).flatMap((item) => [item.value, item.label].filter(Boolean)),
+        ].join(" ")),
         detail: `${property.dataType}${property.required ? "，必填" : ""}${property.sourceField ? `，取自 ${property.sourceField}` : ""}`,
         weight: 0,
         description: property.description ?? "",
         boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : boundTable,
+        dataSource: resourceNameOf(source),
         sourceColumn: property.sourceField ?? "",
         references: [entity.name],
       });
@@ -428,10 +455,13 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
         metric.filters.length ? `口径 ${metric.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
         metric.dimensions.length ? `维度 ${metric.dimensions.join("、")}` : "",
         metric.unit ? `单位 ${metric.unit}` : "",
+        // 状态位进检索结果的说明：模型一眼能分辨「已验收」和「还没定稿」。
+        (metric.status ?? "draft") === "verified" ? "已验收" : "未验收（draft）",
       ].filter(Boolean).join("；"),
       weight: 0,
       description: metric.description,
       boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : "",
+      dataSource: resourceNameOf(source),
       sourceColumn: column,
       references: scope ? [scope] : [],
     });
@@ -534,6 +564,7 @@ function toMatch(item: ScoredConcept, forced?: SchemaMatch["matched"]): SchemaMa
     detail: item.concept.detail,
     ...(item.concept.description ? { description: describeBriefly(item.concept.description, 300) } : {}),
     ...(item.concept.boundTable ? { bound_table: item.concept.boundTable } : {}),
+    ...(item.concept.dataSource ? { data_source: item.concept.dataSource } : {}),
     ...(item.concept.sourceColumn ? { source_column: item.concept.sourceColumn } : {}),
     ...(item.concept.kind === "PROPERTY" || item.concept.kind === "METRIC" ? { object_type: item.concept.references?.[0] ?? "" } : {}),
   };
@@ -601,6 +632,52 @@ function businessProperties(node: EntityRecord) {
 }
 
 /**
+ * 一条关系类型声明过的键映射（连接属性 → 该端对象类型的属性）；两端都没配就是 null。
+ *
+ * get_object_type 的一跳与 traverse_object_types 的边共用这一份 —— 多跳时模型同样需要连接键，
+ * 以前只在 get_object_type 里给，走 2 跳以上就只能猜列名，猜错是**静默错数**。
+ */
+function keyMappingsOf(relation: { sourceKeyMappings?: readonly KeyMapping[]; targetKeyMappings?: readonly KeyMapping[] }) {
+  const source = keyMappingRows(relation.sourceKeyMappings).map(keyMappingLabel);
+  const target = keyMappingRows(relation.targetKeyMappings).map(keyMappingLabel);
+  if (!source.length && !target.length) return null;
+  return { source, target };
+}
+
+/**
+ * 一张表可能属于哪些已登记的数据资源。纯函数，不连库。
+ *
+ * get_table_ddl 在模型没给 data_source 时用它自动定位 —— 模型常常只拿到一个表名，
+ * 硬要它先反查出资源名是多一轮往返。判据与来源绑定一致：先看有没有对象类型绑到这张表，
+ * 都没有就退一步按模式名匹配（来源还没补齐绑定时就靠这条兜底）。
+ */
+export function dataSourcesForTable(definition: OntologyDefinition, dataSources: readonly DataSourceRecord[], schema: string, table: string): DataSourceRecord[] {
+  const wantTable = (table ?? "").trim().toUpperCase();
+  if (!wantTable) return [];
+  const wantSchema = (schema ?? "").trim().toUpperCase();
+  const ids = new Set<string>();
+  let mentioned = false;
+  for (const entity of definition.entityTypes) {
+    for (const source of entitySources(entity)) {
+      if ((source.view ?? "").trim().toUpperCase() !== wantTable) continue;
+      const sourceSchema = (source.schema ?? "").trim().toUpperCase();
+      if (wantSchema && sourceSchema && sourceSchema !== wantSchema) continue;
+      mentioned = true;
+      const id = (source.dataSourceId ?? "").trim();
+      if (id) ids.add(id);
+    }
+  }
+  const bound = dataSources.filter((item) => ids.has(item.id));
+  if (bound.length) return bound;
+  /*
+   * 只有「表名确实被某条来源引用、但那条来源没绑资源（或绑飞了）」才走模式名兜底。
+   * 表名谁都没引用时返回空 —— 那多半是表名写错了，该让调用方报「定位不出」，别硬塞一个资源去连。
+   */
+  if (!mentioned || !wantSchema) return [];
+  return dataSources.filter((item) => (item.schema_name ?? "").trim().toUpperCase() === wantSchema);
+}
+
+/**
  * 一张表被哪些对象类型绑着、各自映射了哪些列。
  *
  * 为什么要有它：表的可达路径一直是"对象类型 → 它绑的表"，模型拿一张表名进来时
@@ -608,13 +685,12 @@ function businessProperties(node: EntityRecord) {
  * 反过来给一份"这张表被谁用、哪几列被映射了"，模型立刻能判断"是不是表名写错了 / 该看哪个对象类型"。
  * 纯函数：只读定义，不连库。
  */
-export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string) {
-  const wanted = profileTableKey(schema, table);
-  const bindings: { object_type: string; source_role: string; primary_key: string[]; mapped_columns: string[]; mapped_column_count: number }[] = [];
+export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string, knownSourceIds?: readonly string[]) {
+  const bindings: { object_type: string; source_role: string; primary_key: string[]; mapped_columns: string[]; mapped_column_count: number; binding: SourceTableBinding }[] = [];
   for (const entity of definition.entityTypes) {
     entitySources(entity).forEach((source, index) => {
-      if (source.dataSourceId !== dataSourceId) return;
-      if (profileTableKey(source.schema || schema, source.view) !== wanted) return;
+      const binding = sourceTableBinding(source, { dataSourceId, schema, table, knownSourceIds });
+      if (!binding) return;
       const columns = [...new Set(entity.properties
         .filter((property) => property.sourceField && (!property.sourceId || property.sourceId === source.id))
         .map((property) => property.sourceField as string))];
@@ -625,6 +701,7 @@ export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId:
         // 一列一个名字就够模型对上，不用把整张表复述一遍；太长的截到 30 个并给出总数。
         mapped_columns: columns.slice(0, 30),
         mapped_column_count: columns.length,
+        binding,
       });
     });
   }
@@ -656,7 +733,7 @@ export type TypeGraphNode = {
  * `via_interface` 只在"这条关系是接口带出来的"时出现 —— 见 `interfaceDerivedLinks`。
  */
 /** 边的基数只在"这条边来自关系类型本身"时才有：接口承接的关系由接口约束描述，不带这一项。 */
-export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number; via_interface?: string; cardinality?: string };
+export type TypeGraphEdge = { relation: string; from: string; to: string; hop: number; via_interface?: string; cardinality?: string; key_mapping?: { source: string[]; target: string[] } };
 
 /**
  * 接口带来的关系（Palantir 的 interface link type 语义）：对象类型实现了接口，
@@ -748,8 +825,8 @@ export function traverseTypeGraph(
    * 图上能走的"关系"有两个来源：定义里的关系类型，以及**实现接口**带来的那些。
    * 只认前者的话，实现了接口的对象类型会显得孤立 —— 恰好是模型最容易答错的地方。
    */
-  const links = [
-    ...definition.relationshipTypes.map((item) => ({ name: item.name, fromId: item.sourceEntityTypeId, toId: item.targetEntityTypeId, viaInterface: "", cardinality: item.cardinality ?? "" })),
+  const links: { name: string; fromId: string; toId: string; viaInterface: string; cardinality?: string; keyMapping?: { source: string[]; target: string[] } }[] = [
+    ...definition.relationshipTypes.map((item) => ({ name: item.name, fromId: item.sourceEntityTypeId, toId: item.targetEntityTypeId, viaInterface: "", cardinality: item.cardinality ?? "", keyMapping: keyMappingsOf(item) ?? undefined })),
     ...interfaceDerivedLinks(definition),
   ];
   const relationNames = new Set(links.map((item) => item.name));
@@ -821,6 +898,8 @@ export function traverseTypeGraph(
         ...(link.viaInterface ? { via_interface: link.viaInterface } : {}),
         // 基数：这条边起点端 → 终点端 是一对一 / 一对多 / ……；没标注就不带这一项。
         ...("cardinality" in link && link.cardinality ? { cardinality: link.cardinality } : {}),
+        // 键映射：这条边两端在数据上按哪几个属性对上；没配就不带（别挂空数组）。
+        ...(link.keyMapping ? { key_mapping: link.keyMapping } : {}),
       };
     })
     .filter((edge): edge is TypeGraphEdge => edge !== null);
@@ -934,6 +1013,16 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const sources = entitySources(type);
       const group = (definition.groups ?? []).find((item) => item.id === (type.groupId ?? "")) ?? null;
       const resourceNameById = new Map((context.dataSources ?? []).map((item) => [item.id, item.name]));
+      /*
+       * 没绑 / 绑飞了的来源：模式名唯一对得上一个本机资源时兜底给出资源名。
+       * 否则模型只看到 data_source 是空串，会卡在"知道表名、不知道 get_table_ddl 的 data_source 填什么"。
+       */
+      const resourceNamesBySchema = new Map<string, string[]>();
+      for (const item of context.dataSources ?? []) {
+        const key = (item.schema_name ?? "").trim().toUpperCase();
+        if (!key) continue;
+        resourceNamesBySchema.set(key, [...(resourceNamesBySchema.get(key) ?? []), item.name]);
+      }
       const sourceRoleById = new Map(sources.map((source, index) => [source.id, sourceRoleLabel(index)]));
       const properties = type.properties.map((property) => ({
         name: property.name,
@@ -942,6 +1031,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         data_type: property.dataType,
         required: property.required,
         unique: property.unique,
+        // 取值枚举（码值 + 含义）：口径从列注释搬到定义层，模型不用猜码值。
+        ...(property.enumValues?.length ? { enum_values: property.enumValues.map((item) => ({ value: item.value, label: item.label })) } : {}),
         // 属性取自源表的哪一列、哪一份来源；没映射就是空串。
         source_field: property.sourceField ?? "",
         // 只有映射了列才有来源角色可谈；没映射列的属性不硬套一个。
@@ -959,17 +1050,6 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         };
       };
       const touching = definition.relationshipTypes.filter((item) => item.sourceEntityTypeId === type.id || item.targetEntityTypeId === type.id);
-      /*
-       * 关系类型的键映射：这条关系在数据上按哪几个字段把两端接起来。
-       * 模型答"这两类对象怎么对上"（能不能按客户编号连过去、要不要走连接表）要靠它；
-       * 没配的关系类型就不带这一项，免得每条边都挂一串空数组。
-       */
-      const keyMappingsOf = (relation: (typeof touching)[number]) => {
-        const source = keyMappingRows(relation.sourceKeyMappings).map(keyMappingLabel);
-        const target = keyMappingRows(relation.targetKeyMappings).map(keyMappingLabel);
-        if (!source.length && !target.length) return null;
-        return { source, target };
-      };
       /*
        * 数量关系：声明的是「起点 → 终点」。入边是从终点这一侧看过去的，要**翻过来说**
        * （否则模型会把"一个客户有多个专线"读成"一个专线属于多个客户"，聚合就重复计数了）。
@@ -1015,6 +1095,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           dimensions: item.dimensions,
           time_property: item.timeProperty,
           unit: item.unit,
+          status: item.status ?? "draft",
+          owner: item.owner ?? "",
         }));
       /*
        * 被提取成接口的对象类型仍然留在定义里（影子），名字和接口**同名**。
@@ -1034,14 +1116,22 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           actions,
           metrics,
           ...(metrics.length ? { metrics_note: "metrics 是这个对象类型上定义的指标（业务口径）：aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
-          sources: sources.map((source, index) => ({
-            role: sourceRoleLabel(index),
-            data_source: resourceNameById.get(source.dataSourceId) ?? "",
-            schema: source.schema,
-            view: source.view,
-            primary_key: source.primaryKey,
-            title_field: source.titleField,
-          })),
+          sources: sources.map((source, index) => {
+            const boundName = resourceNameById.get(source.dataSourceId) ?? "";
+            const schemaCandidates = boundName ? [] : (resourceNamesBySchema.get((source.schema ?? "").trim().toUpperCase()) ?? []);
+            return {
+              role: sourceRoleLabel(index),
+              // 绑好了就用绑定的资源名；没绑（或绑飞了）时，模式名唯一对得上一个资源就兜底给出 —— 模型靠这个名字调 get_table_ddl / run_sql。
+              data_source: boundName || (schemaCandidates.length === 1 ? schemaCandidates[0] : ""),
+              // 让模型分清"填好了"和"还没填"：unbound 是配置缺口，不是没有数据。
+              binding: boundName ? "bound" : "unbound",
+              ...(boundName ? {} : { binding_note: schemaCandidates.length === 1 ? "这条来源还没正式绑定数据资源，资源名是按模式名唯一匹配兜底给的；正式出数前请补齐绑定。" : "这条来源还没绑定数据资源，也匹配不出唯一的资源；请在「对象 / 本体」页点「补齐数据资源绑定」。" }),
+              schema: source.schema,
+              view: source.view,
+              primary_key: source.primaryKey,
+              title_field: source.titleField,
+            };
+          }),
           // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
           data_source_note: sources.length
             ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据就调 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。"
@@ -1188,10 +1278,10 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           /*
            * 每项按固定列序：
            * nodes = [对象类型名, 分组, 跳数, 描述, [绑定的表]]；
-           * edges = [关系类型名, 起点, 终点, 跳数, 经哪个接口, 基数]（没有经接口 / 没标基数就是空串）。
+           * edges = [关系类型名, 起点, 终点, 跳数, 经哪个接口, 基数, 键映射]（没有经接口 / 没标基数 / 没配键映射就是空串）。
            */
           nodes: traversal.nodes.map((node) => [node.name, node.group, node.hop, node.description, node.bound_tables]),
-          edges: traversal.edges.map((edge) => [edge.relation, edge.from, edge.to, edge.hop, edge.via_interface ?? "", edge.cardinality ?? ""]),
+          edges: traversal.edges.map((edge) => [edge.relation, edge.from, edge.to, edge.hop, edge.via_interface ?? "", edge.cardinality ?? "", edge.key_mapping ?? ""]),
           // 实现接口带来的那些边单独点一句：模型要能解释"这条路是接口契约给的"。
           ...(interfaceLinks.length
             ? {
@@ -1214,9 +1304,29 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
     }
 
     case "get_table_ddl": {
-      const record = resolveDataSource(context, String(args.data_source ?? ""));
       const table = String(args.table ?? "").trim();
       if (!table) throw new Error("table 不能为空。");
+      const requestedSource = String(args.data_source ?? "").trim();
+      let record: DataSourceRecord;
+      if (requestedSource) {
+        record = resolveDataSource(context, requestedSource);
+      } else {
+        /*
+         * 不给 data_source 时按「模式.表」自动定位。模型常常只拿到一个表名，
+         * 硬要它先反查出资源名是多一轮往返（而且资源名以前只能从概念清单末尾人工读）。
+         */
+        const dot = table.lastIndexOf(".");
+        const schemaPart = dot > 0 ? table.slice(0, dot).trim() : "";
+        const tablePart = (dot > 0 ? table.slice(dot + 1) : table).trim();
+        const candidates = dataSourcesForTable(definition, context.dataSources ?? [], schemaPart, tablePart);
+        if (!candidates.length) {
+          throw new Error(`没有指定 data_source，也定位不出「${table}」属于哪个已登记的数据资源：本体里没有对象类型绑到这张表，也没有模式名对得上的资源。先确认表名（模式.表）有没有写错，或用 search_schema 反查。`);
+        }
+        if (candidates.length > 1) {
+          throw new Error(`没有指定 data_source，「${table}」在多个数据资源里都对得上：${candidates.map((item) => `「${item.name}」`).join("、")}。请明确指定一个。`);
+        }
+        record = candidates[0];
+      }
       const startedAt = Date.now();
       const { openDataSource } = await import("@/lib/data-sources");
       const connector = await openDataSource(record);
@@ -1226,18 +1336,24 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
        * 列画像：只对**被对象类型绑定的表**做，按天缓存、采样而非全表统计。
        * 画像失败（大表超时、没绑定、驱动不支持）不能连带把表结构也搞失败 —— 它只是加分项。
        */
+      // 本机已登记的资源 id：把「指向已删资源的悬空来源」也算成待补，见 sourceTableBinding。
+      const knownSourceIds = (context.dataSources ?? []).map((item) => item.id);
       let profile: Awaited<ReturnType<typeof ensureColumnProfile>> | null = null;
       try {
-        profile = await ensureColumnProfile({ definition, record, view: { schema: ddl.schema || record.schema_name, name: ddl.name }, refresh: args.refresh === true });
+        profile = await ensureColumnProfile({ definition, record, view: { schema: ddl.schema || record.schema_name, name: ddl.name }, refresh: args.refresh === true, knownSourceIds });
       } catch (error) {
         profile = { profile: null, cached: false, warning: `列画像没取到（表结构照常可用）：${error instanceof Error ? error.message : "未知错误"}` };
       }
+      // 属性声明的取值枚举 vs 实际采样：对不上（典型是「注释说非空即全球通、实际只有 0/1」）当场点破。
+      const enumWarnings = profile?.profile
+        ? enumProfileWarnings(definition, profile.profile.schema, profile.profile.table, profile.profile.columns)
+        : [];
       /*
        * 反向引用：这张表被哪些对象类型绑着、各映射了哪几列。
        * 表只能通过对象类型到达，所以"某个表名没人认领"时这就是唯一的排错线索。
        */
       const objectKind = ddl.schema || record.schema_name;
-      const boundObjectTypes = objectTypesBoundTo(definition, record.id, objectKind, ddl.name);
+      const boundObjectTypes = objectTypesBoundTo(definition, record.id, objectKind, ddl.name, knownSourceIds);
       return {
         payload: {
           data_source: record.name,
@@ -1251,11 +1367,16 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           ddl: ddl.ddl,
           notes: ddl.notes,
           /*
-           * 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列, 映射列总数]。
+           * 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列, 映射列总数, 绑定状态]。
            * 第 5 项别省：mapped_columns 只列前 30 个，总数是**另一个数**（真实 37 列也只会列 30 个），
            * 少了它就看不出一列被截断了。见 AGENTS.md「能推出 ≠ 可删」。
+           * 第 6 项 binding 空串 = 绑好了；「未绑定数据资源」= dataSourceId 还没绑到本机资源（导入后没补齐），
+           * 表身份是靠「模式.表」兜底认出来的 —— 要给用户指这条路，别把它当成"表不存在"。
            */
-          bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key, item.mapped_column_count]),
+          bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key, item.mapped_column_count, item.binding === "bound" ? "" : "未绑定数据资源"]),
+          ...(boundObjectTypes.some((item) => item.binding !== "bound")
+            ? { bound_object_types_binding_note: "上面标了「未绑定数据资源」的来源，dataSourceId 还没绑到本机资源（导入后没补齐绑定）：表身份是靠「模式.表」兜底认出来的。要跑数先到「对象 / 本体」页点「补齐数据资源绑定」。" }
+            : {}),
           bound_object_types_note: boundObjectTypes.length
             ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。要字段细节与关系用 get_object_type。"
             : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",
@@ -1276,6 +1397,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             }
             : {}),
           ...(profile?.warning ? { column_profile_warning: profile.warning } : {}),
+          ...(enumWarnings.length ? { enum_profile_warnings: enumWarnings } : {}),
         },
         // 表结构不是可寻址的本体实体，不做证据。
         evidence: [],
@@ -1500,9 +1622,10 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
     case "list_metrics": {
       const typeName = typeof args.type_name === "string" && args.type_name.trim() ? args.type_name.trim() : null;
       const metricName = typeof args.name === "string" && args.name.trim() ? args.name.trim() : null;
+      const statusFilter = typeof args.status === "string" && args.status.trim() ? args.status.trim() : null;
       const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
       const metrics = (definition.metrics ?? [])
-        .filter((item) => (!typeName || typeNameById.get(item.entityTypeId) === typeName) && (!metricName || item.name === metricName))
+        .filter((item) => (!typeName || typeNameById.get(item.entityTypeId) === typeName) && (!metricName || item.name === metricName) && (!statusFilter || (item.status ?? "draft") === statusFilter))
         .map((item) => ({
           name: item.name,
           description: item.description,
@@ -1514,12 +1637,16 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           dimensions: item.dimensions,
           time_property: item.timeProperty,
           unit: item.unit,
+          /** verified = 已验收可直接引用；draft = 还没定稿（老快照没这个字段，按 draft 算）。 */
+          status: item.status ?? "draft",
+          /** 这条口径的负责人 / 责任团队。 */
+          owner: item.owner ?? "",
           tags: item.tags,
         }));
       return {
         payload: {
           metrics,
-          note: "指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL 走 run_sql；scope_object_type 是它作用的对象类型，绑定的表在 get_object_type 里。",
+          note: "指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL 走 run_sql；scope_object_type 是它作用的对象类型，绑定的表在 get_object_type 里。status=verified 才算已验收口径；draft 是还没定稿的（老快照默认也算 draft），引用前先跟用户确认，别把测试残留 / 配置示例当正式口径。",
         },
         evidence: metrics.map((metric) => ({ kind: "METRIC" as const, id: metric.name, label: metric.name })),
       };

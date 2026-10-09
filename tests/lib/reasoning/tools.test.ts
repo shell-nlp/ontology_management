@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
+import { dataSourcesForTable, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import { profileTableKey, type ColumnValueIndex } from "@/lib/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/graph/types";
@@ -264,6 +264,62 @@ describe("schemaConcepts 的绑定信息", () => {
   });
 });
 
+const 标签类 = "77777777-7777-4777-8777-777777777777";
+
+/** 带取值枚举的样本：U_TYPE 这种「码值藏在注释里」的列，靠 enumValues 把中文口径显式挂上。 */
+function enumDefinition(): OntologyDefinition {
+  return {
+    entityTypes: [{
+      id: 标签类,
+      name: "全量用户标签",
+      description: "用户的全球通等级等标签",
+      displayProperty: "USER_ID",
+      properties: [
+        { name: "USER_ID", dataType: "TEXT", required: true, unique: true, indexed: false, sourceField: "USER_ID" },
+        { name: "U_TYPE", displayName: "全球通等级", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "U_TYPE", enumValues: [{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }] },
+      ],
+      sources: [{ id: "primary", dataSourceId: 线路资源, schema: "GISTOOLS", view: "TB_KR_GRP_ALL_USER_FLAG_DAY", primaryKey: ["USER_ID"], titleField: "USER_ID" }],
+    }],
+    groups: [],
+    interfaces: [],
+    metrics: [],
+    relationshipTypes: [],
+    actionTypes: [],
+    rules: [],
+  } as unknown as OntologyDefinition;
+}
+
+describe("属性的取值枚举（码值）在工具里的说法", () => {
+  it("get_object_type 把属性上的取值枚举带给模型（码值 + 中文含义）", async () => {
+    const payload = (await runReasoningTool("get_object_type", { type_name: "全量用户标签" }, { store: {} as never, definition: enumDefinition(), runtimeTypes })).payload as { properties: { name: string; enum_values?: { value: string; label: string }[] }[] };
+    expect(payload.properties.find((item) => item.name === "U_TYPE")!.enum_values).toEqual([{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }]);
+  });
+
+  it("search_schema 能用枚举的中文名命中属性（「全球通」→ U_TYPE），算取值命中", () => {
+    const ranked = rankSchemaConcepts(schemaConcepts(enumDefinition(), runtimeTypes), "全球通", 20);
+    const hit = ranked.find((item) => item.source_column === "U_TYPE")!;
+    expect(hit.matched).toBe("value");
+    expect(hit.object_type).toBe("全量用户标签");
+  });
+});
+
+describe("search_schema 的 data_source 落点（省掉一轮反查）", () => {
+  it("命中结果带上结构化 data_source：模型不用再从说明文字里人工读资源名", () => {
+    const concepts = schemaConcepts(boundDefinition(), runtimeTypes, [{ id: 数据资源, name: "Oracle 测试 1251" } as never]);
+    const ranked = rankSchemaConcepts(concepts, "TB_MK_GRP_LINE_LIST_DAY", 5);
+    const hit = ranked.find((item) => item.kind === "OBJECT_TYPE" && item.name === "专业线产品用户")!;
+    expect(hit.bound_table).toBe("GISTOOLS.TB_MK_GRP_LINE_LIST_DAY");
+    expect(hit.data_source).toBe("Oracle 测试 1251");
+  });
+
+  it("属性命中同样带 data_source：取值命中时「哪张表 + 哪一列 + 哪个资源」一次给全", () => {
+    const concepts = schemaConcepts(boundDefinition(), runtimeTypes, [{ id: 数据资源, name: "Oracle 测试 1251" } as never]);
+    const ranked = rankSchemaConcepts(concepts, "套餐", 20);
+    const hit = ranked.find((item) => item.source_column === "PACKAGE_NAME")!;
+    expect(hit.data_source).toBe("Oracle 测试 1251");
+  });
+});
+
 describe("get_object_type 的数据来源", () => {
   it("把绑定翻译成资源名与表名，不是 UUID；属性带上映射列", async () => {
     const outcome = await runReasoningTool(
@@ -303,6 +359,20 @@ describe("get_object_type 的数据来源", () => {
     expect(payload.sources).toEqual([]);
     expect(payload.data_source_note).toContain("还没有绑定数据资源");
   });
+
+  it("来源没绑数据资源（dataSourceId 为空）时如实标出，并用唯一的模式名匹配兜底给出资源名", async () => {
+    const def = boundDefinition();
+    (def.entityTypes.find((item) => item.id === 专线类)!.sources as { dataSourceId: string }[])[0].dataSourceId = "";
+    const outcome = await runReasoningTool(
+      "get_object_type",
+      { type_name: "专业线产品用户" },
+      { store: {} as never, definition: def, runtimeTypes, dataSources: [{ id: 数据资源, name: "Oracle 测试 1251", schema_name: "GISTOOLS" } as never] },
+    );
+    const payload = outcome.payload as { sources: Record<string, unknown>[] };
+    expect(payload.sources[0].binding).toBe("unbound");
+    // 模式名唯一对得上，就兜底把资源名给出来，模型才能接着调 get_table_ddl。
+    expect(payload.sources[0].data_source).toBe("Oracle 测试 1251");
+  });
 });
 const 客户id = "aaaaaaa1-1111-4111-8111-111111111111";
 const 用户id = "aaaaaaa2-2222-4222-8222-222222222222";
@@ -324,7 +394,7 @@ function chainDefinition(): OntologyDefinition {
       { ...type(订购关系id, "订购关系", "用户与产品的订购关系") },
     ],
     relationshipTypes: [
-      { id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, cardinality: "ONE_TO_MANY", properties: [] },
+      { id: "rrrrrrr1-1111-4111-8111-111111111111", name: "客户拥有用户", sourceEntityTypeId: 客户id, targetEntityTypeId: 用户id, cardinality: "ONE_TO_MANY", properties: [], sourceKeyMappings: [{ entityProperty: "CUST_ID" }], targetKeyMappings: [{ entityProperty: "ID" }] },
       { id: "rrrrrrr2-2222-4222-8222-222222222222", name: "用户产生应收", sourceEntityTypeId: 用户id, targetEntityTypeId: 应收id, properties: [] },
       { id: "rrrrrrr3-3333-4333-8333-333333333333", name: "用户拥有订购关系", sourceEntityTypeId: 用户id, targetEntityTypeId: 订购关系id, properties: [] },
       { id: "rrrrrrr4-4444-4444-8444-444444444444", name: "订购关系产生应收", sourceEntityTypeId: 订购关系id, targetEntityTypeId: 应收id, properties: [] },
@@ -466,6 +536,17 @@ describe("traverse_object_types", () => {
     expect(outcome.evidence.some((item) => item.kind === "RELATION_TYPE" && item.label === "用户产生应收")).toBe(true);
   });
 
+  it("边带上 key_mapping：2 跳以上也能拿到连接键，不用猜（列序写进说明）", async () => {
+    const outcome = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 1 }, context);
+    const edges = (outcome.payload as { edges: [string, string, string, number, string, string, { source: string[]; target: string[] } | ""][] }).edges;
+    const edge = edges.find((item) => item[0] === "客户拥有用户")!;
+    // 没配键映射的边第 7 位是空串；配了的给出 source → target 两端。
+    expect(edge[6]).toEqual({ source: ["外键 CUST_ID"], target: ["外键 ID"] });
+    expect(edges.filter((item) => item[0] !== "客户拥有用户").every((item) => item[6] === "")).toBe(true);
+    // 列序必须写在工具说明里（模型靠它读数组）—— 说明与实现不能对不上。
+    expect(REASONING_TOOLS.find((item) => item.name === "traverse_object_types")!.description).toContain("[关系类型名, 起点对象类型, 终点对象类型, 跳数, 经哪个接口, 基数, 键映射]");
+  });
+
   it("参数照传：关系类型限定、跳数上限", async () => {
     const limited = await runReasoningTool("traverse_object_types", { start_type: "客户", hops: 9, relationship_types: ["客户拥有用户"] }, context);
     const payload = limited.payload as { hops: number; filters: { relationship_types: string[] }; edges: [string, string, string, number, string, string][] };
@@ -525,6 +606,8 @@ function profiledDefinition(): OntologyDefinition {
         timeProperty: "",
         unitType: "",
         unit: "条",
+        status: "verified",
+        owner: "市场部数据组",
         tags: [],
       },
     ],
@@ -601,6 +684,17 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
     expect(outcome.evidence.map((item) => item.kind)).toEqual(["METRIC"]);
   });
 
+  it("list_metrics 带 status / owner，并能按 status 过滤：模型据此分辨哪条口径可信", async () => {
+    const def = profiledDefinition();
+    def.metrics.push({ ...def.metrics[0], id: "66666666-6666-4666-8666-666666666666", name: "专线条数--test", status: "draft", owner: "" } as never);
+    const all = (await runReasoningTool("list_metrics", {}, { store: {} as never, definition: def, runtimeTypes })).payload as { metrics: { name: string; status: string; owner: string }[] };
+    expect(all.metrics.map((item) => [item.name, item.status])).toEqual([["互联网专线条数", "verified"], ["专线条数--test", "draft"]]);
+    expect(all.metrics[0].owner).toBe("市场部数据组");
+    // 只看已验收的口径：测试残留 / 配置示例就被过滤掉了。
+    const verified = (await runReasoningTool("list_metrics", { status: "verified" }, { store: {} as never, definition: def, runtimeTypes })).payload as { metrics: { name: string }[] };
+    expect(verified.metrics.map((item) => item.name)).toEqual(["互联网专线条数"]);
+  });
+
   it("工具层：没连平台库也能检索（取值索引取不到就跳过），并明确「表只能通过对象类型到达」", async () => {
     const outcome = await runReasoningTool("search_schema", { query: "专线", max_concepts: 20 }, { store: {} as never, definition: definition(), runtimeTypes });
     const payload = outcome.payload as { matches: { name: string }[]; note: string };
@@ -663,5 +757,48 @@ describe("objectTypesBoundTo（get_table_ddl 的反向引用）", () => {
   it("没被任何对象类型绑定的表返回空 —— 这正是模型排查「表名是不是写错了」的线索", () => {
     expect(objectTypesBoundTo(profiledDefinition(), 线路资源, "GISTOOLS", "TB_OTHER")).toEqual([]);
     expect(objectTypesBoundTo(profiledDefinition(), "00000000-0000-4000-8000-000000000000", "GISTOOLS", 线路表)).toEqual([]);
+  });
+
+  it("来源的 dataSourceId 为空（导入后没补齐绑定）时仍然算绑定，并标出「未绑定数据资源」", () => {
+    const def = profiledDefinition();
+    (def.entityTypes.find((item) => item.id === 线路类)!.sources as { dataSourceId: string }[])[0].dataSourceId = "";
+    const bound = objectTypesBoundTo(def, 线路资源, "GISTOOLS", 线路表);
+    expect(bound).toHaveLength(1);
+    expect(bound[0].binding).toBe("unbound");
+    expect(bound[0].mapped_column_count).toBe(4);
+  });
+
+  it("来源正常绑定时标 bound —— 让模型能分辨「没填」和「填错了」", () => {
+    const bound = objectTypesBoundTo(profiledDefinition(), 线路资源, "GISTOOLS", 线路表);
+    expect(bound[0].binding).toBe("bound");
+  });
+
+  it("get_table_ddl 的说明写死了 bound_object_types 的列序（说明与实现对不上就是真丢信息）", () => {
+    expect(REASONING_TOOLS.find((item) => item.name === "get_table_ddl")!.description)
+      .toContain("[对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]");
+  });
+});
+
+describe("get_table_ddl 自动定位数据资源（不给 data_source 也能查）", () => {
+  const 资源 = (id: string, name: string, schema_name: string) => ({ id, name, schema_name } as never);
+
+  it("按「模式.表」认资源；只给表名（不带模式）也认；没人认领就是空", () => {
+    const def = profiledDefinition();
+    const sources = [资源(线路资源, "Oracle 测试 1251", "GISTOOLS")];
+    expect(dataSourcesForTable(def, sources, "GISTOOLS", 线路表).map((item) => item.name)).toEqual(["Oracle 测试 1251"]);
+    expect(dataSourcesForTable(def, sources, "", 线路表).map((item) => item.name)).toEqual(["Oracle 测试 1251"]);
+    expect(dataSourcesForTable(def, sources, "GISTOOLS", "TB_NOPE")).toEqual([]);
+  });
+
+  it("表名没人认领时给可操作的报错，且不先连库", async () => {
+    await expect(runReasoningTool("get_table_ddl", { table: "GISTOOLS.TB_NOPE" }, {
+      store: {} as never, definition: profiledDefinition(), runtimeTypes,
+      dataSources: [资源(线路资源, "Oracle 测试 1251", "GISTOOLS")],
+    })).rejects.toThrow(/TB_NOPE/);
+  });
+
+  it("工具的参数表里 data_source 不再是必填（table 才是）", () => {
+    const spec = REASONING_TOOLS.find((item) => item.name === "get_table_ddl")!;
+    expect(spec.parameters.required).toEqual(["table"]);
   });
 });

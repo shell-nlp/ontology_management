@@ -101,6 +101,7 @@ metrics[].entityTypeId               → entityTypes[].id
 | `name` | 机器名，1–120；同一类型内不能重复。建议与数据列对齐 |
 | `displayName` | 给人看的中文名，≤120；留空退回 `name` |
 | `description` | 这是什么、口径怎么算，≤2000 |
+| `enumValues[]` | 取值枚举（可选）：`{ value, label }`，把「`1`=`全球通`」这种码值口径搬到定义层。问答检索会把 `label` 当**取值命中**，模型不用再猜码值 |
 | `dataType` | `TEXT` / `INTEGER` / `DECIMAL` / `BOOLEAN` / `DATE` / `DATETIME` / `TEXT_ARRAY` / `JSON` |
 | `required` | 必填 |
 | `unique` | 唯一（主键列必须写）。**值超过 8KB 的字段不要写 unique**，发布前会被拦 |
@@ -221,6 +222,8 @@ metrics[].entityTypeId               → entityTypes[].id
 | `timeProperty` | 时间维度属性名；留空表示不是时序指标 |
 | `unitType` / `unit` | 单位类型与单位（例如 `unit: "条"` / `"元"` / `"分"`） |
 | `tags[]` | 标签，≤12 个 |
+| `status` | `draft`（默认，还没验收）/ `verified`（已验收、可直接引用）。问答检索按它分辨口径是否可信，`list_metrics` 可用 `status=verified` 只看已验收的 |
+| `owner` | 负责人 / 责任团队，≤120，可选 |
 
 `filters[].operator` 只能是：`EQ` / `NE` / `GT` / `GTE` / `LT` / `LTE` / `IN` / `NOT_IN` / `CONTAINS` / `IS_NULL` / `NOT_NULL`。
 
@@ -240,6 +243,8 @@ metrics[].entityTypeId               → entityTypes[].id
   "timeProperty": "",
   "unitType": "",
   "unit": "元",
+  "status": "verified",
+  "owner": "计费组",
   "tags": ["计费"]
 }
 ```

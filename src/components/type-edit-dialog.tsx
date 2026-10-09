@@ -71,6 +71,23 @@ type Props = {
  *
  * 「对象类型」清单和可视化画布共用这一个面板，两种入口写出来的草稿结构完全一致。
  */
+/** 取值枚举 ⇄ 文本：一行一个「码值=含义」；只写码值也行。 */
+function formatEnumValues(values: Property["enumValues"]): string {
+  return (values ?? []).map((item) => (item.label ? `${item.value}=${item.label}` : item.value)).join("\n");
+}
+
+function parseEnumValues(text: string): { value: string; label: string }[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("=");
+      return at > 0 ? { value: line.slice(0, at).trim(), label: line.slice(at + 1).trim() } : { value: line, label: "" };
+    })
+    .filter((item) => item.value);
+}
+
 export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTypes, groups = [], interfaces = [], onClose, onSave }: Props) {
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
   const [description, setDescription] = useState(kind === "entity" ? entity?.description ?? "" : relation?.description ?? "");
@@ -104,6 +121,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [required, setRequired] = useState(false);
   const [editingProp, setEditingProp] = useState<number | null>(null);
   const [propDraft, setPropDraft] = useState<Property | null>(null);
+  // 取值枚举的文本编辑态：避免受控输入在「解析 → 回写」之间跳字（空行、半截的 = 都会抖）。
+  const [enumDraft, setEnumDraft] = useState("");
   const [localError, setLocalError] = useState("");
   const [busy, setBusy] = useState(false);
   // 数据来源：只有对象类型有这一块。第 0 份是主来源，其余是按主键补充属性的来源。
@@ -224,7 +243,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
       setLocalError("");
     } catch (reason) { setLocalError(reason instanceof Error ? reason.message : "添加属性失败。"); }
   };
-  const startEditProperty = (index: number) => { setEditingProp(index); setPropDraft({ ...properties[index] }); setLocalError(""); };
+  const startEditProperty = (index: number) => { setEditingProp(index); setPropDraft({ ...properties[index] }); setEnumDraft(formatEnumValues(properties[index].enumValues)); setLocalError(""); };
   const saveProperty = () => {
     try {
       const draft = propDraft;
@@ -235,10 +254,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
       setProperties((current) => current.map((item, i) => i === editingProp ? { ...draft, name: trimmed } : item));
       setEditingProp(null);
       setPropDraft(null);
+      setEnumDraft("");
       setLocalError("");
     } catch (reason) { setLocalError(reason instanceof Error ? reason.message : "保存属性失败。"); }
   };
-  const cancelEditProperty = () => { setEditingProp(null); setPropDraft(null); setLocalError(""); };
+  const cancelEditProperty = () => { setEditingProp(null); setPropDraft(null); setEnumDraft(""); setLocalError(""); };
   const removeProperty = (index: number) => {
     const removed = properties[index];
     setProperties((current) => current.filter((_, i) => i !== index));
@@ -609,6 +629,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         </div>
                       </div>
                       <input className="ted-input ted-prop-desc" value={propDraft.description ?? ""} onChange={(event) => setPropDraft({ ...propDraft, description: event.target.value })} placeholder="说明：这个属性是什么、口径怎么算（可留空）" />
+                      <textarea className="ted-input ted-prop-desc" rows={2} value={enumDraft} onChange={(event) => { setEnumDraft(event.target.value); setPropDraft({ ...propDraft, enumValues: parseEnumValues(event.target.value) }); }} placeholder="取值枚举（可选）：一行一个「码值=含义」，例如 1=全球通（问答检索会把它当取值命中）" />
                     </div>
                   ) : (
                     <div className="ted-prop" key={`${prop.name}-${index}`}>
@@ -618,6 +639,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         <code>{prop.dataType}</code>
                         {prop.required && <i className="ted-tag required">必填</i>}
                         {prop.unique && <i className="ted-tag unique">唯一</i>}
+                        {prop.enumValues?.length ? <i className="ted-tag">{prop.enumValues.length} 个码值</i> : null}
                         {prop.description && <small className="ted-prop-desc-text" title={prop.description}>{prop.description}</small>}
                       </div>
                       <div className="ted-prop-actions">

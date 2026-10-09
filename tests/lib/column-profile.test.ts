@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey } from "@/lib/column-profile";
+import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, enumProfileWarnings, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey } from "@/lib/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 /**
@@ -87,6 +87,39 @@ describe("mappedColumnsFor（只对绑定表、只对被映射的列做画像）
   it("没被任何对象类型绑定的表（或别的数据资源）返回空：调用方据此跳过采样", () => {
     expect(mappedColumnsFor(definition(), 资源id, "GISTOOLS", "TB_OTHER")).toEqual([]);
     expect(mappedColumnsFor(definition(), "00000000-0000-4000-8000-000000000000", "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY")).toEqual([]);
+  });
+
+  it("来源的 dataSourceId 为空（导入后还没补齐绑定）、但模式.表对得上：照样认，别把列画像挡掉", () => {
+    const def = definition();
+    (def.entityTypes[0].sources as { dataSourceId: string }[])[0].dataSourceId = "";
+    expect(mappedColumnsFor(def, 资源id, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY").sort()).toEqual(["CUST_ID", "ZX_FLAG"]);
+  });
+
+  it("dataSourceId 指向本机已不存在的资源（换过平台库 / 删过资源）时按模式.表兜底，但只在传了已知资源 id 时生效", () => {
+    const def = definition();
+    (def.entityTypes[0].sources as { dataSourceId: string }[])[0].dataSourceId = "00000000-0000-4000-8000-0000000000ff";
+    // 知道本机有哪些资源，才判得出这条是悬空引用 —— 兜底认它。
+    expect(mappedColumnsFor(def, 资源id, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY", [资源id]).sort()).toEqual(["CUST_ID", "ZX_FLAG"]);
+    // 不给已知清单就维持旧行为，不在信息不足时乱绑。
+    expect(mappedColumnsFor(def, 资源id, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY")).toEqual([]);
+  });
+});
+
+describe("enumProfileWarnings（声明的取值和列画像对不上要点破）", () => {
+  it("声明了取值但采样里没有 → 提示；对得上就不报（U_TYPE「注释说非空即全球通、实际只有 0/1」就靠它暴露）", () => {
+    const def = definition();
+    const 取值 = def.entityTypes[0].properties[0] as { enumValues?: { value: string; label: string }[] };
+    const columns = [{ name: "ZX_FLAG", distinct: 2, nullRate: 0, values: ["2", "1"], highCardinality: false }];
+    void 取值;
+    // 声明 2/3，采样里只有 2/1 → 3 没出现，报一条。
+    Object.assign(def.entityTypes[0].properties[0], { enumValues: [{ value: "2", label: "互联网专线" }, { value: "3", label: "语音专线" }] });
+    const warnings = enumProfileWarnings(def, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY", columns);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("专线类型");
+    expect(warnings[0]).toContain("3");
+    // 全部对得上 → 不报。
+    Object.assign(def.entityTypes[0].properties[0], { enumValues: [{ value: "2", label: "互联网专线" }, { value: "1", label: "其他" }] });
+    expect(enumProfileWarnings(def, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY", columns)).toEqual([]);
   });
 });
 

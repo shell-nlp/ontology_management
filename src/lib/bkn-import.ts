@@ -255,6 +255,9 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       timeProperty: text(((metric.time_dimension ?? {}) as Unknown).property),
       unitType: text(metric.unit_type),
       unit: /^none$/i.test(unit) ? "" : unit,
+      // 外部导入的口径一律先落 draft：没在本平台核对过，不该被模型当已验收口径引用。
+      status: "draft",
+      owner: "",
       tags: list(metric.tags),
     });
   }

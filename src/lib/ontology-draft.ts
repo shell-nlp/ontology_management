@@ -8,7 +8,7 @@ import type { KeyMapping } from "@/lib/relationship-keys";
  */
 export type PropertyDataType = OntologyDefinition["entityTypes"][number]["properties"][number]["dataType"];
 /** 属性的界面形态：`name` 是机器名，`displayName` / `description` 是给人看的（导入外部本体时会带上原文）。 */
-export type Property = { name: string; displayName?: string; description?: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean; sourceField?: string; sourceId?: string };
+export type Property = { name: string; displayName?: string; description?: string; dataType: PropertyDataType; required: boolean; unique: boolean; indexed: boolean; /** 取值枚举（码值 + 含义）：把「1=全球通」这种口径搬到定义层，见 @/lib/ontology 的 propertySchema。 */ enumValues?: { value: string; label: string }[]; sourceField?: string; sourceId?: string };
 
 /** 类的一份数据来源：一张表/视图，属性和列一一对应。 */
 export type EntitySource = EntitySourceDefinition;

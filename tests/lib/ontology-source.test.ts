@@ -61,6 +61,25 @@ describe("类的数据来源绑定", () => {
   });
 });
 
+describe("属性的取值枚举（码值）", () => {
+  it("属性可以声明取值枚举；不写时是空数组（老快照读出来也是空）", () => {
+    const parsed = ontologyDefinitionSchema.parse({
+      entityTypes: [{
+        id: entityId,
+        name: "全量用户标签",
+        properties: [
+          { name: "U_TYPE", dataType: "TEXT", enumValues: [{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }] },
+          { name: "别的", dataType: "TEXT" },
+        ],
+      }],
+      relationshipTypes: [],
+    });
+    expect(parsed.entityTypes[0].properties[0].enumValues).toEqual([{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }]);
+    // 没声明枚举就是缺省态：老快照读出来也是 undefined（与 sourceField 同一读法）。
+    expect(parsed.entityTypes[0].properties[1].enumValues).toBeUndefined();
+  });
+});
+
 describe("来源绑定的自检", () => {
   const primary = { id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "" };
 
@@ -68,6 +87,16 @@ describe("来源绑定的自检", () => {
     const issues = validateEntitySources({ name: "客户", sources: [{ ...primary, view: "", primaryKey: [] }], properties: [] });
     expect(issues).toHaveLength(1);
     expect(issues[0].severity).toBe("WARN");
+  });
+
+  it("主来源选了表却没绑数据资源（导入后没补齐绑定）：本机有可绑资源时明确提示", () => {
+    const scope = { name: "客户", sources: [{ ...primary, dataSourceId: "" }], properties: [] };
+    const hit = validateEntitySources(scope, { knownSourceIds: [sourceId] }).find((issue) => issue.message.includes("数据资源"));
+    expect(hit).toBeDefined();
+    expect(hit!.severity).toBe("WARN");
+    expect(hit!.message).toContain("补齐");
+    // 一个资源都没登记时不报：没得补，导入那一步已经提醒过（技能示例包导入到空平台就是这种）。
+    expect(validateEntitySources(scope, { knownSourceIds: [] })).toEqual([]);
   });
 
   it("补充来源没填连接键时拦住发布", () => {

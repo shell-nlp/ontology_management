@@ -58,6 +58,64 @@ export function profileTableKey(schema: string, table: string) {
   return `${(schema ?? "").trim()}.${(table ?? "").trim()}`.toUpperCase();
 }
 
+/** 一条来源绑定跟「某数据资源 + 模式.表」对得上的结论。 */
+export type SourceTableBinding = "bound" | "unbound";
+
+/**
+ * 一条来源绑定跟「某数据资源 + 模式.表」对不对得上。
+ *
+ * 抽出来是因为 `mappedColumnsFor`（列画像闸门）和 `objectTypesBoundTo`（get_table_ddl 的反向引用）
+ * 是同一件事的两个调用方：以前各写各的 `source.dataSourceId === dataSourceId`，于是导入后
+ * "有表名、没资源"（`dataSourceId` 为空）的来源在两边同时被判成"没绑定" —— 列画像和反向引用一起瞎。
+ *
+ * 命中口径（表身份 = 模式.表，大小写不敏感；来源模式留空时退回查询的模式）：
+ * - `dataSourceId` 精确相等 → `bound`；
+ * - `dataSourceId` 为空，或传了 `knownSourceIds` 且它指向本机已不存在的资源 → `unbound`
+ *   （导入后还没「补齐数据资源绑定」那种，仍算绑在这张表上）；
+ * - 指向另一个确实存在的资源 → 不匹配（不在信息不足时乱绑）。
+ */
+export function sourceTableBinding(
+  source: { dataSourceId?: string; schema?: string; view?: string },
+  query: { dataSourceId?: string; schema?: string; table?: string; knownSourceIds?: readonly string[] },
+): SourceTableBinding | null {
+  const actual = profileTableKey(source.schema || query.schema || "", source.view ?? "");
+  if (actual !== profileTableKey(query.schema ?? "", query.table ?? "")) return null;
+  const id = (source.dataSourceId ?? "").trim();
+  if (id && id === (query.dataSourceId ?? "").trim()) return "bound";
+  if (!id) return "unbound";
+  if (query.knownSourceIds && !query.knownSourceIds.includes(id)) return "unbound";
+  return null;
+}
+
+/**
+ * 属性上声明的取值枚举与列画像对不上时给出的提示。纯函数，不连库。
+ *
+ * 为什么要有它：U_TYPE 的列注释写「非空即全球通」，实际列里只有 0/1、没有空值 ——
+ * 这种「注释说的」和「数据里实际有的」不一致是错数高发区，拿画像时当场点破，别让模型自己猜。
+ */
+export function enumProfileWarnings(definition: OntologyDefinition, schema: string, table: string, columns: readonly ProfileColumn[]): string[] {
+  const wanted = profileTableKey(schema, table);
+  const byColumn = new Map(columns.map((column) => [column.name.trim().toUpperCase(), column]));
+  const warnings: string[] = [];
+  for (const entity of definition.entityTypes) {
+    for (const source of entitySources(entity)) {
+      if (profileTableKey(source.schema || schema, source.view) !== wanted) continue;
+      for (const property of entity.properties) {
+        const declared = property.enumValues ?? [];
+        if (!declared.length || !property.sourceField) continue;
+        const column = byColumn.get(property.sourceField.trim().toUpperCase());
+        // 高基数 / 没存取值的列没法比 —— 别把「没采样到」当成「对不上」。
+        if (!column || column.highCardinality || !column.values.length) continue;
+        const sampled = new Set(column.values);
+        const missing = declared.map((item) => item.value).filter((value) => !sampled.has(value));
+        if (!missing.length) continue;
+        warnings.push(`属性「${entity.name}.${property.name}」声明了取值 ${missing.join("、")}，但采样里没出现（这一列实际采到：${column.values.slice(0, 10).join("、")}）。核对属性上的取值枚举，或这条数据的口径。`);
+      }
+    }
+  }
+  return warnings;
+}
+
 /** 表 → 列 → 取值。search_schema 的「取值命中」用它，纯内存、不连库。 */
 export type ColumnValueIndex = Map<string, Map<string, string[]>>;
 
@@ -71,13 +129,11 @@ export function columnValueOf(index: ColumnValueIndex | null | undefined, schema
  * 这是「只对绑定表做画像」的落点：没有对象类型引用它，就返回空数组，调用方据此跳过采样。
  * 一份来源里 `sourceId` 留空的属性按主来源算（与 `entitySources` 的读法一致）。
  */
-export function mappedColumnsFor(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string): string[] {
-  const wanted = profileTableKey(schema, table);
+export function mappedColumnsFor(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string, knownSourceIds?: readonly string[]): string[] {
   const columns = new Set<string>();
   for (const entity of definition.entityTypes) {
     for (const source of entitySources(entity)) {
-      if (source.dataSourceId !== dataSourceId) continue;
-      if (profileTableKey(source.schema, source.view) !== wanted) continue;
+      if (!sourceTableBinding(source, { dataSourceId, schema, table, knownSourceIds })) continue;
       for (const property of entity.properties) {
         if (!property.sourceField) continue;
         if (property.sourceId && property.sourceId !== source.id) continue;
@@ -161,11 +217,13 @@ export async function ensureColumnProfile(input: {
   record: DataSourceRecord;
   view: { schema?: string; name: string };
   refresh?: boolean;
+  /** 本机已登记的数据资源 id：用来把「指向已删资源的悬空来源」也算成待补，见 `sourceTableBinding`。 */
+  knownSourceIds?: readonly string[];
 }): Promise<{ profile: ColumnProfile | null; cached: boolean; warning?: string }> {
   const schema = (input.view.schema ?? input.record.schema_name ?? "").trim();
   const table = input.view.name.trim();
   const label = [schema, table].filter(Boolean).join(".");
-  const columns = mappedColumnsFor(input.definition, input.record.id, schema, table);
+  const columns = mappedColumnsFor(input.definition, input.record.id, schema, table, input.knownSourceIds);
   if (!columns.length) {
     return { profile: null, cached: false, warning: `「${label}」没有被任何对象类型绑定，按约定不做列画像（本平台里表只能通过对象类型到达）。` };
   }
@@ -196,19 +254,23 @@ export async function ensureColumnProfile(input: {
  * 工具会如实告诉模型"想按码值检索就先 get_table_ddl 看一眼那张表"。
  */
 export async function cachedColumnValueIndex(definition: OntologyDefinition): Promise<ColumnValueIndex> {
-  const wanted = new Map<string, { sourceId: string; schema: string; table: string }>();
+  /*
+   * 按「模式.表」收集，而不是按数据资源 id：导入后还没补齐绑定的来源（`dataSourceId` 为空）
+   * 没有 id 可查，但它一旦被 get_table_ddl 采过，画像是按「资源 + 模式.表」存的 —— 按表键才捞得回来。
+   */
+  const wanted = new Set<string>();
   for (const entity of definition.entityTypes) {
     for (const source of entitySources(entity)) {
-      if (!source.dataSourceId || !source.view) continue;
-      const key = profileTableKey(source.schema, source.view);
-      if (!wanted.has(key)) wanted.set(key, { sourceId: source.dataSourceId, schema: source.schema, table: source.view });
+      if (!source.view) continue;
+      wanted.add(profileTableKey(source.schema, source.view));
     }
   }
   const index: ColumnValueIndex = new Map();
   if (!wanted.size) return index;
   const repo = await platformRepo(ColumnProfileEntity);
-  const rows = await repo.find({ where: [...new Set([...wanted.values()].map((item) => item.sourceId))].map((sourceId) => ({ sourceId })) });
+  const rows = await repo.find({ where: [...wanted].map((tableKey) => ({ tableKey })) });
   for (const row of rows) {
+    if (!wanted.has(row.tableKey)) continue;
     const stored = row.profile as ColumnProfile | null | undefined;
     if (!stored || !Array.isArray(stored.columns)) continue;
     const columns = new Map<string, string[]>();

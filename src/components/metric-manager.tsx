@@ -67,6 +67,9 @@ function newMetric(entityTypeId: string): Metric {
     timeProperty: "",
     unitType: "",
     unit: "",
+    // 新指标一律先落 draft：没验收过的口径不该被模型当成现成口径直接用。
+    status: "draft",
+    owner: "",
     tags: [],
   } as Metric;
 }
@@ -159,7 +162,7 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
             <BarChart3 size={13} />
             <span>
               <b>{metric.name}</b>
-              <small>{`${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"} · ${scopeName}`}</small>
+              <small>{`${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"} · ${scopeName} · ${(metric.status ?? "draft") === "verified" ? "已验收" : "草稿"}`}</small>
             </span>
           </button>;
         })}
@@ -200,6 +203,13 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
               </select>
             </label>
             <label className="mm-field"><span>单位</span><input disabled={!canEdit} placeholder="条 / 元 / MB / 分" value={current.unit} onChange={(event) => patch({ unit: event.target.value })} /></label>
+            <label className="mm-field"><span>状态</span>
+              <select disabled={!canEdit} value={current.status ?? "draft"} onChange={(event) => patch({ status: event.target.value as Metric["status"] })}>
+                <option value="draft">草稿（还没验收）</option>
+                <option value="verified">已验收（模型可直接引用）</option>
+              </select>
+            </label>
+            <label className="mm-field"><span>负责人（可选）</span><input disabled={!canEdit} placeholder="例如：市场部数据组" value={current.owner ?? ""} onChange={(event) => patch({ owner: event.target.value })} /></label>
             <label className="mm-field mm-span-2"><span>时间维度（可选，按它看趋势）</span>
               <select disabled={!canEdit || !scope} value={current.timeProperty} onChange={(event) => patch({ timeProperty: event.target.value })}>
                 <option value="">不用时间维度</option>

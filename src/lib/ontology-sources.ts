@@ -79,7 +79,7 @@ function mappedKeys(source: EntitySource) {
  * 「还没填完」（没选表、没指定主键）只提示不拦——平台现在不从绑定取数，
  * 建模阶段允许先把结构搭起来。
  */
-export function validateEntitySources(scope: SourceScope): SourceViolation[] {
+export function validateEntitySources(scope: SourceScope, options: { knownSourceIds?: readonly string[] } = {}): SourceViolation[] {
   const sources = scope.sources ?? [];
   const properties = scope.properties ?? [];
   if (!sources.length) {
@@ -95,8 +95,25 @@ export function validateEntitySources(scope: SourceScope): SourceViolation[] {
   const primary = sources[0];
   if (isBlank(primary)) {
     violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没选表 / 视图。`, count: 1, severity: "WARN" });
-  } else if (!primary.primaryKey.length) {
-    violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没指定主键列，对象的身份还没定下来。`, count: 1, severity: "WARN" });
+  } else {
+    /*
+     * 有表名、没资源是导入本体后的常见中间态（见 source-binding.ts 的「补齐数据资源绑定」）。
+     * 以前这里什么都不报，于是这种快照能一路发布 —— 但推理工具按 dataSourceId 认表，
+     * 列画像 / 反向引用 / 取值检索会一起静默失效。用 WARN 不拦：建模中途允许先搭结构。
+     * **只在调用方给了「本机已登记资源」时才报**：一个资源都没登记的话「没绑」无从补起，
+     * 导入那一步已经单独提醒过，发布时再报就是噪音（技能示例包导入到空平台就是这种情形）。
+     */
+    if (!primary.dataSourceId && options.knownSourceIds?.length) {
+      violations.push({
+        rule: `${scope.name}.sources`,
+        message: `对象类型「${scope.name}」的主来源选了表 / 视图「${primary.view}」，但还没绑定数据资源 —— 导入后没补齐绑定就长这样。不补的话问答 / 取数拿不到它的列画像与反向引用，请到「对象」页点「补齐数据资源绑定」。`,
+        count: 1,
+        severity: "WARN",
+      });
+    }
+    if (!primary.primaryKey.length) {
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没指定主键列，对象的身份还没定下来。`, count: 1, severity: "WARN" });
+    }
   }
 
   sources.slice(1).forEach((source, offset) => {
