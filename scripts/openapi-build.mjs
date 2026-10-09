@@ -2,7 +2,7 @@
  * 生成 OpenAPI 之后的两件事（`pnpm openapi` 里的第二步）：
  *
  * 1. **本地化 `public/openapi.json`** —— 生成器只能按路径首段推出英文分组（Ontology / Targets…），
- *    这里换成平台自己的中文分组；再把两套鉴权（会话 Cookie、MCP 令牌）声明上，
+ *    这里换成平台自己的中文分组；再把两套鉴权（平台会话令牌、MCP 令牌，都是 Bearer）声明上，
  *    给每个接口补一个兜底的成功响应（我们的响应体是手写对象，没有 schema）。
  * 2. **自托管文档页面的静态资源** —— 从 devDependency `swagger-ui-dist` 拷 js/css/图标到
  *    `public/swagger-ui/`。不这么做，文档页就只能从 CDN 拉前端 bundle，内网/容器里会白屏。
@@ -44,7 +44,7 @@ const TAG_DESCRIPTION = {
   检索与查询: "对象检索索引，以及只读图查询（SPARQL / Cypher 由存储后端决定）。",
   数据资源: "业务数据源连接与结构读取：库、表、视图、字段。",
   能力验证: "智能问答、工具调用与对话历史。",
-  "能力验证 · MCP": "把本体数据以 MCP 暴露给外部 Agent（会话 Cookie 或 MCP 令牌）。",
+  "能力验证 · MCP": "把本体数据以 MCP 暴露给外部 Agent（平台会话令牌或 MCP 令牌）。",
   本体技能: "建模方法论 Skill 的清单与整体下载。",
   图引擎配置: "本体存储（内置类型图 / Jena）的连接与维护。",
   平台: "登录、会话与首次初始化。",
@@ -52,7 +52,7 @@ const TAG_DESCRIPTION = {
 
 /** 不需要会话的接口：登录/登出/会话探测、首次初始化，以及免令牌的技能 MCP。 */
 const PUBLIC_PATHS = ["/auth/login", "/auth/logout", "/auth/session", "/bootstrap", "/skills/mcp"];
-/** 会话 Cookie 与 MCP 令牌二选一：面向外部 Agent 的 MCP 端点。 */
+/** 平台会话令牌与 MCP 令牌二选一：面向外部 Agent 的 MCP 端点。 */
 const SESSION_OR_TOKEN_PATHS = ["/mcp", "/mcp/info"];
 
 const SWAGGER_FILES = ["swagger-ui.css", "swagger-ui-bundle.js", "swagger-ui-standalone-preset.js", "favicon-16x16.png", "favicon-32x32.png"];
@@ -110,29 +110,33 @@ function ensureSuccessResponses(document) {
   return added;
 }
 
-/** 两套鉴权：平台会话 Cookie 是默认，外部 Agent 可以改用 MCP 令牌。 */
+/**
+ * 两套鉴权**都走 `Authorization: Bearer`**（2026-10-09 起不再用会话 Cookie）：
+ * 平台会话令牌是默认，外部 Agent 可以改用 MCP 访问令牌。
+ *
+ * 两套同名头在 Swagger 页上是两个可分别 Authorize 的 scheme —— 调试时用哪个就授权哪个。
+ */
 function declareSecurity(document) {
   document.components = document.components ?? {};
   document.components.securitySchemes = {
-    SessionCookie: {
-      type: "apiKey",
-      in: "cookie",
-      name: "ontology_session",
-      description: "平台登录后浏览器自带的会话 Cookie（文档页的 Try it out 用的就是它）。",
+    PlatformToken: {
+      type: "http",
+      scheme: "bearer",
+      description: "平台登录返回的会话令牌（POST /api/auth/login 响应里的 token）。在这个页面点 Authorize 粘进去，Try it out 就能用；用 curl / Postman 时填 Authorization: Bearer <token>。",
     },
     McpToken: {
       type: "http",
       scheme: "bearer",
-      description: "外部 MCP 客户端用：Authorization: Bearer <MCP_API_TOKEN>。",
+      description: "外部 MCP 客户端用：Authorization: Bearer <MCP 访问令牌>（在「MCP 调试 → MCP 接入」里生成，可多条、可撤销）。",
     },
   };
-  document.security = [{ SessionCookie: [] }];
+  document.security = [{ PlatformToken: [] }];
   for (const { route, operation } of operationsOf(document)) {
     const security = PUBLIC_PATHS.includes(route)
       ? []
       : SESSION_OR_TOKEN_PATHS.includes(route)
-        ? [{ SessionCookie: [] }, { McpToken: [] }]
-        : [{ SessionCookie: [] }];
+        ? [{ PlatformToken: [] }, { McpToken: [] }]
+        : [{ PlatformToken: [] }];
     operation.security = security;
   }
 }

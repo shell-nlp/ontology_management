@@ -6,6 +6,7 @@ import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Sear
 import { PropertyEditor } from "@/components/property-editor";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/concept-groups";
+import { api } from "@/lib/api-client";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance-property-editor";
 import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/graph/types";
@@ -25,13 +26,6 @@ type ManagedDefinition = {
   /** 概念分组：只影响「查看本体」这一页怎么摆、怎么画框。 */
   groups?: { id: string; name: string; color?: string }[];
 };
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
-  return data as T;
-}
 
 function graphLabel(node: GraphNode, displayProps?: Map<string, string>) {
   if (displayProps) {

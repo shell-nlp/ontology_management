@@ -308,7 +308,7 @@
         <div class="io-row">
           <div class="io-col up">
             <div class="io-col-title">上游 · 谁调用本项目</div>
-            <div class="io-card"><strong>Web Console</strong><span>浏览器用户：打开界面做建模、看图、问答</span><em>HTTP · 会话 Cookie</em></div>
+            <div class="io-card"><strong>Web Console</strong><span>浏览器用户：打开界面做建模、看图、问答</span><em>HTTP · Bearer 令牌</em></div>
             <div class="io-card"><strong>External Agent</strong><span>外部 Agent 客户端：按 MCP 协议查询本体数据</span><em>POST /api/mcp</em></div>
             <div class="io-card"><strong>External Agent</strong><span>外部 Agent 客户端：获取建模方法（公开内容）</span><em>POST /api/skills/mcp · 免令牌</em></div>
             <div class="io-card"><strong>System Integrator</strong><span>系统集成方：按 HTTP 接口对接平台能力</span><em>/api/** · 文档 /docs</em></div>
@@ -357,10 +357,10 @@
             <table class="compact-table">
               <thead><tr><th>Caller ｜ 调用方</th><th>Entry ｜ 入口</th><th>Auth ｜ 鉴权</th></tr></thead>
               <tbody>
-                <tr><td>浏览器用户</td><td><code>/api/**</code>：版本、实例、对象、问答</td><td>会话 Cookie</td></tr>
-                <tr><td>外部 Agent 客户端</td><td><code>POST /api/mcp</code></td><td>会话或访问令牌</td></tr>
+                <tr><td>浏览器用户</td><td><code>/api/**</code>：版本、实例、对象、问答</td><td>Bearer 会话令牌</td></tr>
+                <tr><td>外部 Agent 客户端</td><td><code>POST /api/mcp</code></td><td>Bearer：会话令牌 / MCP 令牌</td></tr>
                 <tr><td>外部 Agent 客户端</td><td><code>POST /api/skills/mcp</code></td><td>免令牌（公开内容）</td></tr>
-                <tr><td>系统集成方</td><td><code>/api/**</code> + 接口文档 <code>/docs</code></td><td>会话 Cookie</td></tr>
+                <tr><td>系统集成方</td><td><code>/api/**</code> + 接口文档 <code>/docs</code></td><td>Bearer 会话令牌</td></tr>
               </tbody>
             </table>
           </div>

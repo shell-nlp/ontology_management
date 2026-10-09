@@ -16,7 +16,7 @@
  * 常用选项：
  *   --url <地址>            平台地址，默认 http://localhost:3000（也可用环境变量 ONTOLOGY_URL）
  *   --email / --password    登录账号（也可用 ONTOLOGY_EMAIL / ONTOLOGY_PASSWORD）
- *   --cookie <cookie>       跳过登录，直接用现成的会话 cookie（也可用 ONTOLOGY_COOKIE）
+ *   --token <token>         跳过登录，直接用现成的会话令牌（也可用 ONTOLOGY_TOKEN）
  *   --storage-target <值>   本体存储：id 或名字（省略时若只有一个存储就自动用它）
  *   --name <值>             导入时改名（默认用文件里的名字）
  *   --publish               导入后立刻发布（默认只建草稿，和界面导入一致）
@@ -49,7 +49,7 @@ function printHelp() {
     "      --url <地址>          平台地址（默认 http://localhost:3000，或环境变量 ONTOLOGY_URL）",
     "      --email <邮箱>        登录账号（或 ONTOLOGY_EMAIL）",
     "      --password <密码>     登录密码（或 ONTOLOGY_PASSWORD）",
-    "      --cookie <cookie>     直接用会话 cookie，跳过登录（或 ONTOLOGY_COOKIE）",
+    "      --token <token>       直接用会话令牌，跳过登录（或 ONTOLOGY_TOKEN）",
     "      --storage-target <值> 本体存储的 id 或名字（省略时若只有一个就自动用它）",
     "      --target <值>         同上",
     "      --name <值>           导入时改名（默认用文件里的名字）",
@@ -73,7 +73,7 @@ function parseArgs(argv) {
     url: process.env.ONTOLOGY_URL?.trim() || "http://localhost:3000",
     email: process.env.ONTOLOGY_EMAIL?.trim() || "",
     password: process.env.ONTOLOGY_PASSWORD || "",
-    cookie: process.env.ONTOLOGY_COOKIE?.trim() || "",
+    token: process.env.ONTOLOGY_TOKEN?.trim() || "",
     target: "",
     name: "",
     dryRun: false,
@@ -94,7 +94,7 @@ function parseArgs(argv) {
     else if (arg === "--url") options.url = next();
     else if (arg === "--email") options.email = next();
     else if (arg === "--password") options.password = next();
-    else if (arg === "--cookie") options.cookie = next();
+    else if (arg === "--token") options.token = next();
     else if (arg === "--storage-target" || arg === "--target") options.target = next();
     else if (arg === "--name") options.name = next();
     else if (arg === "--dry-run" || arg === "--dryrun") options.dryRun = true;
@@ -111,8 +111,8 @@ function parseArgs(argv) {
   }
   options.url = options.url.replace(/\/+$/, "");
   if (!options.file) throw new UsageError("要传一个文件，例如：node scripts/import-ontology.mjs telecom.json");
-  if (!options.cookie && !(options.email && options.password)) {
-    throw new UsageError("要能登录：给 --email 和 --password（或 ONTOLOGY_EMAIL / ONTOLOGY_PASSWORD），或者直接给 --cookie。");
+  if (!options.token && !(options.email && options.password)) {
+    throw new UsageError("要能登录：给 --email 和 --password（或 ONTOLOGY_EMAIL / ONTOLOGY_PASSWORD），或者直接给 --token。");
   }
   return options;
 }
@@ -134,21 +134,17 @@ function readJsonFile(file) {
   }
 }
 
-/** 从 set-cookie 头里抠出所有 cookie，拼成请求头用的 Cookie 串。 */
-function cookieHeaderFrom(response) {
-  const list = typeof response.headers.getSetCookie === "function"
-    ? response.headers.getSetCookie()
-    : [response.headers.get("set-cookie") ?? ""].filter(Boolean);
-  return list.map((item) => item.split(";")[0]).filter(Boolean).join("; ");
-}
-
-async function requestJson(url, { method = "GET", cookie, body, timeoutMs, what }) {
+/**
+ * 一个请求：登录态是 `Authorization: Bearer <平台会话令牌>`（2026-10-09 起不再用 cookie）。
+ * 超时、非 2xx 都翻成人话，调用方只管 "成功拿到 payload"。
+ */
+async function requestJson(url, { method = "GET", token, body, timeoutMs, what }) {
   let response;
   try {
     response = await fetch(url, {
       method,
       headers: {
-        ...(cookie ? { Cookie: cookie } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -165,7 +161,7 @@ async function requestJson(url, { method = "GET", cookie, body, timeoutMs, what 
     const detail = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : text.slice(0, 300);
     throw new Error(`${what}失败：HTTP ${response.status}${detail ? ` · ${detail}` : ""}`);
   }
-  return { response, payload, cookie: cookieHeaderFrom(response) };
+  return { response, payload };
 }
 
 /** 按 id → 名字 → 唯一子串 的顺序挑一个存储；挑不出来就把候选列给人看（`taken` = 已被本体占用的存储数）。 */
@@ -230,17 +226,17 @@ async function main() {
 
   const say = (line) => { if (!options.quiet) console.log(line); };
 
-  let cookie = options.cookie;
+  let token = options.token;
   try {
-    if (!cookie) {
+    if (!token) {
       const login = await requestJson(`${options.url}/api/auth/login`, {
         method: "POST",
         body: { email: options.email, password: options.password },
         timeoutMs: options.timeoutMs,
         what: "登录",
       });
-      cookie = login.cookie;
-      if (!cookie) throw new Error("登录成功但没有拿到会话 cookie。");
+      token = typeof login.payload?.token === "string" ? login.payload.token : "";
+      if (!token) throw new Error("登录成功但没有拿到会话令牌。");
       say(`已登录：${login.payload?.email ?? options.email}`);
     }
 
@@ -249,8 +245,8 @@ async function main() {
      * 把已有本体的存储再拿来导入会撞唯一键 —— 界面上看不见的坑，这里先替用户挡掉。
      */
     const [targets, ontologies] = await Promise.all([
-      requestJson(`${options.url}/api/targets`, { cookie, timeoutMs: options.timeoutMs, what: "读取本体存储" }),
-      requestJson(`${options.url}/api/ontologies`, { cookie, timeoutMs: options.timeoutMs, what: "读取本体列表" }),
+      requestJson(`${options.url}/api/targets`, { token, timeoutMs: options.timeoutMs, what: "读取本体存储" }),
+      requestJson(`${options.url}/api/ontologies`, { token, timeoutMs: options.timeoutMs, what: "读取本体列表" }),
     ]);
     const used = new Set((Array.isArray(ontologies.payload) ? ontologies.payload : []).map((item) => item.target_id).filter(Boolean));
     const available = (Array.isArray(targets.payload) ? targets.payload : []).filter((item) => !used.has(item.id));
@@ -267,7 +263,7 @@ async function main() {
 
     const result = await requestJson(`${options.url}/api/ontologies/import`, {
       method: "POST",
-      cookie,
+      token,
       timeoutMs: options.timeoutMs,
       what: options.dryRun ? "dry-run" : "导入",
       body: {
@@ -286,7 +282,7 @@ async function main() {
       if (!versionId) throw new Error("导入结果里没有版本 id，无法发布。");
       const published = await requestJson(`${options.url}/api/ontology/${versionId}/publish`, {
         method: "POST",
-        cookie,
+        token,
         timeoutMs: options.timeoutMs,
         what: "发布",
       });

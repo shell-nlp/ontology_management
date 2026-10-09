@@ -12,14 +12,14 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 const script = () => path.join(root, "scripts", "import-ontology.mjs");
 /** 清掉账号环境变量：本地开发机上真配了 ONTOLOGY_EMAIL 时，用例不能因此变成"要联网"。 */
-const cleanEnv = { ...process.env, ONTOLOGY_EMAIL: "", ONTOLOGY_PASSWORD: "", ONTOLOGY_COOKIE: "" };
+const cleanEnv = { ...process.env, ONTOLOGY_EMAIL: "", ONTOLOGY_PASSWORD: "", ONTOLOGY_TOKEN: "" };
 
 describe("scripts/import-ontology.mjs", () => {
   it("--help：打用法、退出码 0", () => {
     const run = spawnSync(process.execPath, [script(), "--help"], { encoding: "utf8", env: cleanEnv });
     expect(run.status, run.stderr).toBe(0);
     expect(run.stdout).toContain("node scripts/import-ontology.mjs <文件.json>");
-    for (const flag of ["--dry-run", "--publish", "--storage-target", "--cookie"]) {
+    for (const flag of ["--dry-run", "--publish", "--storage-target", "--token"]) {
       expect(run.stdout, `用法里少了 ${flag}`).toContain(flag);
     }
   });

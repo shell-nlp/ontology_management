@@ -343,6 +343,37 @@
 - 分工：`git log` 是提交历史，`AGENTS.md`（本文）是工程约定与踩坑，`docs/功能实现记录.md` 是功能账本，
   `docs/adr/` 是架构决策。
 
+## 登录态：`Authorization: Bearer`，不再用 Cookie（2026-10-09）
+
+用户口径：「我感觉还是完全改为 Authorization吧，开始吧」。之前是 HttpOnly 会话 Cookie，换的理由是
+**调试与对接**：cookie 方式下 Postman / curl 得先去浏览器里抄 value，跨机器、给同事、写脚本都别扭；
+`Authorization: Bearer` 是调 API 的默认姿势。
+
+**这是一次拿安全性换便利的改动，不是纯重构**：cookie 的 httpOnly 是唯一能把凭据从 JS 里藏起来的手段，
+换成请求头之后令牌必须由前端自己存（`src/lib/session-token.ts`，localStorage），XSS 能读走它。
+取舍已经跟用户确认过；两条缓解手段不许拆：
+
+- 令牌仍是**8 小时过期**的 JWT（`createSession` 的 `setExpirationTime("8h")`）；
+- 服务端**每次都回平台库核对用户**（`userFromToken` → `findSessionUser`），删用户 / 改权限立刻生效。
+
+落点：
+
+- **签发**：`POST /api/auth/login` 在**响应体**里回 `token`（不再 `Set-Cookie`）。
+- **携带**：`src/lib/session-token.ts` 的 `authHeaders()` / `withAuth()`。所有请求都要带 ——
+  `api-client.ts` 与 `graph-canvas` 的 `api()`、流式问答（`qa-studio`）、MCP 调试页、`downloadResponse`。
+  **下载那条最容易忘**：它以前靠浏览器自动带 cookie，现在必须显式带头。
+- **校验**：`src/lib/auth.ts` 的 `currentUser()` 只读 `Authorization`（`bearerToken()` 解析、
+  `userFromToken()` 验签 + 回库）。54 个路由都走 `currentUser()` / `requireRole()`，服务端只改这一处。
+- **登出**：`POST /api/auth/logout` 是**空操作**（无状态 JWT），真正登出是前端 `clearSessionToken()`。
+- **令牌作废的唯一信号**是 `/api/auth/session` 回 `user: null`（`functional-workbench` 开机检查时清本地那份）。
+  **不要**在 `api()` 里见到 401 就清令牌：`requireRole("ADMIN")` 对查看者也是 401，
+  那样会把"权限不足"当成"登录过期"，把查看者踢下线。
+- **MCP 端点（`/api/mcp`）同一个头上认两套**：平台会话 JWT（带 `SESSION_AUDIENCE` 标记）与 `mcp_…`
+  访问令牌。**先试 JWT** —— 令牌不是 JWT 时验签立刻失败、不查库；反过来先试 MCP 令牌则要对清单逐条解密。
+- **Swagger `/docs` 的 Try it out 不再自动带凭据**：要手动点 Authorize 粘令牌
+  （`PlatformToken` / `McpToken` 两个 scheme 分别对应平台接口与 `/api/mcp`；`persistAuthorization` 已开，粘一次会记住）。
+- **命令行导入脚本**的 `--cookie` 已改名 `--token`（环境变量 `ONTOLOGY_TOKEN`）。
+- **别把 cookie 兜底加回来**：两种来源并存会让"为什么这个客户端能调、那个不能"变得不可解释。
 ## 客户端代码约定
 
 **不许直接用"只在安全上下文里存在"的浏览器 API。** 2026-09-14 用户报：用机器 IP 走 http 访问，
@@ -591,8 +622,10 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   - `src/app/docs/route.ts`：文档页面（手写 HTML + Swagger UI），访问路径 **`/docs`**。**不要**改用生成器自带的 UI 脚手架，
     那套默认从 jsDelivr CDN 拉前端 bundle，内网/容器里会白屏。
 - **鉴权**：文档页 `/docs` 与契约 `/openapi.json` 都是**公开**的（只是一份"有哪些接口"的说明书，不含业务数据）；
-  接口本身照旧要会话 Cookie。schema 里声明了 `SessionCookie`（`ontology_session`）与 `McpToken` 两套，
-  全局默认要会话；`/auth/*`、`/bootstrap`、`/skills/mcp` 标成公开，`/mcp`、`/mcp/info` 是「会话或令牌」。
+  接口本身照旧要鉴权。schema 里声明了 `PlatformToken`（平台会话 JWT）与 `McpToken` 两套，**两个都是
+  `http` + `bearer`**（2026-10-09 起不再有会话 Cookie）；全局默认要平台令牌，
+  `/auth/*`、`/bootstrap`、`/skills/mcp` 标成公开，`/mcp`、`/mcp/info` 是「平台令牌或 MCP 令牌」。
+  文档页右上角的 Authorize 是**要手动点、手动粘令牌**的（浏览器不会再自动带凭据），粘一次会记住。
   要收口就改 `scripts/openapi-build.mjs` 的 `PUBLIC_PATHS`，并给那个 route 加 `requireRole`。
 - **命名约定（最容易踩的坑）**：生成器**按变量名合并 schema**，两个路由里都叫 `inputSchema` 就会互相覆盖、
   文档里张冠李戴。2026-09-19 已经改掉 7 个 `inputSchema`、2 个 `patchSchema`、2 个 `createInput`
@@ -969,12 +1002,10 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 - `APP_PORT` / `VERSION_SNAPSHOT_DIR` / `NODE_IMAGE` 是给 compose 做**变量替换**的。
   `env_file:` 里的变量不参与替换，所以四个 `docker:*` 脚本统一带 `--env-file .env.docker`
   （同一个文件既注入容器、又做替换）；手动敲 `docker compose` 时必须自己带上这个参数。
-- **会话 cookie 的 Secure 不能只看 `NODE_ENV`**（2026-09-14 用户报"登录一下就退出"）：
-  容器里 `NODE_ENV=production` 恒成立，直接 http（非 localhost）访问时发 Secure cookie 会被浏览器丢掉，
-  于是登录成功但会话立刻失效。现在由 `src/lib/session-cookie.ts` 的 `sessionCookieSecure()` 决定：
-  先看 `x-forwarded-proto`（代理后面）与请求协议，`https` 才发 Secure，另有 `AUTH_COOKIE_SECURE`
-  可显式覆盖；本机是 https 时不允许被客户端伪造的头部降级。**这条只有用非 localhost 的地址才复现**，
-  验证时两种入口都要试。
+- **登录态不再和 cookie / `Secure` / 协议有关**（2026-10-09 全量改成 `Authorization: Bearer`）：
+  以前用 HttpOnly 会话 cookie，踩过"容器里 `NODE_ENV=production` 恒成立 → http 访问发出 Secure cookie
+  → 浏览器丢掉 → 登录一下就被踢回登录页"（只见于非 localhost 的地址）。现在令牌走请求头，
+  `src/lib/session-cookie.ts` 已删除、`AUTH_COOKIE_SECURE` 不再有意义。**别把 cookie 兜底加回来**。
 - `platform-db.ts` 的连接池挂了 `error` 监听：远端平台库的空闲连接被网络设备掐断时，
   没有监听者就是未捕获的 error 事件（进程可能直接退出，日志还会打出整个连接对象）。
 - **Jena 端点主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**：平台库里若登记的是宿主机地址
@@ -1677,8 +1708,10 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 传输：Streamable HTTP，JSON 响应；实现 `initialize` / `ping` / `tools/list` / `tools/call`，
   通知回 202，GET 回 405（不做服务端推送）。协议版本 `2025-06-18`。
 - 工具：`list_ontologies` + 上面那几个，**每个都多一个 `ontology_id`**（面向外部客户端时，隔离单位是本体而不是存储）。
-- 鉴权：平台会话 Cookie（站内调试）或 `Authorization: Bearer <MCP_API_TOKEN>`（外部客户端）。
-  令牌在 `.env.local`，没有它外部就连不上，不会静默放行。
+- 鉴权：同一个 `Authorization: Bearer` 头上认两套凭据 —— **平台会话 JWT**（站内「MCP 调试」页，
+  2026-10-09 起浏览器也没有 cookie 了）或 **MCP 访问令牌**（外部客户端，界面上可生成多条 / 逐条撤销，
+  `.env.local` 的 `MCP_API_TOKEN` 只是只读兜底）。先试 JWT（不是 JWT 时验签立刻失败、不查库），
+  两个都不认就是 401，不会静默放行。
 - 复用 `reasoning/tools.ts` 的实现，一层都不重写 —— 避免"界面上查得到、MCP 里查不到"的漂移。
 
 | 编号 | 事项 | 现状 | 建议做法 |

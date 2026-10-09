@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { currentUser } from "@/lib/auth";
+import { bearerToken, userFromToken } from "@/lib/auth";
 import { verifyMcpToken } from "@/lib/mcp-token";
 import { getOntology } from "@/lib/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
@@ -131,30 +131,38 @@ export function applyPinnedOntology(args: Record<string, unknown>, pinnedOntolog
 }
 
 /**
- * 两种鉴权：平台会话 Cookie（站内调试用），或 `Authorization: Bearer <MCP_API_TOKEN>`
- * （外部客户端用）。两个都没配就是未授权，不会静默放行。
+ * 同一个 `Authorization` 头上有**两套凭据**，都要认，一个都不能少：
+ *
+ * - **平台会话 JWT**：站内「MCP 调试」页发的。2026-10-09 起登录态统一走请求头（不再有 cookie），
+ *   所以站内调这个端点也得带头 —— 靠 `aud` 标记认（`@/lib/auth` 的 `SESSION_AUDIENCE`）。
+ * - **MCP 访问令牌**：外部客户端用的 `mcp_…` 随机串，可多条、可逐条撤销（`@/lib/mcp-token`）。
+ *
+ * **先试 JWT**：令牌不是 JWT 时验签立刻失败、不查库；反过来先试 MCP 令牌则要对清单里每一条解密再比较。
+ * 两个都不认就是 401，绝不静默放行。
  */
 async function authorization(request: NextRequest) {
-  const header = (request.headers.get("authorization") ?? "").trim();
-  const bearer = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() ?? "";
-  if (bearer) {
-    /*
-     * 令牌由 `@/lib/mcp-token` 解析：**平台库里那条优先**（「MCP 调试 → MCP 接入」里生成/撤销的），
-     * 其次才是 `.env.local` 的 `MCP_API_TOKEN`。比较走恒定时间，不用 `===`。
-     */
-    const { ok, configured } = await verifyMcpToken(bearer);
-    if (ok) return { ok: true as const, via: "token" as const };
+  const bearer = bearerToken(request.headers.get("authorization"));
+  if (!bearer) {
     return {
       ok: false as const,
-      via: "token" as const,
-      reason: configured
-        ? "令牌不正确（可能已经被撤销）。到「MCP 调试 → MCP 接入」核对一下现在有效的令牌。"
-        : "服务端还没有配置访问令牌：到「MCP 调试 → MCP 接入」生成一条，或给 .env.local 补 MCP_API_TOKEN。",
+      via: "none" as const,
+      reason: "未授权：带上 Authorization: Bearer <平台会话令牌>（站内）或 <MCP 访问令牌>（外部客户端）。",
     };
   }
-  const user = await currentUser();
-  if (user) return { ok: true as const, via: "session" as const };
-  return { ok: false as const, via: "none" as const, reason: "未授权：带上平台会话 Cookie，或 Authorization: Bearer <访问令牌>。" };
+  if (await userFromToken(bearer)) return { ok: true as const, via: "session" as const };
+  /*
+   * MCP 令牌由 `@/lib/mcp-token` 解析：**平台库里那条优先**（「MCP 调试 → MCP 接入」里生成/撤销的），
+   * 其次才是 `.env.local` 的 `MCP_API_TOKEN`。比较走恒定时间，不用 `===`。
+   */
+  const { ok, configured } = await verifyMcpToken(bearer);
+  if (ok) return { ok: true as const, via: "token" as const };
+  return {
+    ok: false as const,
+    via: "token" as const,
+    reason: configured
+      ? "令牌不正确：平台会话可能已过期，MCP 访问令牌可能已被撤销。到「MCP 调试 → MCP 接入」核对现在有效的令牌。"
+      : "既没有有效的平台会话，服务端也还没有配置 MCP 访问令牌：站内请重新登录；外部客户端到「MCP 调试 → MCP 接入」生成一条。",
+  };
 }
 
 export async function handleMcpRequest(request: NextRequest, options: { pinnedOntologyId?: string | null } = {}) {

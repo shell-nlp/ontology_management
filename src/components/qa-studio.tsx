@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { MarkdownView } from "@/components/markdown-view";
 import { api } from "@/lib/api-client";
+import { authHeaders } from "@/lib/session-token";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
 import {
@@ -301,7 +302,8 @@ async function streamRun(
 ) {
   const response = await fetch("/api/reasoning/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // 站内流式问答也走 Authorization（2026-10-09 起没有会话 cookie 了）。
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     signal,
     body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}), ...(attachments.length ? { attachments } : {}) }),
   });
@@ -507,7 +509,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   }, [fail, targetId]);
 
   useEffect(() => {
-    void fetch("/api/reasoning/status").then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
+    void fetch("/api/reasoning/status", { headers: authHeaders() }).then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
   }, []);
 
   // 参数随手改随手存：抽屉里没有"保存"按钮 —— 这几个数没有"改到一半"的中间态。

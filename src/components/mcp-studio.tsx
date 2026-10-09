@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
+import { authHeaders } from "@/lib/session-token";
 import type { OntologySummary } from "@/components/ontology-studio";
 import { McpTokenDialog, type McpTokenEntry, type RevealedToken } from "@/components/mcp-token-dialog";
 import "./mcp-studio.css";
@@ -342,7 +343,8 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
       // 调试用的地址跟「MCP 接入」里选的那条一致：默认是本体级端点，能看到"钉死本体"的真实行为。
       const res = await fetch(scopePath, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // 站内调试页用平台会话令牌（2026-10-09 起没有 cookie）；MCP 端点两种凭据都认。
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(envelope),
       });
       const body = await res.json();

@@ -6,7 +6,7 @@
  * 复制出来是 `http://localhost:3001/...` —— 换台机器、发给同事就废了
  * （2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
  *
- * 口径与 `sessionCookieSecure` 一致：代理后面看 `x-forwarded-host` / `x-forwarded-proto`
+ * 口径：代理后面看 `x-forwarded-host` / `x-forwarded-proto`
  * （可能是一串，只看第一段），没有就退回这次请求自己的 `host` 与协议。
  * 两者都没有（极少见）才退回 `nextUrl.origin`。
  *

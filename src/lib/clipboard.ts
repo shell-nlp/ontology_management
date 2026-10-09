@@ -1,3 +1,5 @@
+import { authHeaders } from "@/lib/session-token";
+
 /**
  * 复制到剪贴板。
  *
@@ -32,13 +34,15 @@ export async function copyText(value: string): Promise<boolean> {
 }
 
 /**
- * 让浏览器下载一个需要带会话 cookie 的接口返回的文件。
+ * 让浏览器下载一个需要带会话令牌的接口返回的文件。
  *
  * 用 fetch + Blob 而不是 `location.href = url`：这样能读到 `Content-Disposition` 里的文件名，
  * 失败时也能拿到服务端给的错误文案（直接跳转的话浏览器会展示一坨 JSON）。
+ * 顺带一个好处：登录态走请求头（2026-10-09 起不用 cookie），`location.href` 那条路**带不了头**，
+ * 这里本来就绕开了。
  */
 export async function downloadResponse(url: string, fallbackName: string): Promise<string> {
-  const response = await fetch(url);
+  const response = await fetch(url, { headers: authHeaders() });
   if (!response.ok) {
     const data = (await response.json().catch(() => ({}))) as { error?: unknown };
     throw new Error(typeof data.error === "string" && data.error.trim() ? data.error : `下载失败 (${response.status})`);

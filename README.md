@@ -123,10 +123,9 @@ cp .env.example .env.local
 | --- | :---: | --- |
 | `DATABASE_URL` | ✅ | PostgreSQL 连接串（自动使用 `ontology_platform`） |
 | `TARGET_ENCRYPTION_KEY` | ✅ | 32 字节 Base64 密钥：`openssl rand -base64 32` |
-| `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话 Cookie |
-| `AUTH_COOKIE_SECURE` | 可选 | 会话 Cookie 的 Secure 开关；留空按请求实际协议判断（推荐） |
+| `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话令牌（JWT） |
 | `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | Jena 端点主机名改写；容器默认 `localhost=host.docker.internal`，外部服务可覆盖 |
-| `MCP_API_TOKEN` | 可选 | 外部 MCP 客户端访问 `/api/mcp` 用的 Bearer 令牌；不配则只有平台会话能连（站内「MCP 调试」不受影响） |
+| `MCP_API_TOKEN` | 可选 | 外部 MCP 客户端访问 `/api/mcp` 用的 Bearer 令牌；平台只把它当一条只读兜底（正规做法是在「MCP 调试 → MCP 接入」里生成，可多条、可撤销） |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
 | `ONTOLOGY_VERSION_DIR` | 可选 | 快照目录，默认 `<项目>/.data/ontology-versions` |
@@ -206,11 +205,10 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
   不再配置服务，建议手动移除（`env_file` 仍会把它们注入 app 环境）。
   如果旧连接登记的是 `http://fuseki:3030`，请改成独立服务可达地址，或设置
   `GRAPH_ENDPOINT_HOST_ALIAS=fuseki=host.docker.internal`（服务仍映射到宿主机 3030 时）。
-- **用机器 IP / 域名走 http 访问时，登录能站住**：会话 cookie 的 `Secure` 按**这次请求实际的协议**决定
-  （反向代理后面看 `x-forwarded-proto`），不再只看 `NODE_ENV`。早先只看 `NODE_ENV`，容器里
-  `NODE_ENV=production` 恒成立，于是 http 访问发出去的是 Secure cookie，浏览器直接丢掉 ——
-  现象就是"登录成功了一下马上又被踢回登录页"（localhost 例外，浏览器把它当安全源，所以只在这台机器上
-  用 localhost 测是查不出来的）。前端是 https 而代理没带头时，用 `AUTH_COOKIE_SECURE=true` 兜底。
+- **登录态是请求头，不是 Cookie**（2026-10-09 起）：`POST /api/auth/login` 在响应体里回一枚会话令牌，
+  之后每个请求带 `Authorization: Bearer <令牌>`，浏览器把它存在本地存储里。这样 Postman / curl / 脚本
+  直接就能调（以前得从浏览器里抄会话 Cookie）。代价是令牌对页面脚本可见（没有 httpOnly 保护），
+  换来的好处是免 CSRF 且调试方便；有效期仍是 8 小时，服务端每次请求都回库核对用户。
 - **版本快照目录是状态，不是缓存**：库里只记"某本体发布了 v2"，定义本身在快照目录里
   （容器内 `/data/ontology-versions`，默认绑到项目 `.data/ontology-versions` —— 与本机开发服务同一份，
   `docker compose down` 不会删它；也可以把 `VERSION_SNAPSHOT_DIR` 写成卷名改用命名卷，
@@ -348,7 +346,7 @@ node scripts/import-ontology.mjs "你的文件.json" --storage-target "内置类
 node scripts/import-ontology.mjs "你的文件.json" --publish
 ```
 
-- 账号也能用环境变量给：`ONTOLOGY_EMAIL` / `ONTOLOGY_PASSWORD`（或直接给 `--cookie` 跳过登录）。
+- 账号也能用环境变量给：`ONTOLOGY_EMAIL` / `ONTOLOGY_PASSWORD`（或直接给 `--token` 跳过登录）。
 - `--storage-target` 省略时，若只剩一个没被占用的存储就自动用它；多个候选会把名字列出来。
 - 导入响应里带 `timings`（解析 / 规划 / 绑定 / 建快照），慢的时候一眼看出慢在哪。
 - 三种输入都支持：bkn 知识网络、平台自己的 `ontology.bundle`、以及工具导出的本体包。
@@ -423,7 +421,8 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 | `ADMIN` | 本体与版本、数据资源、图引擎连接、导入导出、本体编辑与删除、审计；实例与动作写入 |
 | `VIEWER` | 登录、浏览、只读查询与智能问答（工具全部只读） |
 
-- 会话：HttpOnly Cookie，`AUTH_SECRET` 签署  
+- 会话：`Authorization: Bearer <平台会话令牌>`，`AUTH_SECRET` 签署的 JWT，8 小时过期；
+  令牌由前端存在本地存储（没有 httpOnly 保护，换来免 CSRF + 便于 Postman / 脚本调试）  
 - 数据面：图库 / PostgreSQL 仅服务端访问，浏览器不接触密码与主密钥  
 - 写入边界：业务写经草稿快照与发布；原生查询一律只读，避免绕过版本  
 
@@ -435,8 +434,8 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `POST` | `/api/bootstrap` | 创建 Schema 与首个管理员（仅一次） |
-| `POST` | `/api/auth/login` | 登录，签发会话 Cookie |
-| `POST` | `/api/auth/logout` | 登出 |
+| `POST` | `/api/auth/login` | 登录，响应体里回会话令牌（`token`），之后用 `Authorization: Bearer` |
+| `POST` | `/api/auth/logout` | 空操作（无状态 JWT，登出由前端丢令牌完成） |
 | `GET` | `/api/auth/session` | 当前会话 |
 
 </details>

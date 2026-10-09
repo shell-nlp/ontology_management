@@ -6,7 +6,9 @@
  * 由 `scripts/openapi-build.mjs` 从 devDependency `swagger-ui-dist` 拷过来），不连外网。
  *
  * 文档页本身不要求登录：它只是"有哪些接口"的说明书，不含任何业务数据。
- * 页面上「Try it out」调接口时用的还是浏览器里已有的会话 Cookie，该 401 还是 401。
+ * 「Try it out」要自己点右上角 Authorize 粘一枚令牌（2026-10-09 起登录态是
+ * `Authorization: Bearer`，浏览器不会再自动带凭据了）：平台会话令牌调平台接口，
+ * MCP 访问令牌调 `/api/mcp`。粘一次会记住（下面 `persistAuthorization: true`）。
  */
 const PAGE = `<!doctype html>
 <html lang="zh-CN">

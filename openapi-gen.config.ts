@@ -7,7 +7,7 @@
  * 文档页面本身是手写的：`src/app/docs/route.ts`（访问路径 `/docs`）。
  *
  * 生成之后还有一道本地化（`scripts/openapi-build.mjs`）：把按路径推出来的英文分组换成平台的中文分组、
- * 声明会话 Cookie 与 MCP 令牌两套鉴权、给每个接口补一个兜底的成功响应。
+ * 声明平台会话令牌与 MCP 令牌两套鉴权（都是 `Authorization: Bearer`）、给每个接口补一个兜底的成功响应。
  * **能在这里表达的（标题、服务器、错误响应形状）就别写进那个脚本**。
  */
 export default {
@@ -18,8 +18,8 @@ export default {
     description: [
       "本体建模、本体实例、数据资源与能力验证的 HTTP 接口。",
       "",
-      "全部接口挂在 `/api` 下。除登录、首次初始化与「本体技能 MCP」外，都需要平台会话 Cookie；",
-      "`/api/mcp` 额外接受 `Authorization: Bearer <MCP_API_TOKEN>`。",
+      "全部接口挂在 `/api` 下。除登录、首次初始化与「本体技能 MCP」外，都要带 `Authorization: Bearer <平台会话令牌>`",
+      "（令牌来自 `POST /api/auth/login` 的 `token` 字段）；`/api/mcp` 额外接受 `Authorization: Bearer <MCP 访问令牌>`。",
       "请求体由各路由里的 zod schema 推断，响应体是手写对象、暂时没有 schema（页面上给的是通用 200）。",
     ].join("\n"),
   },
