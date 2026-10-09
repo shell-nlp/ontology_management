@@ -79,7 +79,7 @@ export type McpTool = {
 
 const ONTOLOGY_PROPERTY = {
   type: "string",
-  description: "本体 id。先调 list_ontologies 拿到；不是图数据库连接 id。",
+  description: "本体 id，决定这次查哪个本体（如 a3ba5564-……）；不是图数据库连接 id。平台级端点必填，本体级端点已在地址里钉死、无需填。",
 };
 
 /** MCP 面向的是"本体"，所以每个工具都多一个 ontology_id，再带上它自己的参数。 */
@@ -162,7 +162,7 @@ async function listOntologySummaries() {
 
 /** 走和平台内一致的解析路径：本体 → 落点 → 已发布定义 → 图库。 */
 async function contextFor(ontologyId: string): Promise<ToolContext> {
-  if (!ontologyId) throw new Error("缺少 ontology_id。先调 list_ontologies 拿一个。");
+  if (!ontologyId) throw new Error("缺少 ontology_id：平台级端点每次调用要带本体 id；也可以直接用本体级端点 /api/mcp/<本体 id>，那里地址就钉死了。");
   const ontology = await getOntology(ontologyId);
   if (!ontology) throw new Error(`没有 id 为 ${ontologyId} 的本体。`);
   const target = await getTarget(ontology.target_id);

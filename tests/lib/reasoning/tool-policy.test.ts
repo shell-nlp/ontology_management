@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { callMcpTool, mcpToolCatalog, mcpTools } from "@/lib/reasoning/mcp";
 import { applyPinnedOntology } from "@/lib/reasoning/mcp-endpoint";
-import { emptyToolPolicy, normalizeToolPolicy, resolveToolPolicy, togglableToolNames, toolPolicyKey, TOOL_POLICY_KEY } from "@/lib/reasoning/tool-policy";
+import { stripOntologyId } from "@/lib/mcp-schema";
+import { DEFAULT_DISABLED_TOOLS, defaultToolPolicy, normalizeToolPolicy, resolveToolPolicy, togglableToolNames, toolPolicyKey, TOOL_POLICY_KEY } from "@/lib/reasoning/tool-policy";
 
 /**
  * 工具开关的**两个层级**（2026-10-08 用户口径：「工具的开关配置会根据不同的本体而不同吗」→ 要做）。
@@ -40,9 +41,9 @@ describe("resolveToolPolicy", () => {
     expect(resolved.policy.disabledTools).toEqual(["run_sql"]);
   });
 
-  it("两层都没配 = 全开（DEFAULT）", () => {
-    expect(resolveToolPolicy(null, null)).toEqual({ policy: emptyToolPolicy(), source: "DEFAULT" });
-    expect(resolveToolPolicy(undefined, undefined).source).toBe("DEFAULT");
+  it("两层都没配 = 出厂默认（DEFAULT）：动作定义 / 两个实例工具默认关闭（本体列表默认开着）", () => {
+    expect(resolveToolPolicy(null, null)).toEqual({ policy: defaultToolPolicy(), source: "DEFAULT" });
+    expect(resolveToolPolicy(undefined, undefined).policy.disabledTools).toEqual(DEFAULT_DISABLED_TOOLS);
   });
 
   it("脏数据会被归一化：不认识的工具名进不来，重复的去掉", () => {
@@ -66,6 +67,36 @@ describe("applyPinnedOntology（本体级 MCP 端点）", () => {
   it("平台级端点（没钉本体）原样透传参数", () => {
     const args = { query: "客户", ontology_id: "22222222-2222-4222-8222-222222222222" };
     expect(applyPinnedOntology(args, null)).toEqual(args);
+  });
+});
+
+/**
+ * 本体级端点的 `tools/list` 不暴露 `ontology_id`：它恒被 URL 钉死，标成必填只会误导客户端。
+ */
+describe("stripOntologyId（本体级端点的参数表）", () => {
+  const schema = {
+    type: "object",
+    properties: { ontology_id: { type: "string" }, query: { type: "string" } },
+    required: ["ontology_id", "query"],
+  };
+
+  it("properties 与 required 里的 ontology_id 都去掉，其余留着", () => {
+    expect(stripOntologyId(schema)).toEqual({
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    });
+  });
+
+  it("不改原 schema（纯函数，别把目录里那份改了）", () => {
+    stripOntologyId(schema);
+    expect(schema.required).toEqual(["ontology_id", "query"]);
+    expect(Object.keys(schema.properties)).toEqual(["ontology_id", "query"]);
+  });
+
+  it("本来就没有 ontology_id 的工具（如 list_ontologies）原样返回", () => {
+    const bare = { type: "object", properties: {} };
+    expect(stripOntologyId(bare)).toBe(bare);
   });
 });
 

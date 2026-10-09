@@ -27,7 +27,7 @@ export function toolPolicyKey(ontologyId?: string | null): string {
   return id ? `${TOOL_POLICY_KEY}:${id}` : TOOL_POLICY_KEY;
 }
 
-/** 这份策略是哪来的：本体自己的覆盖 / 全局默认 / 谁都没配（等于全开）。 */
+/** 这份策略是哪来的：本体自己的覆盖 / 全局默认 / 谁都没配（=出厂默认）。 */
 export type ToolPolicySource = "ONTOLOGY" | "GLOBAL" | "DEFAULT";
 
 export type ResolvedToolPolicy = {
@@ -57,6 +57,26 @@ export function emptyToolPolicy(): ToolPolicy {
   return { disabledTools: [] };
 }
 
+/**
+ * 出厂默认关掉的工具：**两层都没配**时生效。
+ *
+ * 2026-10-09 用户口径：动作定义 / 对象实例查询 / 关系子图查询「默认关闭」。
+ * **不含 `list_ontologies`** —— 平台级端点的客户端得靠它列出本体、拿 `ontology_id`，
+ * 默认开着（同日用户追加：「平台级的本体列表工具要打开」）。
+ * 不把这些标成工具上的 `disabled`（那是平台永久停用、开关都没了），
+ * 只在没配开关时默认关 —— 用户仍可在「MCP 调试」里按本体或全局单独打开。
+ */
+export const DEFAULT_DISABLED_TOOLS: readonly string[] = [
+  "list_actions",
+  "query_object_instance",
+  "query_instance_subgraph",
+];
+
+/** 出厂默认的那一份策略（两层都没配时生效）。 */
+export function defaultToolPolicy(): ToolPolicy {
+  return { disabledTools: [...DEFAULT_DISABLED_TOOLS] };
+}
+
 /** 全局行 / 覆盖行都存在时的取值规则。纯函数，单测直接喂值。 */
 export function resolveToolPolicy(globalValue: unknown, overrideValue: unknown | null): { policy: ToolPolicy; source: ToolPolicySource } {
   if (overrideValue !== null && overrideValue !== undefined) {
@@ -66,7 +86,7 @@ export function resolveToolPolicy(globalValue: unknown, overrideValue: unknown |
   if (globalValue !== null && globalValue !== undefined) {
     return { policy: normalizeToolPolicy(globalValue), source: "GLOBAL" };
   }
-  return { policy: emptyToolPolicy(), source: "DEFAULT" };
+  return { policy: defaultToolPolicy(), source: "DEFAULT" };
 }
 
 /** 归一化：只保留"确实存在、且可以开关"的名字，顺手去重。脏数据不会把工具误关。 */
@@ -108,7 +128,7 @@ export async function loadResolvedToolPolicy(ontologyId?: string | null): Promis
     policy: resolved.policy,
     source: resolved.source,
     ontologyId: id,
-    global: global ?? emptyToolPolicy(),
+    global: global ?? defaultToolPolicy(),
     override,
   };
 }

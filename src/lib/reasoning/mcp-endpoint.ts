@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bearerToken, userFromToken } from "@/lib/auth";
 import { verifyMcpToken } from "@/lib/mcp-token";
+import { stripOntologyId } from "@/lib/mcp-schema";
 import { getOntology } from "@/lib/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
 import { loadToolPolicy, type ToolPolicy } from "@/lib/reasoning/tool-policy";
@@ -48,7 +49,7 @@ async function handleMessage(
   if (method === "initialize") {
     const instructions = options.pinned
       ? `这是本体平台的 MCP 服务，已经绑定到本体「${options.pinned.name}」（id ${options.pinned.id}）：所有工具都会自动用这个本体，你不必自己填 ontology_id，也不要改它。用 search_schema 确认概念名，再用 get_object_type / list_actions / get_table_ddl / run_sql 读定义与数据。只读，且只覆盖本体定义这一层（不查实例数据）。`
-      : "这是本体平台的 MCP 服务。先调 list_ontologies 拿到 ontology_id，再用 search_schema 确认概念名，然后用 get_object_type / list_actions 读对象类型与动作的定义。本服务只覆盖本体定义这一层（对象类型、属性、关系类型、动作、数据来源绑定），不查实例数据；所有工具只读。";
+      : "这是本体平台的 MCP 服务，一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁；也可以改用本体级端点 /api/mcp/<本体 id>，那里地址已把本体钉死，无需自己填。用 search_schema 确认概念名，再用 get_object_type / list_actions 读对象类型与动作的定义。本服务只覆盖本体定义这一层（对象类型、属性、关系类型、动作、数据来源绑定），不查实例数据；所有工具只读。";
     return {
       jsonrpc: "2.0" as const,
       id: id ?? null,
@@ -68,7 +69,13 @@ async function handleMessage(
       jsonrpc: "2.0" as const,
       id: id ?? null,
       result: {
-        tools: mcpTools(options.listPolicy.disabledTools).map((tool) => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema })),
+        // 本体级端点：ontology_id 恒被 URL 钉死，参数表里不暴露它（见 stripOntologyId）。
+        tools: mcpTools(options.listPolicy.disabledTools).map((tool) => ({
+          name: tool.name,
+          title: tool.title,
+          description: tool.description,
+          inputSchema: options.pinned ? stripOntologyId(tool.inputSchema) : tool.inputSchema,
+        })),
       },
     };
   }

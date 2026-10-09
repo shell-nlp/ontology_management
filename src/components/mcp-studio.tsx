@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
+import { stripOntologyId } from "@/lib/mcp-schema";
 import { authHeaders } from "@/lib/session-token";
 import type { OntologySummary } from "@/components/ontology-studio";
 import { McpTokenDialog, type McpTokenEntry, type RevealedToken } from "@/components/mcp-token-dialog";
@@ -89,12 +90,15 @@ function typeLabel(property: SchemaProperty) {
 /**
  * 「自动填参」：本体 id 用当前选中的，数据资源名用本机登记的第一个 ——
  * 这两个是从名字猜不出来的，不填就等着看"xxx 不能为空"；其余按类型给示例值。
+ *
+ * `includeOntologyId`：本体级端点时传 false —— 那边 `ontology_id` 由地址钉死、
+ * 参数表里也不显示它，示例参数就没必要再摆一个。
  */
-function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource = "") {
+function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource = "", includeOntologyId = true) {
   const properties = tool.inputSchema.properties ?? {};
   const result: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(properties)) {
-    if (name === "ontology_id") { result[name] = ontologyId; continue; }
+    if (name === "ontology_id") { if (includeOntologyId) result[name] = ontologyId; continue; }
     if (name === "data_source") { if (defaultDataSource) result[name] = defaultDataSource; continue; }
     if (name === "query") { result[name] = "用户 订单"; continue; }
     if (name === "type_name") { result[name] = "用户"; continue; }
@@ -233,6 +237,11 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const ontologyId = (selectedOntologyId || ontologies[0]?.id || "").trim();
   const ontologyName = ontologies.find((item) => item.id === ontologyId)?.name ?? ontologyId;
   const defaultDataSource = dataSourceNames[0] ?? "";
+  /**
+   * scope = 当前本体（默认）时，`ontology_id` 由地址钉死、端点也不返回它，
+   * 调试页因此同样要把它藏起来（参数表 / 文档 / 示例参数）—— 页面原则是"看到什么就是什么"。
+   */
+  const pinnedScope = scope === "ontology" && Boolean(ontologyId);
   const absoluteUrl = info?.absoluteUrl ?? "";
   /*
    * 两条地址：
@@ -259,7 +268,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
       // 有可能只认得到自己的 localhost，复制出去换台机器就废了（2026-09-18 用户报的）。
       setInfo({ ...data, absoluteUrl: `${window.location.origin}${data.endpoint}` });
       const first = data.tools.find((tool) => tool.name === "search_schema") ?? data.tools[0];
-      if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId), null, 2)); }
+      if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId, "", !pinnedScope), null, 2)); }
     }).catch(fail);
     // 只在挂载 / 换本体时取一次；换了工具 / 数据资源时由 select 按最新依赖重填示例参数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -316,10 +325,10 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
 
   const select = useCallback((tool: McpTool) => {
     setActiveName(tool.name);
-    setArgumentsText(JSON.stringify(exampleArguments(tool, ontologyId, defaultDataSource), null, 2));
+    setArgumentsText(JSON.stringify(exampleArguments(tool, ontologyId, defaultDataSource, !pinnedScope), null, 2));
     setResponse("");
     setShowDoc(false);
-  }, [defaultDataSource, ontologyId]);
+  }, [defaultDataSource, ontologyId, pinnedScope]);
 
   const run = useCallback(async () => {
     if (!active) return;
@@ -370,8 +379,12 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
 
   if (!info) return <section className="stack"><div className="panel functional-panel">正在读取 MCP 信息…</div></section>;
 
-  const properties = Object.entries(active?.inputSchema.properties ?? {});
-  const required = new Set(active?.inputSchema.required ?? []);
+  /** 参数表跟着 scope 走：本体级端点不暴露 ontology_id，页面也不显示它（平台级则保留）。 */
+  const activeSchema = active
+    ? (pinnedScope ? (stripOntologyId(active.inputSchema as unknown as Record<string, unknown>) as unknown as ToolSchema) : active.inputSchema)
+    : undefined;
+  const properties = Object.entries(activeSchema?.properties ?? {});
+  const required = new Set(activeSchema?.required ?? []);
   /** 真正对外可用的工具数：平台停用的与用户关掉的都不算。 */
   const availableCount = info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length;
   /** 弹窗里刚「查看」过的那条：下面的接入配置片段用的就是它（片段只能带一个令牌）。 */
@@ -432,7 +445,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
           <p className="mcp-scope-note">
             {scope === "ontology"
               ? "钉死在这个本体：工具清单按它自己的开关给，调工具时自动用它的 ontology_id —— 模型不用也不该自己填，避免查错本体。"
-              : "一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁，客户端先调 list_ontologies 拿 id。"}
+              : "一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁。本体 id 在平台上的本体列表里；开启 list_ontologies 后外部客户端也能自己列出来。"}
           </p>
         </div>
         {/*
@@ -596,7 +609,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
                   <button className="action compact" onClick={() => setShowDoc((current) => !current)}>
                     <FileJson size={13} />{showDoc ? "收起文档" : "接口文档"}
                   </button>
-                  <button className="action compact" onClick={() => setArgumentsText(JSON.stringify(exampleArguments(active, ontologyId), null, 2))}>
+                  <button className="action compact" onClick={() => setArgumentsText(JSON.stringify(exampleArguments(active, ontologyId, defaultDataSource, !pinnedScope), null, 2))}>
                     <Wand2 size={13} />自动填参
                   </button>
                   <button className="action primary compact" disabled={busy || info.disabledTools.includes(activeName)} onClick={() => void run()}>
@@ -606,7 +619,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
               </div>
               <p className="mcp-desk-desc">{active.description}</p>
 
-              {showDoc && <pre className="mcp-doc">{JSON.stringify(active.inputSchema, null, 2)}</pre>}
+              {showDoc && <pre className="mcp-doc">{JSON.stringify(activeSchema ?? active.inputSchema, null, 2)}</pre>}
 
               <div className="mcp-section">
                 <div className="mcp-section-head">
