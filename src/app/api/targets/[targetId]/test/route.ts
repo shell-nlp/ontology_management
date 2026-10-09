@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isUnauthorized, requireRole } from "@/lib/auth";
+import { isUnauthorized, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTargetKind } from "@/lib/graph/types";
 import { describeTargetError, getTarget } from "@/lib/targets";
@@ -8,7 +8,7 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
   // 出错时也要按这个存储的引擎给提示，所以 kind 提到 try 外面。
   let kind: GraphTargetKind = "JENA";
   try {
-    await requireRole("ADMIN");
+    await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });

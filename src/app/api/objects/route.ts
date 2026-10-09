@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { parsePrimaryKeyInput } from "@/lib/object-identity";
 import { getObject, queryObjects, resolveObjectContext } from "@/lib/object-service";
 
@@ -42,7 +42,7 @@ function parseFilters(values: string[]) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const params = request.nextUrl.searchParams;
     const targetId = params.get("targetId");
     const entityType = params.get("entityType");
@@ -69,7 +69,6 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(result);
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status: apiErrorStatus(error) });
   }
 }

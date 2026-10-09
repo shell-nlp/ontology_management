@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/graph/types";
 import { getObjectIndex } from "@/lib/object-index";
@@ -13,7 +13,7 @@ const clearInput = z.object({ confirm: z.string().min(1) });
 export async function GET(_: NextRequest, context: { params: Promise<{ targetId: string }> }) {
   let kind: GraphTargetKind = "JENA";
   try {
-    await requireRole("VIEWER");
+    await requirePermission("target.read");
     const { targetId } = await context.params;
     if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);
@@ -34,7 +34,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ targetId:
 export async function POST(request: NextRequest, context: { params: Promise<{ targetId: string }> }) {
   let kind: GraphTargetKind = "JENA";
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.publish");
     const { targetId } = await context.params;
     if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，不能整体清空；请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);

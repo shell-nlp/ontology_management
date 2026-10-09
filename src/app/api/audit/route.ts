@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { AUDIT_SCOPE_OPTIONS, auditActionsForScope, normalizeAuditScope } from "@/lib/audit";
 import { listPlatformAudit, listPlatformUsers } from "@/lib/platform-db";
 import { listTargets } from "@/lib/targets";
@@ -21,7 +21,7 @@ import { listTargets } from "@/lib/targets";
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("ADMIN");
+    await requirePermission("audit.read");
     const params = request.nextUrl.searchParams;
     const scope = normalizeAuditScope(params.get("scope"));
     const action = params.get("action")?.trim() ?? "";
@@ -63,8 +63,7 @@ export async function GET(request: NextRequest) {
       actors: actors.map((actor) => ({ id: actor.id, email: actor.email })),
     });
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取审计记录。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取审计记录。") }, { status: apiErrorStatus(error) });
   }
 }
 

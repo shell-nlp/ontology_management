@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
 import { parsePrimaryKeyInput } from "@/lib/object-identity";
 import { ensureObjectInDraft, resolveObjectContext } from "@/lib/object-service";
 import { getTarget } from "@/lib/targets";
@@ -24,7 +24,7 @@ const materializeInput = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireRole("ADMIN");
+    await requirePermission("instance.write");
     const input = materializeInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });

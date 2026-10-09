@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { And, In, LessThanOrEqual, MoreThanOrEqual, type FindOptionsWhere } from "typeorm";
 import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/db";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
+import { effectivePermissions, type Permission } from "@/lib/permissions";
+import { RoleEntity } from "@/lib/db/entities";
 
 /**
  * 平台库（PostgreSQL）的数据访问。
@@ -14,23 +16,54 @@ import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
  * 本文件与所有调用点都不需要动。
  */
 
-export type Role = "ADMIN" | "VIEWER";
-
+/**
+ * 平台账号。**权限不在人身上，在角色上**（2026-10-09 RBAC）：
+ * 用户只挂一个 `roleId`，角色才是一组权限点。
+ */
 export type PlatformUser = {
   id: string;
   email: string;
-  role: Role;
+  roleId: string;
+  roleName: string;
+  permissions: Permission[];
+  disabled: boolean;
   password_hash: string;
 };
 
+/** 不含密码的那一份（会话、列表、审计筛选用）。 */
+export type PlatformUserView = Omit<PlatformUser, "password_hash">;
+
 export { ensurePlatformSchema, withAdvisoryLock, withPlatformTransaction };
 
-/** 按 id 取当前有效用户；找不到说明这个会话已经不该再用（换库、删用户、改权限）。 */
-export async function findSessionUser(id: string): Promise<Pick<PlatformUser, "id" | "email" | "role"> | null> {
+/**
+ * 角色 → 它的权限集。**每次取用户都要走这里**，这就是"改角色立刻生效"的实现方式：
+ * 权限只在库里存一份（角色上），不缓存到会话或进程里。
+ *
+ * 不放 `@/lib/users` 是为了避免循环 import（那个模块反过来要用本文件的 repo 工具）。
+ */
+async function roleSnapshot(roleId: string): Promise<{ id: string; name: string; permissions: Permission[] } | null> {
+  const repo = await platformRepo(RoleEntity);
+  const role = await repo.findOne({ where: { id: roleId } });
+  if (!role) return null;
+  // `effectivePermissions` 里对内置 admin 直接返回全部权限点（用户口径：admin 拥有所有权限）。
+  return { id: role.id, name: role.name, permissions: effectivePermissions(role.id, role.permissions) };
+}
+
+/**
+ * 按 id 取当前有效用户（连角色与权限一起，**每次请求都会走这里**）。
+ *
+ * 三种情况都返回 null，调用方一律当"这个令牌不认了"：用户不存在（删了）、
+ * **被停用**（`disabled_at` 非空）、角色被删（外键是 RESTRICT，正常不会有，防御性判断）。
+ * 因为每次都回库，"停用立刻生效"不需要等令牌过期。
+ */
+export async function findSessionUser(id: string): Promise<PlatformUserView | null> {
   const repo = await platformRepo(PlatformUserEntity);
-  const user = await repo.findOne({ where: { id }, select: { id: true, email: true, role: true } });
+  const user = await repo.findOne({ where: { id } });
   if (!user) return null;
-  return { id: user.id, email: user.email, role: user.role as Role };
+  if (user.disabledAt) return null;
+  const role = await roleSnapshot(user.roleId);
+  if (!role) return null;
+  return { id: user.id, email: user.email, roleId: role.id, roleName: role.name, permissions: role.permissions, disabled: false };
 }
 
 /** 按邮箱取账号（含密码哈希）：登录用。 */
@@ -38,7 +71,16 @@ export async function findUserByEmail(email: string): Promise<PlatformUser | nul
   const repo = await platformRepo(PlatformUserEntity);
   const user = await repo.findOne({ where: { email: email.trim().toLowerCase() } });
   if (!user) return null;
-  return { id: user.id, email: user.email, role: user.role as Role, password_hash: user.passwordHash };
+  const role = await roleSnapshot(user.roleId);
+  return {
+    id: user.id,
+    email: user.email,
+    roleId: user.roleId,
+    roleName: role?.name ?? "",
+    permissions: role?.permissions ?? [],
+    disabled: Boolean(user.disabledAt),
+    password_hash: user.passwordHash,
+  };
 }
 
 /** 用户总数：首次启动引导用。 */
@@ -47,11 +89,17 @@ export async function countUsers(): Promise<number> {
   return repo.count();
 }
 
-/** 建用户（引导流程与将来的用户管理都用它）。 */
-export async function insertUser(input: { id?: string; email: string; passwordHash: string; role?: Role }) {
+/** 建用户（引导流程与用户管理都用它）。默认给 `admin` 角色 —— 只有平台首次装配会走默认值。 */
+export async function insertUser(input: { id?: string; email: string; passwordHash: string; roleId?: string }) {
   const repo = await platformRepo(PlatformUserEntity);
   const id = input.id ?? randomUUID();
-  await repo.insert({ id, email: input.email.trim().toLowerCase(), passwordHash: input.passwordHash, role: input.role ?? "ADMIN" });
+  await repo.insert({
+    id,
+    email: input.email.trim().toLowerCase(),
+    passwordHash: input.passwordHash,
+    roleId: input.roleId ?? "admin",
+    disabledAt: null,
+  });
   return id;
 }
 
@@ -186,10 +234,11 @@ export async function listPlatformAudit(input: {
 
 
 /** 平台用户清单：审计页的"操作人"筛选用它（用户数量很小，整表取回即可）。 */
-export async function listPlatformUsers(): Promise<{ id: string; email: string; role: Role }[]> {
+export async function listPlatformUsers(): Promise<{ id: string; email: string; roleId: string; roleName: string }[]> {
   const repo = await platformRepo(PlatformUserEntity);
+  const roles = new Map((await (await platformRepo(RoleEntity)).find()).map((role) => [role.id, role.name]));
   const rows = await repo.find({ order: { email: "ASC" } });
-  return rows.map((row) => ({ id: row.id, email: row.email, role: row.role as Role }));
+  return rows.map((row) => ({ id: row.id, email: row.email, roleId: row.roleId, roleName: roles.get(row.roleId) ?? "" }));
 }
 /**
  * 平台级设置：一段 JSON 存在库里，按 key 取。

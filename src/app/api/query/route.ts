@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, currentUser } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -19,8 +19,8 @@ const requestInput = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await currentUser();
-    if (!user) return NextResponse.json({ error: "未授权。" }, { status: 401 });
+    // 只读图查询：能看实例的人就能查（和实例图谱同一档权限）。
+    const user = await requirePermission("instance.read");
     const input = requestInput.parse(await request.json());
     const statement = input.query;
     if (!statement) return NextResponse.json({ error: "查询语句不能为空。" }, { status: 400 });
@@ -34,6 +34,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "GRAPH_QUERY_READ", details: { language: store.info.queryLanguage, query: statement } });
     return NextResponse.json({ ...result, mode: "READ", queryLanguage: store.info.queryLanguage });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "查询执行失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "查询执行失败。") }, { status: apiErrorStatus(error) });
   }
 }

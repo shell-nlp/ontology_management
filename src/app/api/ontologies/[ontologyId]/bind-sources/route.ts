@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getOntology } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -22,7 +22,7 @@ const bindInput = z.object({
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -43,14 +43,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ont
       dataSources: sources.filter((source) => source.enabled).map((source) => ({ id: source.id, name: source.name, kind: source.kind })),
     });
   } catch (error) {
-    const unauthorized = isUnauthorized(error);
-    return NextResponse.json({ error: unauthorized ? "未授权。" : apiErrorMessage(error, "无法读取待补绑定的数据来源。") }, { status: unauthorized ? 401 : 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取待补绑定的数据来源。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.write");
     const { ontologyId } = await context.params;
     const input = bindInput.parse(await request.json());
     const ontology = await getOntology(ontologyId);
@@ -69,8 +68,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ on
     });
     return NextResponse.json({ saved: true, definition: saved });
   } catch (error) {
-    const unauthorized = isUnauthorized(error);
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "保存数据来源绑定失败。");
-    return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
+    return NextResponse.json({ error: message }, { status: apiErrorStatus(error) });
   }
 }

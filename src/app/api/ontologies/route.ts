@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/graph/types";
 import { createOntology, listOntologies } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -52,7 +52,7 @@ async function withSummary() {
 
 export async function GET() {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     // 存储资源不是本体：列表只展示用户显式创建或导入的本体。
     // 旧版「给未关联资源自动补本体」会把平台内置资源也误建成一条本体。
     return NextResponse.json(await withSummary());
@@ -63,7 +63,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.write");
     const input = ontologyCreateInput.parse(await request.json());
     const ontology = await createOntology(input, user.id);
     await writeAuditEntry({

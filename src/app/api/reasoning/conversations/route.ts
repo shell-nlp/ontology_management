@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { getOntologyByTargetId } from "@/lib/ontologies";
 import { listConversations } from "@/lib/reasoning/conversations";
 
@@ -9,7 +9,7 @@ import { listConversations } from "@/lib/reasoning/conversations";
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const ontology = await getOntologyByTargetId(targetId);

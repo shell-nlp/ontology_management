@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getDataSource, openDataSource } from "@/lib/data-sources";
 import { cachedStructure } from "@/lib/data-source/structure-cache";
 import type { DataViewField, DataViewPreview } from "@/lib/data-source/types";
@@ -13,7 +13,7 @@ import type { DataViewField, DataViewPreview } from "@/lib/data-source/types";
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ sourceId: string; viewName: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("datasource.read");
     const { sourceId, viewName } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -40,6 +40,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
     });
     return NextResponse.json({ ...hit.value, fetched_at: hit.fetchedAt, from_cache: hit.fromCache });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取表结构。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取表结构。") }, { status: apiErrorStatus(error) });
   }
 }

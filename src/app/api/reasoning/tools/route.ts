@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, currentUser, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { clearToolPolicyOverride, loadResolvedToolPolicy, saveToolPolicy, togglableToolNames } from "@/lib/reasoning/tool-policy";
 
@@ -39,18 +39,18 @@ async function readState(ontologyId: string | null) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("reasoning.use");
     const ontologyId = request.nextUrl.searchParams.get("ontologyId")?.trim() || null;
     return NextResponse.json(await readState(ontologyId));
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取工具开关。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取工具开关。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
     const user = await currentUser();
-    await requireRole("ADMIN");
+    await requirePermission("mcp.token.manage");
     const input = reasoningToolsInput.parse(await request.json());
     if (input.reset) {
       if (!input.ontologyId) return NextResponse.json({ error: "撤销覆盖要带 ontologyId。" }, { status: 400 });
@@ -70,6 +70,6 @@ export async function PUT(request: NextRequest) {
     });
     return NextResponse.json(await readState(input.ontologyId ?? null));
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "保存工具开关失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "保存工具开关失败。") }, { status: apiErrorStatus(error) });
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requireRole } from "@/lib/auth";
+import { isUnauthorized, requirePermission } from "@/lib/auth";
 import { getObjectIndex } from "@/lib/object-index";
 import { getTarget } from "@/lib/targets";
 
@@ -32,7 +32,7 @@ function fail(error: unknown, fallback: string) {
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const input = searchSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
 /** 索引状态与能力：条目数、按类的分布、以及全文/模糊/向量是否可用。 */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);

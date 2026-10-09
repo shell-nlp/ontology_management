@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requireRole } from "@/lib/auth";
+import { isUnauthorized, requirePermission } from "@/lib/auth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getGraphStore } from "@/lib/graph";
 import type { GraphTarget, GraphTargetKind } from "@/lib/graph/types";
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   // 解析失败时也要按用户选的类型给提示，所以 kind 提到 try 外面。
   let kind: GraphTargetKind = "JENA";
   try {
-    await requireRole("ADMIN");
+    await requirePermission("target.write");
     const input = testInput.parse(await request.json());
     kind = input.kind;
     if (kind === "JENA" && !input.uri) throw new Error("请填写 Jena 服务地址。");

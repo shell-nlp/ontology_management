@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { readSkillsArchive } from "@/lib/skills";
 import { createZip } from "@/lib/zip";
 
@@ -14,7 +14,7 @@ import { createZip } from "@/lib/zip";
  */
 export async function GET(_: Request) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const files = await readSkillsArchive();
     if (files.length === 0) return NextResponse.json({ error: "技能目录里没有内容。" }, { status: 404 });
     const zip = createZip(files);

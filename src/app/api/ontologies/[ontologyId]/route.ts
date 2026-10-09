@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { deleteOntology, getOntology, updateOntology } from "@/lib/ontologies";
 import { writeAuditEntry } from "@/lib/platform-db";
 
@@ -13,7 +13,7 @@ const updateInput = z.object({
 
 export async function GET(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -25,7 +25,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ ontologyI
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.write");
     const { ontologyId } = await context.params;
     const input = updateInput.parse(await request.json());
     if (Object.keys(input).length === 0) return NextResponse.json({ error: "没有需要更新的字段。" }, { status: 400 });
@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ o
 
 export async function DELETE(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.publish");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });

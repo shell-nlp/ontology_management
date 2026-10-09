@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/bkn-import";
 import { listDataSources } from "@/lib/data-sources";
 import { createOntology, deleteOntology } from "@/lib/ontologies";
@@ -40,7 +40,7 @@ const importInput = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.write");
     const input = importInput.parse(await request.json());
     // 各阶段耗时随响应带出去：导入慢的时候能一眼看出是解析、绑定还是建快照慢。
     const startedAt = Date.now();

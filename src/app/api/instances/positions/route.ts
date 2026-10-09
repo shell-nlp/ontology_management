@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { ensureVersionSnapshot, updateSnapshotPositions } from "@/lib/version-snapshot";
@@ -13,7 +13,7 @@ const positionUpdateInput = z.object({
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const input = positionUpdateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -22,6 +22,6 @@ export async function PUT(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_POSITIONS_UPDATED", details: { versionId: input.versionId, count: updated } });
     return NextResponse.json({ updated });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法保存节点位置。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法保存节点位置。") }, { status: apiErrorStatus(error) });
   }
 }

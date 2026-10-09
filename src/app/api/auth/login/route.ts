@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
-import { createSession, findUserByEmail } from "@/lib/auth";
+import { apiErrorMessage, createSession, findUserByEmail } from "@/lib/auth";
 
 /**
  * 登录：验密码，发一枚**平台会话 JWT**。
@@ -18,7 +18,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       id: user.id,
       email: user.email,
-      role: user.role,
+      roleId: user.roleId,
+      roleName: user.roleName,
+      /** 权限点清单：界面靠它决定哪些按钮可见 / 可点（服务端每次都另行校验，不信任前端）。 */
+      permissions: user.permissions,
       /** 前端存这个（`setSessionToken`）。 */
       token: await createSession(user),
       /** 有效期秒数，与 `createSession` 里的 "8h" 对应；界面不需要倒计时，给调试的人看的。 */

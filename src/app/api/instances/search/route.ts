@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { getPublishedOntology } from "@/lib/published-ontology";
@@ -7,7 +7,7 @@ import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/version-snaps
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     const q = (request.nextUrl.searchParams.get("q") ?? "").trim();
     const labelParam = request.nextUrl.searchParams.get("labels");
@@ -45,6 +45,6 @@ export async function GET(request: NextRequest) {
     const results = await getGraphStore(target).searchEntities({ search: q, labels, limit, displayProperties: displayProps });
     return NextResponse.json({ results });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法搜索对象。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法搜索对象。") }, { status: apiErrorStatus(error) });
   }
 }

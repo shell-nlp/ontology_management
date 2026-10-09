@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/version-snapshot";
 import { getTarget } from "@/lib/targets";
 
 export async function POST(_: Request, context: { params: Promise<{ versionId: string }> }) {
   try {
-    await requireRole("ADMIN");
+    await requirePermission("ontology.publish");
     const { versionId } = await context.params;
     const row = await getVersionRecord(versionId);
     if (!row) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
@@ -17,6 +17,6 @@ export async function POST(_: Request, context: { params: Promise<{ versionId: s
     const warnings = violations.filter((violation) => violation.severity === "WARN");
     return NextResponse.json({ valid: blockers.length === 0, violations: blockers, warnings });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "本体校验失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "本体校验失败。") }, { status: apiErrorStatus(error) });
   }
 }

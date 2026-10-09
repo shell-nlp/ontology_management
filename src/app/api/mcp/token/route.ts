@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, currentUser, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/auth";
 import { createMcpToken, listMcpTokens, revealMcpToken, revokeMcpToken } from "@/lib/mcp-token";
 import { writeAuditEntry } from "@/lib/platform-db";
 
@@ -15,12 +15,12 @@ import { writeAuditEntry } from "@/lib/platform-db";
  * 明文默认不发 —— 页面正常加载时浏览器内存里没有密钥，只有点了「查看」那一次才取。
  */
 function errorResponse(error: unknown, fallback: string) {
-  return NextResponse.json({ error: apiErrorMessage(error, fallback) }, { status: 400 });
+  return NextResponse.json({ error: apiErrorMessage(error, fallback) }, { status: apiErrorStatus(error) });
 }
 
 export async function GET(request: Request) {
   try {
-    await requireRole("ADMIN");
+    await requirePermission("mcp.token.manage");
     const revealId = new URL(request.url).searchParams.get("reveal")?.trim() ?? "";
     const list = await listMcpTokens();
     const token = revealId ? await revealMcpToken(revealId) : null;
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await currentUser();
-    await requireRole("ADMIN");
+    await requirePermission("mcp.token.manage");
     // 名字是可选的人话标签；不传就给个兜底名，别让清单里出现无名条目。
     const body = await request.json().catch(() => ({}));
     const { entry, token } = await createMcpToken((body as { name?: unknown })?.name, user?.id);
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const user = await currentUser();
-    await requireRole("ADMIN");
+    await requirePermission("mcp.token.manage");
     const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
     if (!id) return NextResponse.json({ error: "撤销令牌要带 id。" }, { status: 400 });
     const removed = await revokeMcpToken(id, user?.id);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { listMcpTokens } from "@/lib/mcp-token";
 import { publicOrigin } from "@/lib/public-origin";
 import { mcpToolCatalog, MCP_PROTOCOL_VERSION, MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
@@ -8,7 +9,7 @@ import { loadResolvedToolPolicy } from "@/lib/reasoning/tool-policy";
 /** 「MCP 调试」页启动时读一次：连哪个地址、有哪些工具、令牌配没配。 */
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     // 地址要跟着**用户实际访问的地址**走，不能落回服务端的 localhost（见 `@/lib/public-origin`）。
     const origin = publicOrigin(request);
     /*
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
         tokens: token.entries,
         warning: token.warning,
         /** 管理令牌要 ADMIN（与工具开关同一档）；不是管理员时界面把按钮禁掉。 */
-        canManage: user.role === "ADMIN",
+        canManage: can(user.permissions, "mcp.token.manage"),
       },
       groups: MCP_TOOL_GROUPS,
       // 给调试页的是全量目录（含暂时不用的工具），它会把那些灰着显示。
@@ -47,6 +48,6 @@ export async function GET(request: NextRequest) {
       overrideDisabledTools: resolved.override?.disabledTools ?? null,
     });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取 MCP 信息。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取 MCP 信息。") }, { status: apiErrorStatus(error) });
   }
 }

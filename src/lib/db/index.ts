@@ -15,6 +15,7 @@ import {
   OntologyEntity,
   PlatformSettingEntity,
   PlatformUserEntity,
+  RoleEntity,
 } from "@/lib/db/entities";
 import { PLATFORM_MIGRATIONS } from "@/lib/db/migrations";
 
@@ -48,6 +49,7 @@ export function jsonValue(value: unknown): JsonValue {
 
 export const PLATFORM_ENTITIES = [
   PlatformUserEntity,
+  RoleEntity,
   GraphTargetEntity,
   DataSourceEntity,
   OntologyEntity,
@@ -143,7 +145,8 @@ async function ensureBootstrapAdmin(source: DataSource) {
   if (!email || !password) {
     throw new Error("平台库还没有用户，请配置 BOOTSTRAP_ADMIN_EMAIL 和 BOOTSTRAP_ADMIN_PASSWORD。");
   }
-  await users.insert({ id: randomUUID(), email, passwordHash: await bcrypt.hash(password, 12), role: "ADMIN" });
+  // 首个账号拿内置的 admin 角色（roles 表由迁移 0004 建好并同步内置角色）。
+  await users.insert({ id: randomUUID(), email, passwordHash: await bcrypt.hash(password, 12), roleId: "admin", disabledAt: null });
 }
 
 /**

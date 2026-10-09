@@ -16,7 +16,8 @@ import "./graph-canvas.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 
-type User = { role: "ADMIN" | "VIEWER" } | null;
+/** 只需要"这个人能不能写实例"这一件事 —— 权限判断统一在 functional-workbench 的 may()。 */
+type User = { permissions: string[] } | null;
 
 type OntologyPropertyDefinition = PropertyDefinition & { unique?: boolean; indexed?: boolean };
 
@@ -298,7 +299,7 @@ export function GraphCanvas({
   notify?: (text: string) => void;
   fail?: (reason: unknown) => void;
 }) {
-  const admin = editable && user?.role === "ADMIN" && Boolean(targetId) && Boolean(versionId);
+  const admin = editable && Boolean(user?.permissions?.includes("instance.write")) && Boolean(targetId) && Boolean(versionId);
   const [search, setSearch] = useState("");
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
   const [activeRelationshipTypes, setActiveRelationshipTypes] = useState<string[]>([]);

@@ -403,6 +403,61 @@
 （React 专用 prop，**不会渲染成 HTML 属性**，所以看服务端返回的 HTML 是看不出区别的）。
 再见到 html/body 上被扩展加属性的报错，先看属性名认不认得出扩展，别去翻组件。
 
+## 权限模型（RBAC，2026-10-09）
+
+用户先问「现在系统没有 RBAC 是吗」，确认后说「做 1，2 吧」（用户管理 + 角色与权限）。
+授权从「一列 `users.role`（ADMIN / VIEWER）+ 70 处 `requireRole()`」换成**13 个权限点 + 角色**。
+
+### 模型
+
+- 权限点是**代码里的常量**：`src/lib/permissions.ts` 的 `PERMISSIONS`（13 个，按模块分组）。
+  新增一个点必须同时有 `requirePermission` 在用它，否则是给人看的摆设。
+- 角色 = 一组权限点，存在 `roles` 表（迁移 0004）。**内置三档**：管理员 / 编辑者 / 查看者，
+  由 `BUILTIN_ROLES` 定义并**每次启动同步进库** —— 以后加权限点，`admin` 自动拿到，不用另写数据迁移。
+- **`admin` 永远是全部权限**：`effectivePermissions(roleId, stored)` 对 `admin` 直接短路成 `ALL_PERMISSIONS`，
+  不看库里那一行（用户口径：「admin 用户是拥有所有权限的」）。迁移没跑、那行被人手改坏，都锁不死管理员。
+- `users` 挂 `role_id`（外键 RESTRICT）+ `disabled_at`；老 `role` 列按用户要求**直接删掉**，代码里不再有它。
+
+### 守卫
+
+- `requirePermission(code)`（`src/lib/auth.ts`）：未登录 401，登录了没权限 **403**。
+  `apiErrorStatus(error)` 把三种情况映成 401 / 403 / 原状态码 —— **路由的 catch 里别写死 `{ status: 400 }`**：
+  2026-10-09 全库收口了 31 处，在那之前"权限不足"会显示成 400（文案对、状态码错）。
+- 74 处 `requireRole` 逐个映射成了权限点，映射表现在就是每处 `requirePermission("…")`。几条容易记错的：
+  发布 / 校验 / 激活历史版本 / **清空与重置图数据** / 删除本体 → `ontology.publish`；
+  跑动作、建改对象与关系、重建检索索引、取进草稿 → `instance.write`；
+  导出本体与下载技能 → `ontology.read`；`PUT /api/reasoning/tools`（工具开关）→ `mcp.token.manage`
+  （工具开关和 MCP 令牌都是"对外暴露哪些能力"，归同一档治理动作，没有为它单开第 14 个点）。
+
+### 防漏改的安全网（别删）
+
+`tests/lib/authz-coverage.test.ts` 扫 `src/app/api/**/route.ts`：
+
+1. 每个非公开路由都必须有 `requirePermission(` / `requireUser(`；
+2. 代码里出现的权限点必须都在 `PERMISSIONS` 里（拼错当场红）；
+3. 内置角色的权限点也必须存在；
+4. 三条边界：管理员全权、编辑者不能管用户/令牌/图引擎、查看者只读。
+
+公开路由白名单与"自守卫"白名单（MCP 端点自己认双凭据）都在那个测试里，**往里加白名单要慎重**。
+2026-10-09 它当场抓到 `/api/query` 用的是手写 `currentUser()` 判断。
+
+### 用户管理
+
+- 接口：`/api/users`、`/api/users/:id`（改角色 / 重置密码 / 停用 / **真删**）、
+  `/api/roles`、`/api/roles/:id`、`POST /api/auth/password`（改自己的密码，不占 `users.manage`）。
+- **删除是真删**，所以指向 `users` 的 4 条外键改成了 `ON DELETE SET NULL`（那几列本来就可空）。
+  代价说清楚：删掉一个人，他历史的审计记录会保留、但"操作人"变空 —— 所以路由额外写一条
+  `USER_DELETED` 审计，里面带邮箱，人名还追得回来。
+- **最后一个能管用户的账号**不许降级 / 停用 / 删除（`countActiveManagers`），否则平台当场锁死。
+- 建号时管理员直接给初始密码；**不做首登强制改密、不做密码强度策略**（用户明确要求）。
+
+### 踩过的坑：迁移必须幂等
+
+迁移 0004 第一版把"按老 `role` 列回填 `role_id`"的 UPDATE 写在无条件路径上。第一次跑没问题，
+**第二次启动就炸**：`role` 列已经删了，那句 UPDATE 直接 `column "role" does not exist`，
+而这抛在建库阶段 —— 表现是整个平台 500、**连登录都进不去**（2026-10-09 用户报「登不上了」）。
+规矩：`PLATFORM_MIGRATIONS` 每支**每次启动都会跑**，数据回填、删列这类操作必须挂在
+"那一列还在不在"的检查上（`hasColumn`）。
 ## 「还没读到」不等于「是空的」（2026-10-09）
 
 2026-10-09 用户报「点进『对象』立马弹出一个红色的东西然后很快消失」。不是请求失败，

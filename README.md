@@ -416,10 +416,16 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 
 ## 角色与安全
 
-| 角色 | 权限 |
+权限是 **13 个权限点**（按模块分组），角色 = 一组权限点。内置三档不可改不可删，也可以自建角色；
+**`admin` 永远拥有全部权限**。入口在「设置 → 用户与角色」。
+
+| 内置角色 | 权限 |
 | --- | --- |
-| `ADMIN` | 本体与版本、数据资源、图引擎连接、导入导出、本体编辑与删除、审计；实例与动作写入 |
-| `VIEWER` | 登录、浏览、只读查询与智能问答（工具全部只读） |
+| 管理员 | 全部 13 个权限点 |
+| 编辑者 | 建模与发布、改数据资源、改对象与关系、用智能问答；**碰不到**用户与角色、MCP 访问令牌、图引擎连接 |
+| 查看者 | 只读：看本体与对象、用智能问答查数 |
+
+权限不足返回 **403**（401 只表示令牌不认）；「最后一个能管用户的账号」不许降级 / 停用 / 删除。
 
 - 会话：`Authorization: Bearer <平台会话令牌>`，`AUTH_SECRET` 签署的 JWT，8 小时过期；
   令牌由前端存在本地存储（没有 httpOnly 保护，换来免 CSRF + 便于 Postman / 脚本调试）  
@@ -437,6 +443,11 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 | `POST` | `/api/auth/login` | 登录，响应体里回会话令牌（`token`），之后用 `Authorization: Bearer` |
 | `POST` | `/api/auth/logout` | 空操作（无状态 JWT，登出由前端丢令牌完成） |
 | `GET` | `/api/auth/session` | 当前会话 |
+| `POST` | `/api/auth/password` | 改自己的密码（验当前密码，不需要用户管理权限） |
+| `GET` / `POST` | `/api/users` | 用户清单 / 建账号（要「管理用户与角色」） |
+| `PATCH` / `DELETE` | `/api/users/:userId` | 改角色 / 重置密码 / 停用；删除（真删） |
+| `GET` / `POST` | `/api/roles` | 角色清单（含权限点定义）/ 新建角色 |
+| `PATCH` / `DELETE` | `/api/roles/:roleId` | 改 / 删角色（内置角色不可改不可删） |
 
 </details>
 

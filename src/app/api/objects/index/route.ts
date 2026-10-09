@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
 import { parsePrimaryKeyInput } from "@/lib/object-identity";
 import { resolveObjectContext, syncObjectsToIndex } from "@/lib/object-service";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -22,7 +22,7 @@ const syncInput = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const input = syncInput.parse(await request.json());
     const context = await resolveObjectContext(input.targetId, input.versionId);
     const result = await syncObjectsToIndex(context, input.entityType, {

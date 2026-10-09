@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { openDataSourceConnector } from "@/lib/data-source";
 import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
 import { normalizeDataSourceKind } from "@/lib/data-sources";
@@ -11,7 +11,7 @@ import type { DataSourceRecord } from "@/lib/data-source/types";
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireRole("ADMIN");
+    await requirePermission("datasource.write");
     const input = dataSourceInput.parse(await request.json());
     const kind = normalizeDataSourceKind(input.kind);
     // 过一遍校验后就丢：这里只是把表单参数拼成连接器认识的形状。
@@ -33,6 +33,6 @@ export async function POST(request: NextRequest) {
     const health = await connector.test();
     return NextResponse.json({ ...health, kind });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: apiErrorStatus(error) });
   }
 }

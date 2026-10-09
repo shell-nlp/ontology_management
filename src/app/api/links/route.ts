@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { parsePrimaryKeyInput } from "@/lib/object-identity";
 import { resolveObjectContext } from "@/lib/object-service";
 import { queryLinks } from "@/lib/object-service/links";
@@ -15,7 +15,7 @@ import { queryLinks } from "@/lib/object-service/links";
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const params = request.nextUrl.searchParams;
     const targetId = params.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
@@ -33,7 +33,6 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(result);
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系实例。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系实例。") }, { status: apiErrorStatus(error) });
   }
 }

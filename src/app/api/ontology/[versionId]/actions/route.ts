@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
 import { ensureVersionSnapshot, getVersionRecord, readVersionSnapshot, runSnapshotAction, visibleSnapshotActions } from "@/lib/version-snapshot";
@@ -38,7 +38,7 @@ async function snapshotHasEntity(versionId: string, entityId: string) {
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const { versionId } = await context.params;
     const subjectEntityId = request.nextUrl.searchParams.get("subjectEntityId");
     if (!subjectEntityId) return NextResponse.json({ error: "subjectEntityId 不能为空。" }, { status: 400 });
@@ -49,13 +49,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
     await ensureVersionSnapshot(versionId, target);
     return NextResponse.json({ actions: await visibleSnapshotActions(versionId, subjectEntityId) });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取动作可见性。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取动作可见性。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const { versionId } = await context.params;
     const input = actionRunInput.parse(await request.json());
     const version = await getVersionRecord(versionId);
@@ -121,6 +121,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ve
       applied,
     });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "动作执行失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "动作执行失败。") }, { status: apiErrorStatus(error) });
   }
 }

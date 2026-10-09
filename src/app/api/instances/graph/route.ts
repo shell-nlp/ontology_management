@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { getGraphStore } from "@/lib/graph";
 import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/version-snapshot";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
@@ -33,6 +33,6 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(graph);
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取图谱。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取图谱。") }, { status: apiErrorStatus(error) });
   }
 }

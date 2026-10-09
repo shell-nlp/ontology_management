@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 
 /** 一度邻居扩展，对不同图后端使用各自的查询实现。 */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     const nodeId = request.nextUrl.searchParams.get("nodeId");
     const limitRaw = Number(request.nextUrl.searchParams.get("limit") ?? "200");
@@ -16,6 +16,6 @@ export async function GET(request: NextRequest) {
     const limit = Number.isFinite(limitRaw) ? limitRaw : 200;
     return NextResponse.json(await getGraphStore(target).readNeighborhood(nodeId, limit));
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法扩展邻居。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法扩展邻居。") }, { status: apiErrorStatus(error) });
   }
 }

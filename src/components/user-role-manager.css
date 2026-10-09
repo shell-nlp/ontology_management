@@ -1,0 +1,113 @@
+/*
+ * 「用户与角色」：权限矩阵的操作台。
+ *
+ * 设计取向（按 frontend-design 的路子定的）：
+ * - 主体是**权限矩阵**，所以签名元素就是它：权限点**按模块成块**（本体模型 / 本体实例 / 数据资源 / 能力验证 / 平台），
+ *   每块一张小卡，块内一行一个权限点 —— 左边中文名、中间"它到底管什么"、右下角是等宽代码。
+ *   这不是装饰：权限点天然按模块成簇，管理员找"发布在哪"是按模块找的，不是按字母表找的。
+ * - 角色用**色点**标量级（管理员深蓝 / 编辑者青绿 / 查看者灰蓝 / 自定义紫），
+ *   在清单里扫一眼就知道哪个人权限大 —— 比读一行小字快。
+ * - 内置角色整块**只读**（勾选框禁用 + 顶部一句为什么），因为它们的权限集由代码决定。
+ * - 配色沿用平台既有 tokens，只在"已授予"上用那个青绿（平台里"有效/确认"一直是它）。
+ *   没有动画、没有渐变：这个页面要的是可以一眼核对，不是好看。
+ */
+
+.rbac { display: grid; gap: 14px; }
+.rbac-grid { display: grid; grid-template-columns: minmax(280px, 0.72fr) minmax(420px, 1.28fr); gap: 18px; align-items: start; }
+@media (max-width: 980px) { .rbac-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* 右栏那行摘要（`9 / 13 个权限点 · 本体模型 3 · …`）比栏宽长，必须能收窄，否则会顶出面板。 */
+.rbac-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
+.rbac-pane-head > small { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.rbac-rows { display: grid; gap: 4px; margin: 10px 0 0; }
+.rbac-row {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 9px;
+  border: 1px solid transparent; border-radius: 4px; background: transparent;
+  color: #33414f; text-align: left; cursor: pointer;
+}
+.rbac-row:hover { background: #f4f8ff; border-color: #dbe7f7; }
+.rbac-row.selected { background: #eef3fb; border-color: #b6cdf5; }
+.rbac-row.off .rbac-row-main b { color: var(--muted); text-decoration: line-through; }
+.rbac-row-main { display: grid; gap: 2px; min-width: 0; }
+.rbac-row-main b { display: flex; align-items: center; gap: 5px; color: var(--ink); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.rbac-row-main b em { padding: 0 4px; border-radius: 2px; background: #eef3fb; color: #3b5f9e; font-size: 9.5px; font-style: normal; font-weight: 700; }
+.rbac-row-main small { color: var(--muted); font-size: 10.5px; }
+
+/* 角色色点：量级一眼可见。 */
+.rbac-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #94a3b8; }
+.rbac-dot.admin { background: #1e3a8a; }
+.rbac-dot.editor { background: #0f766e; }
+.rbac-dot.viewer { background: #94a3b8; }
+.rbac-dot.custom { background: #7c3aed; }
+
+.rbac-create { display: grid; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rbac-create label, .rbac-field { display: grid; gap: 5px; }
+.rbac-create label > span, .rbac-field > span { color: #3f5052; font-size: 11px; font-weight: 700; }
+.rbac-create input, .rbac-create select, .rbac-field input, .rbac-field select, .rbac-name {
+  width: 100%; height: 34px; padding: 0 10px; border: 1px solid #ccd9ea; border-radius: 4px;
+  background: #fff; color: #16233b; font-size: 12px; outline: 0;
+}
+.rbac-create input:focus, .rbac-create select:focus, .rbac-field input:focus, .rbac-field select:focus {
+  border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29, 78, 216, .13);
+}
+.rbac-create .action, .rbac-detail .action { justify-self: start; }
+.rbac-hint { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.65; }
+
+.rbac-detail { display: grid; gap: 13px; margin-top: 12px; }
+.rbac-inline { display: flex; align-items: center; gap: 8px; }
+.rbac-inline .action { flex: none; }
+.rbac-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+/* "这是你自己的账号…"这类说明跟在按钮后面，要独占一行，别跟按钮挤在一起被截断。 */
+.rbac-actions .rbac-hint { flex-basis: 100%; }
+
+.rbac-badge { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid var(--line); border-left-width: 3px; border-radius: 4px; background: #fbfdff; }
+.rbac-badge.admin { border-left-color: #1e3a8a; color: #1e3a8a; }
+.rbac-badge.editor { border-left-color: #0f766e; color: #0f766e; }
+.rbac-badge.viewer { border-left-color: #94a3b8; color: #55627a; }
+.rbac-badge.custom { border-left-color: #7c3aed; color: #6d28d9; }
+.rbac-badge span { display: grid; gap: 2px; }
+.rbac-badge b { color: var(--ink); font-size: 12.5px; }
+.rbac-badge small { color: var(--muted); font-size: 10.5px; }
+
+.rbac-note {
+  display: flex; align-items: center; gap: 8px; margin: 12px 0 0; padding: 9px 11px;
+  border: 1px solid #f3e0c0; border-radius: 4px; background: #fffbeb; color: #b45309;
+  font-size: 11.5px; line-height: 1.6;
+}
+.rbac-note svg { flex: none; }
+
+/* ---------- 权限矩阵：按模块成块 ---------- */
+
+.rbac-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 12px; margin-top: 14px; }
+.rbac-module { display: grid; align-content: start; gap: 2px; padding: 11px 12px 12px; border: 1px solid var(--line); border-radius: 5px; background: #fbfdff; }
+.rbac-module > header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--line); }
+.rbac-module > header b { color: #1f3557; font-size: 12px; }
+.rbac-module > header small { color: var(--soft, #8b9ab0); font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
+
+.rbac-perm { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; align-items: start; padding: 6px 4px; border-radius: 4px; cursor: pointer; }
+.rbac-perm:hover { background: #f1f6ff; }
+.rbac-perm.locked { cursor: default; }
+.rbac-perm.locked:hover { background: transparent; }
+.rbac-perm input { position: absolute; opacity: 0; width: 0; height: 0; }
+.rbac-perm-box {
+  grid-row: span 1; display: grid; place-items: center; width: 16px; height: 16px; margin-top: 1px;
+  border: 1px dashed #b9c8dc; border-radius: 3px; background: #fff; color: #fff;
+}
+.rbac-perm.on .rbac-perm-box { border: 1px solid #0f766e; background: #0f766e; }
+.rbac-perm:not(.locked) input:focus-visible + .rbac-perm-box { box-shadow: 0 0 0 3px rgba(29, 78, 216, .18); }
+.rbac-perm-text { display: grid; gap: 1px; min-width: 0; }
+.rbac-perm-text b { color: var(--ink); font-size: 11.5px; }
+.rbac-perm-text small { color: var(--muted); font-size: 10.5px; line-height: 1.55; }
+.rbac-perm-text code { color: #8b9ab0; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 9.5px; }
+.rbac-perm.on .rbac-perm-text b { color: #0f766e; }
+
+.rbac-empty { display: grid; align-content: center; justify-items: center; gap: 8px; min-height: 240px; color: var(--muted); text-align: center; }
+.rbac-empty svg { color: #b6c4d6; }
+.rbac-empty b { color: var(--ink); font-size: 13px; }
+.rbac-empty span { max-width: 320px; font-size: 11.5px; line-height: 1.7; }
+
+@media (max-width: 560px) {
+  .rbac-inline { flex-wrap: wrap; }
+  .rbac-matrix { grid-template-columns: minmax(0, 1fr); }
+}

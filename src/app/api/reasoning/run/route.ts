@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
 import { getOntologyByTargetId } from "@/lib/ontologies";
@@ -34,7 +34,7 @@ const reasoningRunInput = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     const input = reasoningRunInput.parse(await request.json());
     const question = effectiveQuestion(input.question, input.attachments ?? []);
     if (!question) return NextResponse.json({ error: "问题不能为空。" }, { status: 400 });
@@ -73,6 +73,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(run);
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "推理失败。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "推理失败。") }, { status: apiErrorStatus(error) });
   }
 }

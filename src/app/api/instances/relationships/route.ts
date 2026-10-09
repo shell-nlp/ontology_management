@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getGraphStore } from "@/lib/graph";
 import { getTarget } from "@/lib/targets";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -23,7 +23,7 @@ function parseLimit(value: string | null, fallback = 200) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     const type = request.nextUrl.searchParams.get("type");
     const search = request.nextUrl.searchParams.get("search");
@@ -39,13 +39,13 @@ export async function GET(request: NextRequest) {
     const rows = await getGraphStore(target).listRelationships({ type: type || null, search: search || null, limit });
     return NextResponse.json({ rows });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const input = relationshipCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -54,6 +54,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_RELATIONSHIP_CREATED", details: { versionId: input.versionId, relationshipId: relationship.id, relationshipType: relationship.type } });
     return NextResponse.json(relationship, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法创建关系。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建关系。") }, { status: apiErrorStatus(error) });
   }
 }

@@ -3,23 +3,23 @@ import { encryptSecret } from "@/lib/crypto";
 import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import { listDataSources, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
 import { writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET() {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("datasource.read");
     const sources = await listDataSources();
     return NextResponse.json(sources.map(publicDataSource));
   } catch (error) {
-    return NextResponse.json({ error: isUnauthorized(error) ? "未授权。" : "无法读取数据资源。" }, { status: 401 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取数据资源。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("datasource.write");
     const input = dataSourceInput.parse(await request.json());
     const kind = normalizeDataSourceKind(input.kind);
     const record: DataSourceRecord = {
@@ -53,7 +53,6 @@ export async function POST(request: NextRequest) {
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_CREATED", details: { dataSourceId: record.id, name: record.name, kind: record.kind, host: record.host, databaseName: record.database_name } });
     return NextResponse.json(publicDataSource(record), { status: 201 });
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法创建数据资源。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法创建数据资源。") }, { status: apiErrorStatus(error) });
   }
 }

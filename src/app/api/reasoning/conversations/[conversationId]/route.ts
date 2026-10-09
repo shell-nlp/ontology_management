@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { getOntologyByTargetId } from "@/lib/ontologies";
 import { deleteConversation, getConversation, type ConversationScope } from "@/lib/reasoning/conversations";
 
@@ -16,7 +16,7 @@ async function scopeOf(targetId: string): Promise<ConversationScope> {
 
 export async function GET(request: NextRequest, context: { params: Promise<{ conversationId: string }> }) {
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const { conversationId } = await context.params;
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ con
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ conversationId: string }> }) {
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const { conversationId } = await context.params;

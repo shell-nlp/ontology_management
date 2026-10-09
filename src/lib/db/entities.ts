@@ -23,13 +23,27 @@ type JsonColumn = any;
  * 建表与改列统一放 `migrations/`，由 `runMigrations()` 执行。
  */
 
-/** 平台账号。密码只存 bcrypt 哈希。 */
+/** 角色 = 一组权限点（2026-10-09 RBAC）。内置三档由 `@/lib/permissions` 定义并在启动时同步。 */
+@Entity({ schema: "ontology_platform", name: "roles" })
+export class RoleEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text") name!: string;
+  @Column("text") description!: string;
+  @Column("boolean") builtin!: boolean;
+  @Column("jsonb") permissions!: JsonColumn;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
+}
+
+/** 平台账号。密码只存 bcrypt 哈希；权限不落在人身上，落在 `role_id` 指的角色上。 */
 @Entity({ schema: "ontology_platform", name: "users" })
 export class PlatformUserEntity {
   @PrimaryColumn("text") id!: string;
   @Column("text", { unique: true }) email!: string;
   @Column("text", { name: "password_hash" }) passwordHash!: string;
-  @Column("text") role!: string;
+  @Column("text", { name: "role_id" }) roleId!: string;
+  /** 停用时间；非空即停用（令牌在下一次请求就失效，因为每次都会回库核对）。 */
+  @Column("timestamptz", { name: "disabled_at", nullable: true }) disabledAt!: Date | null;
   @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
 }
 

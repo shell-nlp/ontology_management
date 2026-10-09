@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { getObjectIndex } from "@/lib/object-index";
 import { GraphTargetEntity, platformRepo } from "@/lib/db";
@@ -20,7 +20,7 @@ const targetUpdate = z.object({
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ targetId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -54,14 +54,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
     const updated = await getTarget(targetId);
     return NextResponse.json(publicTarget(updated!));
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法更新本体存储。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法更新本体存储。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function DELETE(_: Request, context: { params: Promise<{ targetId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -86,7 +85,6 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
     }
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体存储。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体存储。") }, { status: apiErrorStatus(error) });
   }
 }

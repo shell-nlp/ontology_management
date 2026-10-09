@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getGraphStore } from "@/lib/graph";
 import { getOntologyByTargetId } from "@/lib/ontologies";
@@ -69,12 +69,12 @@ export async function POST(request: NextRequest) {
   let input: z.infer<typeof reasoningStreamInput>;
   let actorId: string;
   try {
-    const user = await requireRole("VIEWER");
+    const user = await requirePermission("reasoning.use");
     actorId = user.id;
     input = reasoningStreamInput.parse(await request.json());
   } catch (error) {
     const status = apiErrorStatus(error, 400);
-    return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status });
+    return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status: apiErrorStatus(error) });
   }
 
   // 真正下发的问题文本：带图不带字时就是那句默认问题。审计、历史、模型入参三处都用它。

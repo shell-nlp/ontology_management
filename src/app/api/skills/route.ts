@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp-protocol";
 import { publicOrigin } from "@/lib/public-origin";
 import { listSkills } from "@/lib/skills";
@@ -17,7 +17,7 @@ import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills-mcp";
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const skills = await listSkills();
     const origin = publicOrigin(request);
     return NextResponse.json({

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
 import { getTarget } from "@/lib/targets";
 import { getGraphStore } from "@/lib/graph";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -18,7 +18,7 @@ function versionIdOf(request: NextRequest) {
 
 export async function GET(request: NextRequest, context: { params: Promise<{ elementId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("instance.read");
     const { elementId } = await context.params;
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -33,13 +33,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ele
     if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
     return NextResponse.json(entity);
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ elementId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const { elementId } = await context.params;
     const input = entityPatchInput.parse(await request.json());
     const target = await getTarget(targetIdOf(request));
@@ -59,7 +59,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ elementId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const { elementId } = await context.params;
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -71,6 +71,6 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_ENTITY_DELETED", details: { versionId, entityId: elementId } });
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法删除对象。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除对象。") }, { status: apiErrorStatus(error) });
   }
 }

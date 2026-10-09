@@ -4,25 +4,25 @@ import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
 import { clearStructureCache } from "@/lib/data-source/structure-cache";
 import { releaseDataSourcePool } from "@/lib/data-source/sql";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
 import { writeAuditEntry } from "@/lib/platform-db";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("datasource.read");
     const { sourceId } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
     return NextResponse.json(publicDataSource(source));
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取数据资源。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取数据资源。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("datasource.write");
     const { sourceId } = await context.params;
     const input = dataSourcePatch.parse(await request.json());
     const current = await getDataSource(sourceId);
@@ -74,14 +74,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ s
     await writeAuditEntry({ actorId: user.id, action: "DATA_SOURCE_UPDATED", details: { dataSourceId: sourceId, name: next.name, kind: next.kind, enabled: next.enabled } });
     return NextResponse.json(publicDataSource({ ...current, ...next }));
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法更新数据资源。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法更新数据资源。") }, { status: apiErrorStatus(error) });
   }
 }
 
 export async function DELETE(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("datasource.write");
     const { sourceId } = await context.params;
     const current = await getDataSource(sourceId);
     if (!current) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -93,7 +92,6 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
     await repo.delete({ id: sourceId });
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "无法删除数据资源。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法删除数据资源。") }, { status: apiErrorStatus(error) });
   }
 }

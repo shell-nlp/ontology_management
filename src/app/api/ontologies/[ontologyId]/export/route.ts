@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requireRole } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
 import { listDataSources } from "@/lib/data-sources";
 import { getOntology } from "@/lib/ontologies";
 import { buildOntologyBundle, bundleFileName } from "@/lib/ontology-bundle";
@@ -15,7 +15,7 @@ import { listVersionRecords } from "@/lib/version-snapshot";
  */
 export async function GET(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });

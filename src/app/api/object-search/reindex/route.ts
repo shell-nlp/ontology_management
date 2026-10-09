@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
 import { getObjectIndex } from "@/lib/object-index";
 import { buildIndexEntries } from "@/lib/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform-db";
@@ -21,7 +21,7 @@ const reindexInput = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("instance.write");
     const input = reindexInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });

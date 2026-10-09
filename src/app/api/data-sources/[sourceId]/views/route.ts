@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { getDataSource, openDataSource } from "@/lib/data-sources";
 import { cachedStructure } from "@/lib/data-source/structure-cache";
 import type { DataViewSummary } from "@/lib/data-source/types";
@@ -15,7 +15,7 @@ const CATALOG_LIMIT_MAX = 5000;
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {
-    await requireRole("VIEWER");
+    await requirePermission("datasource.read");
     const { sourceId } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -49,6 +49,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
       from_cache: hit.fromCache,
     });
   } catch (error) {
-    return NextResponse.json({ error: apiErrorMessage(error, "无法读取结构清单。") }, { status: 400 });
+    return NextResponse.json({ error: apiErrorMessage(error, "无法读取结构清单。") }, { status: apiErrorStatus(error) });
   }
 }

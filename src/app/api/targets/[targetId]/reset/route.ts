@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, isUnauthorized, requireRole } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
 import { writeAuditEntry } from "@/lib/platform-db";
 import { getTarget } from "@/lib/targets";
@@ -7,7 +7,7 @@ import { deleteTargetVersions } from "@/lib/version-snapshot";
 
 export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
   try {
-    const user = await requireRole("ADMIN");
+    const user = await requirePermission("ontology.publish");
     const { targetId } = await context.params;
     if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，不能重置版本；请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);
@@ -22,7 +22,6 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
     });
     return NextResponse.json({ reset: true, deletedVersions });
   } catch (error) {
-    const status = isUnauthorized(error) ? 401 : 400;
-    return NextResponse.json({ error: apiErrorMessage(error, "初始化失败。") }, { status });
+    return NextResponse.json({ error: apiErrorMessage(error, "初始化失败。") }, { status: apiErrorStatus(error) });
   }
 }
