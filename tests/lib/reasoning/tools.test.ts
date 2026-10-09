@@ -717,6 +717,26 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
   });
 });
 
+describe("批量本体工具：单项信息不缩水", () => {
+  const context = { store: {} as never, definition: groupedDefinition(), runtimeTypes };
+
+  it("search_schema 支持多个 query，并按概念去重且保留命中来源", async () => {
+    const single = (await runReasoningTool("search_schema", { query: "用户" }, context)).payload as { matches: { kind: string; name: string; detail: string }[] };
+    const batch = (await runReasoningTool("search_schema", { queries: ["用户", "客户域"] }, context)).payload as { matches: { kind: string; name: string; detail: string; matched_queries: string[] }[] };
+    const user = batch.matches.find((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")!;
+    expect(user.detail).toBe(single.matches.find((item) => item.kind === "OBJECT_TYPE" && item.name === "用户")!.detail);
+    expect(user.matched_queries).toContain("用户");
+    expect(new Set(batch.matches.map((item) => `${item.kind}:${item.name}`)).size).toBe(batch.matches.length);
+  });
+
+  it("get_object_type 数组返回每个单项的完整 payload", async () => {
+    const single = (await runReasoningTool("get_object_type", { type_name: "用户" }, context)).payload as Record<string, unknown>;
+    const batch = (await runReasoningTool("get_object_type", { type_names: ["用户", "订单"] }, context)).payload as { objects: Record<string, unknown>[] };
+    expect(batch.objects[0]).toEqual(single);
+    expect(batch.objects).toHaveLength(2);
+  });
+});
+
 describe("数量关系（cardinality）在工具里的说法", () => {
   const context = { store: {} as never, definition: chainDefinition(), runtimeTypes };
   type Neighbor = { relation: string; name: string; cardinality?: string; cardinality_label?: string; cardinality_from_here?: string };
@@ -813,6 +833,6 @@ describe("get_table_ddl 自动定位数据资源（不给 data_source 也能查�
 
   it("工具的参数表里 data_source 不再是必填（table 才是）", () => {
     const spec = REASONING_TOOLS.find((item) => item.name === "get_table_ddl")!;
-    expect(spec.parameters.required).toEqual(["table"]);
+    expect(spec.parameters.required).toEqual(["tables"]);
   });
 });

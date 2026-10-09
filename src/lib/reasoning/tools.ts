@@ -113,11 +113,11 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。**整个本体都没命中时会带 no_match: true** —— 那说明这个概念还没建进本体，剩下的 matches 只是兜底推荐，别当成命中、也别拿它硬凑口径。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
+      "在已发布本体里按一个或多个自然语言关键词检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。多个关键词一次传入 queries，结果按概念去重。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。**整个本体都没命中时会带 no_match_queries** —— 那说明这些概念还没建进本体，剩下的 matches 只是兜底推荐，别当成命中、也别拿它硬凑口径。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "用户问题或关键词，原样传进来即可" },
+        queries: { type: "array", items: { type: "string" }, description: "一次传一个或多个关键词。结果会按概念去重，并在每条命中上标 matched_queries，避免同一轮重复检索同一概念" },
         max_concepts: { type: "integer", description: "最多返回多少个候选，默认 20，上限 50" },
         limit: { type: "integer", description: "max_concepts 的别名，二选一即可" },
         kinds: {
@@ -128,7 +128,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
         object_type: { type: "string", description: "只看挂在这个对象类型下的概念（它的属性、指标、关系类型）。问「X 有哪些字段 / 指标」时传它" },
         include_values: { type: "boolean", description: "是否用已缓存的列画像做取值检索，默认 true。列画像是按天缓存的采样结果，不会为了一次检索去扫表" },
       },
-      required: ["query"],
+      required: ["queries"],
     },
   },
   {
@@ -137,8 +137,10 @@ export const REASONING_TOOLS: ToolSpec[] = [
       "读取一个对象类型的完整定义：属性（映射到哪一列也会带上）、实现了哪些接口、参与的关系类型、可执行的动作、绑定的数据来源（哪张表 / 视图、主键、标题列、在哪个数据资源上）。问「某个对象类型绑了哪张表」时调它。",
     parameters: {
       type: "object",
-      properties: { type_name: { type: "string", description: "对象类型名称，必须来自 search_schema 的结果" } },
-      required: ["type_name"],
+      properties: {
+        type_names: { type: "array", items: { type: "string" }, description: "一次查询多个对象类型；返回 objects 数组，每一项都是单个 get_object_type 的完整原样结果" },
+      },
+      required: ["type_names"],
     },
   },
   {
@@ -171,15 +173,15 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。采样里的取值清单是**跨多个统计日混在一起**算的，别当成「每天都有」——覆盖了哪些日期看 sample_coverage；带右填充空格的列看 padded_columns（比较 / join 要 TRIM，漏了会静默丢行）。要跑数之前先用它确认字段。",
+      "看一个或多个表 / 视图的结构，返回每张表完整的 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。多个表一次传入 tables，results 中每一项与单独调用完全一致。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。tables 中每项写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。采样里的取值清单是**跨多个统计日混在一起**算的，别当成「每天都有」——覆盖了哪些日期看 sample_coverage；带右填充空格的列看 padded_columns（比较 / join 要 TRIM，漏了会静默丢行）。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
         data_source: { type: "string", description: "数据资源名称，例如「Oracle 测试 1251」。**可以省略**：不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定" },
-        table: { type: "string", description: "表或视图名，写全「模式.表」（如 GISTOOLS.TB_DIC_AREA_CODE）；大小写不敏感" },
+        tables: { type: "array", items: { type: "string" }, description: "一次查询多张表；返回 tables 数组，每一项都是单个 get_table_ddl 的完整原样结果。data_source 可对整批共用" },
         refresh: { type: "boolean", description: "重新采一次列画像（默认 false：用当天缓存的那一份）。只在确实怀疑数据分布变了时才传 true" },
       },
-      required: ["table"],
+      required: ["tables"],
     },
   },
   {
@@ -984,6 +986,78 @@ export function reasoningToolSet(
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
   const { definition, store, runtimeTypes } = context;
+
+  // 批量入口只负责编排，单项仍走下面原有实现，保证旧参数与单项返回字段完全不变。
+  if (name === "search_schema") {
+    const rawQueries = Array.isArray(args.queries) ? args.queries : Array.isArray(args.query) ? args.query : null;
+    const queries = rawQueries
+      ? [...new Set(rawQueries.map((item) => String(item).trim()).filter(Boolean))]
+      : [];
+    if (queries.length) {
+      const { queries: _queries, query: _query, ...baseArgs } = args;
+      const outcomes = await Promise.all(queries.map((query) => runReasoningTool(name, { ...baseArgs, query }, context)));
+      type Match = Record<string, unknown> & { kind?: string; name?: string; score?: number };
+      const merged = new Map<string, Match>();
+      const matchedQueries = new Map<string, string[]>();
+      const queryScores = new Map<string, Record<string, number>>();
+      const noMatchQueries: string[] = [];
+      for (let index = 0; index < outcomes.length; index += 1) {
+        const payload = outcomes[index].payload as { matches?: Match[]; no_match?: boolean };
+        const query = queries[index];
+        if (payload.no_match) noMatchQueries.push(query);
+        for (const match of payload.matches ?? []) {
+          const key = `${String(match.kind ?? "")}:${String(match.name ?? "")}`;
+          const previous = merged.get(key);
+          if (!previous || Number(match.score ?? 0) > Number(previous.score ?? 0)) merged.set(key, { ...match });
+          matchedQueries.set(key, [...new Set([...(matchedQueries.get(key) ?? []), query])]);
+          queryScores.set(key, { ...(queryScores.get(key) ?? {}), [query]: Number(match.score ?? 0) });
+        }
+      }
+      const matches = [...merged.entries()].map(([key, match]) => ({
+        ...match,
+        matched_queries: matchedQueries.get(key) ?? [],
+        query_scores: queryScores.get(key) ?? {},
+      }));
+      const firstPayload = outcomes[0]?.payload as Record<string, unknown> | undefined;
+      return {
+        payload: {
+          queries,
+          matches,
+          ...(noMatchQueries.length ? { no_match_queries: noMatchQueries } : {}),
+          hint: "本次按多个关键词检索后已按 kind + name 去重；matched_queries 说明每个概念由哪些关键词命中，query_scores 保留各关键词的评分。",
+          note: firstPayload?.note ?? "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
+        },
+        evidence: outcomes.flatMap((outcome) => outcome.evidence).filter((item, index, all) => all.findIndex((candidate) => candidate.kind === item.kind && candidate.id === item.id) === index),
+      };
+    }
+  }
+
+  if (name === "get_object_type") {
+    const rawNames = Array.isArray(args.type_names) ? args.type_names : Array.isArray(args.type_name) ? args.type_name : null;
+    const names = rawNames ? [...new Set(rawNames.map((item) => String(item).trim()).filter(Boolean))] : [];
+    if (names.length) {
+      const { type_names: _typeNames, type_name: _typeName, ...baseArgs } = args;
+      const outcomes = await Promise.all(names.map((type_name) => runReasoningTool(name, { ...baseArgs, type_name }, context)));
+      return {
+        payload: { object_types: names, objects: outcomes.map((outcome) => outcome.payload), note: "objects 数组中的每一项都是单独调用 get_object_type 的完整结果，字段未删减。" },
+        evidence: outcomes.flatMap((outcome) => outcome.evidence),
+      };
+    }
+  }
+
+  if (name === "get_table_ddl") {
+    const rawTables = Array.isArray(args.tables) ? args.tables : Array.isArray(args.table) ? args.table : null;
+    const tables = rawTables ? [...new Set(rawTables.map((item) => String(item).trim()).filter(Boolean))] : [];
+    if (tables.length) {
+      const { tables: _tables, table: _table, ...baseArgs } = args;
+      const outcomes = await Promise.all(tables.map((table) => runReasoningTool(name, { ...baseArgs, table }, context)));
+      return {
+        payload: { tables, results: outcomes.map((outcome) => outcome.payload), note: "results 数组中的每一项都是单独调用 get_table_ddl 的完整结果，DDL、列画像与反向引用均保留。" },
+        evidence: outcomes.flatMap((outcome) => outcome.evidence),
+      };
+    }
+  }
+
   switch (name) {
     case "search_schema": {
       const query = typeof args.query === "string" ? args.query : "";
