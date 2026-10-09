@@ -113,7 +113,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
+      "在已发布本体里按自然语言检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。**整个本体都没命中时会带 no_match: true** —— 那说明这个概念还没建进本体，剩下的 matches 只是兜底推荐，别当成命中、也别拿它硬凑口径。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
@@ -171,7 +171,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。要跑数之前先用它确认字段。",
+      "看一张表 / 视图的结构，返回 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。table 写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。采样里的取值清单是**跨多个统计日混在一起**算的，别当成「每天都有」——覆盖了哪些日期看 sample_coverage；带右填充空格的列看 padded_columns（比较 / join 要 TRIM，漏了会静默丢行）。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
@@ -468,6 +468,29 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
   }
 
   return concepts;
+}
+
+/**
+ * 这次检索有没有「真命中」：整串关键词落在某个概念的名字 / 描述 / 已缓存取值上，**或者至少两个词重合**。
+ *
+ * 为什么要单独判：没命中时 rankSchemaConcepts 会给一批兜底推荐（实例数权重会让结果非空），
+ * 只看 matches.length 永远判不出"没命中"，模型就会把兜底当成命中、换着词反复试探（2026-10-10 用户报的）。
+ * 单个 2 字词的重合（搜「专线分类」碰到「业务」）是噪音，不算命中。
+ *
+ * 这里不碰 rankSchemaConcepts 的排序与分档，只回答"有没有落到东西"。
+ */
+export function schemaQueryHasStrongHit(concepts: readonly SchemaConcept[], query: string): boolean {
+  const needle = normalize(query);
+  if (!needle) return false;
+  const tokens = queryTokens(query);
+  return concepts.some((concept) => {
+    const name = normalize(concept.name);
+    if (name === needle || name.includes(needle) || needle.includes(name)) return true;
+    if (needle.length >= 2 && concept.values && concept.values.includes(needle)) return true;
+    if (needle.length >= 2 && concept.haystack.includes(needle)) return true;
+    // 长问题（"统计互联网专线带宽≥100的条数"）整串不会出现在任何描述里，退回按词命中，但要有 ≥2 个词才算数。
+    return tokens.filter((token) => token.length >= 2 && token !== needle && concept.haystack.includes(token)).length >= 2;
+  });
 }
 
 export type RankSchemaOptions = {
@@ -977,15 +1000,29 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         if (!definition.entityTypes.some((item) => item.name === scopeType)) throw new Error(`本体里没有对象类型「${scopeType}」。先用 search_schema 确认名字。`);
         concepts = concepts.filter((item) => item.references?.includes(scopeType));
       }
-      const matches = rankSchemaConcepts(concepts, query, maxConcepts, { kinds });
+      /*
+       * 「整个本体都没命中」要和「命中了」分开说。以前只看 matches.length —— 但没命中时
+       * rankSchemaConcepts 会给一批兜底推荐（实例数权重也会让结果非空），于是 hint 永远说
+       * "这些是本体里的真实定义"，模型只能靠换词反复试探（2026-10-10 用户报的就是这个）。
+       */
+      const noMatch = !schemaQueryHasStrongHit(concepts, query);
+      const ranked = rankSchemaConcepts(concepts, query, maxConcepts, { kinds });
+      /*
+       * 没命中时，把返回项也一律标成 fallback —— 否则 hint 说"这些是兜底、别当成命中"，
+       * 列表里却写着 matched=description（零星词重合造成的），模型读的是列表、不是提示。
+       */
+      const matches = noMatch
+        ? ranked.map((item) => ({ ...item, matched: "fallback" as const, reason: "整串关键词没有命中；这条是按本体概念清单（或零星词重合）兜底给的，不代表本体内有对应概念。" }))
+        : ranked;
       const valueTables = valueIndex?.size ?? 0;
       return {
         payload: {
           query,
           matches,
-          hint: matches.length
-            ? "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。"
-            : "没有命中任何概念，换一个说法或先用更宽的关键词再试。",
+          hint: noMatch
+            ? `「${query}」在对象类型 / 属性 / 关系类型 / 动作 / 接口 / 指标的名字、说明与已缓存的列取值里**都没有命中**。下面这些是按本体概念清单**兜底**给的（不代表本体里有对应概念），别当成命中结果，也别拿它硬凑口径。换个更贴业务的原词再试；如果确认本体内没这个概念，就如实说"本体里还没有这个口径"。`
+            : "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。",
+          ...(noMatch ? { no_match: true } : {}),
           // 表只能通过对象类型到达：明确写出来，免得模型退回"直接枚举数据源里的表"。
           note: "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
           ...(includeValues && !valueTables
@@ -1378,7 +1415,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             ? { bound_object_types_binding_note: "上面标了「未绑定数据资源」的来源，dataSourceId 还没绑到本机资源（导入后没补齐绑定）：表身份是靠「模式.表」兜底认出来的。要跑数先到「对象 / 本体」页点「补齐数据资源绑定」。" }
             : {}),
           bound_object_types_note: boundObjectTypes.length
-            ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。要字段细节与关系用 get_object_type。"
+            ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。primary_key 是**本体建模声明的对象主键**，不是数据库唯一约束 —— 数据到底唯不唯一看 column_profile 的 distinct 与 sample_size。要字段细节与关系用 get_object_type。"
             : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",
           ...(ddl.truncatedAt ? { truncated_at: ddl.truncatedAt, truncated_note: `原始语句超过 ${ddl.truncatedAt} 字符，上面是截断后的。` } : {}),
           ...(profile?.profile
@@ -1392,12 +1429,24 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
                   ? [column.name, column.distinct, column.nullRate]
                   : [column.name, column.distinct, column.nullRate, column.values])),
                 distinct_basis: "采样（非全表精确值）",
-                note: `列画像是**采样**结果（前 ${profile.profile.sampleSize} 行，按天缓存），distinct 是采样里的取值种数、不是全表精确统计；high_cardinality=true 的列没存取值。写 WHERE 时用它确认码值，别拿它当精确基数。`,
+                note: `列画像是**采样**结果（前 ${profile.profile.sampleSize} 行，按天缓存），distinct 是采样里的取值种数、不是全表精确统计；high_cardinality=true 的列没存取值。distinct 等于 sample_size 只能说**采样内**唯一，不能推断全表唯一 / 数据库约束。写 WHERE 时用它确认码值，别拿它当精确基数。`,
               },
             }
             : {}),
           ...(profile?.warning ? { column_profile_warning: profile.warning } : {}),
           ...(enumWarnings.length ? { enum_profile_warnings: enumWarnings } : {}),
+          ...(profile?.profile?.coverage?.length
+            ? {
+              sample_coverage: profile.profile.coverage,
+              sample_coverage_note: "sample_coverage 是这个日期列采样覆盖到的日期与每日期行数。column_profile 的取值清单是把这些日期**混在一起**统计的：某个取值只说明采样里出现过，不代表每个日期都有（反过来，清单里没有也不代表那天没有）。按日期过滤前先用 run_sql 确认那天真有这个值。",
+            }
+            : {}),
+          ...(profile?.profile?.columns.some((column) => column.padded)
+            ? {
+              padded_columns: profile.profile.columns.filter((column) => column.padded).map((column) => column.name),
+              padded_columns_note: "这些列的取值带首尾空格（Oracle CHAR 右填充）：比较 / join 记得 TRIM，漏了就静默丢行。",
+            }
+            : {}),
         },
         // 表结构不是可寻址的本体实体，不做证据。
         evidence: [],

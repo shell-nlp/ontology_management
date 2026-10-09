@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, enumProfileWarnings, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey } from "@/lib/column-profile";
+import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, enumProfileWarnings, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey, sampleDateCoverage } from "@/lib/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 /**
@@ -102,6 +102,33 @@ describe("mappedColumnsFor（只对绑定表、只对被映射的列做画像）
     expect(mappedColumnsFor(def, 资源id, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY", [资源id]).sort()).toEqual(["CUST_ID", "ZX_FLAG"]);
     // 不给已知清单就维持旧行为，不在信息不足时乱绑。
     expect(mappedColumnsFor(def, 资源id, "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY")).toEqual([]);
+  });
+});
+
+describe("采样值的渲染（差一天 / 右填充空格 / 跨日期混采）", () => {
+  it("DATE 列按本地墙钟输出，不走 JSON.stringify —— 否则 +08 会显示成前一日 16:00，照它写条件就差一天", () => {
+    const [column] = profileFromRows([{ STATIS_DATE: new Date(2026, 8, 13, 0, 0, 0) }], ["STATIS_DATE"]);
+    expect(column.values[0]).toBe("2026-09-13 00:00:00");
+    expect(column.values[0]).not.toContain("Z");
+  });
+
+  it("CHAR 右填充空格的列标出来：比较 / join 时要 TRIM，不然静默丢行", () => {
+    const [padded] = profileFromRows([{ AREA_CODE: "371 " }, { AREA_CODE: "0391 " }], ["AREA_CODE"]);
+    expect(padded.padded).toBe(true);
+    const [clean] = profileFromRows([{ AREA_CODE: "371" }], ["AREA_CODE"]);
+    expect(clean.padded).toBe(false);
+  });
+
+  it("采样覆盖：DATE 列给出覆盖的日期与每日期行数 —— 低基数列的取值是跨日期混在一起统计的", () => {
+    const rows = [
+      { STATIS_DATE: new Date(2026, 7, 19), STATS: "1" },
+      { STATIS_DATE: new Date(2026, 7, 19), STATS: "3" },
+      { STATIS_DATE: new Date(2026, 8, 13), STATS: "A" },
+    ];
+    const coverage = sampleDateCoverage(rows, [{ column: "STATIS_DATE", property: "统计日期" }]);
+    expect(coverage).toHaveLength(1);
+    expect(coverage[0]).toMatchObject({ column: "STATIS_DATE", property: "统计日期", from: "2026-08-19", to: "2026-09-13" });
+    expect(coverage[0].dates).toEqual([{ date: "2026-08-19", rows: 2 }, { date: "2026-09-13", rows: 1 }]);
   });
 });
 

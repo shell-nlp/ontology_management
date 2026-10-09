@@ -10,6 +10,7 @@ import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/data-source/sql-guard";
 import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, quoteLiteral, splitObjectName } from "@/lib/data-source/object-name";
 import { ddlFromColumns, typeWithSize } from "@/lib/data-source/ddl";
+import { wallClockText } from "@/lib/datetime";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,
@@ -304,10 +305,15 @@ export function clampLimit(value: number, max = PREVIEW_LIMIT_MAX, fallback = DE
   return Math.min(Math.floor(value), max);
 }
 
-/** 预览值要能直接进 JSON：日期转 ISO、二进制只报大小、大整数转字符串。 */
+/**
+ * 预览值要能直接进 JSON：二进制只报大小、大整数转字符串。
+ *
+ * 日期**转成本地墙钟字符串**（见 @/lib/datetime），不要用 toISOString：
+ * 东八区 2026-09-13 00:00 会显示成 2026-09-12T16:00:00.000Z，run_sql 的结果与「数据预览」都会差一天。
+ */
 export function toPreviewValue(value: unknown): unknown {
   if (value === null || value === undefined) return null;
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) return wallClockText(value);
   if (typeof value === "bigint") return value.toString();
   if (Buffer.isBuffer(value)) return `<${value.length} bytes>`;
   if (Array.isArray(value)) return value.map(toPreviewValue);

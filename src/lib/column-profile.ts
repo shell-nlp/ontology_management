@@ -1,4 +1,5 @@
 import { entitySources } from "@/lib/ontology-sources";
+import { dateOnlyText, wallClockText } from "@/lib/datetime";
 import { ColumnProfileEntity, jsonValue, platformRepo } from "@/lib/db";
 import type { DataSourceRecord } from "@/lib/data-source/types";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -40,6 +41,21 @@ export type ProfileColumn = {
   values: string[];
   /** 采样里取值种数就超过了 PROFILE_MAX_VALUES：这是高基数列（主键、编号、金额…），别拿它当码值。 */
   highCardinality: boolean;
+  /** 采样值带首尾空格（Oracle CHAR 右填充）：比较 / join 要 TRIM。老画像没有这一项，按 false 读。 */
+  padded: boolean;
+};
+
+/** 采样覆盖到的统计日期（DATE / DATETIME 列）。 */
+export type SampleDateCoverage = {
+  column: string;
+  /** 这一列对应的属性名（让模型知道哪个属性才是统计日期）。 */
+  property: string;
+  from: string;
+  to: string;
+  /** 采样覆盖到的日期（最多列 30 个）与每个日期的行数。 */
+  dates: { date: string; rows: number }[];
+  /** 采样里一共出现过多少个不同日期。 */
+  dateCount: number;
 };
 
 export type ColumnProfile = {
@@ -51,6 +67,8 @@ export type ColumnProfile = {
   /** 实际采到多少行（空表是 0）。 */
   sampleSize: number;
   columns: ProfileColumn[];
+  /** DATE 列的采样覆盖：低基数列的取值是**跨这些日期混在一起**统计的。 */
+  coverage?: SampleDateCoverage[];
 };
 
 /** 表键：`模式.表`，统一大写 —— Oracle 报上来是大写，模型写小写也要能对上。 */
@@ -155,15 +173,30 @@ function valueOfRow(row: Record<string, unknown>, column: string): unknown {
   return hit ? row[hit] : undefined;
 }
 
+/**
+ * 采样值 → 画像里存的文本。
+ *
+ * **DATE 必须用本地时间分量还原墙钟值**：驱动（Oracle DATE）按本地分量构造 JS Date，
+ * 走 JSON.stringify / toISOString 会带时区偏移 —— 东八区 2026-09-13 00:00 会显示成 2026-09-12T16:00:00.000Z，
+ * 照它写 WHERE 就差一天（这是 2026-10-10 用户报的"最危险的一条"）。
+ */
+export function profileValueText(raw: unknown): string {
+  if (raw instanceof Date) return wallClockText(raw);
+  return typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+}
+
 /** 从采样行里算每列的画像。纯函数，单测直接喂假数据。 */
 export function profileFromRows(rows: readonly Record<string, unknown>[], columns: readonly string[]): ProfileColumn[] {
   return columns.map((column) => {
     const counts = new Map<string, number>();
     let nulls = 0;
+    let padded = false;
     for (const row of rows) {
       const raw = valueOfRow(row, column);
       if (raw === null || raw === undefined) { nulls += 1; continue; }
-      const text = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+      const text = profileValueText(raw);
+      // CHAR 右填充空格：比较 / join 要 TRIM，标出来免得静默丢行。
+      if (text !== text.trim()) padded = true;
       // 超长文本不是"码值"，省掉它们，别把画像撑成一张数据表。
       const key = text.length > 80 ? `${text.slice(0, 80)}…` : text;
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -173,8 +206,53 @@ export function profileFromRows(rows: readonly Record<string, unknown>[], column
     const values = highCardinality
       ? []
       : [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN")).map(([value]) => value);
-    return { name: column, distinct, nullRate: rows.length ? nulls / rows.length : 0, values, highCardinality };
+    return { name: column, distinct, nullRate: rows.length ? nulls / rows.length : 0, values, highCardinality, padded };
   });
+}
+
+/**
+ * 采样行里 DATE / DATETIME 列的覆盖情况：覆盖到哪些日期、每日期多少行。纯函数。
+ *
+ * 为什么要给：低基数列（例如状态 STATS）的取值清单是把多个统计日**混在一起**算的，
+ * 不标覆盖范围，模型会以为"清单里没有的值 = 表里没有"（实际可能只是那天没采到）。
+ */
+export function sampleDateCoverage(rows: readonly Record<string, unknown>[], dateColumns: readonly { column: string; property: string }[]): SampleDateCoverage[] {
+  const coverage: SampleDateCoverage[] = [];
+  for (const { column, property } of dateColumns) {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const raw = valueOfRow(row, column);
+      if (raw === null || raw === undefined) continue;
+      const date = raw instanceof Date ? dateOnlyText(raw) : profileValueText(raw).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      counts.set(date, (counts.get(date) ?? 0) + 1);
+    }
+    if (!counts.size) continue;
+    const all = [...counts.entries()].map(([date, count]) => ({ date, rows: count })).sort((a, b) => a.date.localeCompare(b.date));
+    coverage.push({ column, property, from: all[0].date, to: all[all.length - 1].date, dates: all.slice(0, 30), dateCount: all.length });
+  }
+  return coverage;
+}
+
+/** 这张表上映射到的、属性类型是 DATE / DATETIME 的列（采样覆盖按它们算）。 */
+export function dateColumnsFor(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string, knownSourceIds?: readonly string[]): { column: string; property: string }[] {
+  const out: { column: string; property: string }[] = [];
+  const seen = new Set<string>();
+  for (const entity of definition.entityTypes) {
+    for (const source of entitySources(entity)) {
+      if (!sourceTableBinding(source, { dataSourceId, schema, table, knownSourceIds })) continue;
+      for (const property of entity.properties) {
+        if (!property.sourceField) continue;
+        if (property.sourceId && property.sourceId !== source.id) continue;
+        if (property.dataType !== "DATE" && property.dataType !== "DATETIME") continue;
+        const column = property.sourceField.trim();
+        if (!column || seen.has(column.toUpperCase())) continue;
+        seen.add(column.toUpperCase());
+        out.push({ column, property: property.name });
+      }
+    }
+  }
+  return out;
 }
 
 /** 读缓存的画像；没有就返回 null。 */
@@ -235,6 +313,7 @@ export async function ensureColumnProfile(input: {
   const connector = await openDataSource(input.record);
   if (!connector.selectRows) return { profile: null, cached: false, warning: `数据资源「${input.record.name}」不支持按列取行，无法做列画像。` };
   const page = await connector.selectRows({ view: { schema: schema || undefined, name: table }, columns, limit: PROFILE_SAMPLE_ROWS });
+  const coverage = sampleDateCoverage(page.rows, dateColumnsFor(input.definition, input.record.id, schema, table, input.knownSourceIds));
   const profile: ColumnProfile = {
     sourceId: input.record.id,
     schema,
@@ -242,6 +321,7 @@ export async function ensureColumnProfile(input: {
     sampledAt: new Date().toISOString(),
     sampleSize: page.rows.length,
     columns: profileFromRows(page.rows, columns),
+    ...(coverage.length ? { coverage } : {}),
   };
   await writeColumnProfile(profile);
   return { profile, cached: false };

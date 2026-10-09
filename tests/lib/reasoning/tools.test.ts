@@ -695,6 +695,20 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
     expect(verified.metrics.map((item) => item.name)).toEqual(["互联网专线条数"]);
   });
 
+  it("整个本体都没命中时给 no_match + 明确措辞：别把兜底推荐当成「命中的概念」", async () => {
+    const ctx = { store: {} as never, definition: definition(), runtimeTypes };
+    const miss = (await runReasoningTool("search_schema", { query: "完全不存在的业务黑话zzz" }, ctx)).payload as { no_match?: boolean; hint: string; matches: { matched: string }[] };
+    expect(miss.no_match).toBe(true);
+    expect(miss.hint).toContain("都没有命中");
+    // 兜底结果照旧返回（供模型看本体里大概有什么），但每一条都要如实标成 fallback。
+    expect(miss.matches.length).toBeGreaterThan(0);
+    expect(miss.matches.every((item) => item.matched === "fallback")).toBe(true);
+
+    // 有真命中就不该带 no_match。
+    const hit = (await runReasoningTool("search_schema", { query: "订单" }, ctx)).payload as { no_match?: boolean };
+    expect(hit.no_match).toBeUndefined();
+  });
+
   it("工具层：没连平台库也能检索（取值索引取不到就跳过），并明确「表只能通过对象类型到达」", async () => {
     const outcome = await runReasoningTool("search_schema", { query: "专线", max_concepts: 20 }, { store: {} as never, definition: definition(), runtimeTypes });
     const payload = outcome.payload as { matches: { name: string }[]; note: string };
