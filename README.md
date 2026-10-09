@@ -699,7 +699,7 @@ ontology_management/
 - 改动版本快照 / 发布流程时，同步关注 `src/lib/version-snapshot.ts` 与相关 ADR
 - 改 `src/lib/ontology.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
 - 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建
-- **每完成一批功能，在 [`docs/功能实现记录.md`](docs/功能实现记录.md) 追加一条**（做了什么 / 入口 / 限制 / 怎么验证）—— 那是给人看的功能账本
+- **每完成一批功能，把 [`docs/功能实现记录.md`](docs/功能实现记录.md) 里对应的功能分区更新掉**（能做什么 / 入口 / 限制 / 怎么验证）—— 那是"平台有什么功能"的账本，不记修复过程，别按日期往下堆条目
 
 ## 许可证
 

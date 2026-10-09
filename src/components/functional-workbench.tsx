@@ -1225,12 +1225,18 @@ function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes,
   /**
    * 还差数据资源绑定的来源（没绑的 + 指向已删资源的）。
    * 不补的表现是"对象页一条都读不出来"，所以这里要主动提示，并给一个能改的入口。
+   *
+   * **初值必须是 `null`（还没读到），不能是 `[]`**：`brokenSourcesOf` 判的是"这个 dataSourceId
+   * 在不在已知清单里"，先给空数组等于告诉它"本机一个数据资源都没有"，
+   * 于是 42 个已经绑好的来源在首帧全被判成"没绑" —— 刚点进「对象」就闪一条红色告警，
+   * 等 `/api/data-sources` 回来又自己消失（2026-10-09 用户报的"立马出来弹出一个红色的东西然后很快消失"）。
    */
-  const [sourceIds, setSourceIds] = useState<string[]>([]);
+  const [sourceIds, setSourceIds] = useState<string[] | null>(null);
   const [bindOpen, setBindOpen] = useState(false);
 
   useEffect(() => {
-    void api<{ id: string }[]>("/api/data-sources").then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds([]));
+    // 读不到就保持"还不知道"：宁可少提示一次，也不要报一条"全都绑飞了"的假警。
+    void api<{ id: string }[]>("/api/data-sources").then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds(null));
   }, [version?.id]);
 
   /**
@@ -1310,7 +1316,8 @@ function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes,
   const linkHint = (version?.definition.relationshipTypes ?? []).some((item) => item.linkSource?.dataSourceId)
     ? "这个对象在业务库里没有一跳关系。"
     : "关系类型还没配数据来源，业务库里读不出关系 —— 到「关系类型」里给关系配上数据来源，这里就能看到它连接的对象。";
-  const brokenSources = version ? brokenSourcesOf(version.definition, sourceIds) : [];
+  // 数据资源清单还没回来就先不判 —— 名单不全时候的"断链"判断没有意义。
+  const brokenSources = version && sourceIds ? brokenSourcesOf(version.definition, sourceIds) : [];
 
   const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
     if (!target) return [];
