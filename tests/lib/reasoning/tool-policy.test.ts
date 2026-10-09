@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { callMcpTool, mcpToolCatalog, mcpTools } from "@/lib/reasoning/mcp";
 import { applyPinnedOntology } from "@/lib/reasoning/mcp-endpoint";
-import { emptyToolPolicy, normalizeToolPolicy, resolveToolPolicy, toolPolicyKey, TOOL_POLICY_KEY } from "@/lib/reasoning/tool-policy";
+import { emptyToolPolicy, normalizeToolPolicy, resolveToolPolicy, togglableToolNames, toolPolicyKey, TOOL_POLICY_KEY } from "@/lib/reasoning/tool-policy";
 
 /**
  * 工具开关的**两个层级**（2026-10-08 用户口径：「工具的开关配置会根据不同的本体而不同吗」→ 要做）。
@@ -65,5 +66,29 @@ describe("applyPinnedOntology（本体级 MCP 端点）", () => {
   it("平台级端点（没钉本体）原样透传参数", () => {
     const args = { query: "客户", ontology_id: "22222222-2222-4222-8222-222222222222" };
     expect(applyPinnedOntology(args, null)).toEqual(args);
+  });
+});
+
+/**
+ * `list_ontologies` 是**只在 MCP 目录里**的工具（不在 `REASONING_TOOLS` 里），
+ * 2026-10-08 用户报「这个 tool 为什么关不了」：界面把名字发上来，`normalizeToolPolicy`
+ * 拿 `togglableToolNames()` 当白名单，而那份白名单原来只认 `REASONING_TOOLS`，
+ * 于是这条被当脏数据丢掉，开关自己弹回去。下面三条把这个坑钉住。
+ */
+describe("list_ontologies 也要能开关", () => {
+  it("它在白名单里", () => {
+    expect(togglableToolNames()).toContain("list_ontologies");
+  });
+
+  it("关掉它能存下来，不会被归一化丢掉", () => {
+    const resolved = resolveToolPolicy(null, { disabledTools: ["list_ontologies", "run_sql"] });
+    expect(resolved.policy.disabledTools).toEqual(["list_ontologies", "run_sql"]);
+  });
+
+  it("关掉之后 tools/list 里没有它，tools/call 也调不动", async () => {
+    expect(mcpToolCatalog().map((tool) => tool.name)).toContain("list_ontologies");
+    expect(mcpTools(["list_ontologies"]).map((tool) => tool.name)).not.toContain("list_ontologies");
+    expect(mcpTools().map((tool) => tool.name)).toContain("list_ontologies");
+    await expect(callMcpTool("list_ontologies", {}, ["list_ontologies"])).rejects.toThrow();
   });
 });

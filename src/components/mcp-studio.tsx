@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Check, Copy, FileJson, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
+import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import type { OntologySummary } from "@/components/ontology-studio";
+import { McpTokenDialog, type McpTokenEntry, type RevealedToken } from "@/components/mcp-token-dialog";
 import "./mcp-studio.css";
 
 /**
@@ -29,6 +30,16 @@ type McpInfo = {
   protocolVersion: string;
   transport: string;
   tokenConfigured: boolean;
+  /** 访问令牌的清单：明文永远不在这份响应里（要看明文走 `/api/mcp/token?reveal=<id>`）。 */
+  token: {
+    configured: boolean;
+    envConfigured: boolean;
+    /** 可以有多条：换个客户端 / 换台机器各配一条，停用其中一个不牵连别人。 */
+    tokens: McpTokenEntry[];
+    warning: string | null;
+    /** 管理令牌要 ADMIN。 */
+    canManage: boolean;
+  };
   groups: { key: string; label: string; description: string; disabled?: boolean }[];
   /** 被关掉的工具名：关掉之后模型与外部客户端都拿不到它。 */
   disabledTools: string[];
@@ -65,7 +76,7 @@ type McpView = "tools" | "mcp";
 
 const SUBTITLES: Record<McpView, string> = {
   tools: "平台把本体的工具按 MCP 协议暴露出去：外部客户端接的是同一个端点、同一套工具，这个页面用来逐个试。",
-  mcp: "外部客户端用 Authorization: Bearer <MCP_API_TOKEN> 连接（令牌在服务端 .env.local 里）；平台内这个页面用登录会话直接调，走的是同一个端点。",
+  mcp: "外部客户端用 Authorization: Bearer <访问令牌> 连接，令牌就在这一档生成 / 查看 / 撤销；平台内这个页面用登录会话直接调，走的是同一个端点。",
 };
 
 function typeLabel(property: SchemaProperty) {
@@ -94,7 +105,12 @@ function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource =
   return result;
 }
 
-/** 令牌只以占位符出现在配置里：真实值在服务端 `.env.local`，密文不出服务端。 */
+/**
+ * 配置片段里的令牌占位符。
+ *
+ * 没看过明文时配置里写占位符（配置可以随便贴）；点了「查看」之后就用真值 ——
+ * 用户口径是「只能通过配置文件进行配置，不行的」，所以复制出去的配置要能直接用。
+ */
 const TOKEN_PLACEHOLDER = "<MCP_API_TOKEN>";
 const SERVER_NAME = "ontology-management";
 
@@ -129,15 +145,16 @@ type ConnectTab = { key: string; label: string; hint: string; blocks: ConnectBlo
 /**
  * 一键复制走的接入配置。写法按各家官方文档来（Claude Code 的 `claude mcp add --transport http`
  * 与 `.mcp.json` 的 `type: "http"`、Cursor 的 `.cursor/mcp.json` 与 `${env:NAME}` 插值）。
- * 地址用你当前访问平台的地址，令牌永远是占位符。
+ * 地址用你当前访问平台的地址；令牌用 `token` 传进来的那一条 —— 界面没看过明文时是占位符，
+ * 点过「查看」之后就是真值，复制出去能直接用（用户口径：不想再手工替换）。
  *
  * **顺序与默认值**：通用 mcp.json 排第一且默认选中（2026-09-18 用户口径："MCP 配置那里，默认是
  * 通用 mcp.json"）。它是各客户端共用的那一段，先给最通用的，别让人先看到某个专有的写法。
  * 与「本体技能」页的 MCP 接入档口径一致。
  */
-function connectTabs(url: string, serverName: string = SERVER_NAME): ConnectTab[] {
+function connectTabs(url: string, serverName: string = SERVER_NAME, token: string = TOKEN_PLACEHOLDER): ConnectTab[] {
   const config = (entry: Record<string, unknown>) => JSON.stringify({ mcpServers: { [serverName]: entry } }, null, 2);
-  const withToken = { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } };
+  const withToken = { type: "http", url, headers: { Authorization: `Bearer ${token}` } };
   return [
     {
       key: "generic",
@@ -161,7 +178,7 @@ function connectTabs(url: string, serverName: string = SERVER_NAME): ConnectTab[
           note: "--scope user 是「所有项目都能用」，去掉就只对当前项目生效。",
           code: [
             `claude mcp add --transport http ${serverName} ${url} \\`,
-            `  --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}" \\`,
+            `  --header "Authorization: Bearer ${token}" \\`,
             "  --scope user",
           ].join("\n"),
         },
@@ -204,6 +221,13 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
    */
   const [scope, setScope] = useState<"ontology" | "platform">("ontology");
   const [dataSourceNames, setDataSourceNames] = useState<string[]>([]);
+  /**
+   * 被「查看」到的那一条（id + 明文）：由令牌弹窗回传，**只有点过查看或刚生成时才在浏览器里**。
+   * 页面加载时拿到的是 `/api/mcp/info` 那份清单（只有名字 / 尾巴四位 / 来源）。
+   */
+  const [revealedToken, setRevealedToken] = useState<RevealedToken>(null);
+  /** 令牌清单专门用一个弹窗管（2026-10-08 用户口径），这里只记它开没开。 */
+  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   // 用**当前选中的本体**，不是列表里的第一个（2026-10-08 修：以前多本体平台下会指向第一个本体）。
   const ontologyId = (selectedOntologyId || ontologies[0]?.id || "").trim();
   const ontologyName = ontologies.find((item) => item.id === ontologyId)?.name ?? ontologyId;
@@ -220,7 +244,11 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const scopeUrl = scope === "ontology" && ontologyId ? pinnedUrl : platformUrl;
   const scopePath = scope === "ontology" && ontologyId ? `/api/mcp/${ontologyId}` : "/api/mcp";
   const scopeServerName = scope === "ontology" && ontologyId ? `${SERVER_NAME}-${ontologyId.slice(0, 8)}` : SERVER_NAME;
-  const tabs = useMemo(() => connectTabs(scopeUrl, scopeServerName), [scopeUrl, scopeServerName]);
+  // 看过明文就把它写进配置片段，复制出去能直接用；否则还是占位符。
+  const tabs = useMemo(
+    () => connectTabs(scopeUrl, scopeServerName, revealedToken?.token || TOKEN_PLACEHOLDER),
+    [scopeUrl, scopeServerName, revealedToken],
+  );
   const activeTab = tabs.find((tab) => tab.key === connectTab) ?? tabs[0];
 
   useEffect(() => {
@@ -272,6 +300,18 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
       fail(reason);
     }
   };
+
+  /**
+   * 令牌弹窗把清单与「手上那条」回传过来：页面据此更新摘要，并把它写进下面的接入配置片段。
+   * 生成 / 查看 / 撤销本身都在弹窗里做（`mcp-studio` 不重复一套逻辑）——
+   * 这里只接结果，别把这几个动作再抄回来。
+   */
+  const applyTokenState = useCallback((tokens: McpTokenEntry[], revealed: RevealedToken) => {
+    setRevealedToken(revealed);
+    setInfo((current) => (current
+      ? { ...current, tokenConfigured: tokens.length > 0, token: { ...current.token, configured: tokens.length > 0, tokens } }
+      : current));
+  }, []);
 
   const select = useCallback((tool: McpTool) => {
     setActiveName(tool.name);
@@ -332,6 +372,8 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const required = new Set(active?.inputSchema.required ?? []);
   /** 真正对外可用的工具数：平台停用的与用户关掉的都不算。 */
   const availableCount = info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length;
+  /** 弹窗里刚「查看」过的那条：下面的接入配置片段用的就是它（片段只能带一个令牌）。 */
+  const activeToken = revealedToken ? info.token.tokens.find((entry) => entry.id === revealedToken.id) ?? null : null;
 
   return (
     <section className="mcp-root">
@@ -364,7 +406,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
             <b>{info.transport} · 协议 {info.protocolVersion}</b>
           </div>
           <span className={`mcp-token${info.tokenConfigured ? "" : " off"}`}>
-            {info.tokenConfigured ? "外部令牌已配置" : "未配置 MCP_API_TOKEN"}
+            {info.token.configured ? `外部令牌 ${info.token.tokens.length} 条` : "未配置访问令牌"}
           </span>
         </div>
         <div className="mcp-connect-row">
@@ -391,15 +433,37 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
               : "一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁，客户端先调 list_ontologies 拿 id。"}
           </p>
         </div>
-        <p className="mcp-connect-note">
-          外部客户端用 <code>Authorization: Bearer &lt;MCP_API_TOKEN&gt;</code> 连接（令牌在 <code>.env.local</code> 里）；
-          平台内这个页面用登录会话直接调，走的是同一个端点、同一套工具。
-        </p>
+        {/*
+         * 访问令牌（2026-10-08 用户口径「专门弹出来一个界面进行管理」）：清单在专用弹窗里管，
+         * 这里只留一行摘要与入口 —— 令牌会越攒越多，全铺在页面上会把接入说明挤没了。
+         */}
+        <div className="mcp-token-box">
+          <div className="mcp-token-summary">
+            <span className="mcp-token-summary-mark"><KeyRound size={15} /></span>
+            <div>
+              <b>{info.token.tokens.length ? `访问令牌 ${info.token.tokens.length} 条` : "还没有访问令牌"}</b>
+              <small>
+                {info.token.tokens.length
+                  ? `外部客户端用 Authorization: Bearer 连接${info.token.envConfigured ? " · 其中一条来自 .env.local" : ""}`
+                  : "外部客户端现在还连不上：进去生成第一条"}
+              </small>
+            </div>
+            <button type="button" className="mcp-token-manage" onClick={() => setTokenDialogOpen(true)}>
+              管理令牌
+            </button>
+          </div>
+          {activeToken && (
+            <p className="mcp-token-active">
+              下面的配置片段用的是「{activeToken.name}」（<code>{activeToken.hint}</code>）。
+            </p>
+          )}
+          {info.token.warning && <p className="mcp-token-warn">{info.token.warning}</p>}
+        </div>
 
         <div className="mcp-connect-body">
           <ol className="mcp-steps">
-            <li>在服务端的 <code>.env.local</code> 里给 <code>MCP_API_TOKEN</code> 填一个值，重启开发服务。</li>
-            <li>选一个客户端，把下面的整段配置复制过去（令牌先用占位符，粘完再换成真值）。</li>
+            <li>在上面的「访问令牌」里生成一条，并给它起个名字（哪台机器 / 哪个客户端在用）。</li>
+            <li>点这条的「查看」，再选一个客户端，把下面的整段配置复制过去 —— 片段里带的就是真值，不用再手工替换。</li>
             <li>回到智能体的对话里直接提问，它通过 MCP 工具读这个本体 —— 只读，且每个结论都带证据。</li>
           </ol>
 
@@ -596,6 +660,19 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
           ) : <p className="mcp-empty">左边选一个工具。</p>}
         </div>
       </div>
+      )}
+
+      {/* 令牌清单专用弹窗：生成 / 查看 / 撤销都在这里，页面只接结果。 */}
+      {tokenDialogOpen && (
+        <McpTokenDialog
+          canManage={info.token.canManage}
+          initialTokens={info.token.tokens}
+          initialWarning={info.token.warning}
+          onClose={() => setTokenDialogOpen(false)}
+          onState={applyTokenState}
+          notify={notify}
+          fail={fail}
+        />
       )}
     </section>
   );

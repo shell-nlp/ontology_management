@@ -264,6 +264,32 @@
   界面（`mcp-studio.tsx`）据此显示「跟随全局默认 / 本体 X 单独配置」并给「跟随全局」按钮。
 - 界面的 `ontologyId` 是**当前选中的本体**（由 `functional-workbench` 传进来）。以前它取的是 `ontologies[0]`
   ——多本体平台下会指向第一个本体，2026-10-08 一起修了。
+- **能开关的工具名单在 `togglableToolNames()`**：`REASONING_TOOLS` 与 `MCP_ONLY_TOOLS`（只活在 MCP 目录里的
+  `list_ontologies`）**两份都要算**。2026-10-08 用户报「这个 tool 为什么关不了」就是漏了后者 ——
+  界面把名字发上来、`normalizeToolPolicy` 当脏数据丢掉、开关自己弹回去。
+  同一个坑还有第二处：`callMcpTool` 的开关判定必须在 `list_ontologies` 那个分支**之前**，
+  否则 `tools/list` 里没了、`tools/call` 照样能调。
+
+### 访问令牌：界面上生成 / 查看 / 撤销，而且可以有多条（2026-10-08）
+
+用户两个口径连着来：「mcp 接入的 token 现在只能通过配置文件进行配置，不行的，要实现，可以在这个界面生成，
+也要支持查看和撤销」→ 做完之后立刻追加「token 应该能生成多个，可以管理 token，而不是现在的一个」。
+
+- **多条是硬要求，别退回单条**：换个客户端、换台机器各配一条，撤销哪条只断哪条；
+  只有一条的话"重新生成"就等于把所有人踢下线。
+- 存储：`platform_settings` 一行 `mcp.apiTokens`，值是 `{ tokens: [{ id, name, ciphertext, createdAt, createdBy }] }`。
+  密文用 `@/lib/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
+  实现在 `src/lib/mcp-token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `verifyMcpToken`。
+- **`.env.local` 的 `MCP_API_TOKEN` 还认**，作为清单里一条**只读**的兜底（`id: "env"`，撤销按钮禁掉）。
+  取值来源对客户端透明，`/api/mcp/token` 的 `DELETE ?id=env` 会明确回一句"只能改配置文件"。
+- 校验：`verifyMcpToken` **逐条恒定时间比较**（`timingSafeEqual`，别写 `===`），平台清单与环境变量那条都算数；
+  返回 `configured` 让端点区分"令牌错"与"根本没配"。`mcp-endpoint.ts` 的 `authorization()` 只调它，别在那儿读 env。
+- 接口：`GET /api/mcp/token`（清单，**不含明文**）、`GET ?reveal=<id>`（单条明文）、`POST { name }`（生成，明文只回这一次）、
+  `DELETE ?id=<id>`（撤销）。**只有 ADMIN 能调**；`/api/mcp/info` 只回清单 + `canManage`，不回明文。
+- 界面：`mcp-studio.tsx` 里只留**一行摘要 + 「管理令牌」按钮**，清单与明文在专用弹窗
+  `src/components/mcp-token-dialog.tsx`（配 `mcp-token-dialog.css`）。用户口径：「访问令牌的管理可以专门弹出来一个界面进行管理」——
+  令牌会越攒越多，别再铺回页面上。弹窗把 `(tokens, revealedToken)` 回传给页面，
+  页面据此更新摘要，并把**刚查看的那条**写进接入配置片段（片段只能带一个令牌）。
 
 ### MCP：平台级 + 本体级两个地址
 

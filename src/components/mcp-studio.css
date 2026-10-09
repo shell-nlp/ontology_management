@@ -37,6 +37,30 @@
   font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
 }
 
+/* ---------- 访问令牌（2026-10-08：生成 / 查看 / 撤销都搬到界面上） ---------- */
+
+/* 访问令牌：页面上只留一行摘要 + 入口（清单在 mcp-token-dialog.css 那个弹窗里）。 */
+.mcp-token-box { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 4px; background: #fbfdff; }
+.mcp-token-summary { display: flex; align-items: center; gap: 10px; }
+.mcp-token-summary-mark { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 4px; background: #eef3fb; color: #1e3a8a; }
+.mcp-token-summary > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.mcp-token-summary b { color: var(--ink); font-size: 12.5px; }
+.mcp-token-summary small { color: var(--muted); font-size: 11px; }
+.mcp-token-manage {
+  flex: none; min-height: 30px; padding: 0 13px; border: 1px solid #1e3a8a; border-radius: 4px;
+  background: #1e3a8a; color: #fff; font-size: 11.5px; font-weight: 650; cursor: pointer;
+}
+.mcp-token-manage:hover { background: #142f73; border-color: #142f73; }
+.mcp-token-active { margin: 0; padding-left: 40px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.mcp-token-active code {
+  padding: 1px 5px; border-radius: 3px; background: #eef2f7; color: #334155;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10.5px;
+}
+.mcp-token-warn {
+  margin: 0; padding: 7px 9px; border: 1px solid #f3e0c0; border-radius: 4px;
+  background: #fffbeb; color: #b45309; font-size: 11.5px; line-height: 1.6;
+}
+
 /* 这条配置查哪个本体（2026-10-08）：默认本体级端点，配置片段因此自带本体信息。 */
 .mcp-scope { display: grid; gap: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: #fbfdff; }
 .mcp-scope > div { display: inline-flex; flex-wrap: wrap; gap: 6px; }

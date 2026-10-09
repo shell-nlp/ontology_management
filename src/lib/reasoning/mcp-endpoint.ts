@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
+import { verifyMcpToken } from "@/lib/mcp-token";
 import { getOntology } from "@/lib/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
 import { loadToolPolicy, type ToolPolicy } from "@/lib/reasoning/tool-policy";
@@ -136,14 +137,24 @@ export function applyPinnedOntology(args: Record<string, unknown>, pinnedOntolog
 async function authorization(request: NextRequest) {
   const header = (request.headers.get("authorization") ?? "").trim();
   const bearer = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() ?? "";
-  const expected = process.env.MCP_API_TOKEN?.trim() ?? "";
   if (bearer) {
-    if (expected && bearer === expected) return { ok: true as const, via: "token" as const };
-    return { ok: false as const, via: "token" as const, reason: expected ? "令牌不正确。" : "服务端没有配置 MCP_API_TOKEN，外部客户端暂时连不上。" };
+    /*
+     * 令牌由 `@/lib/mcp-token` 解析：**平台库里那条优先**（「MCP 调试 → MCP 接入」里生成/撤销的），
+     * 其次才是 `.env.local` 的 `MCP_API_TOKEN`。比较走恒定时间，不用 `===`。
+     */
+    const { ok, configured } = await verifyMcpToken(bearer);
+    if (ok) return { ok: true as const, via: "token" as const };
+    return {
+      ok: false as const,
+      via: "token" as const,
+      reason: configured
+        ? "令牌不正确（可能已经被撤销）。到「MCP 调试 → MCP 接入」核对一下现在有效的令牌。"
+        : "服务端还没有配置访问令牌：到「MCP 调试 → MCP 接入」生成一条，或给 .env.local 补 MCP_API_TOKEN。",
+    };
   }
   const user = await currentUser();
   if (user) return { ok: true as const, via: "session" as const };
-  return { ok: false as const, via: "none" as const, reason: "未授权：带上平台会话 Cookie，或 Authorization: Bearer <MCP_API_TOKEN>。" };
+  return { ok: false as const, via: "none" as const, reason: "未授权：带上平台会话 Cookie，或 Authorization: Bearer <访问令牌>。" };
 }
 
 export async function handleMcpRequest(request: NextRequest, options: { pinnedOntologyId?: string | null } = {}) {

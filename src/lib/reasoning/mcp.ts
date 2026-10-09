@@ -99,9 +99,15 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
   };
 }
 
-/** 给「MCP 调试」页看的全量目录：**含**暂时不用的工具，界面把它们灰着显示。 */
-export function mcpToolCatalog(): McpTool[] {
-  return [
+/**
+ * 只活在 MCP 目录里的工具：不在 `REASONING_TOOLS` 里，智能问答那份工具集没有它们。
+ *
+ * `list_ontologies` 只有外部客户端那条链路需要（先拿 `ontology_id` 才查得了别的），
+ * 平台内问答是在某个本体里跑的，用不到。**但它一样要能被用户关掉** ——
+ * 开关的白名单 `togglableToolNames()` 必须把这一份算进去，否则界面上开关点得动、
+ * 存下去却被归一化丢掉，开关自己弹回去（2026-10-08 用户报的「这个 tool 为什么关不了」）。
+ */
+export const MCP_ONLY_TOOLS: McpTool[] = [
   {
     name: "list_ontologies",
     title: TOOL_TITLES.list_ontologies,
@@ -109,8 +115,11 @@ export function mcpToolCatalog(): McpTool[] {
     description: "列出平台上登记的本体：id、名称、标识、落在哪个存储、版本状态与对象数量。查其它工具前先用它拿 ontology_id。",
     inputSchema: { type: "object", properties: {} },
   },
-    ...REASONING_TOOLS.map(withOntology),
-  ];
+];
+
+/** 给「MCP 调试」页看的全量目录：**含**暂时不用的工具，界面把它们灰着显示。 */
+export function mcpToolCatalog(): McpTool[] {
+  return [...MCP_ONLY_TOOLS, ...REASONING_TOOLS.map(withOntology)];
 }
 
 /**
@@ -172,10 +181,14 @@ async function contextFor(ontologyId: string): Promise<ToolContext> {
 }
 
 export async function callMcpTool(name: string, args: Record<string, unknown>, disabledTools: readonly string[] = []): Promise<ToolOutcome> {
+  /*
+   * 开关判定必须在最前面：`list_ontologies` 的分支原来是第一个 return，
+   * 结果"被用户关掉"对它是失效的 —— tools/list 里没了，tools/call 照样能调。
+   */
+  if (!findMcpTool(name, disabledTools)) throw new Error(`没有叫「${name}」的工具。先调 tools/list 看可用工具（被关掉的工具不在里面）。`);
   if (name === "list_ontologies") {
     return { payload: { ontologies: await listOntologySummaries() }, evidence: [] };
   }
-  if (!findMcpTool(name, disabledTools)) throw new Error(`没有叫「${name}」的工具。先调 tools/list 看可用工具（被关掉的工具不在里面）。`);
   const { ontology_id: ontologyId, ...rest } = args;
   const context = await contextFor(typeof ontologyId === "string" ? ontologyId : "");
   return runReasoningTool(name, rest, context);

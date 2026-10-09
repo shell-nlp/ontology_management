@@ -1,0 +1,145 @@
+/*
+ * 「访问令牌」专用弹窗。
+ *
+ * 一条令牌 = 一把钥匙：左侧那道键齿（notch）标出它是平台签发的（青绿）
+ * 还是 `.env.local` 兜底的（灰蓝）；展开明文时，上面压一条虚线"撕口"，
+ * 像把密钥从卡片上撕下来 —— 整页只有这一个记忆点，其余保持安静。
+ *
+ * 配色与字体都沿用「MCP 调试」那一套（slate/蓝 + Georgia 标题 + 等宽标识符），
+ * 不为了好看而另起一套皮肤。
+ */
+
+.mcp-key-backdrop { z-index: 130; background: rgba(11, 20, 38, .52); }
+
+.mcp-key-dialog {
+  --key-ink: #0f172a;
+  --key-body: #334155;
+  --key-muted: #64748b;
+  --key-soft: #94a3b8;
+  --key-line: #e2e8f0;
+  --key-line-strong: #cbd5e1;
+  --key-paper: #f8fafc;
+  --key-accent: #1e3a8a;
+  --key-accent-soft: #eef3fb;
+  /* 钥匙色与页面上那颗「外部令牌」胶囊同色，一眼看出是一家人。 */
+  --key-key: #0f766e;
+  --key-danger: #b45309;
+  --key-danger-soft: #fffbeb;
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(660px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--key-ink);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .38);
+  animation: mcp-key-enter .16s ease-out;
+}
+@keyframes mcp-key-enter { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .mcp-key-dialog { animation: none; } }
+
+.mcp-key-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 15px; border-bottom: 1px solid var(--key-line); }
+.mcp-key-mark { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 4px; background: var(--key-accent-soft); color: var(--key-accent); }
+.mcp-key-title { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.mcp-key-eyebrow { color: var(--key-soft); font-size: 9.5px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; }
+.mcp-key-dialog h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 20px; font-weight: 600; line-height: 1.2; }
+.mcp-key-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 4px; background: transparent; color: var(--key-soft); cursor: pointer; }
+.mcp-key-close:hover { background: #f1f5fb; color: var(--key-ink); }
+
+.mcp-key-body { display: grid; align-content: start; gap: 12px; min-height: 0; padding: 18px 22px 20px; overflow: auto; }
+.mcp-key-lede { margin: 0; color: var(--key-muted); font-size: 11.5px; line-height: 1.75; }
+.mcp-key-lede code, .mcp-key-note code {
+  padding: 1px 5px; border-radius: 3px; background: #eef2f7; color: #334155;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
+}
+
+/* ---------- 清单：一条令牌一行 ---------- */
+
+.mcp-key-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.mcp-key-item {
+  position: relative; display: grid; grid-template-columns: 3px minmax(0, 1fr);
+  border: 1px solid var(--key-line); border-radius: 4px; background: #fff;
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.mcp-key-item:hover { border-color: var(--key-line-strong); }
+.mcp-key-item.open { border-color: #b6cdf5; box-shadow: 0 0 0 3px rgba(29, 78, 216, .09); }
+/* 键齿：平台签发是青绿实心，环境变量那条是灰蓝斜纹（"不是在这儿发的"）。 */
+.mcp-key-notch { border-radius: 3px 0 0 3px; background: var(--key-key); }
+.mcp-key-notch.env {
+  background-image: repeating-linear-gradient(135deg, #94a3b8 0 3px, #cbd5e1 3px 6px);
+}
+.mcp-key-main { display: grid; gap: 5px; min-width: 0; padding: 9px 11px; }
+.mcp-key-line { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.mcp-key-line b { color: var(--key-ink); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-key-fingerprint {
+  flex: none; padding: 1px 6px; border-radius: 3px; background: #eef2f7; color: #475569;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 11px;
+}
+.mcp-key-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.mcp-key-origin { color: var(--key-muted); font-size: 10.5px; }
+
+/* 撕口 + 密钥条：展开时才出现，虚线是"从卡片上撕下来"的那一道。 */
+.mcp-key-secret { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; padding-top: 9px; border-top: 1px dashed var(--key-line-strong); }
+.mcp-key-secret code {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--key-line); border-radius: 4px;
+  background: var(--key-paper); color: #1e293b;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.mcp-key-empty { padding: 16px 12px; border: 1px dashed var(--key-line-strong); border-radius: 4px; color: var(--key-muted); font-size: 11.5px; text-align: center; }
+.mcp-key-warn {
+  display: flex; align-items: center; gap: 7px; margin: 0; padding: 8px 10px;
+  border: 1px solid #f3e0c0; border-radius: 4px; background: var(--key-danger-soft);
+  color: var(--key-danger); font-size: 11.5px; line-height: 1.6;
+}
+.mcp-key-warn svg { flex: none; }
+
+/* ---------- 生成新令牌 ---------- */
+
+.mcp-key-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; padding-top: 3px; }
+.mcp-key-field { display: grid; gap: 6px; }
+.mcp-key-field > span { color: #3f5052; font-size: 11px; font-weight: 700; }
+.mcp-key-field input {
+  width: 100%; height: 34px; padding: 0 11px; border: 1px solid var(--key-line-strong);
+  border-radius: 4px; background: #fff; color: #16233b; font-size: 12px; outline: 0;
+}
+.mcp-key-field input::placeholder { color: #a9b8cb; }
+.mcp-key-field input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29, 78, 216, .13); }
+.mcp-key-field input:disabled { background: var(--key-paper); color: var(--key-soft); }
+.mcp-key-primary {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  border: 1px solid var(--key-accent); border-radius: 4px; background: var(--key-accent);
+  color: #fff; font-size: 12px; font-weight: 650; cursor: pointer;
+}
+.mcp-key-primary:hover:not(:disabled) { background: #142f73; border-color: #142f73; }
+.mcp-key-primary:disabled { opacity: .5; cursor: not-allowed; }
+.mcp-key-note { margin: 0; color: var(--key-muted); font-size: 10.5px; line-height: 1.7; }
+
+.mcp-key-btn {
+  min-height: 26px; padding: 0 10px; border: 1px solid var(--key-line-strong); border-radius: 4px;
+  background: #fff; color: var(--key-body); font-size: 11px; font-weight: 650; cursor: pointer;
+}
+.mcp-key-btn:hover:not(:disabled) { border-color: #93b4f5; color: #2563eb; }
+.mcp-key-btn:disabled { opacity: .45; cursor: not-allowed; }
+.mcp-key-btn.danger { color: #8a4b12; border-color: #eccf9f; }
+.mcp-key-btn.danger:hover:not(:disabled) { border-color: #d9ab63; background: var(--key-danger-soft); color: #92400e; }
+.mcp-key-copy {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; min-height: 30px; padding: 0 11px;
+  border: 1px solid var(--key-line-strong); border-radius: 4px; background: #fff;
+  color: var(--key-body); font-size: 11.5px; font-weight: 650; cursor: pointer;
+}
+.mcp-key-copy:hover { border-color: #93b4f5; color: #2563eb; }
+.mcp-key-copy.done { border-color: #9fd3c3; background: #ecfdf5; color: #0f766e; }
+
+.mcp-key-foot { display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-top: 1px solid var(--key-line); background: #fbfcfe; }
+.mcp-key-foot span { flex: 1; color: var(--key-muted); font-size: 11px; }
+
+/* 窄屏：生成区折成两行，动作按钮不挤名字。 */
+@media (max-width: 560px) {
+  .mcp-key-create { grid-template-columns: minmax(0, 1fr); }
+  .mcp-key-actions { margin-left: 0; }
+  .mcp-key-body, .mcp-key-head, .mcp-key-foot { padding-left: 16px; padding-right: 16px; }
+}

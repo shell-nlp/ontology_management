@@ -1,4 +1,5 @@
 import { deletePlatformSetting, readPlatformSetting, writePlatformSetting } from "@/lib/platform-db";
+import { MCP_ONLY_TOOLS } from "@/lib/reasoning/mcp";
 import { REASONING_TOOLS } from "@/lib/reasoning/tools";
 
 /**
@@ -41,9 +42,15 @@ export type ResolvedToolPolicy = {
   override: ToolPolicy | null;
 };
 
-/** 能被用户开关的工具：平台自己停用的那几个不算（它们恒为关）。 */
+/**
+ * 能被用户开关的工具：平台自己停用的那几个不算（它们恒为关）。
+ *
+ * 两份都要算上：`REASONING_TOOLS`（智能问答与 MCP 共用的）+ `MCP_ONLY_TOOLS`（只有 MCP 有，
+ * 例如 `list_ontologies`）。漏掉后者，那个工具的开关就存不下去（2026-10-08 用户报的
+ * 「这个 tool 为什么关不了」）：界面把名字发上来，`normalizeToolPolicy` 当脏数据丢掉，开关弹回去。
+ */
 export function togglableToolNames(): string[] {
-  return REASONING_TOOLS.filter((spec) => !spec.disabled).map((spec) => spec.name);
+  return [...MCP_ONLY_TOOLS, ...REASONING_TOOLS].filter((spec) => !spec.disabled).map((spec) => spec.name);
 }
 
 export function emptyToolPolicy(): ToolPolicy {
