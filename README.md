@@ -33,16 +33,16 @@
 
 ---
 
-平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿只写本地文件，发布才重建图数据。
+平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿与历史快照都写平台库，发布才重建图数据。
 
-图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象，不感知具体引擎。平台库（PostgreSQL `ontology_platform`）保存账号、连接、审计、对象检索索引与版本状态。
+图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象，不感知具体引擎。平台库（PostgreSQL `ontology_platform`）保存账号、连接、审计、对象检索索引，以及本体定义与版本快照（`ontology_versions` / `ontology_concepts`）。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
 ```text
 草稿编辑 → 校验 → 发布 / 激活 → 重建图数据
    │                                    │
-   └──── 只写本地快照文件 ──────────────┘  成功后才更新版本状态
+   └──── 版本写进平台库（定义 + 快照）────┘  成功后才更新版本状态
 ```
 
 ## 目录
@@ -75,7 +75,7 @@
 | **动力模型** | 本体「能做什么」：动作（唯一的业务写入口），以及挂在动作上的规则 / 动态安全 | 动作 · 规则 |
 | **能力验证** | 把本体交给模型与外部 Agent 用起来：智能问答（工具循环）与 MCP 服务 | 智能问答 · MCP 调试 |
 
-「总览」同时展示当前本体的运行状态与本体列表，可在列表中搜索、新建、导入、打开或导出。数据资源（本体脚下来自哪张表）与本体存储（本体落在哪个图库）是平台层；图引擎连接在「设置 → 图引擎配置」管理。
+「总览」同时展示当前本体的运行状态与本体列表，可在列表中搜索、新建、导入、打开或导出。数据资源（本体的数据来自哪张表）与本体存储（本体落在哪个图库）是平台层；图引擎连接在「设置 → 图引擎配置」管理。
 | | 模块 | 说明 |
 | :---: | --- | --- |
 | 📐 | **本体建模** | 对象类型、关系类型、端点契约与属性规则；保存为草稿，校验后发布 |
@@ -87,7 +87,7 @@
 | 🗄 | **图引擎配置** | 内置图存储开箱可用；也可登记 Apache Jena / Fuseki，凭据 AES-256-GCM 加密入库 |
 | 🔌 | **存储抽象** | `GraphStore` 契约 + 注册表（内置 / Jena 两个适配器），业务 API 不直接依赖具体引擎 |
 | 🧱 | **数据资源** | 外部关系库的只读连接（PostgreSQL / MySQL / Oracle）：列结构、字段与数据预览，再把类绑到表上（一个类可挂多份来源，按主键合并属性） |
-| 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿写文件，发布才写图 |
+| 📦 | **统一版本** | 类型 + 对象 + 关系完整快照；草稿与快照都写平台库，发布才写图 |
 | 📤 | **本体包** | 一个 `.ontology.json` 带走整份**结构**（类 / 关系类型 / 动作 / 规则 + 数据资源坐标），导入停在草稿。不含实例数据，也不含凭据 |
 | 🧭 | **概念分组** | 画布上的逻辑分组：先建分组，再在对象类型上选归属；智能问答可以按分组找类型 |
 | 🤖 | **智能问答** | 服务端工具循环（AI SDK）：模型只调只读工具（本体检索、多跳、表结构、只读 SQL），流式输出、可中断、可带图片、带会话历史 |
@@ -128,7 +128,7 @@ cp .env.example .env.local
 | `MCP_API_TOKEN` | 可选 | 外部 MCP 客户端访问 `/api/mcp` 用的 Bearer 令牌；平台只把它当一条只读兜底（正规做法是在「MCP 调试 → MCP 接入」里生成，可多条、可撤销） |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
-| `ONTOLOGY_VERSION_DIR` | 可选 | 快照目录，默认 `<项目>/.data/ontology-versions` |
+| `ONTOLOGY_VERSION_DIR` | 可选 | 旧部署的磁盘快照目录；**只在把历史版本一次性迁进平台库时读取**，新部署不需要 |
 
 ### 2. 安装与启动
 
@@ -152,7 +152,10 @@ pnpm dev
 | --- | --- |
 | `pnpm dev` | 开发服务器 |
 | `pnpm build` / `pnpm start` | 生产构建与启动 |
-| `pnpm test` | 单元测试（Vitest） |
+| `pnpm test` | 单元测试（Vitest，并行跑） |
+| `pnpm test:object-index` | 对象索引契约测试（需平台库） |
+| `pnpm test:version-store` | 版本记录契约测试（需平台库） |
+| `pnpm test:schema-comments` | 表 / 字段注释契约测试（需平台库） |
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | TypeScript 检查 |
 | `pnpm docker:up` / `docker:down` / `docker:logs` | 容器部署（见下一节） |
@@ -170,18 +173,17 @@ pnpm docker:logs                      # 跟日志
 ```
 
 `pnpm docker:*` 都带 `--env-file .env.docker`：这个文件既给容器注入变量，也给 compose 做变量替换，
-所以 `APP_PORT` / `VERSION_SNAPSHOT_DIR` / `NODE_IMAGE` 也写在里面（模板第 0 节）。手动敲命令时
-记得带上这个参数，否则这几个变量取不到值。
+所以 `APP_PORT` / `NODE_IMAGE` 也写在里面（模板第 0 节）。手动敲命令时记得带上这个参数，
+否则这几个变量取不到值。
 
 不带 `--env-file` 直接 `docker compose up -d` 也能起（Docker Desktop 上点按钮、IDE 里的 compose up
-都走这条路），但那时用的是**默认值**：版本快照使用项目下的 `./.data/ontology-versions`，
-Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.docker` 提供平台库与密钥。
-固定配置请用 `pnpm docker:up`。
+都走这条路），但那时用的是**默认值**：`APP_PORT` 取 3000，Jena 端点中的 `localhost`
+改写为 `host.docker.internal`；仍需 `.env.docker` 提供平台库与密钥。固定配置请用 `pnpm docker:up`。
 
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm docker:up` | 构建并后台启动（`docker compose up -d --build`） |
-| `pnpm docker:down` | 停止并删除平台容器（版本快照在绑定目录或命名卷里，不会丢） |
+| `pnpm docker:down` | 停止并删除平台容器（本体定义与快照在平台库里，不会丢） |
 | `pnpm docker:logs` | 跟踪平台日志 |
 | `pnpm docker:config` | 打印合并后的编排，排查变量问题 |
 
@@ -209,15 +211,11 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
   之后每个请求带 `Authorization: Bearer <令牌>`，浏览器把它存在本地存储里。这样 Postman / curl / 脚本
   直接就能调（以前得从浏览器里抄会话 Cookie）。代价是令牌对页面脚本可见（没有 httpOnly 保护），
   换来的好处是免 CSRF 且调试方便；有效期仍是 8 小时，服务端每次请求都回库核对用户。
-- **版本快照目录是状态，不是缓存**：库里只记"某本体发布了 v2"，定义本身在快照目录里
-  （容器内 `/data/ontology-versions`，默认绑到项目 `.data/ontology-versions` —— 与本机开发服务同一份，
-  `docker compose down` 不会删它；也可以把 `VERSION_SNAPSHOT_DIR` 写成卷名改用命名卷，
-  Linux 服务器用绑定挂载时要 `chown -R 1000:1000`，容器里的 node 用户是 uid 1000）。
-  把部署搬到新机器时，要么把旧机器的 `<项目>/.data/ontology-versions` 带过来并让
-  `VERSION_SNAPSHOT_DIR` 指向它，要么部署完在界面「本体建模」里重新发布一次 ——
-  不带过去的话，模型工具会答"本体还没有发布版本"，图库也跟库里记的版本对不上。
-  同一个平台库上同时跑着本机开发服务时，更要把它指到项目里的同一个目录：两边各写各的快照，
-  会出现"一边发布、另一边读不到"。
+- **版本在平台库，不占磁盘、不用共享卷**：本体定义与实例快照都写在
+  `ontology_platform.ontology_versions` 里，容器重建、换机器都不会丢，多实例部署也不需要共享目录。
+  `docker-compose.yml` 里那个 `/data/ontology-versions` 绑定目录只服务于**旧部署升级**：
+  以前把版本放在磁盘上的部署，首次访问版本数据时会读这个目录、迁进平台库并删掉磁盘副本
+  （见「统一版本快照」节）。全新部署用不到它，`VERSION_SNAPSHOT_DIR` 可以不管。
 - 拉不动 Docker Hub 时用镜像站：`NODE_IMAGE=docker.1ms.run/node:24-bookworm-slim docker compose up -d --build`
   （Windows PowerShell 先 `$env:NODE_IMAGE="docker.1ms.run/node:24-bookworm-slim"`）。
 - **Oracle 开箱可用**：镜像里装好了 Linux 版 Instant Client，`ORACLE_CLIENT_LIB_DIR` 指向
@@ -232,28 +230,29 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 
 一个版本是 **不可拆分** 的完整快照，不只是类型定义。
 
-### 快照文件
+### 版本存在哪
 
-| 文件 | 内容 |
+| 存什么 | 在哪 |
 | --- | --- |
-| `definition.json` | 类、关系类型、端点契约、属性规则 |
-| `nodes.csv` | 对象稳定 ID、Label、属性 JSON |
-| `relationships.csv` | 关系稳定 ID、起止对象 ID、类型、属性 JSON |
-| `manifest.json` | 格式版本、本体存储、版本号、数量、时间、SHA-256 |
+| 本体定义（对象类型 / 关系类型 / 接口 / 指标 / 动作 / 规则 / 概念分组） | 平台库 `ontology_platform.ontology_versions.definition`（jsonb，一行一个版本） |
+| 版本元数据（版本号、状态、对象与关系条数、内容哈希、发布时刻） | 同一行的其它列 |
+| 实例快照（对象节点与关系边） | 同一行的 `snapshot`（jsonb）：激活历史版本时用它整图回滚 |
+| 概念检索索引（一行一个概念） | `ontology_concepts`（定义保存/发布时重建） |
+| 发布后的图数据 | 图库：Jena 命名图，或内置类型图的 `embedded_graphs` 表 |
 
-版本索引与状态（版本号、状态、数量、哈希、发布时间）就写在同一个快照目录的 `manifest.json` 里，**快照文件是版本状态与草稿的事实来源**。Jena 发布后写入命名图；内置后端把当前发布视图原子保存在 PG 的 `embedded_graphs` 表，运行时从中重建小型类型图。`ONTOLOGY_VERSION_DIR` 仍是所有平台实例共享的持久卷。
+**定义与快照都在平台库，磁盘上不再有本体数据**（`.data/ontology-versions` 已废弃）。老部署首次访问版本数据时会把磁盘上的那批版本自动迁进平台库并删掉磁盘副本；`ONTOLOGY_VERSION_DIR` 现在只在这次一次性迁移里被读取。
 
 ### 生命周期
 
 ```text
 ┌─────────────┐    ┌─────────────┐    ┌──────────┐    ┌────────────────┐
 │ 1. 创建草稿  │ →  │ 2. 编辑草稿  │ →  │ 3. 校验   │ →  │ 4. 发布 / 激活  │
-│ 复制或导出  │    │ 只改本地文件 │    │ 定义+实例 │    │ 事务重建图      │
+│ 复制或导出  │    │ 只改草稿记录 │    │ 定义+实例 │    │ 事务重建图      │
 └─────────────┘    └─────────────┘    └──────────┘    └────────────────┘
 ```
 
 1. **创建草稿** — 优先复制当前发布版；升级后首版从当前图数据导出  
-2. **编辑草稿** — 类型 / 对象 / 关系 / 属性 / 画布位置只改文件；写操作须带 `versionId`  
+2. **编辑草稿** — 类型 / 对象 / 关系 / 属性 / 画布位置只改这条草稿记录；写操作须带 `versionId`  
 3. **校验** — 必填/唯一、实例类型、关系端点与契约  
 4. **发布** — 由后端适配器整图替换，必须原子：要么整体生效，要么图保持原样  
 5. **激活历史** — 同一发布流程；存在草稿时禁止切换  
@@ -277,13 +276,11 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
 
 ### 部署注意
 
-> **多实例生产环境**：`ONTOLOGY_VERSION_DIR` 必须是所有实例共享的持久卷，不能用各机本地临时目录。
-
-无实例快照的旧归档版本不可激活；当前发布版与草稿会在首次使用时从真实图库生成快照。
+版本数据在平台库里，多实例部署不需要共享卷。无实例快照的旧归档版本不可激活；当前发布版与草稿会在首次使用时从真实图库生成快照。
 
 ## 本体包（导出与导入）
 
-版本快照是**平台内部**的形态：一个目录四个文件，id 全是本机的 UUID。要在人和环境之间传播，
+版本快照是**平台内部**的形态：平台库 `ontology_versions` 里一行一条，id 全是本机的 UUID。要在人和环境之间传播，
 需要的是另一种东西 —— **本体包**：一个 `.ontology.json` 文件，单文件、自描述、只装结构。
 
 ```json
@@ -305,7 +302,7 @@ Jena 端点中的 `localhost` 改写为 `host.docker.internal`；仍需 `.env.do
    所以导出/导入不可能出现"两份定义各说各话"。
 2. **包里绝不写凭据。** 数据资源只记连接坐标（kind / host / port / 库 / 模式），
    导入端按坐标去匹配本机已登记的资源。
-3. **导入一定停在草稿。** 别人的文件不该绕过版本边界——导入只写本地快照，
+3. **导入一定停在草稿。** 别人的文件不该绕过版本边界——导入只写平台库草稿，
    校验、发布仍走平台既有流程。
 
 ### 导入时做的三件事
@@ -352,6 +349,22 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 - 三种输入都支持：bkn 知识网络、平台自己的 `ontology.bundle`、以及工具导出的本体包。
 
 ## 智能问答与 MCP
+
+REST 与智能问答 / MCP 是**两条入口、一层 lib**（工具侧只读，且只认已发布版本）：
+
+```mermaid
+flowchart LR
+  UI["界面"] -->|"读写"| REST["REST：/api/ontologies/* · /api/ontology/*"]
+  QA["智能问答"] -->|"只读"| RUN["/api/reasoning/*"]
+  EXT["外部 MCP 客户端"] -->|"只读"| MCP["/api/mcp"]
+  RUN --> TOOLS["reasoning/tools/*"]
+  MCP --> TOOLS
+  REST --> LIB["同一层 lib：platform/ontologies · versioning/snapshot · versioning/published-ontology · framework/graph · instance/object-service · datasource/*"]
+  TOOLS --> LIB
+  LIB --> PG[("PostgreSQL：ontologies · ontology_versions · ontology_concepts · object_entries")]
+  LIB --> GRAPH[("图库：Jena / 内置图")]
+  LIB --> BIZ[("业务库（只读）")]
+```
 
 「能力验证」这一组是同一个能力的两种用法：**平台内的问答**与**对外的 MCP 服务**共用同一套只读工具，
 所以不会出现"界面上查得到、MCP 里查不到"的漂移。
@@ -570,14 +583,14 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 
 ## 图存储抽象
 
-`src/lib/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
+`src/lib/framework/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
 
 | 文件 | 职责 |
 | --- | --- |
 | `types.ts` | `GraphTarget`、`GraphData`、`RuntimeTypeSet`、`GraphStore` 契约与连接元数据 |
-| `jena/index.ts` | Apache Jena / Fuseki 适配器：SPARQL 1.1、RDF ↔ 属性图映射 |
-| `embedded/index.ts` | 内置适配器：平台 PG 持久化，Graphology 类型图与 N3.js / Comunica 只读 SPARQL |
 | `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
+| `jena/` | Apache Jena / Fuseki 适配器：`store` / `read` / `replace` / `statements` / `protocol` / `vocabulary` 分文件，SPARQL 1.1、RDF ↔ 属性图映射 |
+| `embedded/` | 内置适配器：平台 PG 持久化，Graphology 类型图与 N3.js / Comunica 只读 SPARQL |
 
 ### 本体存储配置字段
 
@@ -618,13 +631,16 @@ API 路由、版本发布流程与界面组件无需改动。
 
 数据资源是**外部业务数据来源**，和本体存储不是一回事：本体存储（内置或 Jena）管理本体发布视图，数据资源回答「对象类型对应的业务数据从哪来」。
 
-`src/lib/data-source` 是唯一的数据来源访问入口：
+`src/lib/datasource` 是唯一的数据来源访问入口：
 
 | 文件 | 职责 |
 | --- | --- |
 | `types.ts` | `DataSourceKind`、`DATA_SOURCE_KINDS` 连接表单元数据、`DataSourceConnector` 契约；纯类型，客户端可直接引用 |
 | `sql.ts` | 关系库适配器：TypeORM 建连接，`test / listViews / describeView / previewView`；Oracle 走数据字典读结构 |
 | `index.ts` | `openDataSourceConnector(record, credentials)` 注册表，按 `record.kind` 分派 |
+| `sources.ts` · `input.ts` · `structure-cache.ts` | 数据资源记录的读写、表单校验与结构清单缓存 |
+| `ddl.ts` · `column-profile.ts` · `sql-guard.ts` | 给模型看的 DDL、列画像采样与只读 SQL 护栏 |
+| `source-binding.ts` · `source-hints.ts` · `object-name.ts` | 对象类型到表 / 列的绑定与表名规范化 |
 
 当前支持 PostgreSQL、MySQL、Oracle。三类共用同一份 SQL 实现，接入新的关系库通常只需要在 `DATA_SOURCE_KINDS` 里加一条元数据；接入 Elasticsearch、REST、文件这类非关系来源时，在 `openDataSourceConnector` 里分流到一个新实现即可 —— 界面与 API 不用改。
 
@@ -681,24 +697,80 @@ Oracle 注意两点：服务端版本较旧（11g 及更早）时必须用 Insta
 
 ## 目录结构
 
+分层与依赖（mermaid，GitHub / 编辑器里可直接渲染）：
+
+```mermaid
+flowchart LR
+  UI["界面：工作台 · 本体建模 · 实例图谱 · 智能问答"]
+  EXT["外部 MCP 客户端 / Agent"]
+
+  subgraph L_API["接口层 · src/app/api"]
+    REST["REST：/api/ontologies/* · /api/ontology/*"]
+    RUN["/api/reasoning/*"]
+    MCPE["/api/mcp · /api/mcp/&lt;ontologyId&gt;"]
+  end
+
+  subgraph L_DOMAIN["领域与平台层 · src/lib"]
+    TOOLS["reasoning/tools/（11 个只读工具）"]
+    ONTO["ontology/：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检"]
+    VER["versioning/：快照（定义 + 实例）· 发布 · 已发布定义"]
+    INST["instance/：对象服务 · 对象索引 · 动作引擎"]
+    DS["datasource/：连接器 · DDL · 只读 SQL 与护栏 · 列画像"]
+    REA["reasoning/：工具循环 · 提示词 · 历史 · MCP 服务端"]
+    MS["mcp/ · skills/：协议与令牌 · 技能与打包"]
+    PLAT["platform/：auth · users · permissions · audit · ontologies · targets"]
+    DBM["platform/db/：连接 · 实体 · 迁移"]
+    FW["framework/：graph（jena / embedded）· crypto · zip · ids · format-units"]
+  end
+
+  subgraph L_STORE["存储"]
+    PG[("PostgreSQL · ontology_platform：ontologies · ontology_versions · ontology_concepts · object_entries · graph_targets · data_sources · audit_entries")]
+    GRAPH[("图库：Jena / Fuseki 或内置类型图")]
+    BIZ[("业务库（只读）：Oracle / PostgreSQL / MySQL")]
+  end
+
+  UI --> L_API
+  EXT --> MCPE
+  L_API --> L_DOMAIN
+  RUN --> TOOLS
+  MCPE --> TOOLS
+  TOOLS --> VER
+  TOOLS --> INST
+  TOOLS --> DS
+  ONTO --> VER
+  VER --> PG
+  INST --> PG
+  INST --> GRAPH
+  DS --> BIZ
+  PLAT --> DBM
+  DBM --> PG
+  FW --> GRAPH
+  FW --> PG
+  REA --> MS
+```
+
+目录细节：
+
 ```text
 ontology_management/
 ├── src/
 │   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
-│   ├── components/       # 工作台、建模画布、实例图谱、动作、问答、MCP 调试
-│   └── lib/
-│       ├── graph/        # 图存储抽象：内置（embedded/）与 Jena（jena/）两个适配器 + 注册表
-│       ├── data-source/  # 数据资源抽象：Oracle / PostgreSQL / MySQL
-│       ├── object-index/ # 对象检索索引（当前落 PostgreSQL）
-│       ├── object-service/ # 对象从哪来：索引 / 回源 / 自动
-│       ├── reasoning/    # 智能问答：工具循环、工具集、提示词、会话历史、MCP
-│       ├── db/           # TypeORM 实体与迁移
-│       └── ...           # 本体定义、版本快照、本体包、接口、动作引擎、认证、审计
+│   ├── components/       # 界面组件；workbench/ 下按页面一个文件（本体建模 / 图谱 / 对象 / 关系 / 设置 …）
+│   └── lib/              # 领域与平台代码（根目录只有目录，没有散文件）
+│       ├── framework/    # 通用件：graph/（图存储抽象 + jena/embedded 适配器）· crypto · zip · ids · format-units …
+│       ├── platform/     # 平台自身：auth · users · permissions · audit · ontologies · targets · platform-db · db/（实体与迁移）
+│       ├── ontology/     # 本体模型：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检 · bkn 导入 · 关系键与数量关系
+│       ├── versioning/   # 版本：快照（定义 + 实例）· 发布 · 已发布定义
+│       ├── instance/     # 本体实例：对象服务 · 对象索引 · 动作引擎
+│       ├── datasource/   # 数据资源：连接器 · DDL · 只读 SQL 与护栏 · 列画像 · 来源绑定
+│       ├── reasoning/    # 智能问答：工具循环 · tools/（工具实现）· 提示词 · 历史 · MCP 服务端
+│       ├── mcp/          # MCP 对外契约：协议版本 · 工具 schema · 访问令牌
+│       └── skills/       # 本体技能清单与打包
 ├── skills/               # 随平台下发的建模技能（Markdown + 出包脚本）
 ├── docs/                 # 设计文档与架构决策记录
-├── scripts/              # OpenAPI 生成等构建脚本
+├── scripts/              # OpenAPI 生成、离线导入等脚本
 ├── docker/               # Oracle Instant Client 等镜像内资源
-├── e2e/ · tests/         # Playwright 端到端与 Vitest 单测
+├── e2e/ · tests/         # Playwright 端到端与 Vitest 单测（tests/ 与 src/ 同构）
 ├── .env.example
 ├── LICENSE
 └── package.json
@@ -710,8 +782,9 @@ ontology_management/
 
 - 包管理统一使用 **pnpm**（见 `packageManager`）
 - 业务逻辑优先放在 `src/lib`，API 路由保持薄封装
-- 改动版本快照 / 发布流程时，同步关注 `src/lib/version-snapshot.ts` 与相关 ADR
-- 改 `src/lib/ontology.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
+- 改动版本快照 / 发布流程时，同步关注 `src/lib/versioning/snapshot.ts`、`src/lib/versioning/publication.ts` 与相关 ADR
+- 改 `src/lib/ontology/index.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
+- 新增或修改数据表 / 字段时，**表注释与字段注释必须一起补**（写进 `src/lib/platform/db/comments.ts`，迁移 0006 会生成 `COMMENT ON`）
 - 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建
 - **每完成一批功能，把 [`docs/功能实现记录.md`](docs/功能实现记录.md) 里对应的功能分区更新掉**（能做什么 / 入口 / 限制 / 怎么验证）—— 那是"平台有什么功能"的账本，不记修复过程，别按日期往下堆条目
 

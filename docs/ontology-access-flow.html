@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>本体访问流程：REST 与智能问答 / MCP 共用一层 lib</title>
+<style>
+  :root { --line:#cfd9d4; --ink:#24383a; --muted:#6b7d7e; --accent:#245e60; --write:#b4553f; --read:#3d7c60; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 28px 40px; background:#f5f7f4; color:var(--ink);
+         font-family:system-ui,"Segoe UI","Noto Sans SC",sans-serif; }
+  h1 { margin:0 0 6px; font-size:22px; font-family:Georgia,"Noto Serif SC",serif; }
+  .sub { margin:0 0 22px; color:var(--muted); font-size:13px; line-height:1.7; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:6px; padding:18px; box-shadow:0 8px 24px rgba(16,30,31,.06); }
+  svg { display:block; width:100%; height:auto; }
+  .legend { display:flex; gap:22px; margin-top:16px; color:var(--muted); font-size:12px; flex-wrap:wrap; }
+  .legend b { display:inline-block; width:26px; height:3px; margin-right:6px; vertical-align:middle; border-radius:2px; }
+  .notes { margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+  .note { background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:5px; padding:12px 14px; font-size:12.5px; line-height:1.75; }
+  .note b { color:var(--accent); }
+  code { font-family:ui-monospace,"Cascadia Code",monospace; font-size:12px; color:#2c5f57; }
+</style>
+</head>
+<body>
+  <h1>本体访问流程：两条入口，一层 lib</h1>
+  <p class="sub">
+    REST（界面点按钮）与智能问答 / MCP（模型与外部 agent）<b>不互相调用</b>，各自进入 HTTP 层，
+    但都落到<b>同一层 lib</b>，读<b>同一批存储</b>。差别只有三处：读写 vs 只读、全部版本 vs 已发布版本、权限点 vs 工具开关。
+  </p>
+
+  <div class="card">
+  <svg viewBox="0 0 1180 800" role="img" aria-label="本体访问流程图">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#7f918e" />
+      </marker>
+      <marker id="arrowWrite" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#b4553f" />
+      </marker>
+      <marker id="arrowRead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#3d7c60" />
+      </marker>
+    </defs>
+
+    <!-- 入口 -->
+    <text x="40" y="24" font-size="12" fill="#8a9a99" letter-spacing="1">入口</text>
+    <g font-size="13">
+      <rect x="40" y="34" width="320" height="54" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="60" y="58" font-weight="700">界面（工作台）</text>
+      <text x="60" y="76" fill="#6b7d7e" font-size="11.5">总览 · 本体建模 · 版本记录 · 对象 / 关系</text>
+
+      <rect x="430" y="34" width="320" height="54" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="450" y="58" font-weight="700">智能问答（问答页）</text>
+      <text x="450" y="76" fill="#6b7d7e" font-size="11.5">提问 / 看轨迹 / 停止 · 后台运行</text>
+
+      <rect x="820" y="34" width="320" height="54" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="840" y="58" font-weight="700">外部 MCP 客户端 / Agent</text>
+      <text x="840" y="76" fill="#6b7d7e" font-size="11.5">Claude、IDE、脚本…</text>
+    </g>
+
+    <!-- HTTP 层 -->
+    <text x="40" y="122" font-size="12" fill="#8a9a99" letter-spacing="1">HTTP 层（Next.js route.ts）</text>
+    <g font-size="12.5">
+      <rect x="40" y="132" width="320" height="62" rx="7" fill="#fdf6f4" stroke="#e2bbae" />
+      <text x="60" y="155" font-weight="700" fill="#a04c38">REST：本体读写</text>
+      <text x="60" y="174" font-family="ui-monospace,monospace" font-size="11.5">/api/ontologies/*　/api/ontology/*</text>
+
+      <rect x="430" y="132" width="320" height="62" rx="7" fill="#f4faf6" stroke="#b9d8c6" />
+      <text x="450" y="155" font-weight="700" fill="#2f6b52">智能问答</text>
+      <text x="450" y="174" font-family="ui-monospace,monospace" font-size="11.5">/api/reasoning/runs · stream</text>
+
+      <rect x="820" y="132" width="320" height="62" rx="7" fill="#f4faf6" stroke="#b9d8c6" />
+      <text x="840" y="155" font-weight="700" fill="#2f6b52">MCP 端点</text>
+      <text x="840" y="174" font-family="ui-monospace,monospace" font-size="11.5">/api/mcp　/api/mcp/&lt;ontologyId&gt;</text>
+    </g>
+
+    <!-- 工具层 -->
+    <rect x="430" y="222" width="710" height="58" rx="7" fill="#f4faf6" stroke="#b9d8c6" />
+    <text x="450" y="245" font-size="12.5" font-weight="700" fill="#2f6b52">工具层（只读）：reasoning/tools/{registry, search, projection, dispatch}</text>
+    <text x="450" y="265" font-size="11.5" fill="#6b7d7e">同一套实现，问答与 MCP 各调一次 —— 不出现「界面查得到、MCP 查不到」</text>
+
+    <!-- 服务层 -->
+    <rect x="40" y="310" width="1100" height="250" rx="9" fill="#fbfdfc" stroke="#cfd9d4" />
+    <text x="60" y="334" font-size="13" font-weight="700">服务层 lib（两条入口共用 · 进程内直调，不走 HTTP）</text>
+    <g font-size="12">
+      <rect x="62" y="348" width="340" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="78" y="370" font-weight="700">platform/ontologies.ts</text>
+      <text x="78" y="389" fill="#6b7d7e" font-size="11.5">本体台账：列 / 建 / 改 / 删</text>
+      <text x="78" y="407" fill="#6b7d7e" font-size="11.5">受管图存储分配、配额</text>
+
+      <rect x="420" y="348" width="330" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="436" y="370" font-weight="700">versioning/snapshot.ts</text>
+      <text x="436" y="389" fill="#6b7d7e" font-size="11.5">版本 · 定义 · 实例快照（读写）</text>
+      <text x="436" y="407" fill="#6b7d7e" font-size="11.5">内容哈希校验 · 草稿变更</text>
+
+      <rect x="768" y="348" width="352" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="784" y="370" font-weight="700">versioning/published-ontology.ts</text>
+      <text x="784" y="389" fill="#6b7d7e" font-size="11.5">只取 <tspan font-family="ui-monospace,monospace">status = PUBLISHED</tspan> 那一条</text>
+      <text x="784" y="407" fill="#6b7d7e" font-size="11.5">工具侧读定义的唯一入口</text>
+
+      <rect x="62" y="452" width="340" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="78" y="474" font-weight="700">platform/targets · datasource/sources</text>
+      <text x="78" y="493" fill="#6b7d7e" font-size="11.5">图引擎连接 · 数据资源登记</text>
+      <text x="78" y="511" fill="#6b7d7e" font-size="11.5">结构缓存 / 列画像</text>
+
+      <rect x="420" y="452" width="330" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="436" y="474" font-weight="700">framework/graph · instance/object-service</text>
+      <text x="436" y="493" fill="#6b7d7e" font-size="11.5">图库读写（Jena / 内置图）</text>
+      <text x="436" y="511" fill="#6b7d7e" font-size="11.5">对象索引与回源取数</text>
+
+      <rect x="768" y="452" width="352" height="92" rx="6" fill="#fff" stroke="#dbe4e0" />
+      <text x="784" y="474" font-weight="700">ontology/*（纯函数）</text>
+      <text x="784" y="493" fill="#6b7d7e" font-size="11.5">接口约束 · 关系键 · 数量关系 · 指标口径</text>
+      <text x="784" y="511" fill="#6b7d7e" font-size="11.5">REST 校验与工具检索用的是同一批</text>
+    </g>
+
+    <!-- 存储 -->
+    <text x="40" y="592" font-size="12" fill="#8a9a99" letter-spacing="1">存储</text>
+    <g font-size="12">
+      <rect x="40" y="602" width="520" height="96" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="60" y="626" font-weight="700">PostgreSQL（平台库 ontology_platform）</text>
+      <text x="60" y="647" font-family="ui-monospace,monospace" font-size="11.5" fill="#4c6668">ontologies · ontology_versions（定义 + 快照）</text>
+      <text x="60" y="666" font-family="ui-monospace,monospace" font-size="11.5" fill="#4c6668">ontology_concepts · graph_targets · data_sources</text>
+      <text x="60" y="685" font-family="ui-monospace,monospace" font-size="11.5" fill="#4c6668">object_entries（对象索引）· audit_entries · platform_settings</text>
+
+      <rect x="600" y="602" width="270" height="96" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="620" y="626" font-weight="700">图库</text>
+      <text x="620" y="647" font-size="11.5" fill="#6b7d7e">Jena / Fuseki（外部）</text>
+      <text x="620" y="666" font-size="11.5" fill="#6b7d7e">内置类型图（embedded_graphs）</text>
+      <text x="620" y="685" font-size="11.5" fill="#6b7d7e">发布后的投影，不是定义源</text>
+
+      <rect x="910" y="602" width="230" height="96" rx="7" fill="#fff" stroke="#cfd9d4" />
+      <text x="930" y="626" font-weight="700">业务库（只读）</text>
+      <text x="930" y="647" font-size="11.5" fill="#6b7d7e">Oracle / PostgreSQL / MySQL</text>
+      <text x="930" y="666" font-size="11.5" fill="#6b7d7e">只读事务 + SQL 护栏</text>
+    </g>
+
+    <!-- 箭头：入口 -> HTTP -->
+    <path d="M 200 88 V 126" stroke="#b4553f" stroke-width="2" fill="none" marker-end="url(#arrowWrite)" />
+    <path d="M 590 88 V 126" stroke="#3d7c60" stroke-width="2" fill="none" marker-end="url(#arrowRead)" />
+    <path d="M 980 88 V 126" stroke="#3d7c60" stroke-width="2" fill="none" marker-end="url(#arrowRead)" />
+    <text x="208" y="112" font-size="11" fill="#a04c38">读写</text>
+    <text x="598" y="112" font-size="11" fill="#2f6b52">只读</text>
+    <text x="988" y="112" font-size="11" fill="#2f6b52">只读</text>
+
+    <!-- 箭头：HTTP -> 工具层 / 服务层 -->
+    <path d="M 590 194 V 216" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 980 194 V 216" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 200 194 V 304" stroke="#b4553f" stroke-width="2" fill="none" marker-end="url(#arrowWrite)" />
+    <text x="208" y="250" font-size="11" fill="#a04c38">写定义 / 发布 / 激活</text>
+    <path d="M 590 280 V 304" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 980 280 V 304" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <text x="600" y="300" font-size="11" fill="#6b7d7e">调工具实现</text>
+    <text x="990" y="300" font-size="11" fill="#6b7d7e">复用同一套工具</text>
+
+    <!-- 箭头：服务层 -> 存储 -->
+    <path d="M 232 560 V 596" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 585 560 V 596" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 732 560 V 596" stroke="#7f918e" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <text x="240" y="582" font-size="11" fill="#6b7d7e">定义 / 台账 / 审计 / 索引</text>
+    <text x="593" y="582" font-size="11" fill="#6b7d7e">读写图数据</text>
+    <text x="740" y="582" font-size="11" fill="#6b7d7e">只读取数</text>
+
+    <!-- 差异标注 -->
+    <rect x="40" y="726" width="1100" height="60" rx="7" fill="#fffaf7" stroke="#e2bbae" />
+    <text x="60" y="748" font-size="12" font-weight="700" fill="#a04c38">三条刻意的差异</text>
+    <text x="60" y="770" font-size="11.5" fill="#6b7d7e">
+      ① 读写 vs 只读：只有 REST 能改定义 / 发布 / 改实例；工具全部只读（run_sql 走只读事务 + SQL 护栏）。
+      ② 看哪一版：REST 的版本列表给草稿 + 历史；工具只认 PUBLISHED。
+      ③ 放行机制：REST 按 13 个权限点；工具按工具开关（全局 + 本体覆盖）与访问令牌。
+    </text>
+  </svg>
+  </div>
+
+  <div class="legend">
+    <span><b style="background:#b4553f"></b>写路径（只有 REST）</span>
+    <span><b style="background:#3d7c60"></b>只读路径（问答 / MCP）</span>
+    <span><b style="background:#7f918e"></b>共用层内部调用</span>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>为什么共用</b><br />
+      工具实现只 import <code>@/lib/…</code>，不 fetch 自家 <code>/api/ontology</code> —— 两条入口在进程内落到同一层服务；
+      所以换了存储（定义从磁盘搬到 PG）时，REST 与工具都零改动。</div>
+    <div class="note"><b>定义存哪</b><br />
+      定义与实例快照都在 <code>ontology_versions</code> 的两个 jsonb 列；概念索引在 <code>ontology_concepts</code>；
+      图库里只有发布后的投影，读不回完整定义。</div>
+    <div class="note"><b>一条写入口</b><br />
+      改定义只有 <code>PATCH /api/ontology/[versionId]</code>，改实例只有 <code>/api/instances/*</code>（内部先建草稿）。
+      工具侧没有任何写路径。</div>
+  </div>
+</body>
+</html>

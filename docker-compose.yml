@@ -19,8 +19,8 @@ services:
       args:
         # 拉不动 Docker Hub 就换成镜像站，例如：
         #   NODE_IMAGE=docker.1ms.run/node:24-bookworm-slim
-        # APP_PORT / VERSION_SNAPSHOT_DIR / NODE_IMAGE 都是给 compose 做变量替换的，
-        # 写在 .env.docker 里即可 —— `pnpm docker:up` 带了 --env-file .env.docker。
+        # APP_PORT / NODE_IMAGE 都是给 compose 做变量替换的，写在 .env.docker 里即可
+        # —— `pnpm docker:up` 带了 --env-file .env.docker。
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
         # 依赖源：国内网络直连 registry.npmjs.org 会让构建里的 pnpm install 大面积超时。
         # 默认给镜像源，保证"不带 --env-file 直接 up"也装得动；要直连官方源就写完整地址覆盖。
@@ -34,7 +34,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       PORT: "3000"
-      # 版本快照落在卷里，容器重建不丢。
+      # 本体定义与快照都存在平台库；这个目录只在旧部署升级时被读一次，
+      # 用来把磁盘上的历史版本迁进 ontology_platform.ontology_versions。
       ONTOLOGY_VERSION_DIR: /data/ontology-versions
       # 只改写 Jena 连接中登记的 localhost；外部服务若在别的主机，直接登记真实地址即可。
       GRAPH_ENDPOINT_HOST_ALIAS: ${GRAPH_ENDPOINT_HOST_ALIAS:-localhost=host.docker.internal}
@@ -49,12 +50,12 @@ services:
     # Windows / macOS 的 Docker Desktop 不支持 host 网络，只能用上面的 host.docker.internal。
     # network_mode: host
     volumes:
-      # 版本快照目录（发布版本的本体文件）。它**是状态不是缓存**：库里记着"某本体的已发布版本"，
-      # 而定义本身在这一份文件里 —— 换了机器不带过来，模型工具与发布都会说"还没有发布版本"。
-      # 默认落项目 .data/ontology-versions —— 与本机开发服务用的是同一份，两个入口都能读到已发布的版本。
-      # 想改用命名卷就把 VERSION_SNAPSHOT_DIR 写成卷名（例如 VERSION_SNAPSHOT_DIR=ontology-versions）。
+      # 旧磁盘快照的**只读来源**，只服务于一次性迁移：本体定义与快照现在都写平台库
+      # ontology_platform.ontology_versions，服务端第一次访问版本数据时会把这个目录里的历史版本
+      # 迁进库、并删掉磁盘副本。全新部署用不到它，两套部署共用一个平台库时也不需要共享它。
+      # 默认落项目 .data/ontology-versions；旧数据在别处时才用 VERSION_SNAPSHOT_DIR 指过去。
       # Linux 服务器上注意属主：容器里的 node 用户是 uid 1000，宿主目录要么 chown -R 1000:1000，
-      # 要么用命名卷（Docker 会按镜像里的属主建）。两套部署共用一个平台库时，快照目录必须是同一个。
+      # 要么用命名卷（Docker 会按镜像里的属主建）。
       - ${VERSION_SNAPSHOT_DIR:-./.data/ontology-versions}:/data/ontology-versions
       # Oracle 的 Instant Client 已经装在镜像里（见 docker/oracle/），一般不用挂。
       # 想换成自备的 Linux 版客户端时才打开这行，并在 .env.docker 里设

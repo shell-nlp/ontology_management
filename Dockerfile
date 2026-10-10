@@ -78,7 +78,8 @@ ENV ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient
 # Linux 下必须给动态加载器指路：libclntsh.so 自己不带 $ORIGIN，找不到同目录的 libnnz.so /
 # libclntshcore.so 就会报 DPI-1047（只设 ORACLE_CLIENT_LIB_DIR 不够）。
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
-# 版本快照的落盘目录（compose 把它挂成卷）。容器以 node 用户跑，先把目录建好、换属主。
+# 旧磁盘快照目录（compose 挂成卷）：只在旧部署升级时被读一次，用来把历史版本迁进平台库。
+# 容器以 node 用户跑，先把目录建好、换属主。
 RUN mkdir -p /data/ontology-versions && chown -R node:node /data
 USER node
 EXPOSE 3000
