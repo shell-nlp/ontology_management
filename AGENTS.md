@@ -2060,3 +2060,32 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 时间语义别改：成功类提示由 `notify()` 的 5 秒计时器收起，错误类等用户自己点 ×。
 - 行内 `Notice` 只留给「长在内容里」的地方（登录卡片、面板里本来就在版面上的提示条）；
   工作台页头那一行**不要再塞提示条**。
+
+## 界面层的文件划分（2026-10-10）
+
+用户要求把「workbench 里那几个 Manager 拆成独立文件」。这是**纯搬家**：函数体逐行照搬，只加了 `export`
+（导出是为了跨文件引用），没有改任何行为。现在：
+
+- `src/components/functional-workbench.tsx`（约 250 行）只剩**壳**：登录态、导航表（`NavItem` / `NAV_SECTIONS` /
+  `mayEnterView`）、跨页面的加载与视图切换（`FunctionalWorkbench`），以及两个常量 `emptyDefinition` / `typeOptions`。
+- `src/components/workbench/` 一个页面一个文件：
+
+  | 文件 | 内容 |
+  | --- | --- |
+  | `shared.tsx` | 共享类型（`User` / `View` / `Target` / `Version` / `EntityRow` / `RelationshipRow`…）、`may()`、`Toast` / `Notice`、`ResizableManagerGrid`、图渲染与列表条数两个设置 hook、`graphNoun` / `entityTitle` / `propertySummary` / `relationshipEndpoints` 这类小工具 |
+  | `ontology-manager.tsx` | 本体建模页（可视化 / 分组 / 对象类型 / 关系类型 / 接口 / 指标六个标签都在里面） |
+  | `graph-manager.tsx` | 实例图谱 + 清空图数据 + SPARQL 工作台（`CypherEditor`）+ 渲染限制弹窗 |
+  | `entity-manager.tsx` | 对象页（含新建弹窗、`ScopedActions`、`ObjectLinkList`） |
+  | `relationship-manager.tsx` | 关系页（含新建弹窗、`EndpointCard`） |
+  | `target-manager.tsx` | 图引擎配置（清单 + 新建向导 + 编辑弹窗 + 试连） |
+  | `settings-manager.tsx` | 设置 → 常规设置 |
+  | `overview.tsx` | 总览的「本体控制室」 |
+  | `version-bar.tsx` | 页头的版本条 |
+  | `login-screen.tsx` | 登录卡片 |
+
+- 规矩：**新页面加一个 `workbench/<名字>-manager.tsx`，不要再往 `functional-workbench.tsx` 里塞**；
+  跨文件共享的东西放 `shared.tsx` —— 两个 manager 之间**不要互相 import**（会绕成分叉依赖）。
+- 拆分脚本留在 `.data/ui-check/split-workbench.mjs`（按顶层声明切块）+ `fix-split.mjs`（重算 import），
+  以后再拆类似的大文件可以照着改。
+- 连带改的测试：`tests/lib/nav-visibility.test.ts` 现在同时扫 `functional-workbench.tsx` 与
+  `workbench/shared.tsx`（`type View` 搬到了 shared，`NAV_SECTIONS` 还在壳里）。

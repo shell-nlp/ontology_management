@@ -14,15 +14,22 @@ import { ALL_PERMISSIONS } from "@/lib/permissions";
  * 新增一个 View 却没在 NAV_SECTIONS 里登记（或者写了个不存在的权限点）当场红。
  * 和 `authz-coverage.test.ts` 一个路子：扫源码，不做 AST。
  */
-const SOURCE = path.join(process.cwd(), "src", "components", "functional-workbench.tsx");
+/**
+ * 2026-10-10：工作台按模块拆了文件 —— `type View` 搬去了 `workbench/shared.tsx`，
+ * `NAV_SECTIONS` 留在 `functional-workbench.tsx`。两份拼起来一起扫，测试的口径不变。
+ */
+const SOURCES = [
+  path.join(process.cwd(), "src", "components", "functional-workbench.tsx"),
+  path.join(process.cwd(), "src", "components", "workbench", "shared.tsx"),
+];
 
 function sourceText() {
-  return readFileSync(SOURCE, "utf8");
+  return SOURCES.map((file) => readFileSync(file, "utf8")).join("\n");
 }
 
 /** `type View = "overview" | ...` 里的全部视图 id。 */
 function declaredViews(text: string): string[] {
-  const line = text.split("\n").find((item) => item.startsWith("type View = "));
+  const line = text.split("\n").find((item) => /^(export )?type View = /.test(item));
   if (!line) throw new Error("找不到 View 类型定义");
   return [...line.matchAll(/"([a-z]+)"/g)].map((match) => match[1]);
 }
