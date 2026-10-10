@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { isLlmConfigured, llmSettings } from "@/lib/reasoning/provider";
 
 /** 推理页启动时问一次：模型配好了没。没配就明确提示，别让用户对着按钮发呆。 */

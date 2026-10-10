@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { validateEntitySources } from "@/lib/ontology-sources";
+import { validateEntitySources } from "@/lib/ontology/sources";
 
 const entityId = "11111111-1111-4111-8111-111111111111";
 const sourceId = "22222222-2222-4222-8222-222222222222";

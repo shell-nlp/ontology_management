@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALL_PERMISSIONS, BUILTIN_ROLES, PERMISSIONS, builtinRole } from "@/lib/permissions";
+import { ALL_PERMISSIONS, BUILTIN_ROLES, PERMISSIONS, builtinRole } from "@/lib/platform/permissions";
 
 /**
  * 授权覆盖的**安全网**（2026-10-09 RBAC）。

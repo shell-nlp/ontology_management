@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { createUser, listUsers } from "@/lib/users";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { createUser, listUsers } from "@/lib/platform/users";
 
 /**
  * 用户：`GET` 列清单，`POST` 建账号。都要 `users.manage`。

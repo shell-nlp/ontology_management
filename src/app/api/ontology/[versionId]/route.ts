@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { ensureVersionSnapshot, getVersionRecord, updateSnapshotDefinition } from "@/lib/version-snapshot";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { ensureVersionSnapshot, getVersionRecord, updateSnapshotDefinition } from "@/lib/versioning/snapshot";
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
   try {

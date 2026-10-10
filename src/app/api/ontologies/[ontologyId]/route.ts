@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { deleteOntology, getOntology, updateOntology } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { deleteOntology, getOntology, updateOntology } from "@/lib/ontology/ontologies";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 const updateInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),

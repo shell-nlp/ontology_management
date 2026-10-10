@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { can } from "@/lib/permissions";
-import { listMcpTokens } from "@/lib/mcp-token";
-import { publicOrigin } from "@/lib/public-origin";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { can } from "@/lib/platform/permissions";
+import { listMcpTokens } from "@/lib/mcp/token";
+import { publicOrigin } from "@/lib/framework/public-origin";
 import { mcpToolCatalog, MCP_PROTOCOL_VERSION, MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
 import { loadResolvedToolPolicy } from "@/lib/reasoning/tool-policy";
 

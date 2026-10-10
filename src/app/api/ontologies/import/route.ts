@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/bkn-import";
-import { listDataSources } from "@/lib/data-sources";
-import { createOntology, deleteOntology } from "@/lib/ontologies";
-import { planBundleImport, readOntologyBundle } from "@/lib/ontology-bundle";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { applySourceBindings, planSourceBindings } from "@/lib/source-binding";
-import { collectSourceHints, toPendingSources } from "@/lib/source-hints";
-import { getTarget } from "@/lib/targets";
-import { createVersionRecord, initializeVersionSnapshot } from "@/lib/version-snapshot";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/ontology/bkn-import";
+import { listDataSources } from "@/lib/datasource/sources";
+import { createOntology, deleteOntology } from "@/lib/ontology/ontologies";
+import { planBundleImport, readOntologyBundle } from "@/lib/ontology/bundle";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { applySourceBindings, planSourceBindings } from "@/lib/datasource/source-binding";
+import { collectSourceHints, toPendingSources } from "@/lib/datasource/source-hints";
+import { getTarget } from "@/lib/platform/targets";
+import { createVersionRecord, initializeVersionSnapshot } from "@/lib/versioning/snapshot";
 
 /**
  * 导入本体包：把单文件里的结构还原成这个平台上的一个新本体。

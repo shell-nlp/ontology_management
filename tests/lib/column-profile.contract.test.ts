@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cachedColumnValueIndex, ensureColumnProfile } from "@/lib/column-profile";
-import { listDataSources } from "@/lib/data-sources";
+import { cachedColumnValueIndex, ensureColumnProfile } from "@/lib/datasource/column-profile";
+import { listDataSources } from "@/lib/datasource/sources";
 import { rankSchemaConcepts, schemaConcepts } from "@/lib/reasoning/tools";
 import type { OntologyDefinition } from "@/lib/ontology";
 

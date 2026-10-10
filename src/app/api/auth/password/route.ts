@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireUser } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { changeOwnPassword } from "@/lib/users";
+import { apiErrorMessage, apiErrorStatus, requireUser } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { changeOwnPassword } from "@/lib/platform/users";
 
 /**
  * 改**自己的**密码。任何登录用户都能改自己的，不需要 `users.manage`

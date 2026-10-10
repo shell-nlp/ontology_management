@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, KeyRound, Plus, X } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { copyText } from "@/lib/clipboard";
+import { api } from "@/lib/framework/api-client";
+import { copyText } from "@/lib/framework/clipboard";
 import "./mcp-token-dialog.css";
 
 /**

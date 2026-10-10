@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, RefreshCcw } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { AUDIT_ACTIONS, AUDIT_SCOPE_OPTIONS, auditActionLabel, auditActionsForScope, isAuditFailure, type AuditScope } from "@/lib/audit";
+import { api } from "@/lib/framework/api-client";
+import { AUDIT_ACTIONS, AUDIT_SCOPE_OPTIONS, auditActionLabel, auditActionsForScope, isAuditFailure, type AuditScope } from "@/lib/platform/audit";
 
 /**
  * 审计记录（backlog U2）：发布 / 失败 / 图引擎与数据资源变更 / 草稿写入 / 动作执行，

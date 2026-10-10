@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/version-snapshot";
-import { getTarget } from "@/lib/targets";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/versioning/snapshot";
+import { getTarget } from "@/lib/platform/targets";
 
 export async function POST(_: Request, context: { params: Promise<{ versionId: string }> }) {
   try {

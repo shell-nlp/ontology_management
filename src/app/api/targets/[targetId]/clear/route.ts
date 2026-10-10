@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/graph/types";
-import { getObjectIndex } from "@/lib/object-index";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { describeTargetError, getTarget } from "@/lib/targets";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/framework/graph/types";
+import { getObjectIndex } from "@/lib/instance/object-index";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { describeTargetError, getTarget } from "@/lib/platform/targets";
 
 const clearInput = z.object({ confirm: z.string().min(1) });
 

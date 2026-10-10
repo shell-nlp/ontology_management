@@ -2,7 +2,7 @@
 
 import { type Target, type Version, type View } from "@/components/workbench/shared";
 import { CircleDot, Link2, Network } from "lucide-react";
-import { type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/graph/types";
+import { type RuntimeTypeInfo, type RuntimeTypeSet } from "@/lib/framework/graph/types";
 
 
 

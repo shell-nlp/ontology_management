@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Boxes, Check, Copy, Download, FileText, PackageCheck, Sparkles, Terminal, X } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { copyText, downloadResponse } from "@/lib/clipboard";
+import { api } from "@/lib/framework/api-client";
+import { copyText, downloadResponse } from "@/lib/framework/clipboard";
 import "./skill-studio.css";
 
 /**

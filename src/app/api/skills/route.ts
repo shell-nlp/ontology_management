@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { MCP_PROTOCOL_VERSION } from "@/lib/mcp-protocol";
-import { publicOrigin } from "@/lib/public-origin";
-import { listSkills } from "@/lib/skills";
-import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills-mcp";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
+import { publicOrigin } from "@/lib/framework/public-origin";
+import { listSkills } from "@/lib/skills/index";
+import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
 
 /**
  * 本体技能清单 + 它的 MCP 接入信息。

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { isUnauthorized, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import type { GraphTargetKind } from "@/lib/graph/types";
-import { describeTargetError, getTarget } from "@/lib/targets";
+import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import type { GraphTargetKind } from "@/lib/framework/graph/types";
+import { describeTargetError, getTarget } from "@/lib/platform/targets";
 
 export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
   // 出错时也要按这个存储的引擎给提示，所以 kind 提到 try 外面。

@@ -13,6 +13,14 @@
 - 挑**最贴近改动**的那一种验证，够用就停：
   改文案 / 样式 / 页面结构 → 页面实测一次；改纯函数 → 跑对应单测；改类型签名 → typecheck。
 - 只有动到跨层契约（schema / 存储 / 对外接口）或一次改多个互不相干的模块时，才升级到全量。
+- **测试一律并行跑，别加 `--no-file-parallelism`**（2026-10-10 用户要求：「测试用并行要写进 agent.md，
+  这样每次就用并行了」）：
+  - 全量 = `pnpm test`（= `npx vitest run`，vitest 默认按文件并行）；单文件 = `npx vitest run <路径>`。
+  - 实测：全量 469 条**并行 7.5 秒**，串行 30～80 秒。并行是默认动作，不是"可以试试"。
+  - 只有出现"某条用例超时"这种抖动时，才**把那一个文件**单独串行重跑确认一次；历史上只有
+    `tests/lib/graph/embedded.test.ts` 会这样（抢 CPU 时 5s 超时，单跑 1.4 秒过）。
+  - 判定口径：**结果以并行那一次为准**，别因为一次抖动就把命令改回串行。
+- 能并行的验证就并行发起（例如 `tsc --noEmit` 与 `vitest run` 同时跑），别串着等。
 
 ## CodeGraph（找代码优先用它）
 
@@ -73,7 +81,7 @@
   **2026-10-10 起清单给全了**（见下一节），两者一致，计数仍保留。2026-10-08 是用**对拍**抓到的：
   把 tools.ts 临时切回改动前的提交采一份输出，再切回改后版本采一份，
   用脚本把位置数组还原成对象做逐字段深比较，唯一对不上的一项就是它。
-  **对拍做法（值得复用）**：`git show <改动前的提交>:src/lib/reasoning/tools.ts` 写到文件 →
+**对拍做法（值得复用）**：`git show <改动前的提交>:src/lib/reasoning/tools/` 写到文件 →
   调 MCP 采整数份 `old-*.json` → 还原自己的版本再采 `new-*.json` → 脚本里按列序把数组还原成对象后深比。
   最终只剩这三类"预期差异"才算通过：运行时字段（`elapsed_ms`）、新增字段、以及 A 类里明确不改写就不回显的字段
   （`statement` / `read_only_transaction`，且要有测试证明改写时它们会回来）。
@@ -95,7 +103,7 @@
 用户口径：「这里的时间，单位要会变化，毫秒，分钟，小时 这样的不能只是一个单位」。
 现场是求证轨迹写 `4911ms`、整轮写 `192.7s`（或 `111.5s`）—— 一眼看不出量级，还得自己数位。
 
-- `src/lib/format-units.ts` 是**唯一出口**（纯函数，有单测 `tests/lib/format-units.test.ts`）：
+- `src/lib/framework/format-units.ts` 是**唯一出口**（纯函数，有单测 `tests/lib/format-units.test.ts`）：
   - `formatDuration(ms)`：`812ms` → `4.9s` → `1分52秒` → `1小时05分` → `2天03小时`；
     10 秒以内留一位小数（跑动的时候看着在走），再往上取整；分秒/小时分**低位补零**。
   - `formatCount(n)`：`950` → `5.7k` → `96.3k` → `833.9k` → `1.2M`。
@@ -224,9 +232,9 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 记录时间：2026-10-10。
 
 - 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如
-  `src/lib/graph/embedded/index.ts` 对应 `tests/lib/graph/embedded.test.ts`）。
+  `src/lib/framework/graph/embedded/index.ts` 对应 `tests/lib/graph/embedded.test.ts`）。
   `vitest.config.mts` 只收集 `tests/**/*.test.ts`，不要再在源码目录新增测试文件。
-- 本体存储各实现用自己的目录：`src/lib/graph/jena/`、`src/lib/graph/embedded/`；
+- 本体存储各实现用自己的目录：`src/lib/framework/graph/jena/`、`src/lib/framework/graph/embedded/`；
   `graph/` 根目录只放公共接口、注册表与跨实现共享模块。新增多文件后端也按此结构隔离，
   不把不同后端的实现平铺在 `graph/` 根目录。
 
@@ -243,7 +251,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
   建好之后两个方向都能走，**不配置、也不需要**两侧各自的名字（用户明确口径：「只要构建了关系，就是双向就行，
   不需要再配置这些正向、反向名字」）。所以**反向不要再建一条关系类型**；两条并列的关系类型表示的是两个不同的现实关系。
   界面上用 `↔` 表示这个双向；多跳遍历默认不分方向（`traverse_object_types` 的 `direction` 可以收窄成 `forward` / `backward`）；
-  接口的关系约束也按双向判定 —— 实现方在这条关系的**任一头**都算满足（`@/lib/interfaces` 的 `satisfiesLinkConstraint`）。
+  接口的关系约束也按双向判定 —— 实现方在这条关系的**任一头**都算满足（`@/lib/ontology/interfaces` 的 `satisfiesLinkConstraint`）。
 - 与 Palantir 文档对齐时写成「对象类型（Object Type）」，不要在同一处来回切换两种叫法。
 - 左侧导航按 **本体模型（本体建模 / 本体技能）· 本体实例（实例图谱 / 对象 / 关系）· 动力模型（动作 / 规则）** 分组（2026-09-18 更新）：本体列表已并入「总览」下方，当前本体状态在上方；总览「查看本体」进入本体建模。图谱只保留实例视图，不再有「查看本体」切换；类型定义和关系类型在本体建模画布查看、搜索。平台分组只有数据资源与设置，图引擎连接在「设置 → 图引擎配置」管理。
 - **接口投影**（2026-09-19）：本体建模画布中，无数据源的对象类型可以「提取为接口」。平台保留原对象类型与底层关系作为兼容影子，新增接口记录 `promotedFromEntityTypeId`，并把原关系转成接口关系约束；**不根据关系另一端自动推断 `implements`**。画布隐藏影子节点、显示紫色接口节点与紫色虚线实现边；接口承接的关系用青绿色实线画出来（`showInterfaceLinks` 开关默认打开，"接口节点看着和谁都没连线"是用户报过的问题）。不要把这条 UI 投影误认为实例层数据被删除。
@@ -252,12 +260,12 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
   1. **画布**：默认这些关系挂在**接口节点 B** 身上（不点任何东西时只属于 B）；一旦选中实现方 A，就改挂到 A 身上
      （`inherited-link:<interfaceId>:<relationId>:<entityTypeId>`，见 `buildCanvasProjection`），让"点 A 就能看到 A 从接口集成来的关系类型"。
      **不要两份都画**（那会变成指向同一个对端的两条平行线），也不要只画在 B 上而不给 A。
-  2. **工具**：`interfaceDerivedLinks()`（`src/lib/reasoning/tools.ts`）把接口约束算成实现方的边，`get_object_type` 放在 `one_hop.via_interfaces`，
+2. **工具**：`interfaceDerivedLinks()`（`src/lib/reasoning/tools/`，投影逻辑在 `projection.ts`）把接口约束算成实现方的边，`get_object_type` 放在 `one_hop.via_interfaces`，
      `traverse_object_types` 直接进图并给边打 `via_interface`。只认 `relationshipTypes` 的话，实现方会显得孤立，模型就会答"走不到"。
   3. **弹窗/右栏**：关系类型的详情里要写清"由接口「B」承接"、哪些对象类型实现了它，并给「编辑接口」入口。
 
   变更时一起改的测试：`tests/lib/ontology-canvas.test.ts`（挂载归属）与 `tests/lib/reasoning/tools.test.ts`（遍历算上接口边）。
-- 画布投影是**纯函数** `src/lib/ontology-canvas.ts` 的 `buildCanvasProjection()`（有单测 `tests/lib/ontology-canvas.test.ts`）：节点、连线、分组框、待补全清单都在那一处算，组件只负责渲染。两条硬规矩：**所有接口都要画出来**（紫色 + 虚线圈 + 标签 `◇`，不是"只画被选中的那个"）；**被提取成接口的节点留在原地** —— 接口接手影子对象类型在布局里的位置与手工拖过的坐标，转换前后不跳位。
+- 画布投影是**纯函数** `src/lib/ontology/canvas.ts` 的 `buildCanvasProjection()`（有单测 `tests/lib/ontology-canvas.test.ts`）：节点、连线、分组框、待补全清单都在那一处算，组件只负责渲染。两条硬规矩：**所有接口都要画出来**（紫色 + 虚线圈 + 标签 `◇`，不是"只画被选中的那个"）；**被提取成接口的节点留在原地** —— 接口接手影子对象类型在布局里的位置与手工拖过的坐标，转换前后不跳位。
 - **虚线只给"实现接口"**（2026-09-19 用户口径：接口的联系不是全都虚线，实现了它的对象类型才是虚线）。接口节点自己画虚线圈；`entity → interface` 的实现边是紫色虚线；接口承接的关系（`interface-link`）用**青绿色实线**，只在展开时出现。
 - **接口按对象类型那套方式编辑**（2026-09-19 用户口径：「我说的意思是形如这样」，指的就是「编辑对象类型」那个对话框）：画布右栏只放详情与「编辑」按钮，点开 `src/components/interface-edit-dialog.tsx` —— 和 `TypeEditDialog` 同一个壳（`ted-*` 样式、左栏表单 + 右栏画布预览 + 底部「取消 / 保存修改」），里面改名称、说明、继承的接口、属性、关系约束，并勾选"谁实现了它"（写回 `entityTypes[].implements`）。**不要改成"跳到接口标签去改"，也不要在右栏塞一套独立的行内编辑器**。「在『接口』标签里看」只作为完整视图（继承、实现缺口）的次要入口保留。
 - 全局版本操作放页头右侧，不另占一整行：始终显示「当前版本 vN」（未发布时显示「尚未发布」），有草稿时再并列显示草稿版本；「创建草稿」「版本记录」及历史版本激活入口仍可用。
@@ -268,7 +276,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
     —— 不拦的话 Sigma 会在同一手势里再判一次，把刚选中的东西清掉。
   - 画布上有三类连线 id：草稿里的关系类型（UUID）、`implements:<entityId>:<interfaceId>`（紫色虚线 = 实现接口）、
     `interface-link:<interfaceId>:<relationId>`（青绿色实线 = 接口承接的关系）。后两类是画布算出来的，草稿里没有对应记录，
-    用 `src/lib/ontology-canvas.ts` 的 `parseImplementationEdgeId` / `parseInterfaceLinkEdgeId` 翻回"能编辑的东西"：
+    用 `src/lib/ontology/canvas.ts` 的 `parseImplementationEdgeId` / `parseInterfaceLinkEdgeId` 翻回"能编辑的东西"：
     虚线选中接口、青绿线选中它承接的那条关系类型。**不许直接把这种合成 id 当关系类型 id 塞进选中态**（右栏会一片空白）。
   - 关系类型右栏里，若端点落在某个接口的影子上（`promotedFromEntityTypeId`），要写清"这条关系类型由接口「X」承接"并给一个
     「编辑接口」按钮（`setEditingInterface`），就地弹出接口对话框；**不要只留一句"去接口标签里改"**。
@@ -340,7 +348,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 固定过滤是什么、能按哪些维度分组、单位是什么。它**只描述口径，不是查询结果**；出数仍由模型落成只读 SQL。
 
 - 定义与校验：`ontology.ts` 的 `metricSchema` / `metrics`（加这一项之前的老快照读出来是空数组）；
-  发布前检查在 `src/lib/metrics.ts`（重名、作用类型不存在、聚合/过滤/维度/时间维度指向不存在的属性 → **挡发布**；
+  发布前检查在 `src/lib/ontology/metrics.ts`（重名、作用类型不存在、聚合/过滤/维度/时间维度指向不存在的属性 → **挡发布**；
   没选作用类型、`SUM/AVG/MIN/MAX` 用在非数值属性 → WARN），由 `validateVersionSnapshot` 统一收口。
 - 界面：`metric-manager.tsx`（左清单 + 右口径表单，与概念分组同一套 `manager-grid` + `split-pane` 骨架），
   标签排在「接口」之后（见上面「本体建模」页的标签结构）。`Definition` 多了 `metrics` 字段，`emptyDefinition` 要带上 `metrics: []`。
@@ -352,7 +360,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
   `skills.test.ts` 的 token 列表里有 `metrics`，改了 schema 忘了改文档会直接红。
 - 证据：`ReasoningEvidence.kind` 多了 `"METRIC"`，qa-studio 的「依据」那一行要把它算进概念类。
 
-**列画像的成本红线**（`src/lib/column-profile.ts`，别改成精确统计）：只对**被对象类型绑定的表**做（`mappedColumnsFor`，
+**列画像的成本红线**（`src/lib/datasource/column-profile.ts`，别改成精确统计）：只对**被对象类型绑定的表**做（`mappedColumnsFor`，
 没绑定的表返回空 → 调用方跳过）；只**采样**前 1000 行（`ROWNUM <= 1000` / `LIMIT`），不做全表 `COUNT(DISTINCT)`；
 采样里取值种数超过 50 的列按高基数列处理（不存取值）；写进 `column_profiles` 表（迁移 0003）后**按天复用**，
 只有 `get_table_ddl` 带 `refresh: true`（或过期）才回源库重采。返回里必须如实写 `cached` / `sample_size` / 采样说明。
@@ -375,7 +383,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 - **关系类型的数量关系** `relationshipTypes[].cardinality`（`ONE_TO_ONE` / `ONE_TO_MANY` / `MANY_TO_ONE` / `MANY_TO_MANY`，
   空串 = 未标注，老快照读出来是空串）。说的是**起点端 → 终点端**，只回答"走一次会放大几倍"
   （一个客户 141 条专线，按客户聚合会重复计数）。**它不是正向/反向名字** —— "关系类型双向、不配正反向名字"的口径不变，
-  别把它写成「正向基数/反向基数」两栏。纯逻辑在 `src/lib/relationship-cardinality.ts`（有单测），
+  别把它写成「正向基数/反向基数」两栏。纯逻辑在 `src/lib/ontology/relationship-cardinality.ts`（有单测），
   工具侧 `get_object_type` 的入边要 `reversed` 翻过来说（`cardinality_from_here`），改这里必须跑
   `tests/lib/reasoning/tools.test.ts` 的「数量关系」一组用例。bkn 导入没有这个字段，导入后是"未标注"。
 - **`get_table_ddl` 的反向引用** `bound_object_types`：这张表被哪些对象类型绑定、各映射了哪几列、是主来源还是补充来源。
@@ -415,8 +423,8 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 - **多条是硬要求，别退回单条**：换个客户端、换台机器各配一条，撤销哪条只断哪条；
   只有一条的话"重新生成"就等于把所有人踢下线。
 - 存储：`platform_settings` 一行 `mcp.apiTokens`，值是 `{ tokens: [{ id, name, ciphertext, createdAt, createdBy }] }`。
-  密文用 `@/lib/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
-  实现在 `src/lib/mcp-token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `verifyMcpToken`。
+  密文用 `@/lib/framework/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
+  实现在 `src/lib/mcp/token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `verifyMcpToken`。
 - **`.env.local` 的 `MCP_API_TOKEN` 还认**，作为清单里一条**只读**的兜底（`id: "env"`，撤销按钮禁掉）。
   取值来源对客户端透明，`/api/mcp/token` 的 `DELETE ?id=env` 会明确回一句"只能改配置文件"。
 - 校验：`verifyMcpToken` **逐条恒定时间比较**（`timingSafeEqual`，别写 `===`），平台清单与环境变量那条都算数；
@@ -487,7 +495,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 `Authorization: Bearer` 是调 API 的默认姿势。
 
 **这是一次拿安全性换便利的改动，不是纯重构**：cookie 的 httpOnly 是唯一能把凭据从 JS 里藏起来的手段，
-换成请求头之后令牌必须由前端自己存（`src/lib/session-token.ts`，localStorage），XSS 能读走它。
+换成请求头之后令牌必须由前端自己存（`src/lib/framework/session-token.ts`，localStorage），XSS 能读走它。
 取舍已经跟用户确认过；两条缓解手段不许拆：
 
 - 令牌仍是**8 小时过期**的 JWT（`createSession` 的 `setExpirationTime("8h")`）；
@@ -496,10 +504,10 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 落点：
 
 - **签发**：`POST /api/auth/login` 在**响应体**里回 `token`（不再 `Set-Cookie`）。
-- **携带**：`src/lib/session-token.ts` 的 `authHeaders()` / `withAuth()`。所有请求都要带 ——
+- **携带**：`src/lib/framework/session-token.ts` 的 `authHeaders()` / `withAuth()`。所有请求都要带 ——
   `api-client.ts` 与 `graph-canvas` 的 `api()`、流式问答（`qa-studio`）、MCP 调试页、`downloadResponse`。
   **下载那条最容易忘**：它以前靠浏览器自动带 cookie，现在必须显式带头。
-- **校验**：`src/lib/auth.ts` 的 `currentUser()` 只读 `Authorization`（`bearerToken()` 解析、
+- **校验**：`src/lib/platform/auth.ts` 的 `currentUser()` 只读 `Authorization`（`bearerToken()` 解析、
   `userFromToken()` 验签 + 回库）。54 个路由都走 `currentUser()` / `requireRole()`，服务端只改这一处。
 - **登出**：`POST /api/auth/logout` 是**空操作**（无状态 JWT），真正登出是前端 `clearSessionToken()`。
 - **令牌作废的唯一信号**是 `/api/auth/session` 回 `user: null`（`functional-workbench` 开机检查时清本地那份）。
@@ -517,7 +525,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 一点「本体草稿」整页变成 `This page couldn't load`（控制台是 `crypto.randomUUID is not a function`）——
 `crypto.randomUUID` 只在 https 或 localhost 下存在，IP 访问时是 `undefined`，异常被 Next 的错误边界接住。
 
-- `crypto.randomUUID` → 用 `@/lib/ids` 的 `newId()`（优先原生，其次 `getRandomValues` 自己拼 v4，
+- `crypto.randomUUID` → 用 `@/lib/framework/ids` 的 `newId()`（优先原生，其次 `getRandomValues` 自己拼 v4，
   最差退回时间戳 + 随机数）。`resolveGroup` / `planBundleImport` 这类可注入生成器的函数，默认值也用它。
 - `navigator.clipboard` → 用 `mcp-studio.tsx` 里那种"先 Clipboard API、失败退隐藏 textarea + execCommand"的写法。
 - 同类还有 `crypto.subtle`、`navigator.geolocation`、`Notification`、Service Worker：都需要安全上下文。
@@ -547,7 +555,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 
 ### 模型
 
-- 权限点是**代码里的常量**：`src/lib/permissions.ts` 的 `PERMISSIONS`（13 个，按模块分组）。
+- 权限点是**代码里的常量**：`src/lib/platform/permissions.ts` 的 `PERMISSIONS`（13 个，按模块分组）。
   新增一个点必须同时有 `requirePermission` 在用它，否则是给人看的摆设。
 - 角色 = 一组权限点，存在 `roles` 表（迁移 0004）。**内置三档**：管理员 / 编辑者 / 查看者，
   由 `BUILTIN_ROLES` 定义并**每次启动同步进库** —— 以后加权限点，`admin` 自动拿到，不用另写数据迁移。
@@ -557,7 +565,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 
 ### 守卫
 
-- `requirePermission(code)`（`src/lib/auth.ts`）：未登录 401，登录了没权限 **403**。
+- `requirePermission(code)`（`src/lib/platform/auth.ts`）：未登录 401，登录了没权限 **403**。
   `apiErrorStatus(error)` 把三种情况映成 401 / 403 / 原状态码 —— **路由的 catch 里别写死 `{ status: 400 }`**：
   2026-10-09 全库收口了 31 处，在那之前"权限不足"会显示成 400（文案对、状态码错）。
 - 74 处 `requireRole` 逐个映射成了权限点，映射表现在就是每处 `requirePermission("…")`。几条容易记错的：
@@ -631,15 +639,15 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
   `readOntologyBundle` → `planBundleImport` → `validateVersionSnapshot`，要求**零违规**（连 WARN 都不能有），
   并断言 `bundle-format.md` 里出现关键字段名与枚举。**改 `ontology.ts` 的 schema 就要同步改文档与示例**，
   否则测试直接红 —— 这是防止"技能教的格式平台不认"的唯一机制。
-- 服务端 `src/lib/skills.ts`：目录扫描、front-matter 解析（借 `@/lib/markdown`）、
+- 服务端 `src/lib/skills/index.ts`：目录扫描、front-matter 解析（借 `@/lib/framework/markdown`）、
   `resolveSkillFile` 防目录穿越（`..` / 绝对路径 / 越界一律 null）。接口只有两个：
   `GET /api/skills`（清单 + 文件表）与 `GET /api/skills/archive`（**全部技能**打成一个 zip）。
   `SKILL_CATALOG` 只放界面文案（编号 / 场景 / 产物 / 图标），**正文一律读盘**，别抄进代码。
   **按套下载已于 2026-09-17 全部删掉**（用户原话："不要支持一个一个下载，要只支持整体下载"）：
   `GET /api/skills/:id`（正文全文）、`GET /api/skills/:id/file`（单文件）、`GET /api/skills/:id/archive`（单套 zip）
-  都没了，`src/lib/skills.ts` 里也只剩 `readSkillsArchive()` 一个打包入口。
+  都没了，`src/lib/skills/index.ts` 里也只剩 `readSkillsArchive()` 一个打包入口。
   要正文就下整包 —— 别再为"按套下载 / 预览原文"把这些口子加回来。
-- 打包用 `src/lib/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
+- 打包用 `src/lib/framework/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
   验证方式是实测：单测比对 CRC32 与 zip 结构，端到端用 `Expand-Archive` 解一次（2026-09-16 验过）。
 - 界面 `src/components/skill-studio.tsx`（侧栏「语义模型 → 本体技能」）：**只给清单，正文不进页面**
   （2026-09-17 用户要求"太不简洁了…不需要看到细节，想看整体下载下来看就行"）。
@@ -651,10 +659,10 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 - **Dockerfile 的 runner 必须 `COPY --from=builder /app/skills ./skills`**（2026-09-16 已加）：
   技能是运行时读盘的数据，不拷进镜像这一页就是空的；`.dockerignore` 也别把 `skills` 挡掉。
 - 顺带抽出来的共用件（别再各写一份）：
-  - `src/lib/markdown.ts`：front-matter 解析 / 剥离（纯函数，客户端也要用）。
+  - `src/lib/framework/markdown.ts`：front-matter 解析 / 剥离（纯函数，客户端也要用）。
   - `src/components/markdown-view.tsx`：Markdown 渲染器，问答页（`qa-markdown`）与技能页共用，
     支持围栏代码块与 `- [ ]` 清单；自研而非引库（只渲染我们自己产出的文本）。
-  - `src/lib/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
+  - `src/lib/framework/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
     （Blob 下载、读 `Content-Disposition` 文件名）—— MCP 页复制、本体导出、技能下载共用同一份。
 
 ### 技能同时发布为 MCP（免令牌，2026-09-18）
@@ -684,12 +692,12 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
     `list_ontologies` / `get_object_type` / `search_schema` 一眼分得开。别退回 `list_skills` / `get_skill`
     这种光看名字不知道是谁家的短名（`skills.test.ts` 有两条用例钉着这一点）。
   - **`description` 按「用途：… 输入：… 产出：… 怎么用：…」写**，把"拿到结果之后下一步调谁"也写进去，
-    模型不点开 inputSchema 就知道怎么用。工具名、`title`、说明都改在 `src/lib/skills-mcp.ts` 一处，
+    模型不点开 inputSchema 就知道怎么用。工具名、`title`、说明都改在 `src/lib/skills/index/mcp.ts` 一处，
     界面上的工具卡片与 `/api/skills` 返回的 `mcp.tools` 自动跟着变。
-- 代码分工：`src/lib/skills-mcp.ts` 写"提供什么"（工具与提示词定义 + 执行，纯函数级、可单测）；
+- 代码分工：`src/lib/skills/index/mcp.ts` 写"提供什么"（工具与提示词定义 + 执行，纯函数级、可单测）；
   `src/app/api/skills/mcp/route.ts` 写协议面（`initialize` / `ping` / `tools/*` / `prompts/*`、通知回 202、
-  GET 回 405、CORS `*`）；正文一律走 `@/lib/skills`，这里只写协议文案。
-- **`src/lib/mcp-protocol.ts` 是特意抽出来的**：协议版本两个服务端共用一份。技能 MCP 若 import
+  GET 回 405、CORS `*`）；正文一律走 `@/lib/skills/index`，这里只写协议文案。
+- **`src/lib/mcp/protocol.ts` 是特意抽出来的**：协议版本两个服务端共用一份。技能 MCP 若 import
   `@/lib/reasoning/mcp`，会连带把 Jena / oracledb / pg 的驱动拉进一个公开端点；实测不加载时
   `/api/skills/mcp` 单次调用 ~13ms。改协议版本只改这一个文件（`reasoning/mcp.ts` 原样再导出，路由不用动）。
 - `GET /api/skills` 多返回一段 `mcp`（`absoluteUrl` / `protocolVersion` / `transport` / `tools`），
@@ -713,7 +721,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
   **再加页面就用 `.view-switcher`，别抄第三份。**
 - **MCP 地址必须跟着前端 URL 变**（2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
   两端各一层，缺一层就会在某种部署形态下露出 localhost：
-  1. **服务端**：`@/lib/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
+  1. **服务端**：`@/lib/framework/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
      （只看第一段），协议认 `x-forwarded-proto` / 请求自己的协议，口径与 `sessionCookieSecure` 一致。
      **别用 `request.nextUrl.origin`**：它在 dev 与容器里会落回服务端自己认的 `localhost:port`。
   2. **界面**：拿到数据后再用 `window.location.origin` **覆盖** `absoluteUrl`。端口转发 / 反代会把 Host
@@ -760,7 +768,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 用户确认：类型图只包含对象类型、关系类型、接口等定义，不把将来海量对象放入内存图；
 先新增 JS/TS 内置后端，**保留 Jena/Fuseki 与旧数据**。充分验证后再讨论清理，不得提前删掉 Jena。
 
-- `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/graph/index.ts` 分发。
+- `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/framework/graph/index.ts` 分发。
   内置存储入口由代码虚拟提供，不在 `graph_targets` 创建根记录；新建本体默认选它，并为该本体持久化独立的受管目标。入口不能手工创建、编辑、删除、清空或重置，
   但本体仍必须由用户显式新建或导入。`ensureDefaultOntologies` 旧逻辑已移除，不能把资源自动变成本体。
   外部 Jena 连接仍可按需新建；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
@@ -781,7 +789,7 @@ AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextSt
 - 缓存就存在 `ontology_platform.data_sources.catalog`（JSONB，`ADD COLUMN IF NOT EXISTS`，形状
   `{ catalog: { "<范围>": { fetchedAt, objects } }, views: { "<模式.表>@<行数>": { fetchedAt, fields, preview } } }`）。
   **不要另开一张缓存表**，也别把这份数据塞进 `graph_targets` / 版本快照。
-- 取数口径：`src/lib/data-source/structure-cache.ts` 的 `cachedStructure()` —— 命中平台库就直接返回，**没有 TTL**；
+- 取数口径：`src/lib/datasource/structure-cache.ts` 的 `cachedStructure()` —— 命中平台库就直接返回，**没有 TTL**；
   只有 `refresh=1`（「刷新结构 / 重新取数」）或库里还没有时才连源库，读完顺手写回。失败时不写缓存。
 - 路由：`GET /api/data-sources/:id/views`（清单，按范围分片）与 `.../views/:name?limit=N`（字段 + 样本行，按「模式.表@行数」分片）
   都走这一层，响应里带 `fetched_at` / `from_cache`，界面据此显示"结构存于平台库 / 刚回源重读 · 时间"。
@@ -846,7 +854,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 - 数据：`relationshipTypes[].sourceKeyMappings / targetKeyMappings`，每行 `{ linkProperty, entityProperty }` ——
   前者是**关系类型这一侧**的连接属性（连接表的列名，可留空 = 外键长在对象类型上，两侧按顺序一一对应），
   后者是**这一侧对象类型**的属性名。多行就是复合键。schema 在 `src/lib/ontology.ts`
-  （`relationshipKeyMappingSchema`），纯函数与校验在 `src/lib/relationship-keys.ts`。
+  （`relationshipKeyMappingSchema`），纯函数与校验在 `src/lib/ontology/relationship-keys.ts`。
 - **默认空、空不算错**：平台只在类型层建模，键映射是给实例层、数据绑定与模型推理用的声明，
   老快照读出来就是空数组（`.default([])`），发布校验不会因为"没配"报任何东西。
 - **发布前校验**（`validateVersionSnapshot` 调用 `relationshipKeyViolations`）：
@@ -868,12 +876,12 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 **口径：操作数据库一定要用 ORM，不能直接写 SQL；以前写在业务代码里的 SQL 也要改掉。**
 这条是硬约束，改任何数据访问前先看这一节。
 
-**平台库（PostgreSQL，schema `ontology_platform`）**：全部走 `@/lib/db`。
+**平台库（PostgreSQL，schema `ontology_platform`）**：全部走 `@/lib/platform/db`。
 
-- 实体在 `src/lib/db/entities.ts`，表结构在 `src/lib/db/migrations/`（**幂等**，按数组顺序执行；
+- 实体在 `src/lib/platform/db/entities.ts`，表结构在 `src/lib/platform/db/migrations/`（**幂等**，按数组顺序执行；
   加表 / 加列就追加一支迁移类，不要在业务代码里写 DDL）。
 - 读写用 `platformRepo(Entity)`（事务内用 `repoIn(manager, Entity)`）；事务用
-  `withPlatformTransaction(manager => …)`。`src/lib/platform-db.ts` 只留业务口径与领域类型转换。
+  `withPlatformTransaction(manager => …)`。`src/lib/platform/platform-db.ts` 只留业务口径与领域类型转换。
 - **仓储一律按"实体名"解析**（`repositoryFor`）：dev 的 HMR 会让同一份代码存在多个模块副本、
   各自换一批实体类，按类身份判断会互相重建 DataSource，表现为随机的
   `No metadata for "…Entity" was found`。所以 DataSource 只按配置建一次，仓储按名字找 target。
@@ -900,8 +908,8 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 
 **允许保留的显式 SQL**（都在各自文件的注释里写明原因，别再扩散）：
 
-1. `src/lib/db/migrations/*`：建表 / 改列 / 数据回填（迁移本来就是干这个的）；
-2. `@/lib/db` 的 `withAdvisoryLock`：PG 会话级 advisory lock，TypeORM 没有等价 API；
+1. `src/lib/platform/db/migrations/*`：建表 / 改列 / 数据回填（迁移本来就是干这个的）；
+2. `@/lib/platform/db` 的 `withAdvisoryLock`：PG 会话级 advisory lock，TypeORM 没有等价 API；
 3. `object-index/postgres.ts` 的**表结构与全文 / 向量检索**：GIN、tsvector 生成列、pgvector、
    `@@` / `ts_rank` / `<=>` —— PG 专有，换搜索引擎就是换这个文件；
 4. `data-source/sql.ts` 的 **DDL 还原、Oracle 数据字典、只读 SQL 工作台**：
@@ -909,7 +917,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 
 ### 对象身份与对象服务（S1 / S2 / S3，2026-09-19）
 
-**身份 = (对象类型, 主键)**：`@/lib/object-identity` 是唯一定义处（纯函数、有单测）。
+**身份 = (对象类型, 主键)**：`@/lib/instance/object-identity` 是唯一定义处（纯函数、有单测）。
 
 - `objectIdOf(entityType, primaryKey)`：SHA-1 派生的**确定性 UUID**（v5 风格）。同一主键永远同一个 id，
   发布 / 动作写入 / 导出快照 / 索引键四处共用；主键不全时返回空串，调用方退回"快照里的那一行"。
@@ -920,7 +928,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   按主键查询都用去空格后的值。
 - **主键重复挡发布**：`validateVersionSnapshot` 会报"同一个对象类型里主键必须唯一"（`primaryKeyConflicts`）。
 
-**对象服务**（`@/lib/object-service`）是"按对象类型 + 主键取对象"的唯一入口：
+**对象服务**（`@/lib/instance/object-service`）是"按对象类型 + 主键取对象"的唯一入口：
 
 | 入口 | 说明 |
 | --- | --- |
@@ -954,7 +962,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 问题：bkn 知识网络只写了「SCHEMA.TABLE」，本体包里的资源 id 又属于导出端环境，
 于是导入进来的对象类型常常"有表名、没资源"，对象服务只会回一句"没有绑定数据资源"。
 
-口径（`@/lib/source-binding.ts`，纯函数 + 单测）：
+口径（`@/lib/datasource/source-binding.ts`，纯函数 + 单测）：
 
 1. **表名唯一命中某个本机资源的表清单** → 自动绑（表清单来自结构缓存：`catalog` 桶 + 看过的视图键）；
 2. 命中多个 → 不猜，导入响应里给 `pendingSources`，导入弹窗列出候选让人选一次；
@@ -1018,10 +1026,10 @@ linkSource: { mode: "JOIN_TABLE" | "FOREIGN_KEY", dataSourceId, schema, view, fo
 
 **分工（别把这三层混在一起）**：
 
-- `@/lib/link-source`：**纯函数**，把 `linkSource` + 两侧键映射翻译成一次取数计划
+- `@/lib/ontology/link-source`：**纯函数**，把 `linkSource` + 两侧键映射翻译成一次取数计划
   （`planLinkSource`），失败给"人话原因"。它负责属性名 → 真实列名的换算，以及"这一步之后 SQL 长什么样"。
   `linkSourceViolations` 接进 `validateVersionSnapshot`，配了但取不出实例只报 **WARN**（不挡发布）。
-- `@/lib/object-service/links.ts`：`queryLinks(context, { relationshipType?, seed?, limit })` ——
+- `@/lib/instance/object-service/links.ts`：`queryLinks(context, { relationshipType?, seed?, limit })` ——
   取行、拼对象身份（复用 S1 的确定性 id）、去重、如实告知。边两端的 id 与对象页/索引**同一套身份**。
 - `GET /api/links?targetId&versionId&relationshipType&entityType&key=…&limit=`：`key` 可重复传，
   表示"以这一批对象为起点"；过滤会**下推到业务库**（单值 `EQ`、多值 `IN`），不是把整张连接表拉回来再筛。
@@ -1042,8 +1050,8 @@ linkSource: { mode: "JOIN_TABLE" | "FOREIGN_KEY", dataSourceId, schema, view, fo
 - AI 工具 `query_instance_subgraph` 也吃这些边（节点走对象服务、边来自索引 + 配了来源的关系类型）。
   **注意 MCP / 问答读的是已发布版本**：草稿里刚配好的数据来源，发布之后 AI 才看得到。
 
-顺带抽出来的共用件：`@/lib/ontology-fields.ts` 的 `propertyForColumn` / `columnForProperty`
-（属性 ↔ 列的换算）。**单独一个文件是因为客户端也要用它** —— 原来的家 `@/lib/object-identity`
+顺带抽出来的共用件：`@/lib/ontology/fields.ts` 的 `propertyForColumn` / `columnForProperty`
+（属性 ↔ 列的换算）。**单独一个文件是因为客户端也要用它** —— 原来的家 `@/lib/instance/object-identity`
 依赖 `node:crypto`（算确定性 id），进不了浏览器包；服务端那边从 `object-identity` 转出去，实现只有一份。
 
 **实测**（2026-09-19，Oracle 测试库）：新建关系类型「网格属于县区」（政企网格编码字典 → 县区编码字典，
@@ -1070,7 +1078,7 @@ D2 当初只接了「从数据源加载」与 AI 子图，留下两处对不上�
   每行写清「关系类型 + 方向 + 另一端的引用」，点一行跳到那个对象（不在本页列表里就先切到它的对象类型再选）。
   空的两种原因要分开说（`linkHint`）：**没配 `linkSource`** vs **真的有零条边**。
 - **客户端也要算主键**：`primaryKeyFromProperties` / `primaryKeyColumns` / `normalizeKeyValue` 从
-  `@/lib/object-identity` 搬到了 `@/lib/ontology-fields`（那边带 `node:crypto`，客户端引不了），
+  `@/lib/instance/object-identity` 搬到了 `@/lib/ontology/fields`（那边带 `node:crypto`，客户端引不了），
   前者原样再导出，服务端调用点一行没改。**别再各写一份主键换算。**
 - 已知边界同 D2：复合主键的端点不做一跳展开；关系类型自己的属性只按 `sourceField` 同名列读。
 
@@ -1095,9 +1103,9 @@ alias 切换）与 **按缺失键 prune 的增量同步**（PG 一条 `DELETE �
 顺手做了三件收口，把切换成本固定在这个水平：
 
 - **PG 专用件不再从公共 barrel 转出**：`escapeLike` / `normalizeSearchQuery` / `planObjectSearch`
-  是 PostgreSQL 的查询规划与 LIKE 转义，留在 `@/lib/object-index/sql`（要单测就直接引它）。
-  以前从 `@/lib/object-index` 转出去，等于把"索引后端 = PostgreSQL"写进公共契约。
-- **实例改成注册表 + 按 kind 缓存**：`src/lib/object-index/index.ts` 的 `factories` 是唯一的扩展点
+  是 PostgreSQL 的查询规划与 LIKE 转义，留在 `@/lib/instance/object-index/sql`（要单测就直接引它）。
+  以前从 `@/lib/instance/object-index` 转出去，等于把"索引后端 = PostgreSQL"写进公共契约。
+- **实例改成注册表 + 按 kind 缓存**：`src/lib/instance/object-index/index.ts` 的 `factories` 是唯一的扩展点
   —— **加后端 = 实现 `ObjectIndex` + 扩 `ObjectIndexKind` + 加一行**；没登记的 kind 会报
   「还没有 X 的检索索引实现…」。缓存挂 `globalThis`（`__ontologyObjectIndexes`）：dev 下模块被反复求值不会漏实例
   （和 D3 的连接池一个教训）。
@@ -1122,7 +1130,7 @@ GIN(search_text gin_trgm_ops)、HNSW(embedding)、唯一键 `(target_id, object_
 
 ## 数据资源的连接池与并发闸门（D3，2026-09-19）
 
-动的只有 `src/lib/data-source/sql.ts` 的 `withConnection()`：以前是**每次操作连一次、断开一次**
+动的只有 `src/lib/datasource/sql.ts` 的 `withConnection()`：以前是**每次操作连一次、断开一次**
 （`new DataSource()` → `initialize()` → `destroy()`），试连 ~400ms、点开一张表 ~500ms 基本都花在建连接上。现在：
 
 - **按连接指纹缓存连接池**：指纹 = `buildConnectionOptions()` 的结果（除 `name`）做 SHA-256。
@@ -1150,7 +1158,7 @@ GIN(search_text gin_trgm_ops)、HNSW(embedding)、唯一键 `(target_id, object_
 发布 / 失败 / 图引擎与数据资源变更 / 草稿写入 / 动作执行，本来只在 PostgreSQL `audit_entries` 里躺着。
 现在有界面了：**设置 → 审计记录**（第三档，仅管理员可见）。
 
-- **范围切换是核心**：`src/lib/audit.ts` 的动作目录（`AUDIT_ACTIONS`）一处定义中文名、分组与失败标记，API 与界面共用。
+- **范围切换是核心**：`src/lib/platform/audit.ts` 的动作目录（`AUDIT_ACTIONS`）一处定义中文名、分组与失败标记，API 与界面共用。
   四档范围：`changes`（默认：本体 / 版本 / 草稿 / 索引 / 图引擎 / 数据资源）、`all`、`actions`、`reads`（问答与图查询）。
   **默认把 `REASONING_RUN` / `GRAPH_QUERY_READ` 排除在外** —— 一次提问好几条，混进来会把真正的变更淹掉；要看就切「全部记录」。
 - `GET /api/audit`：`scope` / `action` / `actorId` / `targetId` / `from` / `to` / `limit`（默认 50，上限 200）/ `offset`。
@@ -1202,7 +1210,7 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
   没有监听者就是未捕获的 error 事件（进程可能直接退出，日志还会打出整个连接对象）。
 - **Jena 端点主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**：平台库里若登记的是宿主机地址
   `http://localhost:3030/ds`，容器里默认用 `localhost=host.docker.internal` 保持可达。
-  远端 Jena 直接登记真实地址或显式覆盖别名；实现位于 `src/lib/graph/jena/index.ts` 的
+  远端 Jena 直接登记真实地址或显式覆盖别名；实现位于 `src/lib/framework/graph/jena/index.ts` 的
   `resolveSparqlEndpoints`（`applyEndpointHostAlias` 有单测），不要绕过唯一出口。
 - **现存 Fuseki 数据不清理**：旧 `ontology-fuseki` 容器可能在更新 Compose 后成为孤儿，本次只改编排，
   不自动停止或删除容器，也不删 `.data/fuseki`。旧 `.env.docker` 的 `FUSEKI_*` 不再配置服务，
@@ -1297,7 +1305,7 @@ object type 是 schema 定义（属性、主键、标题、backing datasource）
 
 1. **接口不是对象类型**：不绑数据源、不能实例化、不进实例查询。发布时声明成 `owl:Class` + `urn:bkn:Interface`；
    `jena.ts` 的 `META_TYPES` 必须留着 `BKN_INTERFACE_META`，否则接口会被当成对象混进对象数、标签清单与整图导出。
-2. **实现 = 同名属性 + 必填关系约束**：判断口径只有一处 —— `src/lib/interfaces.ts` 的 `checkImplementations`
+2. **实现 = 同名属性 + 必填关系约束**：判断口径只有一处 —— `src/lib/ontology/interfaces.ts` 的 `checkImplementations`
    （纯函数、有单测）。发布前校验（`validateVersionSnapshot` → `validateInterfaces` / `validateInterfaceImplementations`）
    与界面提示都走它；校验返回的 message 是**给用户看的界面文案**，按术语约定写「对象类型」。
    **2026-09-16 补**：`validateVersionSnapshot` 里原先只 import 了这两个校验函数却没调用（只有接口页在客户端提示），
@@ -1370,14 +1378,14 @@ Object Views / Object Explorer / Object Monitors）后得出的 P0 结论，用�
 | 层次 | 现在有没有 | 规模取决于 |
 | --- | --- | --- |
 | 对象存储（对象存在哪、身份是什么） | 实质是版本快照里的节点 | 发布快照节点数 |
-| 对象检索索引（PG 全文 + `pg_trgm` + 向量，见上一节） | 有：`src/lib/object-index/` | **同上** |
+| 对象检索索引（PG 全文 + `pg_trgm` + 向量，见上一节） | 有：`src/lib/instance/object-index/` | **同上** |
 | 对象服务（按业务主键按需取对象） | 没有 | 业务表行数 ← 海量对象真正来自这里 |
 
 关键事实（动手前先确认这几条还成立，变了就要重估）：
 
 - 发布时走 `buildIndexEntries(snapshot.definition, snapshot.nodes)` → `replaceTargetObjects()` **全量替换**
-  （`src/lib/version-publication.ts`）；`buildIndexEntries` 的入参 `IndexableNode` 注释就写着
-  "正好是 VersionSnapshot 里节点的形状"（`src/lib/object-index/entries.ts`）。
+  （`src/lib/versioning/publication.ts`）；`buildIndexEntries` 的入参 `IndexableNode` 注释就写着
+  "正好是 VersionSnapshot 里节点的形状"（`src/lib/instance/object-index/entries.ts`）。
   → **索引再大也大不过快照**：业务表 100 万行，索引里一条都没有。
 - 对象类型的 `sources[]` 目前只服务绑定校验与多来源（MDO）按列合并，不会把表里的行读成对象（见 D1）。
 - 动作 `runSnapshotAction` 写的是版本快照 + 审计，不回写业务库。
@@ -1387,8 +1395,8 @@ Object Views / Object Explorer / Object Monitors）后得出的 P0 结论，用�
 
 | 编号 | 事项 | 现状 | 建议做法 |
 | --- | --- | --- | --- |
-| S1 | 对象身份 = (对象类型, 主键) | **已于 2026-09-19 完成**（见「对象身份与对象服务」一节）：`@/lib/object-identity` 按主键推导确定性 UUID，新建对象 / 动作写入 / 导出快照 / 索引键四处共用同一份口径；主键重复在发布前**挡发布** | 已落地。M1 随之关闭 |
-| S2 | 对象服务：类型 + 主键 → 对象 | **已于 2026-09-19 完成（含界面与 AI 接入）**：`@/lib/object-service`（门面 + 数据资源来源）+ `GET /api/objects`；对象页可选来源、图谱页可按类型从数据源加载、动作页主对象走对象服务并可"取进草稿"，AI 两个实例工具也已开放。**2026-09-19 真浏览器实测**（1680×1000，Oracle 测试库）：对象页「集团客户」业务库取到 200 / 共 1051 条真数据、详情标「来自业务库」；「专线产品用户」取进草稿 → 确定性 id → 从草稿删除后草稿回到 0 条；图谱页「从数据源加载」30 个节点真的画在画布上（当时还孤立无连线，D2 之后已能连边）；MCP 11 个工具全部开放；全程无 4xx | 已落地，D2 见下一节 |
+| S1 | 对象身份 = (对象类型, 主键) | **已于 2026-09-19 完成**（见「对象身份与对象服务」一节）：`@/lib/instance/object-identity` 按主键推导确定性 UUID，新建对象 / 动作写入 / 导出快照 / 索引键四处共用同一份口径；主键重复在发布前**挡发布** | 已落地。M1 随之关闭 |
+| S2 | 对象服务：类型 + 主键 → 对象 | **已于 2026-09-19 完成（含界面与 AI 接入）**：`@/lib/instance/object-service`（门面 + 数据资源来源）+ `GET /api/objects`；对象页可选来源、图谱页可按类型从数据源加载、动作页主对象走对象服务并可"取进草稿"，AI 两个实例工具也已开放。**2026-09-19 真浏览器实测**（1680×1000，Oracle 测试库）：对象页「集团客户」业务库取到 200 / 共 1051 条真数据、详情标「来自业务库」；「专线产品用户」取进草稿 → 确定性 id → 从草稿删除后草稿回到 0 条；图谱页「从数据源加载」30 个节点真的画在画布上（当时还孤立无连线，D2 之后已能连边）；MCP 11 个工具全部开放；全程无 4xx | 已落地，D2 见下一节 |
 | S3 | 检索索引归位：稳定唯一键 + 增量 upsert | **已于 2026-09-19 完成**：索引行有 `entity_type` / `object_key`，唯一键 `(target_id, object_key)`；发布改走 `syncTargetObjects(..., { prune: true })`，另有 `POST /api/objects/index` 做单条增量 | 已落地。R1 / R3 仍是它的前端与统计面 |
 | S4 | 物化 / 回源的按对象类型策略 | 没有"要不要物化"这个概念 | 按对象类型配置：物化「身份 + 检索 / 排序 / 聚合字段」，明细字段按需回源。纯联邦查询在跨源 join、排序、分页、聚合上会崩；全量物化等于给业务库做一份迟早过期的副本 —— 两头都不选 |
 
@@ -1451,7 +1459,7 @@ z-index 从 10 抬到 **120**（与 `.ted-backdrop` 一致），不再被 sigma 
 
 删掉的东西：
 
-- 代码：`src/lib/graph/neo4j.ts`、`src/lib/graph/neo4j.test.ts`、`scripts/neo4j-instance.ps1`
+- 代码：`src/lib/framework/graph/neo4j.ts`、`src/lib/framework/graph/neo4j.test.ts`、`scripts/neo4j-instance.ps1`
 - 依赖：`package.json` 的 `neo4j-driver`（`next.config.ts` 的 `serverExternalPackages` 同步去掉）
 - 类型：`GraphTargetKind` 收窄成 `"JENA"`，`QueryLanguage` 收窄成 `"sparql"`，`GRAPH_TARGET_KINDS` 只剩 Jena；
   `retiredGraphTargetKinds()` 与「已下线」分组一并删除（`FRONTEND_GRAPH_TARGET_KINDS` 保留为 `GRAPH_TARGET_KINDS` 的别名）
@@ -1508,12 +1516,12 @@ createTime, creatorName, updateTime, updaterName, statistics, embeddingModelId }
 
 记录时间：2026-09-14。对标 bkn-foundry 的知识网络导出：**一个 JSON 文件带走整份结构**，方便传播。
 
-- 模块：`src/lib/ontology-bundle.ts`（纯函数，单测 `ontology-bundle.test.ts`）。
+- 模块：`src/lib/ontology/bundle.ts`（纯函数，单测 `ontology-bundle.test.ts`）。
 - 接口：`GET /api/ontologies/:ontologyId/export`（取已发布版本的定义，没有就取草稿）、
   `POST /api/ontologies/import`（建本体 + 写草稿，**不发布**）。
 - 界面：本体卡片上的「导出」；页头「导入本体包」。
 - **导入接受两种文件**：平台自己的 `ontology.bundle`，以及 bkn-foundry 导出的知识网络
-  （`module_type: knowledge_network`）。后者由 `src/lib/bkn-import.ts` 先转成标准本体包，
+  （`module_type: knowledge_network`）。后者由 `src/lib/ontology/bkn-import.ts` 先转成标准本体包，
   **转换时丢掉的每一类东西都进 warnings**（指标、关系连接规则、平台不认的属性类型……），不静默丢。
 - **概念域分组会一起搬**（2026-09-14 起）：bkn 的 `concept_groups` → `definition.groups`，
   成员在 bkn 里写在分组这一侧（`object_type_ids`）、平台写在对象类型那一侧，转换时按 `idMap` 铺到 `groupId`；
@@ -1626,7 +1634,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 `get_table_ddl` 在这里踩过一个坑：传进来的名字被原样当成**裸表名**去数据字典里精确比对，
 于是"明明有这张表"却报 `数据源里没有表或视图「GISTOOLS.TB_DIC_AREA_CODE」`（2026-09-14 用户报的）。现在的规则：
 
-- 名字的引用与拆分统一在 `src/lib/data-source/object-name.ts`（纯函数、有单测）：
+- 名字的引用与拆分统一在 `src/lib/datasource/object-name.ts`（纯函数、有单测）：
   `splitObjectName` 认 `模式.表` / `"模式"."表"` / 反引号 / 方括号；`quoteIdentifier`、`qualifiedName`
   也搬到了这个文件，`sql.ts` 只做重导出，别再各写一份。
 - 数据资源层在**查字典之前**拆名字，候选模式按优先级：名字里写的 → 调用方给的 → 数据资源登记的
@@ -1859,7 +1867,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 **数据来源：只读 SQL 与表结构**（2026-09-14，用户提出）：
 
 本体这一层只有定义，要具体数据就得走"对象类型 → 它绑定的表"。两个工具把这条路接上，
-闸门写在 `src/lib/data-source/sql-guard.ts`（纯函数，有单测），**两道闸是有意重复的**：
+闸门写在 `src/lib/datasource/sql-guard.ts`（纯函数，有单测），**两道闸是有意重复的**：
 
 - **词法闸门**判断语句"长得像不像查询"：必须以 SELECT / WITH / SHOW / DESC / DESCRIBE / EXPLAIN / VALUES /
   TABLE 开头；多条语句（分号）、`INTO`、INSERT / MERGE / DROP / ALTER / CREATE / GRANT / CALL 等一律拦下。
@@ -1929,7 +1937,7 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | 管什么 | 来源绑定、端点契约、必填与唯一、接口实现、动作定义 | 建模层面的自洽：粒度、命名、映射完整度、孤立与空壳 |
 
 - **规则码是稳定标识**（`ENTITY_ORPHAN` / `PROPERTY_TYPE_CONFLICT` …）：界面与技能文档共用同一份，
-  加规则只加码、不改码。规则在 `src/lib/modeling-review.ts` 的 `RULES` 数组里，一条一个纯函数；
+  加规则只加码、不改码。规则在 `src/lib/ontology/modeling-review.ts` 的 `RULES` 数组里，一条一个纯函数；
   **每加一条就在 `modeling-review.test.ts` 里钉一个用例**，那里还有一条"健康本体零结论"的用例，
   用来防规则越加越吵。
 - **只有两个出口**（2026-09-18 起**没有 MCP 工具**：用户口径"去掉 review_model 这个工具"，
@@ -2089,3 +2097,32 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   以后再拆类似的大文件可以照着改。
 - 连带改的测试：`tests/lib/nav-visibility.test.ts` 现在同时扫 `functional-workbench.tsx` 与
   `workbench/shared.tsx`（`type View` 搬到了 shared，`NAV_SECTIONS` 还在壳里）。
+
+## src/lib 的目录划分（2026-10-10）
+
+用户口径：「通用的公共中间件或者抽象代码要和业务的拆开，不然放到一层目录太不好了」。现在是四档：
+
+| 目录 | 放什么 | 代表文件 |
+| --- | --- | --- |
+| `src/lib/framework/` | **与本平台业务无关的通用件**：能不能整包搬去别的项目，是这里的准入门槛 | `crypto` `zip` `ids` `datetime` `format-units` `markdown` `clipboard` `api-client` `public-origin` `session-token` `local-layout` `graph-palette`；`graph/` 是图存储抽象（`types.ts` 接口 + `index.ts` 注册表 + `jena/` `embedded/` 两个实现 + `schema-inference.ts`） |
+| `src/lib/platform/` | **平台自身**：账号、权限、审计、平台库 | `auth` `users` `permissions` `audit` `targets`（图引擎连接登记）、`platform-db`（平台表仓储）、`db/`（连接、实体、迁移） |
+| `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型：定义、草稿、画布、接口、指标、分组、体检、bkn 导入、关系键/基数）、`versioning/`（快照与发布）、`instance/`（对象服务与索引）、`datasource/`（数据资源与 SQL）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`skills/`（本体技能） |
+
+两条硬规矩：
+
+1. **新代码先问「它跟本体业务有关吗」**：无关 → `framework/`；是平台自己的账号/权限/审计/平台库 → `platform/`；
+   是本体业务 → 对应的业务模块目录。**不要再往 `src/lib/` 根下加文件**（根下只剩目录）。
+2. **外部一律 import 目录**（`@/lib/ontology`、`@/lib/reasoning/tools`），目录里用 `index.ts` 做 barrel（`export * from "./xxx"`）。
+   换文件位置只改 barrel，不动调用方。
+
+同一天做的两个大文件拆分（都是纯搬家，行为不变）：
+
+- `reasoning/tools.ts`（1751 行）→ `reasoning/tools/{registry,search,projection,dispatch}.ts` + `index.ts`：
+  `registry` 放工具清单与常量，`search` 放检索与打分（`rankSchemaConcepts` 等），`projection` 放把定义投影成工具答案的纯函数，
+  `dispatch` 放 `reasoningToolSet` / `runReasoningTool` / `traverseTypeGraph`。
+- `framework/graph/jena/index.ts`（1160 行）→ `jena/{vocabulary,protocol,statements,store,replace,read}.ts` + `index.ts`：
+  别再把它们合并回去；`store.ts` 那一份是 `createJenaStore` 本体（最大的一块）。
+
+拆分脚本留在 `.data/ui-check/backend-reorg.mjs`（切块 + 生成 import + 目录重排）、`backend-fixpaths.mjs` / `backend-fix2.mjs`
+（把 73+192 个文件的 import 路径改到新位置，含动态 `import()`）。踩过的三个坑记在这儿：
+**多行 import 要整块解析**、**带文档注释的声明要认得出 `export` 加在哪一行**、**别名别写成 `@/src/lib/...`**。

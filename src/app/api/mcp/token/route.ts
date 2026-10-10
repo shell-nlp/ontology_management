@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/auth";
-import { createMcpToken, listMcpTokens, revealMcpToken, revokeMcpToken } from "@/lib/mcp-token";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/platform/auth";
+import { createMcpToken, listMcpTokens, revealMcpToken, revokeMcpToken } from "@/lib/mcp/token";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 /**
  * MCP 访问令牌的管理面。**可以有多条**（2026-10-08 用户口径：「token 应该能生成多个，

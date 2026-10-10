@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import { getTarget } from "@/lib/targets";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getTarget } from "@/lib/platform/targets";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/versioning/snapshot";
 
 const relationshipCreateInput = z.object({
   targetId: z.string().uuid(),

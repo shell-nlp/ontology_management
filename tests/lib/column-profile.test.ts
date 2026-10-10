@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, enumProfileWarnings, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey, sampleDateCoverage } from "@/lib/column-profile";
+import { PROFILE_MAX_VALUES, PROFILE_TTL_MS, columnValueOf, enumProfileWarnings, mappedColumnsFor, profileFromRows, profileIsFresh, profileTableKey, sampleDateCoverage } from "@/lib/datasource/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 /**

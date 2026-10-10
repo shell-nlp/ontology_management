@@ -9,7 +9,7 @@ import {
   paletteColor,
   resolveGroup,
   summarizeGroups,
-} from "@/lib/concept-groups";
+} from "@/lib/ontology/concept-groups";
 import type { ConceptGroup } from "@/lib/ontology";
 
 const 客户域: ConceptGroup = { id: "g-customer", name: "客户域", color: "" };

@@ -2,10 +2,10 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import { Check, LayoutGrid, Palette, Pencil, Plus, Trash2 } from "lucide-react";
-import { GROUP_PALETTE, paletteColor, summarizeGroups } from "@/lib/concept-groups";
-import { newId } from "@/lib/ids";
+import { GROUP_PALETTE, paletteColor, summarizeGroups } from "@/lib/ontology/concept-groups";
+import { newId } from "@/lib/framework/ids";
 import { useSplitPane } from "@/components/split-pane";
-import type { ConceptGroup, Definition } from "@/lib/ontology-draft";
+import type { ConceptGroup, Definition } from "@/lib/ontology/draft";
 import "./concept-group-manager.css";
 
 /**

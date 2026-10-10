@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { searchOntologyDefinition } from "@/lib/ontology-search";
-import type { Definition } from "@/lib/ontology-draft";
+import { searchOntologyDefinition } from "@/lib/ontology/search";
+import type { Definition } from "@/lib/ontology/draft";
 
 const definition = {
   groups: [{ id: "group", name: "客户域" }],

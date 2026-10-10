@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { listDataSources } from "@/lib/data-sources";
-import { getOntology } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { applySourceBindings } from "@/lib/source-binding";
-import { planSourceBindingsFor } from "@/lib/source-hints";
-import { getVersionRecord, listVersionRecords, updateSnapshotDefinition } from "@/lib/version-snapshot";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { listDataSources } from "@/lib/datasource/sources";
+import { getOntology } from "@/lib/ontology/ontologies";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { applySourceBindings } from "@/lib/datasource/source-binding";
+import { planSourceBindingsFor } from "@/lib/datasource/source-hints";
+import { getVersionRecord, listVersionRecords, updateSnapshotDefinition } from "@/lib/versioning/snapshot";
 
 const bindInput = z.object({
   versionId: z.string().uuid(),

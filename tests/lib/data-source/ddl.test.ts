@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ddlFromColumns, inlineDdlComment, typeWithSize } from "@/lib/data-source/ddl";
-import type { DataViewField } from "@/lib/data-source/types";
+import { ddlFromColumns, inlineDdlComment, typeWithSize } from "@/lib/datasource/ddl";
+import type { DataViewField } from "@/lib/datasource/types";
 
 /** 只写关心的那几项，其余按"Oracle 表里的普通可空列"补齐。 */
 function column(name: string, patch: Partial<DataViewField> = {}): DataViewField {

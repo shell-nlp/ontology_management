@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { createVersionRecord, deleteVersionRecord, ensureVersionSnapshot, initializeVersionSnapshot, listVersionRecords, withTargetLock } from "@/lib/version-snapshot";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { createVersionRecord, deleteVersionRecord, ensureVersionSnapshot, initializeVersionSnapshot, listVersionRecords, withTargetLock } from "@/lib/versioning/snapshot";
 
 const draftCreateInput = z.object({ targetId: z.string().uuid(), baseVersionId: z.string().uuid().optional(), definition: ontologyDefinitionSchema.optional() });
 

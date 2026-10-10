@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/graph/types";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { deleteTargetVersions } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/framework/graph/types";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { deleteTargetVersions } from "@/lib/versioning/snapshot";
 
 export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
   try {

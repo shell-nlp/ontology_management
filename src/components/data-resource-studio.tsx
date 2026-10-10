@@ -19,7 +19,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api } from "@/lib/framework/api-client";
 import {
   DATA_SOURCE_KINDS,
   PLANNED_DATA_SOURCES,
@@ -32,7 +32,7 @@ import {
   type DataViewPreview,
   type DataViewSummary,
   type PublicDataSource,
-} from "@/lib/data-source/types";
+} from "@/lib/datasource/types";
 import "./data-resource-studio.css";
 
 /**

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { copyText } from "@/lib/clipboard";
-import { stripOntologyId } from "@/lib/mcp-schema";
-import { authHeaders } from "@/lib/session-token";
+import { api } from "@/lib/framework/api-client";
+import { copyText } from "@/lib/framework/clipboard";
+import { stripOntologyId } from "@/lib/mcp/schema";
+import { authHeaders } from "@/lib/framework/session-token";
 import type { OntologySummary } from "@/components/ontology-studio";
 import { McpTokenDialog, type McpTokenEntry, type RevealedToken } from "@/components/mcp-token-dialog";
 import "./mcp-studio.css";

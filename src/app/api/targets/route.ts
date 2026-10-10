@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { encryptSecret } from "@/lib/crypto";
-import { GraphTargetEntity, jsonValue, platformRepo } from "@/lib/db";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
-import { graphTargetKindInfo, type GraphTarget } from "@/lib/graph/types";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { encryptSecret } from "@/lib/framework/crypto";
+import { GraphTargetEntity, jsonValue, platformRepo } from "@/lib/platform/db";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
+import { graphTargetKindInfo, type GraphTarget } from "@/lib/framework/graph/types";
 
 const targetInput = z.object({
   name: z.string().trim().min(2).max(100),

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { parsePrimaryKeyInput } from "@/lib/object-identity";
-import { resolveObjectContext } from "@/lib/object-service";
-import { queryLinks } from "@/lib/object-service/links";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { resolveObjectContext } from "@/lib/instance/object-service";
+import { queryLinks } from "@/lib/instance/object-service/links";
 
 /**
  * 关系实例接口（D2）。

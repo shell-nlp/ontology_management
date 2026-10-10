@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, KeyRound, Lock, Pencil, Plus, Power, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api } from "@/lib/framework/api-client";
 import "./user-role-manager.css";
 
 /**

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { MCP_PROTOCOL_VERSION } from "@/lib/mcp-protocol";
+import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
 import {
   callSkillMcpTool,
   findSkillMcpTool,
@@ -9,7 +9,7 @@ import {
   SKILLS_MCP_SERVER_NAME,
   SKILLS_MCP_SERVER_VERSION,
   SKILL_MCP_TOOLS,
-} from "@/lib/skills-mcp";
+} from "@/lib/skills/mcp";
 
 /**
  * 「本体技能」的 MCP 服务端：Streamable HTTP 传输，JSON 响应。

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { applySourceBindings, brokenSourcesOf, matchSourceCandidates, planSourceBindings, unboundSourcesOf, type SourceHint } from "@/lib/source-binding";
+import { applySourceBindings, brokenSourcesOf, matchSourceCandidates, planSourceBindings, unboundSourcesOf, type SourceHint } from "@/lib/datasource/source-binding";
 
 const TYPE_ID = "11111111-1111-4111-8111-111111111111";
 

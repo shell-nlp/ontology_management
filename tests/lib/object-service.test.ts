@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { rowProperties, sourceColumns, titleOf } from "@/lib/object-service/data-source";
+import { rowProperties, sourceColumns, titleOf } from "@/lib/instance/object-service/data-source";
 
 const definition = ontologyDefinitionSchema.parse({
   entityTypes: [

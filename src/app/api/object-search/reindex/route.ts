@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { getObjectIndex } from "@/lib/object-index";
-import { buildIndexEntries } from "@/lib/object-index/entries";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { ensureVersionSnapshot, listVersionRecords } from "@/lib/version-snapshot";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getObjectIndex } from "@/lib/instance/object-index";
+import { buildIndexEntries } from "@/lib/instance/object-index/entries";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { ensureVersionSnapshot, listVersionRecords } from "@/lib/versioning/snapshot";
 
 const reindexInput = z.object({
   targetId: z.string().uuid(),

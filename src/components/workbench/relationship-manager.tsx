@@ -5,9 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link2, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { PropertyEditor } from "@/components/property-editor";
-import { api } from "@/lib/api-client";
-import { type RuntimeTypeSet } from "@/lib/graph/types";
-import { sourceName } from "@/lib/ontology-draft";
+import { api } from "@/lib/framework/api-client";
+import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { sourceName } from "@/lib/ontology/draft";
 
 
 

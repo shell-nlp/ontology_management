@@ -1,6 +1,6 @@
-import { implementsIdsOf, interfaceAncestorsOf } from "@/lib/interfaces";
+import { implementsIdsOf, interfaceAncestorsOf } from "@/lib/ontology/interfaces";
 import { summaryBlock } from "@/lib/reasoning/history";
-import { entitySources } from "@/lib/ontology-sources";
+import { entitySources } from "@/lib/ontology/sources";
 import type { ToolContext } from "@/lib/reasoning/tools";
 
 /**

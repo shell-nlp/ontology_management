@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { callMcpTool, mcpToolCatalog, mcpTools } from "@/lib/reasoning/mcp";
 import { applyPinnedOntology } from "@/lib/reasoning/mcp-endpoint";
-import { stripOntologyId } from "@/lib/mcp-schema";
+import { stripOntologyId } from "@/lib/mcp/schema";
 import { DEFAULT_DISABLED_TOOLS, defaultToolPolicy, normalizeToolPolicy, resolveToolPolicy, togglableToolNames, toolPolicyKey, TOOL_POLICY_KEY } from "@/lib/reasoning/tool-policy";
 
 /**

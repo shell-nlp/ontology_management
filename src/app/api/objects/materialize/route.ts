@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { parsePrimaryKeyInput } from "@/lib/object-identity";
-import { ensureObjectInDraft, resolveObjectContext } from "@/lib/object-service";
-import { getTarget } from "@/lib/targets";
-import { getVersionRecord } from "@/lib/version-snapshot";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object-service";
+import { getTarget } from "@/lib/platform/targets";
+import { getVersionRecord } from "@/lib/versioning/snapshot";
 
 const materializeInput = z.object({
   targetId: z.string().uuid(),

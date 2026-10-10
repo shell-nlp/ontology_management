@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runAction, validateActionDefinition, visibleActions, type ActionGraph } from "@/lib/action-engine";
+import { runAction, validateActionDefinition, visibleActions, type ActionGraph } from "@/lib/instance/action-engine";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 
 const passengerTypeId = "11111111-1111-4111-8111-111111111111";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCount, formatDuration } from "@/lib/format-units";
+import { formatCount, formatDuration } from "@/lib/framework/format-units";
 
 /**
  * 单位要随量级变（2026-10-10 用户口径：「毫秒，分钟，小时 这样的不能只是一个单位」）。

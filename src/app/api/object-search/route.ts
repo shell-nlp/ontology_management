@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requirePermission } from "@/lib/auth";
-import { getObjectIndex } from "@/lib/object-index";
-import { getTarget } from "@/lib/targets";
+import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getObjectIndex } from "@/lib/instance/object-index";
+import { getTarget } from "@/lib/platform/targets";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),

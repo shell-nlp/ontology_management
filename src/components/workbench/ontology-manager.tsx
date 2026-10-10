@@ -6,15 +6,15 @@ import { CircleDot, Database, FileCheck2, Link2, Merge, Pencil, Plus, RefreshCcw
 import { ConceptGroupManager } from "@/components/concept-group-manager";
 import { InterfaceManager } from "@/components/interface-manager";
 import { MetricManager } from "@/components/metric-manager";
-import { type KeyMapping } from "@/lib/relationship-keys";
-import { newId } from "@/lib/ids";
+import { type KeyMapping } from "@/lib/ontology/relationship-keys";
+import { newId } from "@/lib/framework/ids";
 import { OntologyBuilder, type EntityPayload, type RelationPayload } from "@/components/ontology-builder";
 import { ModelingReviewPanel } from "@/components/modeling-review-panel";
-import { reviewOntologyModel, summarizeModelingReview } from "@/lib/modeling-review";
-import { resolveGroup } from "@/lib/concept-groups";
+import { reviewOntologyModel, summarizeModelingReview } from "@/lib/ontology/modeling-review";
+import { resolveGroup } from "@/lib/ontology/concept-groups";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
-import { type RuntimeTypeSet } from "@/lib/graph/types";
-import { type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology-draft";
+import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { type Definition, type EntityType, type Property, type RelationType } from "@/lib/ontology/draft";
 import { EMPTY_LINK_SOURCE } from "@/lib/ontology";
 
 

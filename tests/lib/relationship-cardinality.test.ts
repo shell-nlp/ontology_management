@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARDINALITY_OPTIONS, cardinalityLabel, cardinalityPhrase, flipCardinality, RELATIONSHIP_CARDINALITIES } from "@/lib/relationship-cardinality";
+import { CARDINALITY_OPTIONS, cardinalityLabel, cardinalityPhrase, flipCardinality, RELATIONSHIP_CARDINALITIES } from "@/lib/ontology/relationship-cardinality";
 
 /**
  * 关系类型的数量关系（Palantir 的 link type cardinality）。

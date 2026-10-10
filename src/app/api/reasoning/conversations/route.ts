@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { getOntologyByTargetId } from "@/lib/ontologies";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
 import { listConversations } from "@/lib/reasoning/conversations";
 
 /**

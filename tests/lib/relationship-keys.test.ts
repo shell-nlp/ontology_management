@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keyMappingLabel, keyMappingRows, primaryKeyPropertyNames, relationshipKeyViolations } from "@/lib/relationship-keys";
+import { keyMappingLabel, keyMappingRows, primaryKeyPropertyNames, relationshipKeyViolations } from "@/lib/ontology/relationship-keys";
 
 const 客户 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const 订单 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

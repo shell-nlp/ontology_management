@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { DataType, PropertyDefinition } from "@/lib/instance-property-editor";
+import type { DataType, PropertyDefinition } from "@/lib/instance/instance-property-editor";
 
 function stringify(value: unknown) {
   if (value === null || value === undefined) return "";

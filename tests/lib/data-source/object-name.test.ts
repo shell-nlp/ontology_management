@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, splitObjectName } from "@/lib/data-source/object-name";
+import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, splitObjectName } from "@/lib/datasource/object-name";
 
 describe("splitObjectName", () => {
   it("把「模式.表」拆成两段", () => {

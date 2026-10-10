@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { publicOrigin } from "@/lib/public-origin";
+import { publicOrigin } from "@/lib/framework/public-origin";
 
 /** 只造出 `publicOrigin` 用到的三个字段，不必真起一个 NextRequest。 */
 function request(headers: Record<string, string>, url = "http://localhost:3001/api/skills") {

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { encryptSecret } from "@/lib/crypto";
-import { getObjectIndex } from "@/lib/object-index";
-import { GraphTargetEntity, platformRepo } from "@/lib/db";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/targets";
-import { removeTargetSnapshotDirectory } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { encryptSecret } from "@/lib/framework/crypto";
+import { getObjectIndex } from "@/lib/instance/object-index";
+import { GraphTargetEntity, platformRepo } from "@/lib/platform/db";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
+import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),

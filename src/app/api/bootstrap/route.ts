@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
-import { countUsers, insertUser } from "@/lib/platform-db";
+import { countUsers, insertUser } from "@/lib/platform/platform-db";
 
 export async function POST() {
   try {

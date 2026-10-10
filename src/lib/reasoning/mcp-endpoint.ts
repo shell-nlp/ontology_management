@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { bearerToken, userFromToken } from "@/lib/auth";
-import { verifyMcpToken } from "@/lib/mcp-token";
-import { stripOntologyId } from "@/lib/mcp-schema";
-import { getOntology } from "@/lib/ontologies";
+import { bearerToken, userFromToken } from "@/lib/platform/auth";
+import { verifyMcpToken } from "@/lib/mcp/token";
+import { stripOntologyId } from "@/lib/mcp/schema";
+import { getOntology } from "@/lib/ontology/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
 import { loadToolPolicy, type ToolPolicy } from "@/lib/reasoning/tool-policy";
 

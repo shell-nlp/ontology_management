@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { getTarget } from "@/lib/targets";
-import { getGraphStore } from "@/lib/graph";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getTarget } from "@/lib/platform/targets";
+import { getGraphStore } from "@/lib/framework/graph";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/versioning/snapshot";
 
 const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
 

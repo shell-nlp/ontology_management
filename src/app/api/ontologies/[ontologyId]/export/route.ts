@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { listDataSources } from "@/lib/data-sources";
-import { getOntology } from "@/lib/ontologies";
-import { buildOntologyBundle, bundleFileName } from "@/lib/ontology-bundle";
-import { getTarget } from "@/lib/targets";
-import { listVersionRecords } from "@/lib/version-snapshot";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { listDataSources } from "@/lib/datasource/sources";
+import { getOntology } from "@/lib/ontology/ontologies";
+import { buildOntologyBundle, bundleFileName } from "@/lib/ontology/bundle";
+import { getTarget } from "@/lib/platform/targets";
+import { listVersionRecords } from "@/lib/versioning/snapshot";
 
 /**
  * 导出本体包：一个 JSON 文件带走这份本体的**结构**。

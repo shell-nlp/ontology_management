@@ -4,8 +4,8 @@ import { type Target } from "@/components/workbench/shared";
 import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { AlertCircle, Check, Database, Loader2, Pencil, PlugZap, Plus, Trash2, X } from "lucide-react";
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
-import { api } from "@/lib/api-client";
-import { CREATABLE_GRAPH_TARGET_KINDS, DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphTargetKind } from "@/lib/graph/types";
+import { api } from "@/lib/framework/api-client";
+import { CREATABLE_GRAPH_TARGET_KINDS, DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphTargetKind } from "@/lib/framework/graph/types";
 
 
 

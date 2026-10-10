@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { listDataSources } from "@/lib/data-sources";
-import { getGraphStore } from "@/lib/graph";
-import { getOntologyByTargetId } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getPublishedOntology } from "@/lib/published-ontology";
+import { listDataSources } from "@/lib/datasource/sources";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { runReasoning, worthKeepingTurn } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
@@ -12,7 +12,7 @@ import { saveTurn } from "@/lib/reasoning/conversations";
 import { prepareHistory } from "@/lib/reasoning/history-context";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import type { ReasoningRunEvent } from "@/lib/reasoning/run-events";
-import { getTarget } from "@/lib/targets";
+import { getTarget } from "@/lib/platform/targets";
 
 /**
  * 一轮推理的**服务端运行登记处**：跑起来之后不再挂在某一条 HTTP 请求上。

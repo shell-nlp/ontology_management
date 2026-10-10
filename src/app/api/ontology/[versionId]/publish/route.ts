@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { publishVersionSnapshot } from "@/lib/version-publication";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { publishVersionSnapshot } from "@/lib/versioning/publication";
 
 export async function POST(_: Request, context: { params: Promise<{ versionId: string }> }) {
   try {

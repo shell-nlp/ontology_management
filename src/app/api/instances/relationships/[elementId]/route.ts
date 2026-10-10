@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { getTarget } from "@/lib/targets";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { deleteSnapshotRelationship, ensureVersionSnapshot, updateSnapshotRelationship } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { getTarget } from "@/lib/platform/targets";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { deleteSnapshotRelationship, ensureVersionSnapshot, updateSnapshotRelationship } from "@/lib/versioning/snapshot";
 
 const relationshipPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
 

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { deleteUser, updateUser } from "@/lib/users";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { deleteUser, updateUser } from "@/lib/platform/users";
 
 /**
  * 单个账号：`PATCH` 改角色 / 重置密码 / 停用，`DELETE` 真删。

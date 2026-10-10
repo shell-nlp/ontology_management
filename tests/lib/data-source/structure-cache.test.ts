@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { cachedStructure, type StructureCacheStore } from "@/lib/data-source/structure-cache";
-import type { DataSourceCatalogCache } from "@/lib/platform-db";
+import { cachedStructure, type StructureCacheStore } from "@/lib/datasource/structure-cache";
+import type { DataSourceCatalogCache } from "@/lib/platform/platform-db";
 
 /** 假的平台库：只在内存里，用来验证"什么时候回源、什么时候回写"。 */
 function fakeStore(initial: DataSourceCatalogCache = {}) {

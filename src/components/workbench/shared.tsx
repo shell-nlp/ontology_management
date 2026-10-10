@@ -4,10 +4,10 @@ import { Children, type ReactNode, useCallback, useState } from "react";
 import { AlertCircle, CheckCircle2, X } from "lucide-react";
 import { useSplitPane } from "@/components/split-pane";
 import { type OntologySummary } from "@/components/ontology-studio";
-import { api } from "@/lib/api-client";
-import { can, type Permission } from "@/lib/permissions";
-import { graphTargetKindInfo, type GraphTargetKind } from "@/lib/graph/types";
-import { entitySources, sourceName, type Definition, type EntityType, type Property } from "@/lib/ontology-draft";
+import { api } from "@/lib/framework/api-client";
+import { can, type Permission } from "@/lib/platform/permissions";
+import { graphTargetKindInfo, type GraphTargetKind } from "@/lib/framework/graph/types";
+import { entitySources, sourceName, type Definition, type EntityType, type Property } from "@/lib/ontology/draft";
 
 
 

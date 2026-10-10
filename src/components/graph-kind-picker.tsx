@@ -2,7 +2,7 @@
 
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
-import { CREATABLE_GRAPH_TARGET_KINDS, PLANNED_GRAPH_TARGETS, graphTargetKindInfo, type GraphTargetKind, type GraphTargetMark } from "@/lib/graph/types";
+import { CREATABLE_GRAPH_TARGET_KINDS, PLANNED_GRAPH_TARGETS, graphTargetKindInfo, type GraphTargetKind, type GraphTargetMark } from "@/lib/framework/graph/types";
 
 /**
  * 图数据库引擎标记。

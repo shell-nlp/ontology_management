@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import { getTarget } from "@/lib/targets";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getTarget } from "@/lib/platform/targets";
 
 /** 一度邻居扩展，对不同图后端使用各自的查询实现。 */
 export async function GET(request: NextRequest) {

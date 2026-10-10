@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import { getTarget } from "@/lib/targets";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getTarget } from "@/lib/platform/targets";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 /**
  * 后端无关的只读查询入口。

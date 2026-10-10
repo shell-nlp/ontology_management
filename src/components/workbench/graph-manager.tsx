@@ -4,9 +4,9 @@ import { type User, type BusinessLink, type NodeKeyMap, type Target, type Versio
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Eraser, Search, Settings2, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
-import { api } from "@/lib/api-client";
-import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/graph/types";
-import { propertyForColumn } from "@/lib/ontology-fields";
+import { api } from "@/lib/framework/api-client";
+import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { propertyForColumn } from "@/lib/ontology/fields";
 
 
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { listAuditEntries } from "@/lib/platform-db";
-import { getVersionRecord } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { listAuditEntries } from "@/lib/platform/platform-db";
+import { getVersionRecord } from "@/lib/versioning/snapshot";
 
 const DECISION_ACTIONS = ["ACTION_DRY_RUN", "ACTION_EXECUTED", "ACTION_BLOCKED"];
 

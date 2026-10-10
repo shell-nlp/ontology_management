@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { encryptSecret } from "@/lib/crypto";
-import { dataSourcePatch, resolvePort } from "@/lib/data-source/input";
-import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/data-sources";
-import { clearStructureCache } from "@/lib/data-source/structure-cache";
-import { releaseDataSourcePool } from "@/lib/data-source/sql";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/db";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { encryptSecret } from "@/lib/framework/crypto";
+import { dataSourcePatch, resolvePort } from "@/lib/datasource/input";
+import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/datasource/sources";
+import { clearStructureCache } from "@/lib/datasource/structure-cache";
+import { releaseDataSourcePool } from "@/lib/datasource/sql";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/platform/db";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   try {

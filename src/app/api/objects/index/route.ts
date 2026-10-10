@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/auth";
-import { parsePrimaryKeyInput } from "@/lib/object-identity";
-import { resolveObjectContext, syncObjectsToIndex } from "@/lib/object-service";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { resolveObjectContext, syncObjectsToIndex } from "@/lib/instance/object-service";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 const syncInput = z.object({
   targetId: z.string().uuid(),

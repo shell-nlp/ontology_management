@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getDataSource, openDataSource } from "@/lib/data-sources";
-import { cachedStructure } from "@/lib/data-source/structure-cache";
-import type { DataViewField, DataViewPreview } from "@/lib/data-source/types";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getDataSource, openDataSource } from "@/lib/datasource/sources";
+import { cachedStructure } from "@/lib/datasource/structure-cache";
+import type { DataViewField, DataViewPreview } from "@/lib/datasource/types";
 
 /**
  * 一个表/视图的字段清单与若干行预览；两条都只读，不改来源里的任何数据。

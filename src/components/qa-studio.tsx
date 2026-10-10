@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { MarkdownView } from "@/components/markdown-view";
-import { api } from "@/lib/api-client";
-import { formatCount, formatDuration } from "@/lib/format-units";
-import { authHeaders } from "@/lib/session-token";
+import { api } from "@/lib/framework/api-client";
+import { formatCount, formatDuration } from "@/lib/framework/format-units";
+import { authHeaders } from "@/lib/framework/session-token";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
 import {

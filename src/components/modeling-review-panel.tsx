@@ -7,8 +7,8 @@ import {
   reviewOntologyModel,
   summarizeModelingReview,
   type ReviewScope,
-} from "@/lib/modeling-review";
-import type { Definition } from "@/lib/ontology-draft";
+} from "@/lib/ontology/modeling-review";
+import type { Definition } from "@/lib/ontology/draft";
 
 /**
  * 建模体检面板。

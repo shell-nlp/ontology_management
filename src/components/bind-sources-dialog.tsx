@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Database, TriangleAlert, X } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { bindingKey, type PendingSource } from "@/lib/source-binding";
+import { api } from "@/lib/framework/api-client";
+import { bindingKey, type PendingSource } from "@/lib/datasource/source-binding";
 import "./ontology-studio.css";
 
 type BindableSource = { id: string; name: string; kind: string };

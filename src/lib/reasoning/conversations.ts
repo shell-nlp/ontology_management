@@ -1,6 +1,6 @@
 import type { FindOptionsWhere, SelectQueryBuilder } from "typeorm";
 import { In, IsNull } from "typeorm";
-import { ConversationEntity, ConversationMessageEntity, jsonValue, platformRepo, repoIn, withPlatformTransaction } from "@/lib/db";
+import { ConversationEntity, ConversationMessageEntity, jsonValue, platformRepo, repoIn, withPlatformTransaction } from "@/lib/platform/db";
 import type { HistoryTurn } from "@/lib/reasoning/history";
 import { conversationTitle } from "@/lib/reasoning/conversation-view";
 import type { ConversationDetail, ConversationMessage, ConversationSummary } from "@/lib/reasoning/conversation-view";

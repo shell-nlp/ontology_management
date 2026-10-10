@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, it } from "vitest";
-import { getPlatformDataSource } from "@/lib/db";
-import { createPostgresObjectIndex } from "@/lib/object-index/postgres";
+import { getPlatformDataSource } from "@/lib/platform/db";
+import { createPostgresObjectIndex } from "@/lib/instance/object-index/postgres";
 import { runObjectIndexContract } from "./contract";
 
 /**

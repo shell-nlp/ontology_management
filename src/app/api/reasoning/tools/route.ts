@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
+import { apiErrorStatus, apiErrorMessage, currentUser, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { clearToolPolicyOverride, loadResolvedToolPolicy, saveToolPolicy, togglableToolNames } from "@/lib/reasoning/tool-policy";
 
 /**

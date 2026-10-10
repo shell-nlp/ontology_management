@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/graph/types";
-import { createOntology, listOntologies } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { listVersionRecords } from "@/lib/version-snapshot";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/framework/graph/types";
+import { createOntology, listOntologies } from "@/lib/ontology/ontologies";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { listVersionRecords } from "@/lib/versioning/snapshot";
 
 const ontologyCreateInput = z.object({
   name: z.string().trim().min(1).max(100),

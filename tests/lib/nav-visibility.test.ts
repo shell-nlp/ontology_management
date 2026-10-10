@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALL_PERMISSIONS } from "@/lib/permissions";
+import { ALL_PERMISSIONS } from "@/lib/platform/permissions";
 
 /**
  * 左侧导航的可见性安全网（2026-10-10）。

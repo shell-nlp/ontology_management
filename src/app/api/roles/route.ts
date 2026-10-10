@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { createRole, listRoles } from "@/lib/users";
-import { PERMISSIONS } from "@/lib/permissions";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { createRole, listRoles } from "@/lib/platform/users";
+import { PERMISSIONS } from "@/lib/platform/permissions";
 
 /**
  * 角色：`GET` 列清单，`POST` 新建。都要 `users.manage`。

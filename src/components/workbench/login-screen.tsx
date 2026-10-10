@@ -3,8 +3,8 @@
 import { type User, Notice } from "@/components/workbench/shared";
 import { useState } from "react";
 import { GitBranch } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { setSessionToken } from "@/lib/session-token";
+import { api } from "@/lib/framework/api-client";
+import { setSessionToken } from "@/lib/framework/session-token";
 
 
 

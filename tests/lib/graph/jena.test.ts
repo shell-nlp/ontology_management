@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SINGLE_REPLACE_LIMIT, applyEndpointHostAlias, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseHostAliases, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, scopedQueryUrl, sparqlQueryForm, termForId, termValue } from "@/lib/graph/jena";
-import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/graph/schema-inference";
-import type { GraphDefinitionLike, GraphTarget } from "@/lib/graph/types";
+import { DEFAULT_SINGLE_REPLACE_LIMIT, applyEndpointHostAlias, bindSparqlParameters, containsWriteSparql, iriSegment, localName, nodeIdFromTerm, parseHostAliases, parseNTriples, planReplaceRequests, resolveSparqlEndpoints, schemaStatements, scopedQueryUrl, sparqlQueryForm, termForId, termValue } from "@/lib/framework/graph/jena";
+import { dataTypeFromSparqlDatatype, sparqlLiteral, valueFromSparqlLiteral } from "@/lib/framework/graph/schema-inference";
+import type { GraphDefinitionLike, GraphTarget } from "@/lib/framework/graph/types";
 
 function target(overrides: Partial<GraphTarget> = {}): GraphTarget {
   return {

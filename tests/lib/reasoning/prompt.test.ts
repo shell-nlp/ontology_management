@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildInstructions, DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt, schemaBrief } from "@/lib/reasoning/prompt";
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { RuntimeTypeSet } from "@/lib/graph/types";
+import type { RuntimeTypeSet } from "@/lib/framework/graph/types";
 
 const 客户id = "bbbbbbb1-1111-4111-8111-111111111111";
 const 用户id = "bbbbbbb2-2222-4222-8222-222222222222";

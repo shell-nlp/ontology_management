@@ -5,11 +5,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, CircleDot, Link2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { BindSourcesDialog } from "@/components/bind-sources-dialog";
 import { PropertyEditor } from "@/components/property-editor";
-import { api } from "@/lib/api-client";
-import { type RuntimeTypeSet } from "@/lib/graph/types";
-import { type Definition } from "@/lib/ontology-draft";
-import { brokenSourcesOf } from "@/lib/source-binding";
-import { primaryKeyFromProperties } from "@/lib/ontology-fields";
+import { api } from "@/lib/framework/api-client";
+import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { type Definition } from "@/lib/ontology/draft";
+import { brokenSourcesOf } from "@/lib/datasource/source-binding";
+import { primaryKeyFromProperties } from "@/lib/ontology/fields";
 
 
 

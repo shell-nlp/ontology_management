@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
-import { validateInterfaceImplementations, validateInterfaces } from "@/lib/interfaces";
-import { planBundleImport, readOntologyBundle } from "@/lib/ontology-bundle";
-import { DUPLICATE_NAME_CODES } from "@/lib/modeling-review";
-import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills";
-import { callSkillMcpTool, findSkillMcpTool, listSkillPrompts, readSkillPrompt, SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills-mcp";
-import { validateVersionSnapshot } from "@/lib/version-snapshot";
+import { validateInterfaceImplementations, validateInterfaces } from "@/lib/ontology/interfaces";
+import { planBundleImport, readOntologyBundle } from "@/lib/ontology/bundle";
+import { DUPLICATE_NAME_CODES } from "@/lib/ontology/modeling-review";
+import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills/index";
+import { callSkillMcpTool, findSkillMcpTool, listSkillPrompts, readSkillPrompt, SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
+import { validateVersionSnapshot } from "@/lib/versioning/snapshot";
 
 const root = process.cwd();
 
@@ -55,7 +55,7 @@ describe("本体技能目录", () => {
   it("建模体检的规则码与技能文档同步（加了规则就得补文档）", async () => {
     // 规则码是稳定标识，技能文档要照着它自查。这里直接读引擎源码抽码 ——
     // 断言"引擎里有的，文档里都得有"，免得加完规则忘了改文档（之前就漏过两个）。
-    const source = await readFile(path.join(root, "src", "lib", "modeling-review.ts"), "utf8");
+    const source = await readFile(path.join(root, "src", "lib", "ontology", "modeling-review.ts"), "utf8");
     const literals = [...source.matchAll(/finding\(\s*"([A-Z][A-Z0-9_]{4,})",\s*"(?:WARN|INFO)"/g)].map((match) => match[1]);
     const engineCodes = [...new Set([...literals, ...Object.values(DUPLICATE_NAME_CODES)])];
     expect(engineCodes.length).toBeGreaterThan(20);

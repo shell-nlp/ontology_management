@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getDataSource, openDataSource } from "@/lib/data-sources";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 
 /** 试连：只做一次连接与版本探测，不读业务数据。 */
 export async function POST(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {

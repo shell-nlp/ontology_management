@@ -8,7 +8,7 @@ import {
   resolveInterfacePropertyMappings,
   validateInterfaceImplementations,
   validateInterfaces,
-} from "@/lib/interfaces";
+} from "@/lib/ontology/interfaces";
 
 const facility = "11111111-1111-4111-8111-111111111111";
 const asset = "22222222-2222-4222-8222-222222222222";

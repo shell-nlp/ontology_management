@@ -6,7 +6,7 @@ import Graph from "graphology";
 import FA2LayoutSupervisor from "graphology-layout-forceatlas2/worker";
 import NoverlapLayoutSupervisor from "graphology-layout-noverlap/worker";
 import { createNodeCompoundProgram, EdgeArrowProgram, NodeCircleProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
-import { newId } from "@/lib/ids";
+import { newId } from "@/lib/framework/ids";
 import "@react-sigma/core/lib/style.css";
 
 export type SigmaNode = {

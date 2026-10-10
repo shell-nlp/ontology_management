@@ -4,7 +4,7 @@ import { ClearGraphDialog } from "@/components/workbench/graph-manager";
 import { type User, may, type Target, type Version, type DisplaySettings, DEFAULT_DISPLAY_SETTINGS } from "@/components/workbench/shared";
 import { useState } from "react";
 import { Eraser, RotateCcw, X } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api } from "@/lib/framework/api-client";
 
 
 

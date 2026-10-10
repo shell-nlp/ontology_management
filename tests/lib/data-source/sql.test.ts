@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toPreviewValue } from "@/lib/data-source/sql";
+import { toPreviewValue } from "@/lib/datasource/sql";
 
 /**
  * 预览值要能直接进 JSON。日期**不能**走 ISO：run_sql 的结果行与「数据预览」都走这里，

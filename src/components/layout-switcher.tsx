@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, LayoutGrid } from "lucide-react";
-import { LAYOUT_MODES, type LayoutMode } from "@/lib/concept-groups";
+import { LAYOUT_MODES, type LayoutMode } from "@/lib/ontology/concept-groups";
 import "./layout-switcher.css";
 
 /**

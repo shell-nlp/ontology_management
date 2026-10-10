@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { AUDIT_SCOPE_OPTIONS, auditActionsForScope, normalizeAuditScope } from "@/lib/audit";
-import { listPlatformAudit, listPlatformUsers } from "@/lib/platform-db";
-import { listTargets } from "@/lib/targets";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { AUDIT_SCOPE_OPTIONS, auditActionsForScope, normalizeAuditScope } from "@/lib/platform/audit";
+import { listPlatformAudit, listPlatformUsers } from "@/lib/platform/platform-db";
+import { listTargets } from "@/lib/platform/targets";
 
 /**
  * 审计记录（backlog U2）。

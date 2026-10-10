@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getDataSource, openDataSource } from "@/lib/data-sources";
-import { cachedStructure } from "@/lib/data-source/structure-cache";
-import type { DataViewSummary } from "@/lib/data-source/types";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getDataSource, openDataSource } from "@/lib/datasource/sources";
+import { cachedStructure } from "@/lib/datasource/structure-cache";
+import type { DataViewSummary } from "@/lib/datasource/types";
 
 /** 清单里最多回这么多条；缓存里存的就是这一份，调用方再按 search / limit 自己收口。 */
 const CATALOG_LIMIT_MAX = 5000;

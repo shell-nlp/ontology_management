@@ -1,4 +1,4 @@
-import { deletePlatformSetting, readPlatformSetting, writePlatformSetting } from "@/lib/platform-db";
+import { deletePlatformSetting, readPlatformSetting, writePlatformSetting } from "@/lib/platform/platform-db";
 import { MCP_ONLY_TOOLS } from "@/lib/reasoning/mcp";
 import { REASONING_TOOLS } from "@/lib/reasoning/tools";
 

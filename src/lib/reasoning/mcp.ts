@@ -1,12 +1,12 @@
-import { listDataSources } from "@/lib/data-sources";
-import { getGraphStore } from "@/lib/graph";
-import { MCP_PROTOCOL_VERSION } from "@/lib/mcp-protocol";
-import { getOntology, listOntologies } from "@/lib/ontologies";
-import { getPublishedOntology } from "@/lib/published-ontology";
+import { listDataSources } from "@/lib/datasource/sources";
+import { getGraphStore } from "@/lib/framework/graph";
+import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
+import { getOntology, listOntologies } from "@/lib/ontology/ontologies";
+import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
 import type { ToolOutcome } from "@/lib/reasoning/types";
-import { getTarget } from "@/lib/targets";
-import { listVersionRecords } from "@/lib/version-snapshot";
+import { getTarget } from "@/lib/platform/targets";
+import { listVersionRecords } from "@/lib/versioning/snapshot";
 
 /**
  * 把本体工具通过 MCP（Model Context Protocol）暴露出去，让外部 agent / 客户端也能查这个本体。

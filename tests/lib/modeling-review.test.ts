@@ -10,7 +10,7 @@ import {
   type ReviewableProperty,
   type ReviewableRelationshipType,
   type ReviewableRule,
-} from "@/lib/modeling-review";
+} from "@/lib/ontology/modeling-review";
 
 /**
  * 建模体检的规则。

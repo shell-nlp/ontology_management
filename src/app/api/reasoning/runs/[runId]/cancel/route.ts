@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
 import { cancelReasoningRun, getReasoningRun, reasoningRunOwner } from "@/lib/reasoning/run-registry";
 
 /**

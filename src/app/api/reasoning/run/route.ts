@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { listDataSources } from "@/lib/data-sources";
-import { getGraphStore } from "@/lib/graph";
-import { getOntologyByTargetId } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getPublishedOntology } from "@/lib/published-ontology";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { listDataSources } from "@/lib/datasource/sources";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { runReasoning } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
-import { getTarget } from "@/lib/targets";
+import { getTarget } from "@/lib/platform/targets";
 
 const reasoningRunInput = z.object({
   targetId: z.string().uuid(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUNDLE_FORMAT, BUNDLE_FORMAT_VERSION, buildOntologyBundle, bundleFileName, parseOntologyBundle, planBundleImport, readOntologyBundle, type LocalSourceRef } from "@/lib/ontology-bundle";
+import { BUNDLE_FORMAT, BUNDLE_FORMAT_VERSION, buildOntologyBundle, bundleFileName, parseOntologyBundle, planBundleImport, readOntologyBundle, type LocalSourceRef } from "@/lib/ontology/bundle";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 
 const CUSTOMER = "11111111-1111-4111-8111-111111111111";

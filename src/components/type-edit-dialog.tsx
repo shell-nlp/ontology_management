@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
-import { api } from "@/lib/api-client";
-import { effectiveInterfaceProperties } from "@/lib/interfaces";
-import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/relationship-keys";
-import { CARDINALITY_OPTIONS } from "@/lib/relationship-cardinality";
+import { api } from "@/lib/framework/api-client";
+import { effectiveInterfaceProperties } from "@/lib/ontology/interfaces";
+import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
+import { CARDINALITY_OPTIONS } from "@/lib/ontology/relationship-cardinality";
 import type { RelationshipSource } from "@/lib/ontology";
-import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/data-source/types";
-import { compactGraphLabel, graphColor } from "@/lib/graph-palette";
+import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
+import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
 import {
   emptyEntitySource,
   entitySources,
@@ -24,7 +24,7 @@ import {
   type InterfaceType,
   type Property,
   type RelationType,
-} from "@/lib/ontology-draft";
+} from "@/lib/ontology/draft";
 import "./type-edit-dialog.css";
 
 export type TypeEditPayload = {

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { openDataSourceConnector } from "@/lib/data-source";
-import { dataSourceInput, resolvePort } from "@/lib/data-source/input";
-import { normalizeDataSourceKind } from "@/lib/data-sources";
-import type { DataSourceRecord } from "@/lib/data-source/types";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { openDataSourceConnector } from "@/lib/datasource";
+import { dataSourceInput, resolvePort } from "@/lib/datasource/input";
+import { normalizeDataSourceKind } from "@/lib/datasource/sources";
+import type { DataSourceRecord } from "@/lib/datasource/types";
 
 /**
  * 试连一个还没保存的数据来源：向导里「测试连接」用的就是这里。

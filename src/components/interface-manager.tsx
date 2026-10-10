@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Check, Link2, Plus, Save, ShieldAlert, Trash2, X, Zap } from "lucide-react";
-import { newId } from "@/lib/ids";
+import { newId } from "@/lib/framework/ids";
 import {
   checkImplementations,
   effectiveInterfaceLinkConstraints,
@@ -14,9 +14,9 @@ import {
   resolveInterfacePropertyMappings,
   validateInterfaces,
   validateInterfaceImplementations,
-} from "@/lib/interfaces";
+} from "@/lib/ontology/interfaces";
 import { useSplitPane } from "@/components/split-pane";
-import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, type InterfaceType, type Property, type PropertyDataType } from "@/lib/ontology-draft";
+import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, type InterfaceType, type Property, type PropertyDataType } from "@/lib/ontology/draft";
 import "./interface-manager.css";
 
 /**

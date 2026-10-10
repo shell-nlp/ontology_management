@@ -1,6 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { createZip, crc32 } from "@/lib/zip";
+import { createZip, crc32 } from "@/lib/framework/zip";
 
 /** 按 zip 结构把条目读回来：EOCD → 中央目录 → 本地头 → 数据。 */
 function readZip(buffer: Buffer) {

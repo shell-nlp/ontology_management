@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { linkSourceViolations, normalizeLinkSource, planLinkSource, type LinkSourceDefinition } from "@/lib/link-source";
-import { linkSeedFilters } from "@/lib/object-service/links";
+import { linkSourceViolations, normalizeLinkSource, planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
+import { linkSeedFilters } from "@/lib/instance/object-service/links";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 
 const SOURCE_ID = "11111111-1111-4111-8111-111111111111";

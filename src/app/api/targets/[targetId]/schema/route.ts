@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getGraphStore } from "@/lib/graph";
-import { getTarget } from "@/lib/targets";
+import { apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getGraphStore } from "@/lib/framework/graph";
+import { getTarget } from "@/lib/platform/targets";
 
 export async function GET(_: Request, context: { params: Promise<{ targetId: string }> }) {
   try {

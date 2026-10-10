@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateMcpToken, mcpTokenHint, mcpTokenMatches, MCP_TOKEN_NAME_MAX, MCP_TOKEN_PREFIX, normalizeTokenName } from "@/lib/mcp-token";
+import { generateMcpToken, mcpTokenHint, mcpTokenMatches, MCP_TOKEN_NAME_MAX, MCP_TOKEN_PREFIX, normalizeTokenName } from "@/lib/mcp/token";
 
 /**
  * MCP 访问令牌的**纯函数**部分（2026-10-08 用户要求）：令牌要能在界面上**生成多条 / 查看 / 撤销**。

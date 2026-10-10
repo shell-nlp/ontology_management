@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { getTarget } from "@/lib/targets";
-import { getGraphStore } from "@/lib/graph";
-import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/version-snapshot";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { getTarget } from "@/lib/platform/targets";
+import { getGraphStore } from "@/lib/framework/graph";
+import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/versioning/snapshot";
 
 export async function GET(request: NextRequest) {
   try {

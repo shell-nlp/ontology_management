@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/bkn-import";
-import { ontologyBundleSchema } from "@/lib/ontology-bundle";
+import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/ontology/bkn-import";
+import { ontologyBundleSchema } from "@/lib/ontology/bundle";
 
 /** 一份最小但形状完整的 bkn 知识网络：一个带表的类、一个纯建模的类、一条关系。 */
 function knowledgeNetwork() {

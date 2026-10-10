@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/object-index/types";
+import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/instance/object-index/types";
 
 /**
  * **对象检索索引的后端契约**。

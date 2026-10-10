@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, createSession, findUserByEmail } from "@/lib/auth";
+import { apiErrorMessage, createSession, findUserByEmail } from "@/lib/platform/auth";
 
 /**
  * 登录：验密码，发一枚**平台会话 JWT**。

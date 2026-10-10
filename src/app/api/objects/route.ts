@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { parsePrimaryKeyInput } from "@/lib/object-identity";
-import { getObject, queryObjects, resolveObjectContext } from "@/lib/object-service";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { getObject, queryObjects, resolveObjectContext } from "@/lib/instance/object-service";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requirePermission } from "@/lib/auth";
-import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import { getGraphStore } from "@/lib/graph";
-import type { GraphTarget, GraphTargetKind } from "@/lib/graph/types";
-import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/targets";
+import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { decryptSecret, encryptSecret } from "@/lib/framework/crypto";
+import { getGraphStore } from "@/lib/framework/graph";
+import type { GraphTarget, GraphTargetKind } from "@/lib/framework/graph/types";
+import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/platform/targets";
 
 /**
  * 试连一个还没保存（或刚改过）的本体存储：弹窗里的「测试连接」用它。

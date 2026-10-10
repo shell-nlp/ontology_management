@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, ShieldCheck, Trash2, X } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api } from "@/lib/framework/api-client";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
-import { actionInvolvement, validateActionDefinition } from "@/lib/action-engine";
-import { graphColor } from "@/lib/graph-palette";
-import { newId } from "@/lib/ids";
-import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology-draft";
+import { actionInvolvement, validateActionDefinition } from "@/lib/instance/action-engine";
+import { graphColor } from "@/lib/framework/graph-palette";
+import { newId } from "@/lib/framework/ids";
+import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology/draft";
 import type { OntologyDefinition } from "@/lib/ontology";
 import "./action-studio.css";
 

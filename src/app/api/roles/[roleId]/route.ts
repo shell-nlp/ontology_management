@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { deleteRole, updateRole } from "@/lib/users";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { deleteRole, updateRole } from "@/lib/platform/users";
 
 /**
  * 单个角色：`PATCH` 改（内置角色改不了），`DELETE` 删（内置角色删不了、还挂着人删不了）。

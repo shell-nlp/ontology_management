@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createVersionRecord, deleteTargetVersions, getVersionRecord, listVersionRecords, updateVersionRecord } from "@/lib/version-snapshot";
+import { createVersionRecord, deleteTargetVersions, getVersionRecord, listVersionRecords, updateVersionRecord } from "@/lib/versioning/snapshot";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 let tempDir: string | undefined;

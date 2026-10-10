@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/auth";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getTarget } from "@/lib/targets";
-import { ensureVersionSnapshot, getVersionRecord, readVersionSnapshot, runSnapshotAction, visibleSnapshotActions } from "@/lib/version-snapshot";
-import { parsePrimaryKeyInput } from "@/lib/object-identity";
-import { ensureObjectInDraft, resolveObjectContext } from "@/lib/object-service";
+import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { getTarget } from "@/lib/platform/targets";
+import { ensureVersionSnapshot, getVersionRecord, readVersionSnapshot, runSnapshotAction, visibleSnapshotActions } from "@/lib/versioning/snapshot";
+import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object-service";
 
 const actionRunInput = z.object({
   actionId: z.string().uuid(),

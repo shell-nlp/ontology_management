@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { api } from "@/lib/api-client";
-import { authHeaders } from "@/lib/session-token";
+import { api } from "@/lib/framework/api-client";
+import { authHeaders } from "@/lib/framework/session-token";
 import { applyRunEvent, emptyRunViewState, type ReasoningRunEvent, type RunViewState } from "@/lib/reasoning/run-events";
 import type { ReasoningAttachment } from "@/lib/reasoning/types";
 

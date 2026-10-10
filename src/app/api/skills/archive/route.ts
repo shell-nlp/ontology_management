@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { readSkillsArchive } from "@/lib/skills";
-import { createZip } from "@/lib/zip";
+import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { readSkillsArchive } from "@/lib/skills/index";
+import { createZip } from "@/lib/framework/zip";
 
 /**
  * 把**全部技能**打成一个 zip。
