@@ -64,6 +64,35 @@ function addValue(plan: LogicalPlan, bag: ParameterBag, value: ResolvedValue): s
   return bag.add(parameterValue(plan, value));
 }
 
+/**
+ * DATE / DATETIME 的取值在 Oracle 上必须显式 TO_DATE。
+ *
+ * Oracle 不做"字符串字面量 → DATE"的隐式转换：`STATIS_DATE = :p1`（p1='2026-09-27'）
+ * 直接报 ORA-01861，或在某些写法下静默返回 0 行 —— 日期是最常用的过滤条件，
+ * 这条不修等于所有按天的问题都答错（2026-10-10 在真实 Oracle 上实测到）。
+ * PG / MySQL 会自己把字符串转成时间，保持原样。
+ *
+ * 只认两种写法（YYYY-MM-DD 与 YYYY-MM-DD HH24:MI:SS）；认不出的原样传下去，
+ * 让数据库自己去报错，不猜格式。
+ */
+function temporalValueRef(field: ResolvedField, placeholder: string, raw: ResolvedScalar, kind: DataSourceKind): string {
+  if (kind !== "ORACLE" || (field.dataType !== "DATE" && field.dataType !== "DATETIME")) return placeholder;
+  if (typeof raw !== "string") return placeholder;
+  const text = raw.trim();
+  const pattern = /^\d{4}-\d{2}-\d{2}$/.test(text)
+    ? "YYYY-MM-DD"
+    : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(text)
+      ? "YYYY-MM-DD HH24:MI:SS"
+      : "";
+  return pattern ? `TO_DATE(${placeholder}, '${pattern}')` : placeholder;
+}
+
+/** 比较值：先占位，再按目标列的日期类型决定要不要包 TO_DATE。 */
+function addFieldValue(plan: LogicalPlan, bag: ParameterBag, field: ResolvedField, kind: DataSourceKind, value: ResolvedValue): string {
+  const raw = parameterValue(plan, value);
+  return temporalValueRef(field, bag.add(raw), raw, kind);
+}
+
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
@@ -72,8 +101,26 @@ function enumValues(field: ResolvedField, label: string): string[] {
   return field.enumValues.filter((item) => item.label === label).map((item) => item.value);
 }
 
+/**
+ * 比较用的列表达式。
+ *
+ * Oracle 的 CHAR 列是**空格填充**的，而绑定参数是 VARCHAR2，两者比较走非填充语义 ——
+ * `USER_TYPE = :p1`（p1='1'，列里实际是 '1 '）会**静默返回 0 行**。
+ * 实测（2026-10-10，真实 Oracle）：`= :p1('1')` 得 0，`= :p1('1 ')` 得 709，
+ * `trim(USER_TYPE) = :p1('1')` 得 709 —— 状态 / 类型 / 编码这类码值列几乎都是 CHAR，
+ * 不修等于一大类问题静默答 0（比报错还危险）。
+ * PG / MySQL 的 CHAR 比较本来就不看尾部空格，不动。
+ */
+function comparableColumn(field: ResolvedField, kind: DataSourceKind): string {
+  const column = columnRef(field, kind);
+  if (kind !== "ORACLE" || field.dataType !== "TEXT") return column;
+  return `TRIM(${column})`;
+}
+
 function compileCondition(plan: LogicalPlan, expr: Extract<ResolvedExpr, { kind: "condition" }>, kind: DataSourceKind, bag: ParameterBag): string {
   const column = columnRef(expr.field, kind);
+  // 相等 / 排序 / IN 这类比较在 Oracle 上要给 CHAR 列去空格；LIKE 与 IS NULL 不用（尾部空格不影响）。
+  const comparable = comparableColumn(expr.field, kind);
   const value = expr.value;
 
   switch (expr.op) {
@@ -85,14 +132,14 @@ function compileCondition(plan: LogicalPlan, expr: Extract<ResolvedExpr, { kind:
     case "lte": {
       if (value === undefined) throw new QueryDslError("INVALID_QUERY", `操作符「${expr.op}」缺少比较值。`);
       const operator = { eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=" }[expr.op];
-      return `${column} ${operator} ${addValue(plan, bag, value)}`;
+      return `${comparable} ${operator} ${addFieldValue(plan, bag, expr.field, kind, value)}`;
     }
     case "in":
     case "not_in": {
       if (value === undefined) throw new QueryDslError("INVALID_QUERY", `操作符「${expr.op}」缺少比较值。`);
       const values = Array.isArray(value) ? value : [value];
       if (!values.length) return expr.op === "in" ? "1 = 0" : "1 = 1";
-      return `${column} ${expr.op === "in" ? "IN" : "NOT IN"} (${values.map((item) => addValue(plan, bag, item)).join(", ")})`;
+      return `${comparable} ${expr.op === "in" ? "IN" : "NOT IN"} (${values.map((item) => addFieldValue(plan, bag, expr.field, kind, item)).join(", ")})`;
     }
     case "contains":
     case "starts_with":
@@ -115,13 +162,13 @@ function compileCondition(plan: LogicalPlan, expr: Extract<ResolvedExpr, { kind:
       if (!values.length) {
         throw new QueryDslError("INVALID_QUERY", `属性「${expr.field.name}」没有枚举标签「${raw}」。`, "先补 enumValues，或改用显式 eq / in。");
       }
-      return values.length === 1 ? `${column} = ${bag.add(values[0])}` : `${column} IN (${values.map((item) => bag.add(item)).join(", ")})`;
+      return values.length === 1 ? `${comparable} = ${bag.add(values[0])}` : `${comparable} IN (${values.map((item) => bag.add(item)).join(", ")})`;
     }
     case "in_range": {
       if (!Array.isArray(value) || value.length !== 2) throw new QueryDslError("INVALID_QUERY", "in_range 需要提供 [from, to] 两个值。");
-      const from = addValue(plan, bag, value[0]);
-      const to = addValue(plan, bag, value[1]);
-      return `(${column} >= ${from} AND ${column} <= ${to})`;
+      const from = addFieldValue(plan, bag, expr.field, kind, value[0]);
+      const to = addFieldValue(plan, bag, expr.field, kind, value[1]);
+      return `(${comparable} >= ${from} AND ${comparable} <= ${to})`;
     }
   }
 }

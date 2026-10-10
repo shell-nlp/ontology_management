@@ -180,7 +180,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_query",
     description:
-      '按本体查询 DSL 执行只读查询，是结构化问数的优先入口。query 只使用对象类型、属性、关系类型、指标和参数，不接受 SQL、表名、列名。结构示例：{"version":"1.0","kind":"aggregate","from":{"object_type":"对象类型名"},"relationships":[{"alias":"area","type":"关系类型名","direction":"forward","optional":true}],"where":{"and":[{"field":{"alias":"root","property":"属性名"},"op":"eq","value":{"param":"p"}}]},"select":[{"field":{"alias":"root","property":"维度名"},"as":"维度"},{"metric":"指标名","as":"结果"}],"group_by":[{"alias":"root","property":"维度名"}],"order_by":[{"ref":"结果","direction":"desc"}],"limit":100}。DSL 暂不支持或需要排障时，仍可使用 run_sql。',
+      '按本体查询 DSL 执行只读查询，是结构化问数的优先入口。query 只使用对象类型、属性、关系类型、指标和参数，不接受 SQL、表名、列名。结构示例：{"version":"1.0","kind":"aggregate","from":{"object_type":"对象类型名"},"relationships":[{"alias":"area","type":"关系类型名","direction":"forward","optional":true}],"where":{"and":[{"field":{"alias":"root","property":"属性名"},"op":"eq","value":{"param":"p"}}]},"select":[{"field":{"alias":"root","property":"维度名"},"as":"维度"},{"metric":"指标名","as":"结果"}],"group_by":[{"alias":"root","property":"维度名"}],"order_by":[{"ref":"结果","direction":"desc"}],"limit":100}。select 每项三选一：{"field":{"alias":"root","property":"属性名"},"as":"列名"} 取字段（聚合查询里必须同时写进 group_by）/ {"metric":"指标名","as":"列名"} 用指标 / {"aggregate":"COUNT|COUNT_DISTINCT|SUM|AVG|MIN|MAX","property":"属性名（COUNT 可省）","as":"列名"} 直接聚合。没有 {"count":true} 这种简写。DSL 暂不支持或需要排障时，仍可使用 run_sql。',
     parameters: {
       type: "object",
       properties: {

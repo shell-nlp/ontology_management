@@ -74,7 +74,7 @@ describe("query-dsl relationships", () => {
 
     expect(compiled.statement).toContain('FROM "GISTOOLS"."TB_MK_GRP_LINE_LIST_DAY" "line"');
     expect(compiled.statement).toContain('JOIN "GISTOOLS"."TB_DIC_AREA_CODE" "area" ON "area"."AREA_CODE" = "line"."AREA_CODE"');
-    expect(compiled.statement).toContain('"area"."AREA_NAME" = :p1');
+    expect(compiled.statement).toContain('TRIM("area"."AREA_NAME") = :p1');
   });
 
   it("中间表式关系编译成连接表 JOIN，不让模型写 ON 条件", () => {

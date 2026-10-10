@@ -38,11 +38,24 @@ function entityError(name: string) {
 function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias: string): ResolvedEntity {
   const sources = entitySources(entity);
   const primary = sources[0];
-  if (!primary?.dataSourceId || !primary.view) {
+  if (!primary?.view) {
     throw new QueryDslError(
       "ENTITY_NOT_BOUND",
-      `对象类型「${entity.name}」还没有绑定可查询的数据资源。`,
-      "先到「对象 / 本体」页补齐数据资源与表绑定。",
+      `对象类型「${entity.name}」还没有绑定表，DSL 没法查。先到「对象 / 本体」页补齐数据资源与表绑定。`,
+    );
+  }
+  if (!(primary.dataSourceId ?? "").trim()) {
+    /*
+     * 走到这里说明按模式名也认不出唯一资源（能唯一认出来的，executeQueryDsl 里已经被
+     * withInferredDataSources 补上了）。这属于本体的配置缺口、不是没有数据 —— 必须说清楚，
+     * 否则模型会挨个换别的对象类型再试一轮（实测就是这么烧掉 7 次调用的）。
+     */
+    const table = `${(primary.schema ?? "").trim()}.${(primary.view ?? "").trim()}`.replace(/^\./, "");
+    throw new QueryDslError(
+      "ENTITY_NOT_BOUND",
+      `对象类型「${entity.name}」的来源只写了表「${table}」、没绑定数据资源，按模式名也匹配不出唯一的数据资源。`
+        + "这是本体的配置缺口，不是没有数据，换别的对象类型大概率也是同一个错。"
+        + "要出数：到「对象 / 本体」页补齐绑定，或改用 run_sql 直接查这张表。",
     );
   }
 
@@ -97,7 +110,7 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
     entityTypeId: entity.id,
     entityTypeName: entity.name,
     primarySourceId: primary.id,
-    dataSourceId: primary.dataSourceId,
+    dataSourceId: primary.dataSourceId ?? "",
     schema: primary.schema,
     table: primary.view,
     primaryKey: [...primary.primaryKey],
