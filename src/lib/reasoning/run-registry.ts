@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/framework/graph";
-import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
+import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { runReasoning, worthKeepingTurn } from "@/lib/reasoning/agent";

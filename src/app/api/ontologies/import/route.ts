@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
 import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/ontology/bkn-import";
 import { listDataSources } from "@/lib/datasource/sources";
-import { createOntology, deleteOntology } from "@/lib/ontology/ontologies";
+import { createOntology, deleteOntology } from "@/lib/platform/ontologies";
 import { planBundleImport, readOntologyBundle } from "@/lib/ontology/bundle";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { applySourceBindings, planSourceBindings } from "@/lib/datasource/source-binding";

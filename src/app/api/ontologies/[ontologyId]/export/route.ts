@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
-import { getOntology } from "@/lib/ontology/ontologies";
+import { getOntology } from "@/lib/platform/ontologies";
 import { buildOntologyBundle, bundleFileName } from "@/lib/ontology/bundle";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";

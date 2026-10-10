@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/framework/graph";
-import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
+import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
 import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/framework/graph/types";
-import { createOntology, listOntologies } from "@/lib/ontology/ontologies";
+import { createOntology, listOntologies } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";

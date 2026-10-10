@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
-import { getOntologyByTargetId } from "@/lib/ontology/ontologies";
+import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { listReasoningRuns, reasoningRunInput, startReasoningRun } from "@/lib/reasoning/run-registry";
 
 /**

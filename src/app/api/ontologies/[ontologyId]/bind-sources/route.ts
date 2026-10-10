@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
-import { getOntology } from "@/lib/ontology/ontologies";
+import { getOntology } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { applySourceBindings } from "@/lib/datasource/source-binding";
 import { planSourceBindingsFor } from "@/lib/datasource/source-hints";

@@ -2126,3 +2126,21 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 拆分脚本留在 `.data/ui-check/backend-reorg.mjs`（切块 + 生成 import + 目录重排）、`backend-fixpaths.mjs` / `backend-fix2.mjs`
 （把 73+192 个文件的 import 路径改到新位置，含动态 `import()`）。踩过的三个坑记在这儿：
 **多行 import 要整块解析**、**带文档注释的声明要认得出 `export` 加在哪一行**、**别名别写成 `@/src/lib/...`**。
+
+## 领域目录不许碰持久化（2026-10-10）
+
+用户口径：指出 `src/lib/ontology/ontologies.ts` 直接 `import { platformRepo, OntologyEntity } from "@/lib/platform/db"`，
+要求把持久化从领域目录里请出去。已改：**该文件整份搬到 `src/lib/platform/ontologies.ts`**（纯搬家，12 处 import 跟着改），
+`src/lib/ontology/` 现在**一个 `platformRepo` / TypeORM / 快照目录的影子都没有**（复查过：grep `platform/db|platformRepo|OntologyEntity` 无命中）。
+
+为什么要搬而不是加接口：这个文件从头到尾就是**表 ↔ 记录的映射 + 仓储调用 + 受管图存储分配 + 快照目录清理**，
+没有领域规则（唯一像业务的是 `slugify`，但它是给 URL 用的标识规范化，且和「标识唯一性查询」绑在一起）。
+现在这个规模加一层 Repository 端口只会多一层转发，等真出现第二个存储实现再抽端口不迟。
+
+**记账（以后别再犯）**：按依赖方向，`src/lib/<业务模块>/` 只许依赖两类东西 ——
+`framework/` 里的纯工具（`ids` / `format-units` / `graph-palette` 这种），以及同层模块的**纯函数**；
+**不许出现** `platform/db`、`platform/*`（仓储与配置）、`versioning/snapshot`（写文件）这类持久化/副作用调用。
+需要落库的，把那段编排放到 `src/app/api/**/route.ts` 或 `src/lib/platform/`。
+
+现存的最后一处跨模块依赖是 `ontology/link-source.ts` → `instance/object-identity`（借实例层的列识别规则），
+两边都是纯函数，暂不算破例；真要收紧，把那两个纯函数提到 `framework/` 共用。

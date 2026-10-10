@@ -1,7 +1,7 @@
 import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/framework/graph";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
-import { getOntology, listOntologies } from "@/lib/ontology/ontologies";
+import { getOntology, listOntologies } from "@/lib/platform/ontologies";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
 import type { ToolOutcome } from "@/lib/reasoning/types";
