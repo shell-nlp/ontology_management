@@ -177,6 +177,19 @@ export const REASONING_TOOLS: ToolSpec[] = [
       required: ["data_source", "sql"],
     },
   },
+  {
+    name: "run_query",
+    description:
+      "按本体查询 DSL 执行只读查询。P0 阶段先留在工具目录里灰着，不开放给模型；实现使用对象类型、属性、关系类型与指标，不接受 SQL、表名或列名。",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "object", description: "本体查询 DSL JSON（version / kind / from / where / select / group_by / order_by / limit）" },
+      },
+      required: ["query"],
+    },
+    disabled: true,
+  },
   /*
    * 两个实例工具标记成 disabled：这一版只在对象类型 / 关系类型这一层推理，不查具体对象与数据行
    * （2026-09-14 决定）。它们不会进模型的工具集、也不进 MCP 的 tools/list，

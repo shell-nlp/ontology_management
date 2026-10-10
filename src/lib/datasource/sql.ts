@@ -885,7 +885,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
      * 只读查询。两道闸：先用词法闸门看语句"长得像不像查询"，再把它包进只读事务里执行 ——
      * 后一道是权威的，DML / DDL 会被库自己拒掉；有的驱动起不了只读事务时会如实报 false。
      */
-    async runReadOnlyQuery(sql: string, options: { limit?: number } = {}): Promise<SqlQueryResult> {
+    async runReadOnlyQuery(sql: string, options: { limit?: number; parameters?: Record<string, unknown> } = {}): Promise<SqlQueryResult> {
       const statement = assertReadOnlySql(sql);
       const rows = clampLimit(options.limit ?? DEFAULT_QUERY_ROWS, QUERY_LIMIT_MAX, DEFAULT_QUERY_ROWS);
       const timeout = statementTimeoutStatements(kind, QUERY_TIMEOUT_MS);
@@ -898,7 +898,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           for (const setup of timeout.inside) await runner.query(setup).catch(() => undefined);
 
           // 多取一行：套了 LIMIT n 之后永远查不出超过 n 行，靠这一行才能知道"还有没有剩下的"。
-          const raw = await runner.query(boundedStatement(kind, statement, rows + 1));
+          const raw = await runner.query(boundedStatement(kind, statement, rows + 1), options.parameters);
           const list = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
           const page = takeRows(list, rows);
           return {

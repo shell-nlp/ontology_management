@@ -319,7 +319,7 @@ export interface DataSourceConnector {
    * 只读查询。**不是每种来源都提供**（将来接 Elasticsearch 就没有 SQL），所以是可选的：
    * 没有这个方法就是没有，调用方如实拒绝，别假装支持。
    */
-  runReadOnlyQuery?(sql: string, options?: { limit?: number }): Promise<SqlQueryResult>;
+  runReadOnlyQuery?(sql: string, options?: { limit?: number; parameters?: Record<string, unknown> }): Promise<SqlQueryResult>;
   /**
    * 结构化取行（对象服务用）。同样是可选的：数据来源没有"按列取行"这个概念时如实缺席，
    * 对象服务会退回只读 SQL（关系库）或直接告知该来源不支持按主键取对象。

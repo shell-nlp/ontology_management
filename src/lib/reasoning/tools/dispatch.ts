@@ -10,6 +10,7 @@ import { readOnlyPolicyNote } from "@/lib/datasource/sql-guard";
 import { cachedColumnValueIndex, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";
+import { executeQueryDsl } from "@/lib/query-dsl";
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
@@ -789,6 +790,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       };
     }
 
+    case "run_query": {
+      const result = await executeQueryDsl(definition, args.query);
+      return {
+        payload: result,
+        // 查询结果不是本体里的对象，不能当"证据"引用。
+        evidence: [],
+      };
+    }
     /*
      * 实例工具：走**对象服务**（索引优先，没有就按数据来源回源），
      * 于是模型看到的对象与对象页/对象服务接口是同一批、同一套身份。

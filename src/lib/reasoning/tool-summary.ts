@@ -41,7 +41,8 @@ export function toolResultSummary(tool: string, output: unknown): string {
       // 带列画像时明说：低基数列的取值清单是这一步最值钱的部分。
       return `表结构 · ${payload.ddl_source === "native" ? "原始 DDL" : "按列元数据还原"}${payload.column_profile ? " · 列画像" : ""}`;
     }
-    case "run_sql": {
+    case "run_sql":
+    case "run_query": {
       const rows = asNumber(payload?.returned);
       if (rows === null) return "已返回";
       return `${rows} 行${payload?.truncated ? " · 已截断" : ""}`;
