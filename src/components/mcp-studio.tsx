@@ -535,6 +535,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
               {info.tools.some((tool) => tool.disabled) && <em>{info.tools.filter((tool) => tool.disabled).length} 个暂不使用</em>}
             </span>
           </div>
+          {!info.token.canManage && <p className="subtle">只读：工具开关要「管理 MCP 访问令牌」权限，当前角色只能看，改不了。</p>}
           {/*
            * 开关是按本体存的：先说清这一屏的开关管的是谁，再给「跟随全局」的出口 ——
            * 否则用户会以为改了这里所有本体都跟着变（2026-10-08 用户报的疑问）。
@@ -548,7 +549,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
               {info.globalDisabledTools.length > 0 && <em>全局关了 {info.globalDisabledTools.length} 个</em>}
             </span>
             {info.toolPolicySource === "ONTOLOGY" && (
-              <button type="button" onClick={() => void resetPolicy()} title="删掉这个本体的覆盖，重新跟着全局默认走">跟随全局</button>
+              <button type="button" onClick={() => void resetPolicy()} disabled={!info.token.canManage} title={!info.token.canManage ? "只有拥有「管理 MCP 访问令牌」权限的账号能改工具开关" : "删掉这个本体的覆盖，重新跟着全局默认走"}>跟随全局</button>
             )}
           </div>
           {info.groups.map((group) => {
@@ -583,7 +584,8 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
                           aria-label={`${off ? "开启" : "关闭"}工具 ${tool.name}`}
                           className={`mcp-switch${off ? " off" : ""}`}
                           onClick={() => void toggleTool(tool.name, off)}
-                          title={off ? "已关闭：模型与外部客户端都拿不到它，点一下开启" : "已开启：点一下关掉，模型就不再用它"}
+                          disabled={!info.token.canManage}
+                          title={!info.token.canManage ? "只有拥有「管理 MCP 访问令牌」权限的账号能改工具开关" : off ? "已关闭：模型与外部客户端都拿不到它，点一下开启" : "已开启：点一下关掉，模型就不再用它"}
                         >
                           <i />
                         </button>

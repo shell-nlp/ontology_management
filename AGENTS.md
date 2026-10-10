@@ -2029,3 +2029,21 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 没有 `target.read` 也能看本体：`targetFromStorage()` 用本体列表里的 `storage` 拼一个只读 Target 兜底；
   `loadVersions` 在没有 `instance.read` 时**不发** `/api/instances/types`（免得顶栏顶一条 403）。
 - 加视图时别忘了第 4 项：`tests/lib/nav-visibility.test.ts` 扫源码对账（视图清单 ↔ 导航登记 ↔ 权限点存在）。
+
+## 权限点的前端落点（2026-10-10）
+
+用户口径：「要确保这些角色的权限都能生效，包括可见性，如果有一些从可见性控制比较麻烦的话，可以只做提示」。
+
+- **入口级**（导航）按 `NAV_SECTIONS` 的第 4 项过滤：总览 / 本体建模 / 本体技能 / 动作 / 规则 = `ontology.read`；
+  实例图谱 / 对象 / 关系 = `instance.read`；智能问答 / MCP 调试 = `reasoning.use`；数据资源 = `datasource.read`。
+- **按钮级**一律走 `may(user, code)`：建模页的 校验 / 发布 = `ontology.publish`，画布与清单增删改 = `ontology.write`，
+  图引擎配置里的 新建 / 测试 / 编辑 / 删除 = `target.write`（`TargetManager` 收 `canWrite`），
+  动作的 干跑 / 执行 = `instance.write`（`ActionStudio` 收的是 `canRun`，和改定义的 `canEdit` **不是一回事**），
+  MCP 工具开关与「跟随全局」= `mcp.token.manage`（`info.token.canManage`），
+  对象页的「补齐数据资源绑定」= `ontology.write`（它写的是本体草稿，不是实例）。
+- **不好藏的给提示**：智能问答引用里的对象链接在缺 `instance.read` 时回一句「没有查看对象与关系的权限」；
+  对象页在没有草稿又缺 `ontology.write` 时，把「首次修改会自动建草稿」改写成「先补哪个权限」。
+- **容易漏的一类**：写接口要的权限和按钮看起来要的权限不一致。动作执行、补齐绑定、
+  建草稿（`POST /api/ontology`）都是这类 —— 加新按钮前先看服务端那一行 `requirePermission`。
+- 验证办法：用一个只读角色（`ontology.read + instance.read + datasource.read + target.read + reasoning.use`）
+  把每个页面点一遍，确认写按钮全是 disabled、页面没有 403（2026-10-10 实测通过）。

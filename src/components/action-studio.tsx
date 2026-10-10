@@ -53,6 +53,8 @@ type Props = {
   versionId?: string;
   targetId?: string;
   canEdit: boolean;
+  /** 运行动作要「编辑对象与关系」权限 —— 和「改定义」的 canEdit 是两件事。 */
+  canRun: boolean;
   /** 从对象详情页点动作进来时带上：直接选中这个动作，并预填主对象。 */
   initialRun?: { actionId: string; subject: EntitySearchResult } | null;
   /** 从左侧「规则」进来时直接落在规则阶段。 */
@@ -200,7 +202,7 @@ export function effectSentence(effect: RuleEffect) {
   return "给出提示";
 }
 
-export function ActionStudio({ definition, versionId, targetId, canEdit, initialRun, initialStage, onSave, onRan, notify, fail }: Props) {
+export function ActionStudio({ definition, versionId, targetId, canEdit, canRun, initialRun, initialStage, onSave, onRan, notify, fail }: Props) {
   const actions = definition.actionTypes;
   const rules = definition.rules;
   const [selectedId, setSelectedId] = useState(initialRun?.actionId ?? "");
@@ -526,9 +528,10 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, initial
                     )) : <p className="as-quiet">这个动作没有参数，选好主对象就可以直接干跑。</p>}
                   </div>
                   <div className="as-run-actions">
-                    <button className="action" disabled={!canEdit || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
-                    <button className="action primary" disabled={!canEdit || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
+                    <button className="action" disabled={!canRun || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
+                    <button className="action primary" disabled={!canRun || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
                   </div>
+                  {!canRun && <p className="as-quiet">当前角色没有「编辑对象与关系」权限，不能干跑或执行动作。</p>}
                   {outcome ? <OutcomePanel outcome={outcome} /> : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
                 </div>
               )}
