@@ -12,7 +12,9 @@ import {
   EmbeddedGraphEntity,
   GraphTargetEntity,
   ObjectEntryEntity,
+  OntologyConceptEntity,
   OntologyEntity,
+  OntologyVersionEntity,
   PlatformSettingEntity,
   PlatformUserEntity,
   RoleEntity,
@@ -60,6 +62,8 @@ export const PLATFORM_ENTITIES = [
   ConversationMessageEntity,
   ObjectEntryEntity,
   ColumnProfileEntity,
+  OntologyVersionEntity,
+  OntologyConceptEntity,
 ];
 
 type PlatformCache = {

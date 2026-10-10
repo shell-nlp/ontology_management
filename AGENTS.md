@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## AGENTS.md 记什么（2026-10-10 用户要求）
+
+用户口径：「agent.md 是记录要求和代办的……里面有已经解决过的问题，这个也在里面是不对的」。
+
+- 只记**要求**（口径 / 约定 / 禁令 / 当前接口与字段规格）与**待办**（Backlog）：以后干活要遵守的、还没做的。
+- **不记**已解决的问题、修复过程、实测过程 —— 那些进 `docs/历史决策与踩坑.md` 或 git 提交信息。
+- 写之前先问一句：这是「以后必须怎么做」还是「当时怎么修的」？后者不进这个文件。
+- 「为什么这么设计」只留**一句结论式理由**，不写修复过程。
+
 ## Git 约定
 - 禁止使用 `git worktree`（含 `git worktree add/list/remove`）。不要创建多余的工作目录或把分支检出到别处。
 - 所有分支变更（新建、切换、合并）都在本仓库目录 `D:\project\ontology_management` 内通过常规 `git checkout` / `git branch` / `git merge` 完成。
@@ -90,154 +99,56 @@
 
 实测（2026-10-08，真实 MCP 调用六个工具一轮）：
 **只做 A + B → 51,117 → 39,219 字符（-23%），信息量与改动前完全等价**；
-第一版连 C 一起做是 27,258（-47%），但少了信息、也让模型多绕步，**已回退**。
 功能侧的口径见 `docs/功能实现记录.md` 的「工具输出约定」一节。
 
 ## 代码与测试目录（2026-09-18）
-## 智能问答：后台运行 + 时间只认前端时钟（2026-10-10）
-## 列清单不设上限、不砍尾巴（2026-10-10 用户口径）
-## 耗时单位分级 + token 要分两个数（2026-10-10）
 
-### 单位随量级变，别一个单位硬撑
-
-用户口径：「这里的时间，单位要会变化，毫秒，分钟，小时 这样的不能只是一个单位」。
-现场是求证轨迹写 `4911ms`、整轮写 `192.7s`（或 `111.5s`）—— 一眼看不出量级，还得自己数位。
-
-- `src/lib/framework/format-units.ts` 是**唯一出口**（纯函数，有单测 `tests/lib/format-units.test.ts`）：
-  - `formatDuration(ms)`：`812ms` → `4.9s` → `1分52秒` → `1小时05分` → `2天03小时`；
-    10 秒以内留一位小数（跑动的时候看着在走），再往上取整；分秒/小时分**低位补零**。
-  - `formatCount(n)`：`950` → `5.7k` → `96.3k` → `833.9k` → `1.2M`。
-- 用它的地方：求证轨迹头部的总耗时、每一步的耗时、结论页脚的耗时与 token。
-  **以后再有"毫秒/秒/条数"的展示，走这两个函数，别再写 `{x}ms` / `{x/1000}s`。**
-
-### token：累计 ≠ 模型返回的用量
-
-用户口径：「这里显示的 token 数好像也不对，模型应该会返回 token 数，不是累加」。
-
-AI SDK 的两个数（`node_modules/ai` 的 `TextStreamFinishStepPart` / `TextStreamFinishPart`）：
-- `finish-step` 的 `usage` = **这一步这次调用**的用量；
-- `finish` 的 `totalUsage` = **所有步相加**。
-
-工具循环里每一步都要把整段上下文重发一遍，所以 15 步的 `totalUsage` 能到 1.1M ——
-只显示这个数，用户会以为"模型返回了 110 万 token"。所以两个都留、分开说：
-
-- `ReasoningUsage.lastInputTokens` / `lastOutputTokens`（新增，可选）：**最后一步这次调用**的用量，
-  页脚显示成「上下文 5.0k · 输出 239 tokens」——上下文那个数同时是"离上下文上限还有多远"的度量。
-- `promptTokens` / `completionTokens` / `totalTokens`：累计，页脚显示成「累计 1.1M」，**计费口径**。
-- 旧运行记录没有 `last*`（可选），界面就只显示累计 —— 别把累计冒充成"上下文"。
-
-### 顺带修掉的"回答完就消失"
-
-同一轮改动里修了 2026-10-10 用户报的另一个 bug：「每次回答完，聊天窗口立马消失，对话历史也找不到，必须刷新」。
-
-原因：一轮跑完落库时，它的 `conversationId` 从 `null` 变成真 id，而画面是按"当前对话 id"过滤的 ——
-落库那一瞬间这一轮就被滤掉了（历史那边也没人刷）。两条修法：
-
-1. `LiveRun` 多一个 **`requestedConversationId`**（发起时归属的那段对话，落库不会改它），
-   画面按**两个键**认归属：`requestedConversationId === 当前对话` 或 `savedConversationId === 当前对话`。
-2. **落库就刷侧栏**（`refreshedConversations` 去重），不管这一轮是不是眼前这一段 ——
-   不刷的话新对话的第一轮跑完只存在于画面上，侧栏要等刷新页面才出现。
-3. `detachRunsForView(targetId, conversationId)` 取代只摘"还在跑"的那版：点「新对话」时，
-   这一段画面上**已经跑完**的那几轮也要让走，否则它们会跟着新画面又冒出来。
-
-记录时间：2026-10-10。
-
-用户原话：**「列清单不要设上限把尾巴砍掉。」** 起因是 `get_table_ddl` 的 `bound_object_types`：
-
-| 表 | 对象类型 | 清单里给了几列 | 映射列总数 | 被截掉的 |
-| --- | --- | --- | --- | --- |
-| `TB_KR_GRP_ALL_USER_FLAG_DAY` | 全量用户标签 | 30 | **51** | 21 列，从 `HDJ_WLWZD_FLAG` 起，**含 `U_TYPE`** |
-| `TB_MK_GRP_MEMBER_DAY` | 集团成员 | 30 | **33** | 3 列 |
-
-也就是说表**全映射了**，但返回里只看得见前 30 列，`U_TYPE` 到底映射成哪个属性在 `get_table_ddl` 这一步根本看不见 ——
-只能再调一次 `get_object_type` 反查。**省了小钱、赔了一次往返，还让"表尾列"永远隐形。**
-
-规则（以后加任何 `list_*` / 数组类返回都按这条来）：
-
-1. **清单类默认给全**：定义层的数组（映射列、字段清单这种，条数由本体/表结构决定）不加条数上限。
-   **检索类**（`search_schema` 按分数排序的那种）另说：实测"用户"这种词命中 583 条、183KB，
-   全给会把上下文撑爆、还会撞上历史回放的上限（等于尾巴照样断）—— 所以它默认给前 50 条，
-   但**必须**把 total_matched / omitted 报出来，并且允许调用方把 max_concepts 调到 1000 拿全。
-   **关键是"能不能看见"**：数量、被省掉多少、怎么拿到全量，缺一个就是 bug。
-2. **截了就必须说**：真要截（调用方传了上限、或后端有硬性量级控制），返回里要带**总数**与**被省掉的条数**，
-   并说明省掉的是哪些、怎么才能拿到。**静默截断 = bug。**
-3. **"够用就行"不是理由**：模型多绕一步要把整个上下文重发一遍（约 35,000 token/步），
-   而多给几十行清单只有几百 token —— 这条和「工具输出：只砍重复不砍信息」是同一个判断。
-
-这一轮按它改的地方（都留了测试）：
-
-- `get_table_ddl.bound_object_types[].mapped_columns`：**给全**（原来 `slice(0, 30)`）。
-  `mapped_column_count` 保留，现在与清单长度一致 —— 两者不一致就说明某处又偷偷加了上限。
-- `search_schema`：默认从 20 提到 50、调用方能要到 1000，并**回 `total_matched` + `omitted` + `omitted_note`**。
-  以前模型看到的是"命中 N 个概念"，那是被砍过的数字、还当成总数，尾巴里的概念永远找不到。
-- 对话历史列表（`listConversations`）：**不传 limit = 全给**（原来默认 50、上限 200；对话条数由用户自己攒出来，量级可控），
-  否则侧栏的尾巴（第 51 条往后的对话）永远看不见，而且看起来像"我只有这么多"。
-- 列画像的 `sample_coverage.dates`：**给全**（原来只列前 30 个日期）；
-  条数本身就受采样行数限制（`ROWNUM <= 1000`），不会失控。
-- `query_instance_subgraph` 的取数范围（一次最多从 12 个对象类型里取）**没法给全**（那是取数量级），
-  所以在 `warnings` 里写明"这次没取哪些类型"，让模型知道该传 `type_names`。
-
-记录时间：2026-10-10。
-
-用户两条口径连着来：
-1. 「箭头指的地方的时间都必须是实际的前端时间，不能是后端时间」；
-2. 「聊天对话要支持后台运行 —— 我问答了，然后我切换页面了，或者新建聊天了，放后台运行，而且从对话历史还能看到是否正在运行」。
-
-### 运行归服务端，界面只是"接上这条流"
-
-以前一轮推理挂在 `POST /api/reasoning/stream` 这条连接上：断开 = 用户叫停，切页面就等于把这一轮掐了。现在反过来：
-
-- `src/lib/reasoning/run-registry.ts` 是**运行登记处**：起一轮、留存事件、订阅、取消都在这里。
-  事件形状与折叠规则在 `src/lib/reasoning/run-events.ts`（纯函数，前后端共用，有单测）。
-- 端点：`POST /api/reasoning/runs`（起，立刻回 runId）、`GET /api/reasoning/runs?targetId=`（这个本体上还在跑的）、
-  `GET /api/reasoning/runs/[runId]/events?after=N`（接上，SSE）、`POST /api/reasoning/runs/[runId]/cancel`（真停）。
-  `POST /api/reasoning/stream` 保留，改成"起一轮 + 就地看完"的薄壳，协议只有一处实现（`run-stream.ts`）。
-- **断开 ≠ 停止**：关页面、切页、刷新都只是"不看了"，运行照常跑完并 `saveTurn` 落进历史。真停只认 cancel 接口（界面上的「停止」按钮）。
-- 界面侧：`src/lib/reasoning/live-runs.ts` 是本机的运行登记处（模块级单例），`qa-studio.tsx` 只订阅它。
-  所以组件卸载不会中断那一轮 —— 接流的那条 fetch 归模块所有，不归组件。
-
-### 四个必须记住的坑（都是实测踩出来的）
-
-1. **登记处要挂 `globalThis`**：Next dev（Turbopack）按路由分别打包，模块级 `new Map()` 会出现
-   "POST 起的运行在 events 路由里查不到" → 界面显示"接上失败（HTTP 404）"，而运行其实跑完了、也落库了。
-   实测就是这个现象，改成 `globalThis.__ontologyReasoningRuns` 之后正常。**别再写回模块级 Map。**
-2. **补看游标是"含端点"的**：连续的文字增量会被并进同一条事件（省内存），所以游标那一条要重发一次，
-   界面按**下标替换**而不是追加（帧形状是 `{ i, e }`）。`after = cursor - 1`。
-3. **先订阅、再补看**：反过来的话，正好卡在两步之间结束的那一轮会把 `done` / `saved` 漏掉，界面永远停在"进行中"。
-4. **`done` 会来两次**（编排层一条 + 收尾一条），登记处按"同类型就地替换"存，只留一条 —— 它是最大的一条事件。
-
-### 界面上的三条规矩
-
-- **「新对话」不停正在跑的那一轮**：`detachRunningRuns()` 把它让到后台，中间那一栏换一段空对话；
-  侧栏上它显示成「运行中」的一行（还没落库的新对话就是这一行），跑完自动出现在历史里。
-- **切走再回来要接回画面**：`lastSeenConversation` 记住"刚才在看哪段"，回来用 `openConversation` 读回来，
-  否则用户会以为"我刚问的那一轮不见了"（实测确实会）。点「新对话」会清掉这根线。
-- **一段对话正在跑，不挡别的**：`busy` 只按**当前这一段**算（`viewRuns.some(running)`），
-  翻历史、开新对话、在别的对话里提问都不受影响。
-
-### 时间：一律用前端时钟
-
-- 展示的耗时**由浏览器自己算**：`startedAtMs` 记在本机（接回来的运行用服务端给的 ISO 折算），
-  跑的时候每 500ms 重算一次 `Date.now() - startedAtMs`，跑完是 `finishedAtMs - startedAtMs`。
-  服务端回的 `elapsedMs` 只写进运行记录，**不用它显示**；`Turn.liveElapsedMs` 就是这条路径。
-- 侧栏的「今天 / 昨天 + 时刻」由 `conversationTimeLabel` 在浏览器里格式化 —— 别在服务端渲染里烤死时区
-  （容器时区是 UTC，烤进去就差 8 小时）。
-
-### 边界（要对用户讲清楚）
-
-- 运行**只在内存**里：进程重启（开发时改代码触发热更新也算）、容器重建都会丢掉正在跑的那些；
-  已经落库的问答不受影响。要跨重启继续跑就得把运行落库 —— Backlog 里没排期，别默认它能行。
-- 跑完但没落库的记录留 10 分钟给界面接回，之后清掉。
-
-记录时间：2026-10-10。
-
-- 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如
-  `src/lib/framework/graph/embedded/index.ts` 对应 `tests/lib/graph/embedded.test.ts`）。
-  `vitest.config.mts` 只收集 `tests/**/*.test.ts`，不要再在源码目录新增测试文件。
+- 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如 `src/lib/framework/graph/embedded/index.ts`
+  对应 `tests/lib/graph/embedded.test.ts`）。`vitest.config.mts` 只收集 `tests/**/*.test.ts`，
+  **不要再在源码目录新增测试文件**。
 - 本体存储各实现用自己的目录：`src/lib/framework/graph/jena/`、`src/lib/framework/graph/embedded/`；
   `graph/` 根目录只放公共接口、注册表与跨实现共享模块。新增多文件后端也按此结构隔离，
   不把不同后端的实现平铺在 `graph/` 根目录。
 
+## 智能问答：运行归服务端 + 时间只认前端时钟（2026-10-10）
+
+- **运行归服务端**：`src/lib/reasoning/run-registry.ts` 是运行登记处（起一轮、留存事件、订阅、取消）。
+  端点：`POST /api/reasoning/runs`、`GET /api/reasoning/runs?targetId=`、
+  `GET /api/reasoning/runs/[runId]/events?after=N`（SSE 接上）、`POST /api/reasoning/runs/[runId]/cancel`。
+  `POST /api/reasoning/stream` 保留为「起一轮 + 就地看完」的薄壳，协议只有 `run-stream.ts` 一处实现。
+- **断开 ≠ 停止**：关页面、切页、刷新都只是「不看了」，运行照常跑完并落进历史；真停只认 cancel。
+  界面侧 `src/lib/reasoning/live-runs.ts` 是本机登记处，`qa-studio.tsx` 只订阅它 —— 组件卸载不中断运行。
+- 界面三条规矩：「新对话」不停正在跑的那一轮（`detachRunningRuns()` 让到后台）；切走再回来要接回画面
+  （`lastSeenConversation` + `openConversation`）；`busy` 只按**当前这一段**算，翻历史/开新对话不受影响。
+- **时间一律用前端时钟**：展示耗时由浏览器算（`startedAtMs` → `Turn.liveElapsedMs`），
+  服务端回的 `elapsedMs` 只写运行记录、**不用它显示**；侧栏的「今天/昨天 + 时刻」由 `conversationTimeLabel`
+  在浏览器格式化 —— 别在服务端渲染里烤死时区（容器是 UTC，烤进去就差 8 小时）。
+- 边界（要对用户讲清楚）：运行**只在内存**里，进程重启、容器重建都会丢掉正在跑的那些（已落库的不受影响）；
+  跑完但没落库的记录留 10 分钟给界面接回。要跨重启继续跑就得把运行落库 —— Backlog 未排期。
+- 实现细节（登记处挂 `globalThis`、补看游标含端点、先订阅再补看、`done` 会来两次）见
+  `docs/历史决策与踩坑.md`。
+
+## 列清单不设上限、不砍尾巴（2026-10-10 用户口径）
+
+以后加任何 `list_*` / 数组类返回都按这三条：
+
+1. **定义层清单默认给全**：映射列、字段清单这种「条数由本体/表结构决定」的数组**不加条数上限**。
+   **检索类**（`search_schema` 按分数排序那种）另说：默认给前 50 条，但**必须**回 `total_matched` / `omitted`，
+   并允许调用方把 `max_concepts` 调到 1000 拿全。**关键是「能不能看见」**：数量、被省掉多少、怎么拿全量，缺一个就是 bug。
+2. **截了就必须说**：真要截（调用方传了上限、或后端有硬性量级控制），返回里要带**总数**与**被省掉的条数**，
+   并说明省掉的是哪些、怎么才能拿到。**静默截断 = bug。**
+3. **「够用就行」不是理由**：模型多绕一步要把整个上下文重发（约 35,000 token/步），
+   而多给几十行清单只有几百 token。
+
+## 耗时单位分级 + token 要分两个数（2026-10-10）
+
+- 时间与条数的展示走 `src/lib/framework/format-units.ts`（**唯一出口**，纯函数，有单测）：
+  `formatDuration(ms)`（`812ms` → `4.9s` → `1分52秒` → `1小时05分` → `2天03小时`，10 秒内留一位小数、再往上取整）；
+  `formatCount(n)`（`950` → `5.7k` → `833.9k` → `1.2M`）。**别再写 `{x}ms` / `{x/1000}s`。**
+- **token 要分两个数**：`ReasoningUsage.lastInputTokens` / `lastOutputTokens` = **最后一步这次调用**的用量
+  （页脚显示「上下文 5.0k · 输出 239 tokens」，同时也是「离上下文上限还有多远」的度量）；
+  `promptTokens` / `completionTokens` / `totalTokens` = 累计（页脚显示「累计 1.1M」），**计费口径**。
+  旧运行记录没有 `last*` 就只显示累计 —— 别把累计冒充成「上下文」。
 ## 术语约定
 
 **界面文本用 Palantir 的全称，两层结构各一套词，不混用。**
@@ -2023,7 +1934,6 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 ## 左侧导航的权限可见性（2026-10-10）
 
-用户口径：「角色缺少对前端界面某些功能可见性的控制」。做法：**导航每一项都绑权限点**，渲染前过滤
 （`functional-workbench.tsx` 的 `NAV_SECTIONS` / `mayEnterView` / `firstEnterableView`）。
 
 - `NavItem` 是 4 元组 `[View, 标签, 图标, 权限点 | null]`；`null` = 所有登录用户可见（目前只有「设置」）。
@@ -2032,15 +1942,12 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 - 当前视图没权限时**自动落到第一个能进的视图**（改角色 / 换账号立刻生效），不留空白页。
 - 「设置」里三个标签各自判：图引擎配置 = `target.read`、审计记录 = `audit.read`、用户与角色 = `users.manage`。
 - **本体列表不许被别的权限带崩**：`loadTargets` 里 `/api/ontologies` 与 `/api/targets` 分开调
-  （`canReadTargets ? … : []`）。以前平铺成一个 `Promise.all`，没有 `target.read` 的角色收到 403 后
-  整个 `Promise.all` reject，本体列表跟着空掉 —— 新账号看着像「平台里没有本体」。
 - 没有 `target.read` 也能看本体：`targetFromStorage()` 用本体列表里的 `storage` 拼一个只读 Target 兜底；
   `loadVersions` 在没有 `instance.read` 时**不发** `/api/instances/types`（免得顶栏顶一条 403）。
 - 加视图时别忘了第 4 项：`tests/lib/nav-visibility.test.ts` 扫源码对账（视图清单 ↔ 导航登记 ↔ 权限点存在）。
 
 ## 权限点的前端落点（2026-10-10）
 
-用户口径：「要确保这些角色的权限都能生效，包括可见性，如果有一些从可见性控制比较麻烦的话，可以只做提示」。
 
 - **入口级**（导航）按 `NAV_SECTIONS` 的第 4 项过滤：总览 / 本体建模 / 本体技能 / 动作 / 规则 = `ontology.read`；
   实例图谱 / 对象 / 关系 = `instance.read`；智能问答 / MCP 调试 = `reasoning.use`；数据资源 = `datasource.read`。
@@ -2058,7 +1965,6 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 ## 全局提示：浮层吐司，不占页头（2026-10-10）
 
-用户口径：「当前账号没有这个权限。最好是弹出的，而不是在最上面」。
 
 - 工作台的全局提示（`notify()` / `fail()` 写进 `message` / `error` 状态的那些）统一走 `Toast`，
   **底部居中浮层**，样式在 `globals.css` 的 `.toast-stack` / `.toast`（z-index 200，高于 `.dialog-backdrop` 的 120，
@@ -2071,8 +1977,6 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 
 ## 界面层的文件划分（2026-10-10）
 
-用户要求把「workbench 里那几个 Manager 拆成独立文件」。这是**纯搬家**：函数体逐行照搬，只加了 `export`
-（导出是为了跨文件引用），没有改任何行为。现在：
 
 - `src/components/functional-workbench.tsx`（约 250 行）只剩**壳**：登录态、导航表（`NavItem` / `NAV_SECTIONS` /
   `mayEnterView`）、跨页面的加载与视图切换（`FunctionalWorkbench`），以及两个常量 `emptyDefinition` / `typeOptions`。
@@ -2115,32 +2019,26 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 2. **外部一律 import 目录**（`@/lib/ontology`、`@/lib/reasoning/tools`），目录里用 `index.ts` 做 barrel（`export * from "./xxx"`）。
    换文件位置只改 barrel，不动调用方。
 
-同一天做的两个大文件拆分（都是纯搬家，行为不变）：
-
-- `reasoning/tools.ts`（1751 行）→ `reasoning/tools/{registry,search,projection,dispatch}.ts` + `index.ts`：
-  `registry` 放工具清单与常量，`search` 放检索与打分（`rankSchemaConcepts` 等），`projection` 放把定义投影成工具答案的纯函数，
-  `dispatch` 放 `reasoningToolSet` / `runReasoningTool` / `traverseTypeGraph`。
-- `framework/graph/jena/index.ts`（1160 行）→ `jena/{vocabulary,protocol,statements,store,replace,read}.ts` + `index.ts`：
-  别再把它们合并回去；`store.ts` 那一份是 `createJenaStore` 本体（最大的一块）。
-
-拆分脚本留在 `.data/ui-check/backend-reorg.mjs`（切块 + 生成 import + 目录重排）、`backend-fixpaths.mjs` / `backend-fix2.mjs`
-（把 73+192 个文件的 import 路径改到新位置，含动态 `import()`）。踩过的三个坑记在这儿：
-**多行 import 要整块解析**、**带文档注释的声明要认得出 `export` 加在哪一行**、**别名别写成 `@/src/lib/...`**。
-
 ## 领域目录不许碰持久化（2026-10-10）
 
-用户口径：指出 `src/lib/ontology/ontologies.ts` 直接 `import { platformRepo, OntologyEntity } from "@/lib/platform/db"`，
-要求把持久化从领域目录里请出去。已改：**该文件整份搬到 `src/lib/platform/ontologies.ts`**（纯搬家，12 处 import 跟着改），
-`src/lib/ontology/` 现在**一个 `platformRepo` / TypeORM / 快照目录的影子都没有**（复查过：grep `platform/db|platformRepo|OntologyEntity` 无命中）。
-
-为什么要搬而不是加接口：这个文件从头到尾就是**表 ↔ 记录的映射 + 仓储调用 + 受管图存储分配 + 快照目录清理**，
-没有领域规则（唯一像业务的是 `slugify`，但它是给 URL 用的标识规范化，且和「标识唯一性查询」绑在一起）。
-现在这个规模加一层 Repository 端口只会多一层转发，等真出现第二个存储实现再抽端口不迟。
-
-**记账（以后别再犯）**：按依赖方向，`src/lib/<业务模块>/` 只许依赖两类东西 ——
+**规矩**：按依赖方向，`src/lib/<业务模块>/` 只许依赖两类东西 ——
 `framework/` 里的纯工具（`ids` / `format-units` / `graph-palette` 这种），以及同层模块的**纯函数**；
 **不许出现** `platform/db`、`platform/*`（仓储与配置）、`versioning/snapshot`（写文件）这类持久化/副作用调用。
 需要落库的，把那段编排放到 `src/app/api/**/route.ts` 或 `src/lib/platform/`。
 
 现存的最后一处跨模块依赖是 `ontology/link-source.ts` → `instance/object-identity`（借实例层的列识别规则），
 两边都是纯函数，暂不算破例；真要收紧，把那两个纯函数提到 `framework/` 共用。
+
+## 独立任务拆给子智能体并行做（2026-10-10 用户要求）
+
+用户口径：「如果任务是独立的可以拆给子智能体并行做，可以加速」；
+「**在执行主任务的过程中，如果用户又提出了其它任务，且这个任务与主任务独立不相关、不冲突，就要使用子智能体来并行执行**」。
+
+- **主任务进行中收到新的独立任务 → 默认派给子智能体并行做**，主线不放下手上的活。
+- 判据是「文件与关注点都不重叠」：子任务要**自己拥有一组文件**（例如只写 `tests/**` + `package.json`）；
+  两边不编辑同一份文件 —— 会碰同一份文件的只能排队做（并行改同一个文件必然互相覆盖）。
+- 派活时说清三件事：**交付物**（哪几个文件）、**验证命令**、**不许提交**（提交永远是用户自己做）。
+- 别拆的：同一份文件的连续改动、需要看全局状态的编排、以及**对主任务改动的验证**
+  （验证必须由改代码的人做，否则没人对结果负责）。
+- **定位**：子智能体与主线共用同一个工作目录，所以「谁能改哪些文件」必须在派活时说清楚。
+- 最值得拆的是文档/测试这类「顺手活」：主线在跑 tsc、起服务、点页面的那几分钟，它们能并行写完。

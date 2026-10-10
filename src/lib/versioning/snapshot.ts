@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
@@ -12,11 +12,37 @@ import { relationshipKeyViolations } from "@/lib/ontology/relationship-keys";
 import { linkSourceViolations } from "@/lib/ontology/link-source";
 import { metricViolations } from "@/lib/ontology/metrics";
 import { validateInterfaceImplementations, validateInterfaces } from "@/lib/ontology/interfaces";
+import {
+  deleteTargetVersionRecords,
+  deleteVersionRecordRow,
+  getVersionRecordRow,
+  insertVersionRecordRow,
+  isVersionStatus,
+  listVersionRecordRows,
+  replaceVersionConcepts,
+  updateVersionRecordRow,
+  type VersionRecord,
+  type VersionRecordRow,
+  type VersionStatus,
+} from "@/lib/platform/version-records";
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/instance/action-engine";
 import { parsePropertyValues } from "@/lib/instance/instance-property-editor";
 import { objectIdOf, primaryKeyConflicts, resolveObjectIdentity } from "@/lib/instance/object-identity";
 import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/framework/graph/types";
 
+export type { VersionRecord, VersionStatus } from "@/lib/platform/version-records";
+
+/**
+ * 本体版本与快照 —— 2026-10-10 起**数据全在平台库**。
+ *
+ * 以前版本记录与定义落在磁盘 .data/ontology-versions/<targetId>/<versionId>/；
+ * 现在 ontology_platform.ontology_versions 一行装下定义 + 元数据 + **实例快照**
+ * （nodes / relationships 一个 jsonb），磁盘上不再有本体数据。用户口径：
+ * 「本体定义不要存到磁盘，要存到 PG 数据库中」「实现完成和迁移后记得把磁盘原有的删除掉」。
+ *
+ * 这个文件只管**领域编排**：zod 校验、内容哈希、锁、发布/草稿变更、动作与位置；
+ * 表读写全在 @/lib/platform/version-records，路径与老文件只出现在下面的迁移函数里。
+ */
 const INTERNAL_ID = "__ontology_id";
 const INTERNAL_VERSION_ID = "__ontology_version_id";
 const SNAPSHOT_FORMAT = 1;
@@ -44,24 +70,8 @@ export type VersionSnapshot = {
   relationships: SnapshotRelationship[];
 };
 
-export type VersionStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
-
-export type VersionRecord = {
-  id: string;
-  target_id: string;
-  version_number: number;
-  status: VersionStatus;
-  definition: OntologyDefinition;
-  created_by: string;
-  created_at: string;
-  published_at: string | null;
-  artifact_path: string;
-  entity_count: number;
-  relationship_count: number;
-  content_hash: string | null;
-};
-
-type SnapshotManifest = {
+/** 老磁盘版 manifest.json 的形状：只用于**入迁**，不再写回磁盘。 */
+type LegacyManifest = {
   formatVersion: number;
   versionId: string;
   targetId: string;
@@ -79,6 +89,7 @@ type SnapshotManifest = {
 const locks = new Map<string, Promise<void>>();
 const targetLocks = new Map<string, Promise<void>>();
 
+/** 历史版本的落点（只读）：.data/ontology-versions，可用 ONTOLOGY_VERSION_DIR 覆盖。 */
 function snapshotRoot() {
   const configured = process.env.ONTOLOGY_VERSION_DIR;
   if (configured) return path.resolve(/*turbopackIgnore: true*/ configured);
@@ -94,12 +105,7 @@ export function versionArtifactDirectory(targetId: string, versionId: string) {
   return path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId), safeSegment(versionId));
 }
 
-export async function removeTargetSnapshotDirectory(targetId: string) {
-  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
-  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
-}
-
-function artifactFiles(directory: string) {
+function legacyArtifactFiles(directory: string) {
   return {
     definition: path.join(/*turbopackIgnore: true*/ directory, "definition.json"),
     nodes: path.join(/*turbopackIgnore: true*/ directory, "nodes.csv"),
@@ -108,149 +114,168 @@ function artifactFiles(directory: string) {
   };
 }
 
-async function readManifest(directory: string) {
-  const text = await readFile(path.join(/*turbopackIgnore: true*/ directory, "manifest.json"), "utf8");
-  return JSON.parse(text) as SnapshotManifest;
-}
-
-async function readManifestSafe(directory: string): Promise<SnapshotManifest | null> {
-  try {
-    return await readManifest(directory);
-  } catch {
-    return null;
-  }
-}
-
-async function writeManifest(directory: string, manifest: SnapshotManifest) {
-  await atomicWrite(path.join(/*turbopackIgnore: true*/ directory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-}
-
-async function readDefinition(directory: string): Promise<OntologyDefinition> {
-  return ontologyDefinitionSchema.parse(JSON.parse(await readFile(path.join(/*turbopackIgnore: true*/ directory, "definition.json"), "utf8")));
-}
-
-function toVersionRecord(manifest: SnapshotManifest, directory: string): Omit<VersionRecord, "definition"> {
+/**
+ * 存储行 -> 对外记录。
+ *
+ * `artifact_path` 这个名字是磁盘时代的遗留（快照目录），现在它**只是个"有没有实例快照"的标记**
+ * （界面拿它决定显示哈希还是「无实例快照」）。快照本体在
+ * `ontology_platform.ontology_versions.snapshot` 那一列，不再有文件路径可给。
+ */
+function toRecord(row: VersionRecordRow): VersionRecord {
   return {
-    id: manifest.versionId,
-    target_id: manifest.targetId,
-    version_number: manifest.versionNumber,
-    status: manifest.status ?? "ARCHIVED",
-    created_by: manifest.createdBy ?? "",
-    created_at: manifest.createdAt ?? new Date(0).toISOString(),
-    published_at: manifest.publishedAt ?? null,
-    artifact_path: directory,
-    entity_count: manifest.entityCount ?? 0,
-    relationship_count: manifest.relationshipCount ?? 0,
-    content_hash: manifest.contentHash || null,
+    id: row.id,
+    target_id: row.target_id,
+    version_number: row.version_number,
+    status: row.status,
+    definition: row.definition,
+    created_by: row.created_by,
+    created_at: row.created_at,
+    published_at: row.published_at,
+    artifact_path: row.content_hash ? "postgres:ontology_versions.snapshot" : "",
+    entity_count: row.entity_count,
+    relationship_count: row.relationship_count,
+    content_hash: row.content_hash,
   };
 }
 
-async function findVersionDirectory(versionId: string) {
+async function readLegacySnapshot(directory: string): Promise<{ nodes: SnapshotNode[]; relationships: SnapshotRelationship[] }> {
+  const files = legacyArtifactFiles(directory);
+  const [nodesText, relationshipsText] = await Promise.all([
+    readFile(/*turbopackIgnore: true*/ files.nodes, "utf8").catch(() => ""),
+    readFile(/*turbopackIgnore: true*/ files.relationships, "utf8").catch(() => ""),
+  ]);
+  const nodeRows = nodesText.trim() ? (parse(nodesText, { columns: true, skip_empty_lines: true }) as Record<string, string>[]) : [];
+  const relationshipRows = relationshipsText.trim() ? (parse(relationshipsText, { columns: true, skip_empty_lines: true }) as Record<string, string>[]) : [];
+  return {
+    nodes: nodeRows.map((item) => nodeSchema.parse({ id: item["node_id:ID"], labels: item[":LABEL"].split(";").filter(Boolean), properties: parseProperties(item.properties) })),
+    relationships: relationshipRows.map((item) => relationshipSchema.parse({ id: item["relationship_id:ID"], sourceId: item[":START_ID"], targetId: item[":END_ID"], type: item[":TYPE"], properties: parseProperties(item.properties) })),
+  };
+}
+
+let legacyMigration: Promise<void> | undefined;
+
+/**
+ * 一次性把磁盘上的历史版本搬进平台库，**搬完立刻删磁盘副本**。
+ *
+ * - 幂等：已经入库的版本（按 id 查得到）只删磁盘、不重复写；
+ * - 逐个版本删：某个坏目录迁移失败时只保留它自己，下次访问再重试，不连累别的版本；
+ * - 只在第一次访问版本数据时跑一次（进程内 memo）。
+ */
+export async function migrateLegacyVersionFiles(): Promise<void> {
+  legacyMigration ??= migrateLegacyVersionFilesOnce().catch((error) => {
+    legacyMigration = undefined;
+    throw error;
+  });
+  return legacyMigration;
+}
+
+async function migrateLegacyVersionFilesOnce(): Promise<void> {
   const root = snapshotRoot();
   let targets: string[];
   try {
-    targets = await readdir(root);
+    targets = await readdir(/*turbopackIgnore: true*/ root);
   } catch {
-    return null;
+    return; // 没有历史目录 = 已经迁过（或全新部署）
   }
-  for (const segment of targets) {
-    if (!VERSION_SEGMENT.test(segment)) continue;
-    const directory = path.join(root, segment, safeSegment(versionId));
+  let migrated = 0;
+  for (const targetSegment of targets) {
+    if (!VERSION_SEGMENT.test(targetSegment)) continue;
+    const targetDirectory = path.join(/*turbopackIgnore: true*/ root, targetSegment);
+    let versions: string[];
     try {
-      const manifest = await readManifest(directory);
-      if (manifest.versionId === versionId) return directory;
+      versions = await readdir(/*turbopackIgnore: true*/ targetDirectory);
     } catch {
-      // not in this target
+      continue;
     }
+    for (const versionSegment of versions) {
+      if (!VERSION_SEGMENT.test(versionSegment)) continue;
+      const directory = path.join(/*turbopackIgnore: true*/ targetDirectory, versionSegment);
+      try {
+        const manifest = JSON.parse(await readFile(/*turbopackIgnore: true*/ legacyArtifactFiles(directory).manifest, "utf8")) as LegacyManifest;
+        if (manifest.targetId !== targetSegment || manifest.versionId !== versionSegment) continue;
+        if (!(await getVersionRecordRow(versionSegment))) {
+          const definition = ontologyDefinitionSchema.parse(JSON.parse(await readFile(/*turbopackIgnore: true*/ legacyArtifactFiles(directory).definition, "utf8")));
+          const snapshot = await readLegacySnapshot(directory);
+          const content = snapshotContent({ definition, nodes: snapshot.nodes, relationships: snapshot.relationships });
+          await insertVersionRecordRow({
+            id: versionSegment,
+            targetId: manifest.targetId,
+            versionNumber: manifest.versionNumber,
+            status: isVersionStatus(manifest.status) ? manifest.status : "ARCHIVED",
+            createdBy: manifest.createdBy ?? "",
+            createdAt: manifest.createdAt,
+            publishedAt: manifest.publishedAt ?? null,
+            definition,
+            snapshot: { nodes: snapshot.nodes, relationships: snapshot.relationships },
+            entityCount: snapshot.nodes.length,
+            relationshipCount: snapshot.relationships.length,
+            contentHash: content.contentHash,
+          });
+          await replaceVersionConcepts(versionSegment, manifest.targetId, definition).catch(() => 0);
+          migrated += 1;
+        }
+        await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(`[version-store] 历史版本 ${versionSegment} 迁移失败，保留磁盘文件待下次重试：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    // 空的才删得掉；删不掉说明还有没迁成功的，下次再试。
+    await rmdir(/*turbopackIgnore: true*/ targetDirectory).catch(() => undefined);
   }
-  return null;
+  await rmdir(/*turbopackIgnore: true*/ root).catch(() => undefined);
+  if (migrated) console.log(`[version-store] 已把 ${migrated} 个磁盘上的历史版本迁进平台库（磁盘副本已删除）。`);
 }
 
 export async function listVersionRecords(targetId: string): Promise<VersionRecord[]> {
-  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch {
-    return [];
-  }
-  const records: VersionRecord[] = [];
-  for (const segment of entries) {
-    if (!VERSION_SEGMENT.test(segment)) continue;
-    const versionDir = path.join(directory, segment);
-    try {
-      const manifest = await readManifest(versionDir);
-      if (manifest.targetId !== targetId) continue;
-      records.push({ ...toVersionRecord(manifest, versionDir), definition: await readDefinition(versionDir) });
-    } catch {
-      // skip unreadable version directory
-    }
-  }
-  return records.sort((a, b) => b.version_number - a.version_number);
+  await migrateLegacyVersionFiles();
+  return (await listVersionRecordRows(targetId)).map(toRecord);
 }
 
 export async function getVersionRecord(versionId: string): Promise<VersionRecord | null> {
-  const directory = await findVersionDirectory(versionId);
-  if (!directory) return null;
-  const manifest = await readManifest(directory);
-  return { ...toVersionRecord(manifest, directory), definition: await readDefinition(directory) };
+  await migrateLegacyVersionFiles();
+  const row = await getVersionRecordRow(versionId);
+  return row ? toRecord(row) : null;
 }
 
 export async function createVersionRecord(input: { targetId: string; versionNumber: number; createdBy: string; definition: OntologyDefinition }): Promise<VersionRecord> {
+  await migrateLegacyVersionFiles();
+  const definition = ontologyDefinitionSchema.parse(input.definition);
   const id = randomUUID();
-  const directory = versionArtifactDirectory(input.targetId, id);
-  const now = new Date().toISOString();
-  await mkdir(/*turbopackIgnore: true*/ directory, { recursive: true });
-  await atomicWrite(path.join(/*turbopackIgnore: true*/ directory, "definition.json"), `${JSON.stringify(input.definition, null, 2)}\n`);
-  const manifest: SnapshotManifest = {
-    formatVersion: SNAPSHOT_FORMAT,
-    versionId: id,
+  const row = await insertVersionRecordRow({
+    id,
     targetId: input.targetId,
     versionNumber: input.versionNumber,
-    status: "DRAFT",
-    createdAt: now,
     createdBy: input.createdBy,
-    publishedAt: null,
-    entityCount: 0,
-    relationshipCount: 0,
-    contentHash: "",
-    updatedAt: now,
-  };
-  await writeManifest(directory, manifest);
-  return { ...toVersionRecord(manifest, directory), definition: input.definition };
+    definition,
+  });
+  await replaceVersionConcepts(id, input.targetId, definition).catch((error) => {
+    console.warn("[version-store] 概念索引写入失败（不影响版本本身）：", error instanceof Error ? error.message : error);
+  });
+  return toRecord(row);
 }
 
 export async function updateVersionRecord(versionId: string, patch: { status?: VersionStatus; publishedAt?: string | null }) {
-  const directory = await findVersionDirectory(versionId);
-  if (!directory) throw new Error("本体版本不存在。");
-  const manifest = await readManifest(directory);
-  await writeManifest(directory, {
-    ...manifest,
-    status: patch.status ?? manifest.status,
-    publishedAt: patch.publishedAt !== undefined ? patch.publishedAt : manifest.publishedAt,
-    updatedAt: new Date().toISOString(),
-  });
+  const row = await updateVersionRecordRow(versionId, patch);
+  if (!row) throw new Error("本体版本不存在。");
 }
 
+/** 删一个版本。**不抛「不存在」**：调用方多在回滚失败的清理路径上，宽容比抛错有用。 */
 export async function deleteVersionRecord(versionId: string) {
-  const directory = await findVersionDirectory(versionId);
-  if (!directory) throw new Error("本体版本不存在。");
-  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
+  await migrateLegacyVersionFiles().catch(() => undefined);
+  await deleteVersionRecordRow(versionId);
 }
 
 export async function deleteTargetVersions(targetId: string) {
-  const directory = path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId));
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch {
-    return 0;
-  }
-  const count = entries.filter((segment) => VERSION_SEGMENT.test(segment)).length;
-  await rm(/*turbopackIgnore: true*/ directory, { recursive: true, force: true });
+  await migrateLegacyVersionFiles().catch(() => undefined);
+  const count = await deleteTargetVersionRecords(targetId);
+  await rm(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ snapshotRoot(), safeSegment(targetId)), { recursive: true, force: true }).catch(() => undefined);
   return count;
 }
 
+/** 兼容旧调用（删本体存储、删本体时清理）：数据在平台库，这里顺带清掉可能残留的磁盘目录。 */
+export async function removeTargetSnapshotDirectory(targetId: string) {
+  await deleteTargetVersions(targetId).catch(() => 0);
+}
 async function withSnapshotLock<T>(versionId: string, operation: () => Promise<T>): Promise<T> {
   const previous = locks.get(versionId) ?? Promise.resolve();
   let release!: () => void;
@@ -304,44 +329,39 @@ function snapshotContent(snapshot: VersionSnapshot) {
   return { definition, nodes, relationships, contentHash };
 }
 
-async function atomicWrite(filePath: string, content: string) {
-  const temporary = `${filePath}.${randomUUID()}.tmp`;
-  await writeFile(/*turbopackIgnore: true*/ temporary, content, "utf8");
-  await rename(/*turbopackIgnore: true*/ temporary, /*turbopackIgnore: true*/ filePath);
-}
-
 async function writeSnapshotFiles(record: VersionRecord, snapshot: VersionSnapshot) {
   const validated: VersionSnapshot = {
     definition: ontologyDefinitionSchema.parse(snapshot.definition),
     nodes: snapshot.nodes.map((node) => nodeSchema.parse(node)),
     relationships: snapshot.relationships.map((relationship) => relationshipSchema.parse(relationship)),
   };
-  const directory = versionArtifactDirectory(record.target_id, record.id);
-  const files = artifactFiles(directory);
   const content = snapshotContent(validated);
-  const previous = await readManifestSafe(directory);
-  const manifest: SnapshotManifest = {
-    formatVersion: SNAPSHOT_FORMAT,
-    versionId: record.id,
-    targetId: record.target_id,
-    versionNumber: record.version_number,
-    status: previous?.status ?? record.status,
-    createdAt: previous?.createdAt ?? record.created_at,
-    createdBy: previous?.createdBy ?? record.created_by,
-    publishedAt: previous?.publishedAt ?? record.published_at,
+  const updated = await updateVersionRecordRow(record.id, {
+    definition: validated.definition,
+    snapshot: { nodes: validated.nodes, relationships: validated.relationships },
     entityCount: validated.nodes.length,
     relationshipCount: validated.relationships.length,
     contentHash: content.contentHash,
+  });
+  if (!updated) throw new Error("本体版本不存在。");
+  // 概念索引跟着定义一起刷：它是将来向量检索的落点，写失败不能让版本保存失败。
+  await replaceVersionConcepts(record.id, record.target_id, validated.definition).catch((error) => {
+    console.warn("[version-store] 概念索引写入失败（不影响版本本身）：", error instanceof Error ? error.message : error);
+  });
+  return {
+    formatVersion: SNAPSHOT_FORMAT,
+    versionId: updated.id,
+    targetId: updated.target_id,
+    versionNumber: updated.version_number,
+    status: updated.status,
+    createdAt: updated.created_at,
+    createdBy: updated.created_by,
+    publishedAt: updated.published_at,
+    entityCount: updated.entity_count,
+    relationshipCount: updated.relationship_count,
+    contentHash: updated.content_hash ?? "",
     updatedAt: new Date().toISOString(),
   };
-  await mkdir(/*turbopackIgnore: true*/ directory, { recursive: true });
-  await Promise.all([
-    atomicWrite(files.definition, content.definition),
-    atomicWrite(files.nodes, content.nodes),
-    atomicWrite(files.relationships, content.relationships),
-  ]);
-  await writeManifest(directory, manifest);
-  return manifest;
 }
 
 function parseProperties(value: string) {
@@ -351,27 +371,16 @@ function parseProperties(value: string) {
 }
 
 async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot> {
-  const directory = versionArtifactDirectory(record.target_id, record.id);
-  const files = artifactFiles(directory);
-  const [definitionText, nodesText, relationshipsText, manifestText] = await Promise.all([
-    readFile(/*turbopackIgnore: true*/ files.definition, "utf8"),
-    readFile(/*turbopackIgnore: true*/ files.nodes, "utf8"),
-    readFile(/*turbopackIgnore: true*/ files.relationships, "utf8"),
-    readFile(/*turbopackIgnore: true*/ files.manifest, "utf8"),
-  ]);
-  const manifest = JSON.parse(manifestText) as SnapshotManifest;
-  if (manifest.formatVersion !== SNAPSHOT_FORMAT || manifest.versionId !== record.id || manifest.targetId !== record.target_id) {
-    throw new Error("版本快照清单与版本记录不一致。");
-  }
-  const contentHash = createHash("sha256").update(definitionText).update(nodesText).update(relationshipsText).digest("hex");
-  if (contentHash !== manifest.contentHash) throw new Error("版本快照内容校验失败，文件可能已被外部修改。");
-  const nodeRows = parse(nodesText, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
-  const relationshipRows = parse(relationshipsText, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
-  return {
-    definition: ontologyDefinitionSchema.parse(JSON.parse(definitionText)),
-    nodes: nodeRows.map((item) => nodeSchema.parse({ id: item["node_id:ID"], labels: item[":LABEL"].split(";").filter(Boolean), properties: parseProperties(item.properties) })),
-    relationships: relationshipRows.map((item) => relationshipSchema.parse({ id: item["relationship_id:ID"], sourceId: item[":START_ID"], targetId: item[":END_ID"], type: item[":TYPE"], properties: parseProperties(item.properties) })),
-  };
+  const row = await getVersionRecordRow(record.id);
+  if (!row) throw new Error("本体版本不存在。");
+  if (!row.snapshot) throw new Error("这个版本还没有实例快照，先创建草稿或发布一次。");
+  const definition = ontologyDefinitionSchema.parse(row.definition);
+  const nodes = (row.snapshot.nodes ?? []).map((node) => nodeSchema.parse(node));
+  const relationships = (row.snapshot.relationships ?? []).map((item) => relationshipSchema.parse(item));
+  // 完整性口径不变：定义 + 节点 + 关系三段算一个 sha256，写入时记、读出来比。
+  const content = snapshotContent({ definition, nodes, relationships });
+  if (row.content_hash && content.contentHash !== row.content_hash) throw new Error("版本快照内容校验失败，可能被外部改写。");
+  return { definition, nodes, relationships };
 }
 
 export async function exportTargetSnapshot(target: GraphTarget, definition: OntologyDefinition): Promise<VersionSnapshot> {

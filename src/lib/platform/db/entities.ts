@@ -104,6 +104,50 @@ export class EmbeddedGraphEntity {
   @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
 }
 
+/**
+ * 本体版本记录：**本体定义（OntologyDefinition）就存在 `definition` 这一列**。
+ *
+ * 2026-10-10 之前定义是磁盘上的 `definition.json`（见迁移 0005 的说明），现在 PG 是唯一权威；
+ * 磁盘只留实例快照 `nodes.csv` / `relationships.csv`。
+ * 磁盘时代那个 `artifact_path`（快照目录）不再有对应文件，对外只作为「有没有快照」的标记。
+ */
+@Entity({ schema: "ontology_platform", name: "ontology_versions" })
+export class OntologyVersionEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "target_id" }) targetId!: string;
+  @Column("integer", { name: "version_number" }) versionNumber!: number;
+  @Column("text") status!: string;
+  @Column("jsonb") definition!: JsonColumn;
+  /** 实例快照（nodes + relationships）；null = 这个版本还没有快照。 */
+  @Column("jsonb", { nullable: true }) snapshot!: JsonColumn | null;
+  @Column("text", { name: "created_by", default: "" }) createdBy!: string;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "published_at", nullable: true }) publishedAt!: Date | null;
+  @Column("integer", { name: "entity_count", default: 0 }) entityCount!: number;
+  @Column("integer", { name: "relationship_count", default: 0 }) relationshipCount!: number;
+  @Column("text", { name: "content_hash", nullable: true }) contentHash!: string | null;
+  @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
+}
+
+/**
+ * 定义里概念的扁平索引（2026-10-10 建，**为向量检索做准备**）。
+ *
+ * 一行一个概念（对象类型 / 属性 / 关系类型 / 接口 / 指标 / 动作 / 规则 / 分组）。
+ * 现在只填文本：全文列 `search_doc`（tsvector 生成列）、pg_trgm 索引、以及 pgvector 的
+ * `embedding` 列都由 `@/lib/platform/version-records` 的 `ensureConceptSearchIndex()`
+ * 在库支持时补，**这两列刻意不在实体里声明**（PG 专有，交给 synchronize 会被删）。
+ */
+@Entity({ schema: "ontology_platform", name: "ontology_concepts" })
+export class OntologyConceptEntity {
+  @PrimaryColumn("text", { name: "version_id" }) versionId!: string;
+  @PrimaryColumn("text") kind!: string;
+  @PrimaryColumn("text") name!: string;
+  @Column("text", { name: "target_id" }) targetId!: string;
+  @Column("text", { name: "object_type", default: "" }) objectType!: string;
+  @Column("text", { name: "search_text", default: "" }) searchText!: string;
+  @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
+}
+
 /** 审计：发布、失败、动作决策、数据资源变更都落这里。 */
 @Entity({ schema: "ontology_platform", name: "audit_entries" })
 export class AuditEntryEntity {
