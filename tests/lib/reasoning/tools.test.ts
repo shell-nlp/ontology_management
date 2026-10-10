@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
 import { dataSourcesForTable, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import { profileTableKey, type ColumnValueIndex } from "@/lib/datasource/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -116,6 +117,8 @@ describe("工具范围", () => {
     // 2026-09-19：对象服务落地后实例工具重新开放（索引优先、没有就按主键回源）。
     expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "run_query", "query_object_instance", "query_instance_subgraph", "list_actions", "list_metrics"]);
     expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual([]);
+    // 2026-10-10：分组上的 disabled 曾漏改 —— 工具已开放，MCP 调试页却还把整组写成「暂不使用」。
+    expect(MCP_TOOL_GROUPS.filter((group) => group.disabled).map((group) => group.key)).toEqual([]);
   });
 
   it("每个工具的 JSON Schema 都能被 AI SDK 的 jsonSchema() 收下（数组/枚举参数拼错只会在这里炸）", () => {

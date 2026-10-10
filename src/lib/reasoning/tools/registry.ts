@@ -190,10 +190,10 @@ export const REASONING_TOOLS: ToolSpec[] = [
     },
   },
   /*
-   * 两个实例工具标记成 disabled：这一版只在对象类型 / 关系类型这一层推理，不查具体对象与数据行
-   * （2026-09-14 决定）。它们不会进模型的工具集、也不进 MCP 的 tools/list，
-   * 只留在目录里，让「MCP 调试」页把它们灰着显示出来 —— 看得见"有这么两个工具，暂时不用"。
-   * 要恢复：去掉 disabled。
+   * 两个实例工具：2026-09-14 曾用 `disabled` 把它们挡在模型与 MCP 之外；2026-09-19 对象服务落地后
+   * 已撤销该标记（`disabled` 现在是"平台级停用"的口子，当前没有任何工具在用）。
+   * 它们现在由工具开关控制：出厂默认关闭（`tool-policy.ts` 的 `DEFAULT_DISABLED_TOOLS`），
+   * 管理员可在「MCP 调试」里按全局默认或按本体打开。
    */
   {
     name: "query_object_instance",

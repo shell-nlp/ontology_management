@@ -25,15 +25,16 @@ export type McpToolGroup = { key: string; label: string; description: string; di
 /**
  * 分组照 bkn-studio 的说法：先找本体，再查模型，最后查实例。顺序就是使用顺序。
  *
- * 「对象实例与关系子图查询」这一组标了 disabled：2026-09-14 起只在对象类型 / 关系类型这一层
- * 推理，不查实例。它在 MCP 调试页上照样列出来，但是灰的、点不动，一眼能看出"有这两个工具、暂时不用"；
- * 外部客户端的 tools/list 里没有它们（见下面 MCP_TOOLS 与 MCP_TOOL_CATALOG 的区别）。
+ * **目前没有任何分组标 `disabled`**：2026-09-14 曾把「对象实例与关系子图查询」整组标成停用，
+ * 2026-09-19 对象服务落地后已撤销。实例工具现在和别的工具一样可开关，给不给模型用由工具开关
+ * （`tool-policy.ts` 的 `DEFAULT_DISABLED_TOOLS`，出厂默认关）决定，不再由分组或工具上的 `disabled` 决定。
+ * `disabled` 这套机制保留，作为将来"平台级停用、连开关都不给"的口子。
  */
 export const MCP_TOOL_GROUPS: McpToolGroup[] = [
   { key: "discovery", label: "本体与 Schema", description: "本体列表与它落在哪个存储上" },
   { key: "model", label: "本体模型检索", description: "语义检索、对象类型、关系类型、动作定义" },
   { key: "data", label: "数据来源（只读）", description: "对象类型绑定的表：表结构与只读查询" },
-  { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图", disabled: true },
+  { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图" },
 ];
 
 const TOOL_GROUP: Record<string, string> = {
@@ -127,8 +128,8 @@ export function mcpToolCatalog(): McpTool[] {
 /**
  * 真正对外提供的工具：tools/list 与 tools/call 都走这一份。
  *
- * 两种"不提供"：平台自己停用的（`tool.disabled`，这一版不查实例），
- * 以及用户在「MCP 调试」里关掉的（`disabledTools`）。关掉的工具在外部客户端眼里就等于不存在。
+ * 两种"不提供"：平台自己停用的（`tool.disabled`，当前没有任何工具在用它），
+ * 以及用户在「MCP 调试」里关掉的（`disabledTools`，含出厂默认关的那三个）。关掉的工具在外部客户端眼里就等于不存在。
  */
 export function mcpTools(disabledTools: readonly string[] = []): McpTool[] {
   const off = new Set(disabledTools);

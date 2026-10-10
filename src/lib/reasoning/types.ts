@@ -19,6 +19,9 @@ export type ToolSpec = {
    * 暂时不使用的工具：留在这份目录里，MCP 调试页会把它灰着显示（说明它存在），
    * 但**不暴露**给模型、也不给外部 MCP 客户端 —— 它们只能看到没被标记的那些。
    * 要恢复就把这个标记去掉，实现本来就在 `runReasoningTool` 里。
+   *
+   * **当前没有任何工具标它**（2026-10-10）：实例工具的停用已改由工具开关
+   * （`tool-policy.ts` 的 `DEFAULT_DISABLED_TOOLS`）控制，这台"平台级停用"的口子先留着。
    */
   disabled?: boolean;
 };
