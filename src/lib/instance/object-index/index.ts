@@ -19,7 +19,7 @@ const factories = new Map<ObjectIndexKind, () => ObjectIndex>([["POSTGRES", () =
 
 /**
  * 实例缓存挂 `globalThis`：dev 下模块会被反复求值，模块级变量会漏掉上一份实例 ——
- * 和 `@/lib/data-source/sql` 的连接池同一个道理（同一件事只留一份）。
+ * 和 `@/lib/datasource/sql` 的连接池同一个道理（同一件事只留一份）。
  */
 const instances = (() => {
   const holder = globalThis as typeof globalThis & { __ontologyObjectIndexes?: Map<ObjectIndexKind, ObjectIndex> };

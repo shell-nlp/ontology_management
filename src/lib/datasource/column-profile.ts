@@ -18,7 +18,7 @@ import type { OntologyDefinition } from "@/lib/ontology";
  *    不做全表 COUNT(DISTINCT)；采样里种数超过 50 的列按「高基数列」处理，不存取值；
  * 3. **按天缓存**：一份画像写完 24 小时内直接复用，只有显式 `refresh` 才回源库重采。
  *
- * 这里不引驱动：真正采样时才动态 import `@/lib/data-sources`（与 reasoning/tools.ts 同一套路），
+ * 这里不引驱动：真正采样时才动态 import `@/lib/datasource/sources`（与 reasoning/tools.ts 同一套路），
  * 读缓存这条路径因此不需要连业务库。
  */
 
