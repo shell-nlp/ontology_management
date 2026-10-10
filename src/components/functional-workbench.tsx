@@ -79,6 +79,26 @@ function isWriteStatement(kind: GraphTargetKind | undefined, statement: string) 
   return /\b(insert|delete|load|clear|create|drop|add|move|copy)\b/i.test(statement);
 }
 
+/**
+ * 只有 `target.read` 的角色拿不到图引擎连接清单，但本体列表里带着落点（id / 名称 / 类型 / 地址）。
+ * 用它拼一个**只读**的 Target 兜底，让「本体建模」这类只看定义的页面照常能打开。
+ * 连接细节（库名、账号、参数）这里没有，也不该有 —— 那些要 `target.read`。
+ */
+function targetFromStorage(storage: OntologySummary["storage"]): Target | null {
+  if (!storage) return null;
+  return {
+    id: storage.id,
+    name: storage.name,
+    kind: storage.kind as GraphTargetKind,
+    kindLabel: storage.kindLabel,
+    queryLanguage: "sparql",
+    uri: storage.uri,
+    databaseName: "",
+    username: "",
+    options: {},
+  };
+}
+
 function graphNoun(target: Target | null | undefined) {
   return target ? graphTargetKindInfo(target.kind).label : "图数据库";
 }
@@ -253,18 +273,36 @@ function GraphSettingsDialog({ settings, onSave, onReset, onClose }: { settings:
  * 本体列表与当前本体状态合在「总览」；存储资源放进「设置」，数据资源仍在平台分组。
  * 面包屑复用同一份标签，避免导航写中文、面包屑还露着英文 id。
  */
-type NavItem = readonly [View, string, LucideIcon];
+type NavItem = readonly [View, string, LucideIcon, Permission | null];
 
+/**
+ * 左侧导航。第 4 项是**进入这个视图需要的权限点**，`null` = 所有登录用户都能进
+ * （「设置」里各个标签再各自判）。渲染前按它过滤 —— 角色没有权限的功能不该出现在导航里。
+ * 2026-10-10 用户口径：「角色缺少对前端界面某些功能可见性的控制」。
+ *
+ * 隐藏只是体验，真正的边界仍在服务端的 `requirePermission`。
+ */
 const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
-  { label: "", items: [["overview", "总览", Activity]] },
-  { label: "本体模型", items: [["ontology", "本体建模", BookOpen], ["skills", "本体技能", Sparkles]] },
-  { label: "本体实例", items: [["graph", "实例图谱", Network], ["entities", "对象", CircleDot], ["relations", "关系", Link2]] },
-  { label: "动力模型", items: [["actions", "动作", ShieldAlert], ["rules", "规则", ShieldCheck]] },
-  { label: "能力验证", items: [["qa", "智能问答", MessagesSquare], ["mcp", "MCP 调试", Terminal]] },
-  { label: "平台", items: [["data", "数据资源", Table2], ["settings", "设置", Settings2]] },
+  { label: "", items: [["overview", "总览", Activity, "ontology.read"]] },
+  { label: "本体模型", items: [["ontology", "本体建模", BookOpen, "ontology.read"], ["skills", "本体技能", Sparkles, "ontology.read"]] },
+  { label: "本体实例", items: [["graph", "实例图谱", Network, "instance.read"], ["entities", "对象", CircleDot, "instance.read"], ["relations", "关系", Link2, "instance.read"]] },
+  { label: "动力模型", items: [["actions", "动作", ShieldAlert, "ontology.read"], ["rules", "规则", ShieldCheck, "ontology.read"]] },
+  { label: "能力验证", items: [["qa", "智能问答", MessagesSquare, "reasoning.use"], ["mcp", "MCP 调试", Terminal, "reasoning.use"]] },
+  { label: "平台", items: [["data", "数据资源", Table2, "datasource.read"], ["settings", "设置", Settings2, null]] },
 ];
 
 const NAV_ITEMS: readonly NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
+
+/** 这个人能不能进这个视图（导航里没列出、判不出来的按「能进」处理）。 */
+function mayEnterView(user: User, view: View): boolean {
+  const item = NAV_ITEMS.find(([id]) => id === view);
+  return !item || item[3] === null || may(user, item[3]);
+}
+
+/** 被权限挡住时的落脚点：这个人第一个能进的视图。 */
+function firstEnterableView(user: User): View {
+  return NAV_ITEMS.find(([, , , code]) => code === null || may(user, code))?.[0] ?? "settings";
+}
 
 function navLabel(view: View) {
   return NAV_ITEMS.find(([id]) => id === view)?.[1] ?? view;
@@ -295,9 +333,14 @@ export function FunctionalWorkbench() {
   const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { settings: displaySettings, update: updateDisplaySettings, reset: resetDisplaySettings } = useDisplaySettings();
 
-  const selectedTarget = targets.find((target) => target.id === targetId) ?? null;
   const selectedOntology = ontologies.find((item) => item.id === ontologyId) ?? null;
-  const openStorageSettings = () => { setSettingsTab("storage"); setView("settings"); };
+  /*
+   * 图引擎连接清单要 `target.read`，没有这个权限的角色拿不到 `targets`；本体列表里的 `storage`
+   * 是同一份落点信息里该给所有人看的那部分，用它兜底，别让「看得到本体却打不开本体建模」。
+   */
+  const selectedTarget = targets.find((target) => target.id === targetId) ?? targetFromStorage(selectedOntology?.storage ?? null);
+  // 「图引擎配置」要 target.read：没这个权限就别把设置页切到那个标签（导航里那条也不显示）。
+  const openStorageSettings = () => { setSettingsTab(user && may(user, "target.read") ? "storage" : "general"); setView("settings"); };
   /** 选一个本体：它的落点决定后面所有图操作打在哪个存储上。 */
   const openOntology = (ontology: OntologySummary) => {
     // 落点没变就不要清 versionTargetId：清了但 targetId 没变，加载效应不会再跑，
@@ -326,8 +369,19 @@ export function FunctionalWorkbench() {
     const storageId = data.find((item) => item.id === nextId)?.storage?.id ?? "";
     if (storageId && storageId !== targetId) { setTargetId(storageId); setVersionTargetId(""); }
   };
-  const loadTargets = async () => {
-    const [data, ontologyList] = await Promise.all([api<Target[]>("/api/targets"), api<OntologySummary[]>("/api/ontologies")]);
+  const loadTargets = async (actor: User | null = null) => {
+    const viewer = actor ?? user ?? null;
+    /*
+     * 两个请求**分开判**：本体列表只需要 `ontology.read`，图引擎连接清单要 `target.read`。
+     * 以前这里平铺成一个 Promise.all，角色没有 target.read 时 /api/targets 回 403，
+     * 整个 Promise.all 直接 reject —— 本体列表跟着一起空掉，账号看着像「平台里没有本体」。
+     * （2026-10-10 用户报的：新建账号看不到本体。）没这个权限就不发这个请求。
+     */
+    const canReadTargets = Boolean(viewer) && may(viewer as User, "target.read");
+    const [ontologyList, data] = await Promise.all([
+      api<OntologySummary[]>("/api/ontologies"),
+      canReadTargets ? api<Target[]>("/api/targets") : Promise.resolve([] as Target[]),
+    ]);
     setTargets(data);
     setOntologies(ontologyList);
     // 「当前本体」是主选择，落点跟着它走。两边各自取第一个是不行的：
@@ -358,7 +412,10 @@ export function FunctionalWorkbench() {
     setVersionTargetId(id);
     const workspace = nextDraft ?? nextPublished;
     const versionParam = workspace ? `&versionId=${workspace.id}` : "";
-    const types = await api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(id)}${versionParam}`);
+    // 运行时类型要 `instance.read`：没有这个权限的角色别去问，否则顶栏会顶一条 403 提示。
+    const types = user && may(user, "instance.read")
+      ? await api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(id)}${versionParam}`)
+      : null;
     setRuntimeTypes(types);
   };
 
@@ -370,10 +427,18 @@ export function FunctionalWorkbench() {
      */
     api<{ user: User | null }>("/api/auth/session").then(async (data) => {
       setUser(data.user);
-      if (data.user) { await loadTargets(); return; }
+      if (data.user) { await loadTargets(data.user); return; }
       clearSessionToken();
     }).catch(() => setUser(null));
   }, []);
+
+  /*
+   * 权限变了（改角色 / 换账号）或当前视图没权限：落到第一个能进的视图。
+   * 不留「停在空白页」或「点了导航没反应」的状态。
+   */
+  useEffect(() => {
+    if (user && !mayEnterView(user, view)) setView(firstEnterableView(user));
+  }, [user, view]);
 
   useEffect(() => {
     if (!targetId) return;
@@ -422,16 +487,16 @@ export function FunctionalWorkbench() {
   };
 
   if (user === undefined) return <div className="loading-screen">正在加载 Ontology...</div>;
-  if (!user) return <Login onSuccess={async (next) => { setUser(next); await loadTargets(); }} />;
+  if (!user) return <Login onSuccess={async (next) => { setUser(next); await loadTargets(next); }} />;
 
   const userProp = user;
 
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section) => <div className="nav-section" key={section.label || "root"}>{section.label && <p className="nav-section-label">{section.label}</p>}{section.items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>)}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section, sectionIndex) => { const items = section.items.filter(([, , , code]) => code === null || may(user, code)); if (!items.length) return null; return <div className="nav-section" key={section.label || `root-${sectionIndex}`}>{section.label && <p className="nav-section-label">{section.label}</p>}{items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>; })}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
     <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
-      {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
+      {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
       {view === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
-      {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
+      {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(user); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
       {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
       {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={may(userProp, "ontology.write")} initialRun={pendingRun} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
       {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={may(userProp, "ontology.write")} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
@@ -448,7 +513,7 @@ export function FunctionalWorkbench() {
       {view === "mcp" && <McpStudio ontologies={ontologies} ontologyId={selectedOntology?.id ?? ""} notify={notify} fail={fail} />}
       {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
       {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
-      {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button><button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>{may(user, "audit.read") && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}{may(user, "users.manage") && <button type="button" className={settingsTab === "users" ? "active" : ""} aria-pressed={settingsTab === "users"} onClick={() => setSettingsTab("users")}>用户与角色</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} /> : settingsTab === "audit" ? <AuditLog fail={fail} /> : <UserRoleManager me={{ id: user.id, email: user.email }} notify={notify} fail={fail} />}</section>}
+      {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button>{may(user, "target.read") && <button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>}{may(user, "audit.read") && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}{may(user, "users.manage") && <button type="button" className={settingsTab === "users" ? "active" : ""} aria-pressed={settingsTab === "users"} onClick={() => setSettingsTab("users")}>用户与角色</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} notify={notify} fail={fail} /> : settingsTab === "audit" ? <AuditLog fail={fail} /> : <UserRoleManager me={{ id: user.id, email: user.email }} notify={notify} fail={fail} />}</section>}
     </section>
   </main>;
 }
@@ -592,7 +657,7 @@ function censusRows(rows: RuntimeTypeInfo[], total: number, family: "entity" | "
   ));
 }
 
-function Overview({ target, draft, published, runtimeTypes, onNavigate, onOpenStorage }: { target: Target | null; draft: Version | null; published: Version | null; runtimeTypes: RuntimeTypeSet | null; onNavigate: (view: View) => void; onOpenStorage: () => void }) {
+function Overview({ target, draft, published, runtimeTypes, canViewGraph, onNavigate, onOpenStorage }: { target: Target | null; draft: Version | null; published: Version | null; runtimeTypes: RuntimeTypeSet | null; canViewGraph: boolean; onNavigate: (view: View) => void; onOpenStorage: () => void }) {
   const entityTypes = runtimeTypes?.labels.length ?? published?.definition.entityTypes.length ?? 0;
   const relationshipTypes = runtimeTypes?.relationshipTypes.length ?? published?.definition.relationshipTypes.length ?? 0;
   const entities = runtimeTypes?.entityCount ?? runtimeTypes?.labels.reduce((sum, item) => sum + item.count, 0) ?? 0;
@@ -602,7 +667,7 @@ function Overview({ target, draft, published, runtimeTypes, onNavigate, onOpenSt
   const entityTotal = entityRows.reduce((sum, item) => sum + item.count, 0);
   const relationTotal = relationRows.reduce((sum, item) => sum + item.count, 0);
   const hasCensus = runtimeTypes !== null;
-  return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个本体存储"}</h2>{target ? <><div className="overview-stats"><div className="overview-stat"><b>{entityTypes}</b><span>对象类型</span><small>对象的定义</small></div><div className="overview-stat"><b>{entities}</b><span>对象</span><small>数据库中的节点</small></div><div className="overview-stat"><b>{relationshipTypes}</b><span>关系类型</span><small>数据库中的关系类型</small></div><div className="overview-stat"><b>{relationships}</b><span>关系</span><small>数据库中的关系</small></div></div><div className="overview-status"><span>草稿：<b>{draft ? `v${draft.version_number}` : "无"}</b></span><span>已发布：<b>{published ? `v${published.version_number}` : "无"}</b></span></div>{hasCensus && (entityTotal + relationTotal > 0 ? <div className="overview-census"><section className="census-panel entity"><div className="census-head"><CircleDot size={15} /><span>对象类型分布</span><b>{entityRows.length}</b></div>{censusRows(entityRows, entityTotal, "entity")}</section><section className="census-panel relation"><div className="census-head"><Link2 size={15} /><span>关系类型分布</span><b>{relationRows.length}</b></div>{censusRows(relationRows, relationTotal, "relation")}</section></div> : <div className="overview-census-empty">图数据库中还没有数据。在「实例图谱」页创建节点与关系后，这里会展示每个对象类型与关系类型的数量分布。</div>)}</> : <p>先在「本体存储」登记图数据库的连接信息，凭据会加密保存。</p>}<div className="functional-actions">{target && <button className="action" onClick={() => onNavigate("graph")}><Network size={16} />打开图谱管理</button>}<button className="action primary" onClick={() => target ? onNavigate("ontology") : onOpenStorage()}><span className="arrow">→</span>{target ? "查看本体" : "登记本体存储"}</button></div></section>;
+  return <section className="panel functional-panel overview-panel"><span className="eyebrow">本体控制室</span><h2>{target ? "本体与运行时状态" : "开始登记第一个本体存储"}</h2>{target ? <><div className="overview-stats"><div className="overview-stat"><b>{entityTypes}</b><span>对象类型</span><small>对象的定义</small></div><div className="overview-stat"><b>{entities}</b><span>对象</span><small>数据库中的节点</small></div><div className="overview-stat"><b>{relationshipTypes}</b><span>关系类型</span><small>数据库中的关系类型</small></div><div className="overview-stat"><b>{relationships}</b><span>关系</span><small>数据库中的关系</small></div></div><div className="overview-status"><span>草稿：<b>{draft ? `v${draft.version_number}` : "无"}</b></span><span>已发布：<b>{published ? `v${published.version_number}` : "无"}</b></span></div>{hasCensus && (entityTotal + relationTotal > 0 ? <div className="overview-census"><section className="census-panel entity"><div className="census-head"><CircleDot size={15} /><span>对象类型分布</span><b>{entityRows.length}</b></div>{censusRows(entityRows, entityTotal, "entity")}</section><section className="census-panel relation"><div className="census-head"><Link2 size={15} /><span>关系类型分布</span><b>{relationRows.length}</b></div>{censusRows(relationRows, relationTotal, "relation")}</section></div> : <div className="overview-census-empty">图数据库中还没有数据。在「实例图谱」页创建节点与关系后，这里会展示每个对象类型与关系类型的数量分布。</div>)}</> : <p>先在「本体存储」登记图数据库的连接信息，凭据会加密保存。</p>}<div className="functional-actions">{target && canViewGraph && <button className="action" onClick={() => onNavigate("graph")}><Network size={16} />打开图谱管理</button>}<button className="action primary" onClick={() => target ? onNavigate("ontology") : onOpenStorage()}><span className="arrow">→</span>{target ? "查看本体" : "登记本体存储"}</button></div></section>;
 }
 
 type TargetFormState = { name: string; kind: GraphTargetKind; uri: string; databaseName: string; username: string; password: string; namedGraph: string };

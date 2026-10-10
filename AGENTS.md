@@ -2012,3 +2012,20 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
 | --- | --- | --- |
 | C1 | `tests/lib/version-store.test.ts` 命名过时 | 用例实际测试 `version-snapshot.ts`，文件应与被测模块同名 |
 | C2 | 端到端用例覆盖不足 | `e2e/` 目前只有一个版本工作区 smoke；本体存储创建向导、发布失败提示、SPARQL 工作台、数据资源浏览与类绑定都还没有 e2e |
+
+## 左侧导航的权限可见性（2026-10-10）
+
+用户口径：「角色缺少对前端界面某些功能可见性的控制」。做法：**导航每一项都绑权限点**，渲染前过滤
+（`functional-workbench.tsx` 的 `NAV_SECTIONS` / `mayEnterView` / `firstEnterableView`）。
+
+- `NavItem` 是 4 元组 `[View, 标签, 图标, 权限点 | null]`；`null` = 所有登录用户可见（目前只有「设置」）。
+  映射：总览 / 本体建模 / 本体技能 / 动作 / 规则 → `ontology.read`；实例图谱 / 对象 / 关系 → `instance.read`；
+  智能问答 / MCP 调试 → `reasoning.use`；数据资源 → `datasource.read`。
+- 当前视图没权限时**自动落到第一个能进的视图**（改角色 / 换账号立刻生效），不留空白页。
+- 「设置」里三个标签各自判：图引擎配置 = `target.read`、审计记录 = `audit.read`、用户与角色 = `users.manage`。
+- **本体列表不许被别的权限带崩**：`loadTargets` 里 `/api/ontologies` 与 `/api/targets` 分开调
+  （`canReadTargets ? … : []`）。以前平铺成一个 `Promise.all`，没有 `target.read` 的角色收到 403 后
+  整个 `Promise.all` reject，本体列表跟着空掉 —— 新账号看着像「平台里没有本体」。
+- 没有 `target.read` 也能看本体：`targetFromStorage()` 用本体列表里的 `storage` 拼一个只读 Target 兜底；
+  `loadVersions` 在没有 `instance.read` 时**不发** `/api/instances/types`（免得顶栏顶一条 403）。
+- 加视图时别忘了第 4 项：`tests/lib/nav-visibility.test.ts` 扫源码对账（视图清单 ↔ 导航登记 ↔ 权限点存在）。
