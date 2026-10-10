@@ -30,8 +30,15 @@ export type ConversationScope = {
 
 export type { ConversationDetail, ConversationMessage, ConversationSummary } from "@/lib/reasoning/conversation-view";
 
-function clampLimit(limit: number | undefined) {
-  return Math.min(200, Math.max(1, Math.floor(limit ?? 50)));
+/**
+ * 列表条数：**不传就是全给**（2026-10-10 用户口径：「列清单不要设上限把尾巴砍掉」）。
+ *
+ * 以前默认只回 50 条、上限 200：对话攒到 50 条以上，侧栏的尾巴就永远看不见了 ——
+ * 而且是**静默**看不见（用户以为自己只有那么多）。真给一个 limit 时按它截，调用方自己负责。
+ */
+function normalizeLimit(limit: number | undefined) {
+  if (limit === undefined || limit === null || !Number.isFinite(limit) || limit <= 0) return null;
+  return Math.floor(limit);
 }
 
 /**
@@ -55,12 +62,11 @@ function scopedConversations(
 
 export async function listConversations(scope: ConversationScope, userId: string, limit?: number): Promise<ConversationSummary[]> {
   const repo = await platformRepo(ConversationEntity);
-  const rows = await scopedConversations(repo.createQueryBuilder("c"), scope, userId)
-    .orderBy("c.updated_at", "DESC")
-    .limit(clampLimit(limit))
-    .getMany();
+  const query = scopedConversations(repo.createQueryBuilder("c"), scope, userId).orderBy("c.updated_at", "DESC");
+  const capped = normalizeLimit(limit);
+  const rows = await (capped === null ? query : query.limit(capped)).getMany();
   // 轮次用一条按 id 的批量查询数出来：TypeORM 1.x 去掉了 loadRelationCountAndMap，
-  // 与其手写 COUNT/GROUP BY，不如让 ORM 取行、在这里数（上限 200 条对话，代价可忽略）。
+  // 与其手写 COUNT/GROUP BY，不如让 ORM 取行、在这里数（对话是随用户问答长出来的，量级不大）。
   const ids = rows.map((row) => row.id);
   const turns = new Map<string, number>();
   if (ids.length) {

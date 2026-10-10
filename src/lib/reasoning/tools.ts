@@ -99,6 +99,10 @@ export type SchemaMatch = {
   object_type?: string;
 };
 
+/** search_schema 的默认条数与调用方可以要到的上限（排序检索，不是清单；见那里的说明）。 */
+const DEFAULT_SEARCH_MATCHES = 50;
+const MAX_SEARCH_MATCHES = 1000;
+
 /** 「取数行数上限」留空时的兜底：一次最多取这么多行，防止一条语句把内存拉爆。 */
 const SQL_ROW_CEILING = 5000;
 
@@ -113,12 +117,12 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "search_schema",
     description:
-      "在已发布本体里按一个或多个自然语言关键词检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。多个关键词一次传入 queries，结果按概念去重。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。**整个本体都没命中时会带 no_match_queries** —— 那说明这些概念还没建进本体，剩下的 matches 只是兜底推荐，别当成命中、也别拿它硬凑口径。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
+      "在已发布本体里按一个或多个自然语言关键词检索对象类型、关系类型、动作、接口、指标与属性。任何问题都先调它，用来确认业务里到底有哪些概念、叫什么名字。多个关键词一次传入 queries，结果按概念去重。**默认给分数最高的前 50 条**；命中总数写在 total_matched、被省掉多少写在 omitted（尾巴可以不给，但**绝不隐形**）。要看更多就传 max_concepts（最大 1000），或者用更具体的业务词 / kinds 收窄。返回里 matched 说明凭什么命中：name=名字对上，description=描述/属性里提到，value=**某个列的取值**命中（这时 bound_table + source_column 就是落点，可以直接拿去 run_sql 过滤；命中的概念都带 data_source，那就是 run_sql / get_table_ddl 要填的数据资源名，不用再去 get_object_type 反查）。**整个本体都没命中时会带 no_match_queries** —— 那说明这些概念还没建进本体，剩下的 matches 只是兜底推荐，别当成命中、也别拿它硬凑口径。查「某某状态 / 某某类型」这类业务黑话时，先看有没有 value 命中——它往往比名字更接近答案。",
     parameters: {
       type: "object",
       properties: {
         queries: { type: "array", items: { type: "string" }, description: "一次传一个或多个关键词。结果会按概念去重，并在每条命中上标 matched_queries，避免同一轮重复检索同一概念" },
-        max_concepts: { type: "integer", description: "最多返回多少个候选，默认 20，上限 50" },
+        max_concepts: { type: "integer", description: "最多返回多少个候选，默认 50、最大 1000。返回里的 total_matched 是命中总数、omitted 是这次没给的条数" },
         limit: { type: "integer", description: "max_concepts 的别名，二选一即可" },
         kinds: {
           type: "array",
@@ -173,7 +177,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "get_table_ddl",
     description:
-      "看一个或多个表 / 视图的结构，返回每张表完整的 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。多个表一次传入 tables，results 中每一项与单独调用完全一致。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。tables 中每项写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（列只列前 30 个，总数才是真实值，别把两者当成一回事；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。采样里的取值清单是**跨多个统计日混在一起**算的，别当成「每天都有」——覆盖了哪些日期看 sample_coverage；带右填充空格的列看 padded_columns（比较 / join 要 TRIM，漏了会静默丢行）。要跑数之前先用它确认字段。",
+      "看一个或多个表 / 视图的结构，返回每张表完整的 DDL（列、类型、可空、主键、注释）、**列画像**（column_profile：每列采样 1000 行，低基数列给出取值清单、取值种数、空值比例）以及**反向引用**（bound_object_types：这张表被哪些对象类型绑定、各映射了哪几列）。多个表一次传入 tables，results 中每一项与单独调用完全一致。问「某某状态 / 某某类型对应哪个码值」先看 column_profile，不要一轮轮手写 GROUP BY 去探；表名没人认领时看 bound_object_types（本平台里表只能通过对象类型到达）。画像是按天缓存的采样结果，默认直接复用；只有传 refresh=true 才回源库重采（大表 COUNT(DISTINCT) 很贵，别频繁刷新）。返回里的 elapsed_ms 是这一步实际耗时，别对同一张表反复调。data_source 用数据资源名（见概念清单后面的数据资源），**也可以不传** —— 不给就按 table 在本体绑定里自动定位资源，定位到多个才必须指定。tables 中每项写全「模式.表」，例如 GISTOOLS.TB_DIC_AREA_CODE（对象类型绑定的表就是这么写的）；只写表名也认，模式退回数据资源登记的那个。**返回的列序**：column_profile.columns 每项是 [列名, 取值种数, 空值比例, 取值清单]，高基数列没有第 4 项；bound_object_types 每项是 [对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]（**映射列给全、不截断**，总数与清单长度一致；绑定状态写「未绑定数据资源」时，说明这条来源的 dataSourceId 还没绑到本机资源，去「对象 / 本体」页点「补齐数据资源绑定」补上再跑数，别当成表不存在）。采样里的取值清单是**跨多个统计日混在一起**算的，别当成「每天都有」——覆盖了哪些日期看 sample_coverage；带右填充空格的列看 padded_columns（比较 / join 要 TRIM，漏了会静默丢行）。要跑数之前先用它确认字段。",
     parameters: {
       type: "object",
       properties: {
@@ -723,8 +727,12 @@ export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId:
         object_type: entity.name,
         source_role: sourceRoleLabel(index),
         primary_key: source.primaryKey.filter(Boolean),
-        // 一列一个名字就够模型对上，不用把整张表复述一遍；太长的截到 30 个并给出总数。
-        mapped_columns: columns.slice(0, 30),
+        /*
+         * **给全，不截断**（2026-10-10 用户口径：「列清单不要设上限把尾巴砍掉」）。
+         * 以前只列前 30 列，结果 51 列的表里从第 31 列起（含 U_TYPE 这种关键口径列）永远看不见，
+         * 模型只能再调一次 get_object_type 反查 —— 省了小钱、赔了一次往返。
+         */
+        mapped_columns: columns,
         mapped_column_count: columns.length,
         binding,
       });
@@ -1023,6 +1031,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         payload: {
           queries,
           matches,
+          /* 去重之后的条数，与单关键词那条路径同一个字段名。 */
+          total_matched: matches.length,
           ...(noMatchQueries.length ? { no_match_queries: noMatchQueries } : {}),
           hint: "本次按多个关键词检索后已按 kind + name 去重；matched_queries 说明每个概念由哪些关键词命中，query_scores 保留各关键词的评分。",
           note: firstPayload?.note ?? "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
@@ -1061,8 +1071,19 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
   switch (name) {
     case "search_schema": {
       const query = typeof args.query === "string" ? args.query : "";
-      // 默认给宽一点（用户口径：默认可以大一点）：属性多的时候 8 条不够模型看清有哪些类型。
-      const maxConcepts = clamp(args.max_concepts ?? args.limit, 20, 50);
+      /*
+       * 条数（2026-10-10 用户口径：「列清单不要设上限把尾巴砍掉」）。
+       *
+       * 这里是**排序检索**，不是清单：实测"用户"这种词命中 583 条、183KB —— 全给会把上下文直接撑爆
+       * （还会撞上历史回放的上限，等于尾巴照样断，而且更不可解释）。所以：
+       * - 默认给前 50 条（覆盖住实际问法：业务词一般命中几条到几十条）；
+       * - 调用方**可以**要更多，最多 ${MAX_SEARCH_MATCHES} 条（要全量就给够大）；
+       * - **永远如实报出**命中总数与被省掉的条数（total_matched / omitted）—— 尾巴可以不给，但不能隐形。
+       */
+      const requestedMax = args.max_concepts ?? args.limit;
+      const maxConcepts = requestedMax === undefined || requestedMax === null || requestedMax === ""
+        ? DEFAULT_SEARCH_MATCHES
+        : Math.min(MAX_SEARCH_MATCHES, Math.max(1, Math.floor(Number(requestedMax))));
       const requested = Array.isArray(args.kinds) ? args.kinds.map((item) => String(item).trim().toUpperCase()) : [];
       const kinds = requested.filter((item): item is ConceptKind => (CONCEPT_KINDS as string[]).includes(item));
       const scopeType = typeof args.object_type === "string" && args.object_type.trim() ? args.object_type.trim() : "";
@@ -1080,7 +1101,10 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
        * "这些是本体里的真实定义"，模型只能靠换词反复试探（2026-10-10 用户报的就是这个）。
        */
       const noMatch = !schemaQueryHasStrongHit(concepts, query);
-      const ranked = rankSchemaConcepts(concepts, query, maxConcepts, { kinds });
+      // 先按同一个查询词排全部，再决定要不要截 —— 这样"总数"才是真的（不是截断后的长度）。
+      const allRanked = rankSchemaConcepts(concepts, query, Number.POSITIVE_INFINITY, { kinds });
+      const ranked = Number.isFinite(maxConcepts) ? allRanked.slice(0, maxConcepts) : allRanked;
+      const omitted = allRanked.length - ranked.length;
       /*
        * 没命中时，把返回项也一律标成 fallback —— 否则 hint 说"这些是兜底、别当成命中"，
        * 列表里却写着 matched=description（零星词重合造成的），模型读的是列表、不是提示。
@@ -1093,6 +1117,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         payload: {
           query,
           matches,
+          /* 命中总数 = 排序后的真实条数；只有调用方自己要收窄时才会有 omitted。 */
+          total_matched: allRanked.length,
+          ...(omitted > 0
+            ? {
+              omitted,
+              omitted_note: `命中一共 ${allRanked.length} 条，这里给了分数最高的前 ${ranked.length} 条，还有 ${omitted} 条没给（列表按分数排序，没给的是分数最低的那些）。要接着看就把 max_concepts 调大（最多 ${MAX_SEARCH_MATCHES}），或者用更具体的业务词 / kinds 收窄再搜 —— 别因为"只看到这些"就下"本体里没有"的结论。`,
+            }
+            : {}),
           hint: noMatch
             ? `「${query}」在对象类型 / 属性 / 关系类型 / 动作 / 接口 / 指标的名字、说明与已缓存的列取值里**都没有命中**。下面这些是按本体概念清单**兜底**给的（不代表本体里有对应概念），别当成命中结果，也别拿它硬凑口径。换个更贴业务的原词再试；如果确认本体内没这个概念，就如实说"本体里还没有这个口径"。`
             : "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。",
@@ -1479,8 +1511,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           notes: ddl.notes,
           /*
            * 每项按固定列序：[对象类型名, 它映射到这张表的列, 来源角色, 这个对象类型的主键列, 映射列总数, 绑定状态]。
-           * 第 5 项别省：mapped_columns 只列前 30 个，总数是**另一个数**（真实 37 列也只会列 30 个），
-           * 少了它就看不出一列被截断了。见 AGENTS.md「能推出 ≠ 可删」。
+           * 第 5 项是映射列总数，和第 2 项（列清单）一起给：**清单现在给全、不截断**（2026-10-10 用户口径），
+           * 两者应当一致 —— 真出现不一致就说明某一处又加了上限，那是 bug。
            * 第 6 项 binding 空串 = 绑好了；「未绑定数据资源」= dataSourceId 还没绑到本机资源（导入后没补齐），
            * 表身份是靠「模式.表」兜底认出来的 —— 要给用户指这条路，别把它当成"表不存在"。
            */
@@ -1633,7 +1665,12 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const search = typeof args.search === "string" && args.search.trim() ? args.search.trim() : null;
       const warnings: string[] = [];
       // 节点走对象服务（索引 / 数据源），关系仍来自本体图里已有的关系实例。
-      const scopeTypes = (typeNames.length ? typeNames : definition.entityTypes.map((item) => item.name)).slice(0, 12);
+      const allScopeTypes = typeNames.length ? typeNames : definition.entityTypes.map((item) => item.name);
+      const scopeTypes = allScopeTypes.slice(0, 12);
+      // 一次只取前 12 个类型是**取数的量级控制**：这次没取的类型要说出来，别让模型以为本体里没有它们。
+      if (allScopeTypes.length > scopeTypes.length) {
+        warnings.push(`这次只从 ${scopeTypes.length} 个对象类型里取对象（共 ${allScopeTypes.length} 个可取的）：没取的 ${allScopeTypes.length - scopeTypes.length} 个是「${allScopeTypes.slice(scopeTypes.length, scopeTypes.length + 5).join("、")}${allScopeTypes.length - scopeTypes.length > 5 ? " 等" : ""}」。要指定取哪些就传 type_names。`);
+      }
       const perType = Math.max(5, Math.ceil(nodeLimit / Math.max(1, scopeTypes.length)));
       const objectContext = objectContextOf(context);
       const collected: ObjectRecord[] = [];

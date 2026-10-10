@@ -229,7 +229,11 @@ export function sampleDateCoverage(rows: readonly Record<string, unknown>[], dat
     }
     if (!counts.size) continue;
     const all = [...counts.entries()].map(([date, count]) => ({ date, rows: count })).sort((a, b) => a.date.localeCompare(b.date));
-    coverage.push({ column, property, from: all[0].date, to: all[all.length - 1].date, dates: all.slice(0, 30), dateCount: all.length });
+    /*
+     * 采样覆盖到的日期**给全**（2026-10-10 用户口径：列清单不要设上限把尾巴砍掉）。
+     * 条数受采样行数限制（ROWNUM <= 1000），不会失控；dateCount 与 dates.length 一致。
+     */
+    coverage.push({ column, property, from: all[0].date, to: all[all.length - 1].date, dates: all, dateCount: all.length });
   }
   return coverage;
 }

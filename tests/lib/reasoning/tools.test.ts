@@ -715,6 +715,31 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
     expect(payload.matches.some((item) => item.name === "专业线产品用户")).toBe(true);
     expect(payload.note).toContain("表只能通过对象类型到达");
   });
+
+  /*
+   * 2026-10-10 用户口径：「列清单不要设上限把尾巴砍掉」。
+   * 以前默认只回 20 条、上限 50，模型看到"命中 20 个概念"就以为是全部 ——
+   * 尾巴里的概念（表尾列、低频属性）永远查不到。现在不传就是不限量。
+   */
+  it("不传 max_concepts 时给默认条数，但**如实报出命中总数**（尾巴可以不给，不能隐形）", async () => {
+    const context = { store: {} as never, definition: profiledDefinition(), runtimeTypes };
+    const all = (await runReasoningTool("search_schema", { query: "用户" }, context)).payload as { matches: unknown[]; total_matched: number; omitted?: number };
+    expect(all.total_matched).toBeGreaterThanOrEqual(all.matches.length);
+    // 同一份定义里传 5 条：拿到的更少，但总数必须一致（总数是真值，不是截断后的长度）。
+    const capped = (await runReasoningTool("search_schema", { query: "用户", max_concepts: 5 }, context)).payload as { matches: unknown[]; total_matched: number };
+    expect(all.matches.length).toBeGreaterThan(capped.matches.length);
+    expect(capped.total_matched).toBe(all.total_matched);
+  });
+
+  it("自己传了 max_concepts 才截断，并且如实报出总数与被省掉的条数", async () => {
+    const context = { store: {} as never, definition: profiledDefinition(), runtimeTypes };
+    const capped = (await runReasoningTool("search_schema", { query: "用户", max_concepts: 5 }, context)).payload as { matches: unknown[]; total_matched: number; omitted?: number; omitted_note?: string };
+    expect(capped.matches).toHaveLength(5);
+    expect(capped.total_matched).toBeGreaterThan(5);
+    expect(capped.omitted).toBe(capped.total_matched - 5);
+    expect(capped.omitted_note).toContain("没给");
+    expect(capped.omitted_note).toContain("max_concepts");
+  });
 });
 
 describe("批量本体工具：单项信息不缩水", () => {
@@ -810,6 +835,28 @@ describe("objectTypesBoundTo（get_table_ddl 的反向引用）", () => {
   it("get_table_ddl 的说明写死了 bound_object_types 的列序（说明与实现对不上就是真丢信息）", () => {
     expect(REASONING_TOOLS.find((item) => item.name === "get_table_ddl")!.description)
       .toContain("[对象类型名, 映射到这张表的列, 来源角色, 主键列, 映射列总数, 绑定状态]");
+  });
+
+  /*
+   * 2026-10-10 用户口径：「列清单不要设上限把尾巴砍掉」。
+   * 现场是一张被映射了 51 列的表，返回里只列了前 30 列，从第 31 列起（含 U_TYPE 这种关键口径列）
+   * 永远看不见，模型只能再调一次 get_object_type 反查。这个用例就是钉住"给全"。
+   */
+  it("映射列超过 30 个时也给全，不砍尾巴（清单长度 = 总数）", () => {
+    const def = profiledDefinition();
+    const many = Array.from({ length: 33 }, (_, index) => ({
+      name: `属性${index + 1}`,
+      dataType: "TEXT",
+      required: false,
+      unique: false,
+      indexed: false,
+      sourceField: `COL_${String(index + 1).padStart(2, "0")}`,
+    }));
+    (def.entityTypes.find((item) => item.id === 线路类)!.properties as typeof many) = many;
+    const bound = objectTypesBoundTo(def, 线路资源, "GISTOOLS", 线路表);
+    expect(bound[0].mapped_columns).toHaveLength(33);
+    expect(bound[0].mapped_columns).toContain("COL_33");
+    expect(bound[0].mapped_column_count).toBe(bound[0].mapped_columns.length);
   });
 });
 
