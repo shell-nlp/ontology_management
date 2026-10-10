@@ -1,232 +1,35 @@
 import { NextRequest } from "next/server";
-import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/auth";
-import { listDataSources } from "@/lib/data-sources";
-import { getGraphStore } from "@/lib/graph";
-import { getOntologyByTargetId } from "@/lib/ontologies";
-import { writeAuditEntry } from "@/lib/platform-db";
-import { getPublishedOntology } from "@/lib/published-ontology";
-import { runReasoning, worthKeepingTurn, type AgentEvent } from "@/lib/reasoning/agent";
-import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
-import { effectiveQuestion } from "@/lib/reasoning/attachments";
-import { saveTurn } from "@/lib/reasoning/conversations";
-import { prepareHistory } from "@/lib/reasoning/history-context";
-import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
-import type { ReasoningContext } from "@/lib/reasoning/types";
-import { getTarget } from "@/lib/targets";
+import { getReasoningRun, reasoningRunInput, startReasoningRun } from "@/lib/reasoning/run-registry";
+import { runEventStream } from "@/lib/reasoning/run-stream";
 
 /**
- * 流式推理：SSE。事件体是 `data: {"type":"...", ...}`，前端按 type 分发。
+ * 「起一轮 + 就地看完」：一条请求里把推理跑起来并流式看完。
  *
- * - thinking / answer：文字增量，边收边渲染
- * - answerReset：这一轮其实是去调工具的过渡语，界面要把已显示的文字清掉
- * - step：某一步工具执行完成
- * - context：多轮上下文准备好了（start / compressing / ready）—— 压缩要调一次模型，
- *   界面得先知道"在整理上下文"，而不是干等
- * - saved：这一轮已经记进对话历史（`conversationId` 为 null 表示没记上）
- * - done / error：收尾
- *
- * **"停止" = 客户端断开连接**：用户点停止（或关掉页面）时浏览器会掐掉这个 fetch，Next 把 `request.signal`
- * 掀掉，编排层也就跟着收手（见下面的 `aborter`）。被停的一轮在编排层是**正常收尾**的：
- * 已经跑出来的步骤与半截结论照常进对话历史（`run.stopped = true`），审计里也记 `stopped`，
- * 所以这里不会再回一条 error 事件。
- *
- * 校验与权限必须在**开流之前**做完：一旦开始返回 SSE，就没法再改 HTTP 状态码了。
+ * **运行本身不归这条连接所有**（2026-10-10 起）：断开只是"不看了"，服务端照常跑完、照常落库。
+ * 界面走的是先起再按游标接的两个端点（`/api/reasoning/runs` + `.../events`），
+ * 这里保留给「一次调用拿到完整过程」的用法（脚本 / 外部客户端），语义与老版本一致，
+ * 只是实现改成复用同一套运行登记处，不再自己编排一遍。
  */
 
-const reasoningStreamInput = z.object({
-  targetId: z.string().uuid(),
-  // 问题可以为空：只带图片提问时由 effectiveQuestion 补一句默认的（见 attachments.ts）。
-  question: z.string().trim().max(500),
-  /** 和问题一起发过去的图片；张数 / 体积 / 类型上限见 attachments.ts。 */
-  attachments: attachmentsSchema,
-  // 上限与服务端 agent.ts 的 MAX_STEPS_CEILING 对齐：那是防跑穿的兜底，不是给用户设的门槛。
-  maxSteps: z.number().int().min(1).max(100).optional(),
-  thinking: z.boolean().optional(),
-  /** 有就追加到这段对话后面，没有就新开一段。 */
-  conversationId: z.string().uuid().optional(),
-  /** 「问答配置」里的两个数。不传就是"不限制"，服务端只保留防跑穿的兜底。 */
-  toolResultLimit: z.number().int().min(500).max(200_000).optional(),
-  sqlRowLimit: z.number().int().min(1).max(5000).optional(),
-  /** 「问答配置」里改过的系统提示词。不传（或空白）就用默认那段。 */
-  systemPrompt: z.string().trim().max(20_000).optional(),
-  /** 「问答配置」里的「历史轮数」：原样回放最近几轮。不传 = 默认 5；0 = 完全不带历史。 */
-  historyTurns: z.number().int().min(0).max(20).optional(),
-});
-
-/** 除了编排层的事件，这个接口自己还会补几条：context / error / saved。 */
-type RouteEvent =
-  | AgentEvent
-  | { type: "context"; phase: "start" | "compressing" | "ready"; turns?: number; history?: ReasoningContext }
-  | { type: "error"; message: string }
-  | { type: "saved"; conversationId: string | null; warning?: string };
-
-function frame(event: RouteEvent) {
-  return `data: ${JSON.stringify(event)}\n\n`;
-}
-
 export async function POST(request: NextRequest) {
-  let input: z.infer<typeof reasoningStreamInput>;
   let actorId: string;
+  let input;
   try {
     const user = await requirePermission("reasoning.use");
     actorId = user.id;
-    input = reasoningStreamInput.parse(await request.json());
+    input = reasoningRunInput.parse(await request.json());
   } catch (error) {
-    const status = apiErrorStatus(error, 400);
-    return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status: apiErrorStatus(error) });
+    return Response.json({ error: apiErrorMessage(error, "请求不合法。") }, { status: apiErrorStatus(error, 400) });
   }
 
-  // 真正下发的问题文本：带图不带字时就是那句默认问题。审计、历史、模型入参三处都用它。
-  const question = effectiveQuestion(input.question, input.attachments ?? []);
-  if (!question) return Response.json({ error: "问题不能为空。" }, { status: 400 });
-
-  const target = await getTarget(input.targetId);
-  if (!target) return Response.json({ error: "本体存储不存在。" }, { status: 404 });
-
-  let definition;
+  let runId: string;
   try {
-    definition = await getPublishedOntology(target.id);
-  } catch {
-    return Response.json({ error: "该本体还没有发布版本，先在「本体草稿」里发布后再提问。" }, { status: 409 });
+    const run = await startReasoningRun({ userId: actorId, actorId, input });
+    runId = run.runId;
+  } catch (error) {
+    return Response.json({ error: apiErrorMessage(error, "无法开始这次推理。") }, { status: apiErrorStatus(error, 409) });
   }
 
-  const store = getGraphStore(target);
-  const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
-  // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
-  const dataSources = await listDataSources().catch(() => []);
-  // 历史归属在开流之前定下来：这两件事出错时还能回一个正常的 HTTP 错误码。
-  const ontology = await getOntologyByTargetId(target.id);
-  const scope = { ontologyId: ontology?.id ?? null, targetId: target.id };
-  const encoder = new TextEncoder();
-  /**
-   * 用户点「停止」、或者关掉页面/换页时，把整轮运行也停掉：
-   * - 浏览器 abort 这个 fetch，Next 会把 `request.signal` 掀掉
-   *   （它挂在 `res.once('close')` 上，且只在响应没写完时才 abort，正常跑完不会误触发）；
-   * - 消费端取消这条响应流时，ReadableStream 的 `cancel()` 也会被叫到。
-   *
-   * 两条都接到同一个 controller，`runReasoning` 拿它去掐模型请求 —— 所以"停止"是真的不再往下跑，
-   * 而不是前端自己把字藏起来。
-   */
-  const aborter = new AbortController();
-  const abort = () => aborter.abort();
-  request.signal.addEventListener("abort", abort);
-  // 极端情况下进到这里时请求已经断了（客户端点完就走）：补一次，别漏掉。
-  if (request.signal.aborted) abort();
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      // 断了就别再往里塞东西：客户端已经走了，`enqueue` 会抛，日志里全是噪音。
-      let closed = false;
-      const send = (event: RouteEvent) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(frame(event)));
-        } catch {
-          closed = true;
-        }
-      };
-      try {
-        /*
-         * 多轮上下文：同一段对话里的前面几轮要回放给模型 —— 最近几轮连求证轨迹一起原样带，
-         * 更早的轮次压成一段摘要（摘要存在对话记录里，下一轮直接复用）。
-         * 压缩要调一次模型，先发一条事件，别让界面干等。
-         */
-        send({ type: "context", phase: "start" });
-        const history = await prepareHistory({
-          scope,
-          userId: actorId,
-          conversationId: input.conversationId ?? null,
-          verbatimTurns: input.historyTurns,
-          onCompress: (turns) => send({ type: "context", phase: "compressing", turns }),
-        });
-        send({
-          type: "context",
-          phase: "ready",
-          history: {
-            verbatimTurns: history.verbatimTurns,
-            compressedTurns: history.compressedTurns,
-            summaryChars: history.summary.length,
-            chars: history.chars,
-            ...(history.warning ? { warning: history.warning } : {}),
-          },
-        });
-        // 工具开关跟着平台库走：MCP 那边关掉的工具，这里也同样不发给模型。
-        // 按本体分（2026-10-08）：这个本体有自己的覆盖就按覆盖，没有就跟着全局默认。
-        const policy = await loadToolPolicy(scope.ontologyId);
-        const run = await runReasoning({
-          question,
-          attachments: input.attachments,
-          history,
-          context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
-          maxSteps: input.maxSteps,
-          disabledTools: policy.disabledTools,
-          thinking: input.thinking,
-          systemPrompt: input.systemPrompt,
-          // 客户端断开 = 用户叫停：模型这一轮立刻收手，已经跑出来的部分照常收尾成运行记录。
-          abortSignal: aborter.signal,
-          onEvent: send,
-        });
-        await writeAuditEntry({
-          actorId,
-          targetId: target.id,
-          action: "REASONING_RUN",
-          details: { question, attachments: input.attachments?.length ?? 0, historyTurns: history.verbatimTurns, historyCompressed: history.compressedTurns, historyContextChars: history.chars, steps: run.steps.length, stepCount: run.stepCount, maxSteps: run.maxSteps, toolResultLimit: input.toolResultLimit ?? null, sqlRowLimit: input.sqlRowLimit ?? null, customSystemPrompt: Boolean(input.systemPrompt), model: run.model, truncated: run.truncated, stopped: run.stopped ?? false, elapsedMs: run.elapsedMs, thinking: input.thinking !== false, streamed: true },
-        });
-        /**
-         * 记进对话历史放在最后：跑挂了的一轮不留记录，历史里不会出现"点进去只有半句话"的条目。
-         * 被用户叫停的一轮要不要记，判断在 `worthKeepingTurn` 里（有东西可看才记）。
-         */
-        if (!worthKeepingTurn(run)) {
-          // 不记，也不发 saved 事件：这一轮没有可回看的内容，客户端那边也早就收尾了。
-        } else {
-          try {
-            const conversationId = await saveTurn({
-              scope,
-              userId: actorId,
-              conversationId: input.conversationId ?? null,
-              question,
-              answer: run.answer,
-              thinking: run.reasoning,
-              thinkingOn: input.thinking !== false,
-              run,
-              error: null,
-            });
-            send({ type: "saved", conversationId });
-          } catch {
-            // 落库失败不该吞掉已经跑出来的结论：界面照常显示，只是这条不进历史。
-            send({ type: "saved", conversationId: null, warning: "结论已生成，但这次没能记进对话历史。" });
-          }
-        }
-      } catch (error) {
-        // 用户叫停不算失败：客户端那边已经在收尾了，这里不再回一条 error 事件。
-        // （被停的一轮在 runReasoning 里是正常返回的，审计里记着 `stopped: true`。）
-        if (!aborter.signal.aborted) {
-          send({ type: "error", message: error instanceof Error ? error.message : "推理失败。" });
-        }
-      } finally {
-        request.signal.removeEventListener("abort", abort);
-        // 流已经被 cancel 掉时 close() 会抛：这里只是收尾，抛了就说明已经关了。
-        try {
-          controller.close();
-        } catch {
-          // 忽略：客户端先走一步。
-        }
-      }
-    },
-    // 消费端取消这条流（浏览器断开）时也把运行停掉。
-    cancel() {
-      abort();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      // 关掉反向代理的缓冲，否则流会被攒成一坨再吐出来。
-      "X-Accel-Buffering": "no",
-    },
-  });
+  return runEventStream(getReasoningRun(runId), runId, 0, request.signal);
 }

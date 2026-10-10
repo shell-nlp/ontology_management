@@ -21,6 +21,7 @@ import {
 import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
 import { historyLabel } from "@/lib/reasoning/history";
 import type { ReasoningAttachment, ReasoningContext, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
+import { cancelLiveRun, detachRunningRuns, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
 import "./qa-studio.css";
 
 /**
@@ -67,6 +68,11 @@ type Turn = {
   busy: boolean;
   /** 这一轮有没有开思考。关掉时不显示「思考过程」，否则会挂一个永远空着的块。 */
   thinkingOn: boolean;
+  /**
+   * 这一轮耗时的**前端读数**（毫秒）：正在跑的那一轮由浏览器自己计时，显示的是
+   * "我实际等了多久"。历史里回看的那一轮没有这一项，用运行记录里的 elapsedMs。
+   */
+  liveElapsedMs?: number;
 };
 
 /** 历史里的记录 → 界面上的这一轮。步骤直接从那次运行的 run 里取，和当时看到的一样。 */
@@ -85,6 +91,26 @@ function messageToTurn(message: ConversationMessage): Turn {
     stopped: message.run?.stopped ?? false,
     busy: false,
     thinkingOn: message.thinkingOn,
+  };
+}
+
+/** 还在跑的那一轮 → 界面上的这一轮：字段一一对应，跑完（run 落定）之后和历史记录同形。 */
+function liveRunToTurn(run: LiveRun): Turn {
+  return {
+    id: run.runId,
+    question: run.question,
+    attachments: run.attachments,
+    context: run.context,
+    preparing: run.preparing,
+    thinking: run.thinking,
+    answer: run.answer,
+    steps: run.steps,
+    run: run.run,
+    error: run.error,
+    stopped: run.stopped,
+    busy: run.running,
+    thinkingOn: run.thinkingOn,
+    liveElapsedMs: run.elapsedMs,
   };
 }
 
@@ -278,71 +304,6 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** 消费 SSE：把后端的事件翻译成界面状态。 */
-async function streamRun(
-  targetId: string,
-  question: string,
-  /** 和问题一起发过去的图片；空数组就是纯文字提问。 */
-  attachments: ReasoningAttachment[],
-  thinking: boolean,
-  conversationId: string | null,
-  /** 请求体里那几项：三个数字旋钮 + 可选的系统提示词。 */
-  settings: Record<string, number | string>,
-  /** 这一轮的取消开关：用户点「停止」时用它掐断请求，服务端收到断开就把整轮运行停掉。 */
-  signal: AbortSignal,
-  handlers: {
-    onThinking: (text: string) => void;
-    onAnswer: (text: string) => void;
-    onAnswerReset: () => void;
-    onStep: (step: ReasoningStep) => void;
-    onContext: (phase: "start" | "compressing" | "ready", history: ReasoningContext | undefined) => void;
-    onDone: (run: ReasoningRun) => void;
-    onSaved: (conversationId: string | null, warning: string | undefined) => void;
-  },
-) {
-  const response = await fetch("/api/reasoning/stream", {
-    method: "POST",
-    // 站内流式问答也走 Authorization（2026-10-09 起没有会话 cookie 了）。
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    signal,
-    body: JSON.stringify({ targetId, question, thinking, ...settings, ...(conversationId ? { conversationId } : {}), ...(attachments.length ? { attachments } : {}) }),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(body?.error ?? `请求失败（HTTP ${response.status}）。`);
-  }
-  if (!response.body) throw new Error("服务端没有返回流式响应。");
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.split("\n").find((item) => item.startsWith("data:"));
-      if (!line) continue;
-      let event: { type: string; [key: string]: unknown };
-      try {
-        event = JSON.parse(line.slice(5).trim()) as typeof event;
-      } catch {
-        continue;
-      }
-      if (event.type === "thinking") handlers.onThinking(String(event.text ?? ""));
-      else if (event.type === "answer") handlers.onAnswer(String(event.text ?? ""));
-      else if (event.type === "answerReset") handlers.onAnswerReset();
-      else if (event.type === "step") handlers.onStep(event.step as ReasoningStep);
-      else if (event.type === "context") handlers.onContext(String(event.phase) as "start" | "compressing" | "ready", event.history as ReasoningContext | undefined);
-      else if (event.type === "done") handlers.onDone(event.run as ReasoningRun);
-      else if (event.type === "saved") handlers.onSaved((event.conversationId as string | null) ?? null, typeof event.warning === "string" ? event.warning : undefined);
-      else if (event.type === "error") throw new Error(String(event.message ?? "推理失败。"));
-    }
-  }
-}
-
 /** 历史侧栏开没开记在本地：习惯开着的人，下次进来还是开着的。 */
 const HISTORY_OPEN_KEY = "ontology.qa.history";
 
@@ -364,30 +325,43 @@ function fetchConversations(targetId: string) {
  * 铺回主区，和当时看到的一模一样。删除走就地二次确认 —— 历史是随手可删的东西，
  * 但也不该点一下就没了。
  */
-function HistoryRail({ conversations, loading, activeId, loadingId, confirmingId, busy, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
-  conversations: ConversationSummary[];
+/**
+ * 侧栏的一行。**运行中的那一轮也在里面** —— 还没落库的新对话没有 ConversationSummary，
+ * 就用它的运行 id 占一个位置，用户才看得到"后台还在跑"。
+ */
+type RailItem = {
+  id: string;
+  title: string;
+  turns: number;
+  updatedAt: string;
+  running: boolean;
+  /** 还没落库的那一轮：点不进去，也没有"删除"（历史里还没有它）。 */
+  pending?: boolean;
+};
+
+function HistoryRail({ items, loading, activeId, loadingId, confirmingId, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
+  items: RailItem[];
   /** 列表正在读：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
   loading: boolean;
   /** 当前画面正对着哪段对话；新开的一轮在服务端定下 id 之前是 null。 */
   activeId: string | null;
   loadingId: string | null;
   confirmingId: string | null;
-  busy: boolean;
   onOpen: (id: string) => void;
   onAskDelete: (id: string) => void;
   onCancelDelete: () => void;
   onConfirmDelete: (id: string) => void;
 }) {
-  const groups = useMemo(() => groupConversationsByDay(conversations), [conversations]);
+  const groups = useMemo(() => groupConversationsByDay(items), [items]);
   return (
     <aside className="qa-history" aria-label="对话历史">
       <header className="qa-history-head">
         <History size={14} />
         <span>对话历史</span>
-        {conversations.length > 0 && <em>{conversations.length}</em>}
+        {items.length > 0 && <em>{items.length}</em>}
       </header>
 
-      {!conversations.length ? (
+      {!items.length ? (
         <p className="qa-history-empty">
           {loading
             ? "正在读取对话历史…"
@@ -411,22 +385,27 @@ function HistoryRail({ conversations, loading, activeId, loadingId, confirmingId
                       </div>
                     ) : (
                       <>
-                        <button type="button" className="qa-history-open" onClick={() => onOpen(item.id)} disabled={busy} title={item.title}>
+                        <button type="button" className="qa-history-open" onClick={() => onOpen(item.id)} disabled={item.pending} title={item.title}>
                           <b>{item.title || "未命名对话"}</b>
                           <span className="qa-history-meta">
                             {loadingId === item.id && <Loader2 size={11} className="qa-spin" />}
-                            {item.turns} 轮 · {conversationTimeLabel(item.updatedAt)}
+                            {/* 后台还在跑的那些：列表上直接写"运行中"，不用点进去才知道。 */}
+                            {item.running && <Loader2 size={11} className="qa-spin" />}
+                            {item.turns > 0 && `${item.turns} 轮 · `}
+                            {item.running ? "运行中" : conversationTimeLabel(item.updatedAt)}
                           </span>
                         </button>
-                        <button
-                          type="button"
-                          className="qa-history-remove"
-                          onClick={() => onAskDelete(item.id)}
-                          title="删除这段对话"
-                          aria-label={`删除对话：${item.title || "未命名对话"}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {!item.pending && (
+                          <button
+                            type="button"
+                            className="qa-history-remove"
+                            onClick={() => onAskDelete(item.id)}
+                            title="删除这段对话"
+                            aria-label={`删除对话：${item.title || "未命名对话"}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </>
                     )}
                   </li>
@@ -452,7 +431,6 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   /** 点开看的原图；null 就是没开。 */
   const [preview, setPreview] = useState<ReasoningAttachment | null>(null);
   const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
-  const [busy, setBusy] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(loadHistoryOpen);
   // 「问答配置」里的那几个数：默认是空的 = 不限制，存在本机。
@@ -472,15 +450,40 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const fileRef = useRef<HTMLInputElement | null>(null);
   // 用户往上翻了就不自动跟随，免得读一半被拽回底部。
   const stickRef = useRef(true);
-  /**
-   * 当前正在跑的那一轮：id 用来就地改这一轮的状态，controller 用来「停止」。
-   * 一次只可能有一轮在跑（busy 挡着），所以一个 ref 就够，不必用 Map。
-   */
-  const runRef = useRef<{ id: string; controller: AbortController } | null>(null);
-
-  const turns = useMemo(() => (session.targetId === targetId ? session.turns : []), [session, targetId]);
+  /** 后台还在跑的那些轮：登记处是模块级的，切走再回来它们还在（见 @/lib/reasoning/live-runs）。 */
+  const liveRuns = useLiveRuns(targetId);
   const conversationId = session.targetId === targetId ? session.conversationId : null;
+  /**
+   * 画面 = 已经落库的那几轮 + 这一段里还在跑的轮。
+   * 新对话（conversationId 为 null）也走这里：它跑完落库后服务端会回一个真 id，
+   * 那一轮与本节里的 conversationId 同时接上，画面不跳。
+   */
+  const viewRuns = useMemo(
+    // 被「新对话」让到后台的那一轮不画在这里：它在侧栏上写着"运行中"，点开才看。
+    () => liveRuns.filter((run) => !run.detached && run.conversationId === conversationId),
+    [liveRuns, conversationId],
+  );
+  const turns = useMemo(
+    () => [...(session.targetId === targetId ? session.turns : []), ...viewRuns.map(liveRunToTurn)],
+    [session, targetId, viewRuns],
+  );
+  /** 正在跑的那一轮没结束就不给这一段再发一条；换一段对话不受影响（那是后台运行）。 */
+  const busy = viewRuns.some((run) => run.running);
   const conversations = useMemo(() => (history.targetId === targetId ? history.items : []), [history, targetId]);
+  /**
+   * 侧栏的行 = 历史记录 + **还没落库、正在跑的那一轮**。
+   * 只加"正在跑且还没有 conversationId"的：已经落库的本来就在 conversations 里，
+   * 再加一遍会看到两条一样的。
+   */
+  const railItems = useMemo<RailItem[]>(() => {
+    const runningIds = new Set(liveRuns.filter((run) => run.running && run.conversationId).map((run) => run.conversationId as string));
+    return [
+      ...liveRuns
+        .filter((run) => run.running && !run.conversationId)
+        .map((run) => ({ id: run.runId, title: run.question, turns: 0, updatedAt: new Date(run.startedAtMs).toISOString(), running: true, pending: true })),
+      ...conversations.map((item) => ({ id: item.id, title: item.title, turns: item.turns, updatedAt: item.updatedAt, running: runningIds.has(item.id) })),
+    ];
+  }, [conversations, liveRuns]);
   /** 还没为当前本体读过列表：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
   const historyPending = history.targetId !== targetId;
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
@@ -489,16 +492,6 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   /** 抽屉里的提示词文本框：没改过就显示默认那段原文（用户要"看得见默认提示词"）。 */
   const systemPromptText = systemPromptFieldValue(settings);
   const customPrompt = isCustomSystemPrompt(settings.systemPrompt);
-  const updateTurns = useCallback((updater: (current: Turn[]) => Turn[]) => {
-    setSession((current) => {
-      const sameTarget = current.targetId === targetId;
-      return { targetId, conversationId: sameTarget ? current.conversationId : null, turns: updater(sameTarget ? current.turns : []) };
-    });
-  }, [targetId]);
-  const patchTurn = useCallback((id: string, patch: Partial<Turn>) => {
-    updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)));
-  }, [updateTurns]);
-
   /** 用户动作触发的刷新（跑完一轮 / 删掉一条）：这时候读不到就该说出来。 */
   const refreshConversations = useCallback(async () => {
     try {
@@ -564,6 +557,42 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     return () => { cancelled = true; };
   }, [historyOpen, targetId]);
 
+  /**
+   * 接回后台还在跑的那一轮。本机登记处是模块级的，切走再回来时它本来就在；
+   * 这一步真正管的是**刷新页面**和**换本体**：新挂起来的页面得知道服务端还有哪一轮在跑。
+   */
+  useEffect(() => {
+    void syncLiveRuns(targetId);
+  }, [targetId]);
+
+
+  /**
+   * 新对话的第一轮跑完才由服务端定下 conversation id：拿到之后把"当前在跟哪段对话"接上，
+   * 侧栏那一行也从"运行中"变成一条真记录。只在画面还停在**这段新对话**上时接。
+   */
+  const savedId = viewRuns.find((run) => run.savedConversationId && run.savedConversationId !== conversationId)?.savedConversationId ?? null;
+  useEffect(() => {
+    if (!savedId) return;
+    setSession((current) => (current.targetId === targetId && current.conversationId === null ? { ...current, conversationId: savedId } : current));
+    void refreshConversations();
+  }, [refreshConversations, savedId, targetId]);
+
+  /**
+   * 跑完的那一轮说一句。**看的是一整个本体的运行，不只是眼前这一段** ——
+   * 用户可能在看别的对话、或者已经切到别的页面，让它跑完的消息照样要出现。
+   */
+  const announced = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const run of liveRuns) {
+      if (run.running || announced.current.has(run.runId)) continue;
+      announced.current.add(run.runId);
+      if (run.run && !run.stopped && !run.error) notify(`推理完成：${run.run.steps.length} 步，引用 ${run.run.evidence.length} 项证据。`);
+      else if (run.savedWarning) notify(run.savedWarning);
+      // 让到后台的那一轮落库之后要出现在侧栏里：刷一下列表（它自己不会触发别的刷新）。
+      if (run.detached && run.savedConversationId) void refreshConversations();
+    }
+  }, [liveRuns, notify, refreshConversations]);
+
   // 跟随到底部（整页滚动 + 底部吸底输入条，所以跟的是窗口）。
   useEffect(() => {
     if (stickRef.current) window.scrollTo({ top: document.documentElement.scrollHeight });
@@ -611,70 +640,27 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     // 只贴了图没写字也算一次提问：补上 IMAGE_ONLY_QUESTION，界面与模型看到的是同一句。
     if ((!trimmed && !images.length) || busy) return;
     if (!targetId) { fail(new Error("请先在左侧选择一个本体。")); return; }
-    const id = `${Date.now()}`;
     const asked = trimmed || IMAGE_ONLY_QUESTION;
-    // 「停止」掐断的就是这一次请求：controller 跟着这一轮走，跑完 / 失败 / 被停都要把它摘掉。
-    const controller = new AbortController();
-    runRef.current = { id, controller };
+    // 先把输入框清空，再交给运行登记处：从这一刻起这一轮不归这个组件所有 —— 切走、开新对话都照跑。
     setQuestion("");
-    setBusy(true);
+    setAttachments([]);
+    setPreview(null);
     stickRef.current = true;
-    updateTurns((current) => [...current, { id, question: asked, attachments: images, thinking: "", answer: "", steps: [], run: null, error: null, busy: true, thinkingOn: thinkingEnabled }]);
-    try {
-      await streamRun(targetId, asked, images, thinkingEnabled, conversationId, reasoningSettingsPayload(settings), controller.signal, {
-        onThinking: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, thinking: turn.thinking + delta } : turn))),
-        onAnswer: (delta) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: turn.answer + delta } : turn))),
-        // 这一段其实是"要调工具"前的过渡语，不是结论。别丢掉 —— 关掉思考时模型会把旁白写在这里，
-        // 挪进思考过程既保留了过程，又不会让结论区闪出半句话。
-        onAnswerReset: () => updateTurns((current) => current.map((turn) => (
-          turn.id === id ? { ...turn, thinking: turn.thinking ? `${turn.thinking}\n${turn.answer}` : turn.answer, answer: "" } : turn
-        ))),
-        onStep: (step) => updateTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, steps: [...turn.steps, step] } : turn))),
-        // 上下文这两步（读历史 + 压摘要）都发生在模型开始答之前，所以先挂"整理中"，拿到结果再落数。
-        onContext: (phase, history) => patchTurn(id, phase === "ready" ? { preparing: false, context: history } : { preparing: true }),
-        onDone: (run) => { patchTurn(id, { run, busy: false }); notify(`推理完成：${run.steps.length} 步，引用 ${run.evidence.length} 项证据。`); },
-        // 历史 id 由服务端定：新对话的第一轮跑完才有 id，这里把"当前在跟哪段对话"接上去。
-        onSaved: (savedId, warning) => {
-          if (savedId) {
-            setSession((current) => (current.targetId === targetId ? { ...current, conversationId: savedId } : current));
-            void refreshConversations();
-          }
-          if (warning) notify(warning);
-        },
-      });
-    } catch (reason) {
-      // 用户叫停不是错误：这一轮回填成「已停止」，不弹报错，也不动已经流出来的内容。
-      if (controller.signal.aborted) {
-        patchTurn(id, { busy: false, stopped: true });
-      } else {
-        patchTurn(id, { error: reason instanceof Error ? reason.message : "推理失败。", busy: false });
-        fail(reason);
-      }
-    } finally {
-      // 已经被「停止」接手、或者下一轮已经开跑（ref 换了人）时别去动它。
-      if (runRef.current?.controller === controller) runRef.current = null;
-      patchTurn(id, { busy: false });
-      setBusy(false);
-      // 图片属于刚问完的那一轮，不该黏在下一条问题上。
-      setAttachments([]);
-      inputRef.current?.focus();
-    }
-  }, [attachments, busy, conversationId, fail, notify, patchTurn, refreshConversations, settings, thinkingEnabled, targetId, updateTurns]);
+    await startLiveRun({ targetId, question: asked, attachments: images, thinking: thinkingEnabled, conversationId, settings: reasoningSettingsPayload(settings) });
+    inputRef.current?.focus();
+  }, [attachments, busy, conversationId, fail, settings, targetId, thinkingEnabled]);
 
   /**
    * 停止这一轮：先掐断请求，服务端收到断开就把模型那一轮也停了（连带叫住后面还没开始跑的步骤）。
    * 停的是"继续往下查"，不是把查到的抹掉 —— 已经流出来的思考、步骤与半截结论都留在画面上。
    */
   const stop = useCallback(() => {
-    const active = runRef.current;
+    const active = viewRuns.find((run) => run.running);
     if (!active) return;
-    runRef.current = null;
-    active.controller.abort();
-    // 立刻收尾这一轮，不等 fetch 的 finally 回来：输入框要马上能用。
-    patchTurn(active.id, { busy: false, stopped: true });
-    setBusy(false);
+    // 停的是"继续往下查"，不是把查到的抹掉：已经流出来的思考、步骤与半截结论都留在画面上。
+    void cancelLiveRun(active.runId);
     notify("已停止这一轮：已经跑出来的思考和查询留在上面，后面的步骤不再继续。");
-  }, [notify, patchTurn]);
+  }, [notify, viewRuns]);
 
   const toggleHistory = useCallback(() => {
     setHistoryOpen((current) => {
@@ -686,7 +672,11 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
   /** 开一段新对话：只清界面这一侧，原来的记录仍然留在历史里。 */
   const startNewConversation = useCallback(() => {
-    if (busy) return;
+    // 正在跑的那一轮不受影响：它归运行登记处，这里只是把画面换到一段新对话上。
+    // 也断掉"切走再回来接回上一轮"的那根线：用户明确要一段空对话。
+    forgetLastSeenConversation(targetId);
+    // 还在跑的那一轮让到后台：中间换上一段空对话，它继续跑（侧栏显示"运行中"）。
+    detachRunningRuns(targetId);
     setSession({ targetId, conversationId: null, turns: [] });
     setQuestion("");
     setAttachments([]);
@@ -694,14 +684,22 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     setConfirmingDelete(null);
     stickRef.current = true;
     inputRef.current?.focus();
-  }, [busy, targetId]);
+  }, [targetId]);
 
   const openConversation = useCallback(async (id: string) => {
-    if (busy || loadingConversation) return;
+    // 别的对话正在后台跑，不影响翻历史；只有这一段自己还在读的时候挡一下重复点。
+    if (loadingConversation) return;
     setLoadingConversation(id);
     setConfirmingDelete(null);
     try {
       const conversation = await api<ConversationDetail>(`/api/reasoning/conversations/${id}?targetId=${encodeURIComponent(targetId)}`);
+      /*
+       * 这一段里**已经跑完**的那几轮从本机登记处摘掉：它们已经落进历史、下面这批 messages 里就有，
+       * 留着会在画面上重一遍。还在跑的不能摘 —— 它的内容只在登记处里。
+       */
+      dropFinishedLiveRuns(conversation.id);
+      // 记住"现在在看这段"：切走再回来时把画面接回这里，而不是空着。
+      rememberConversation(targetId, conversation.id);
       setSession({ targetId, conversationId: conversation.id, turns: conversation.messages.map(messageToTurn) });
       stickRef.current = true;
     } catch (reason) {
@@ -711,7 +709,24 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     } finally {
       setLoadingConversation(null);
     }
-  }, [busy, fail, loadingConversation, refreshConversations, targetId]);
+  }, [fail, loadingConversation, refreshConversations, targetId]);
+
+  /**
+   * 切走再回来、或者重新挂上这一档时，把画面接回**最近跑完的那一轮**。
+   *
+   * 为什么必须有这一步：那一轮跑完就落进历史了，本机登记处里那条记录的 id 也跟着变成对话 id，
+   * 而新挂起来的画面是一段空对话（conversationId 为 null）—— 两边对不上，用户就会看到
+   * "我刚问的呢？"。这里按对话把它读回来（顺带把它从本机登记处摘掉，免得重一遍）。
+   */
+  const adopted = useRef<string | null>(null);
+  useEffect(() => {
+    if (session.targetId !== targetId || session.conversationId) return;
+    const saved = lastSeenConversation(targetId);
+    if (!saved || adopted.current === saved) return;
+    adopted.current = saved;
+    void openConversation(saved);
+  }, [openConversation, session, targetId]);
+
 
   const removeConversation = useCallback(async (id: string) => {
     setConfirmingDelete(null);
@@ -773,7 +788,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             {/* 设过限制才挂这个角标：让人一眼看出"这次问答是被限制过的"。 */}
             {hasLimits && <em>已设</em>}
           </button>
-          {turns.length > 0 && <button className="action compact" disabled={busy} onClick={startNewConversation} title="清空当前画面，历史记录仍然保留"><Plus size={13} />新对话</button>}
+          {/* 正在跑的那一轮不挡"新对话"：那一轮转后台继续跑，这里换到一段空对话（2026-10-10 用户口径）。 */}
+          {turns.length > 0 && <button className="action compact" onClick={startNewConversation} title="清空当前画面，历史记录仍然保留；正在跑的那一轮会转到后台继续"><Plus size={13} />新对话</button>}
         </div>
       </header>
 
@@ -823,7 +839,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
               <div className="qa-answer-head"><span className="qa-answer-mark">本体</span><b>Agent</b></div>
 
               {(turn.thinkingOn || turn.thinking) && (turn.thinking || turn.busy) && <ThinkingBlock text={turn.thinking} live={turn.busy} />}
-              {(turn.steps.length > 0 || turn.busy) && <ProofTrail steps={turn.steps} live={turn.busy} totalMs={turn.run?.elapsedMs ?? 0} />}
+              {(turn.steps.length > 0 || turn.busy) && <ProofTrail steps={turn.steps} live={turn.busy} totalMs={turn.liveElapsedMs ?? turn.run?.elapsedMs ?? 0} />}
 
               {turn.error && <div className="qa-error"><AlertCircle size={15} />{turn.error}</div>}
 
@@ -842,7 +858,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                   <Evidence run={turn.run} onOpenObject={onOpenObject} />
                   <footer className="qa-meta">
                     <span>{turn.run.model}</span>
-                    <span>{(turn.run.elapsedMs / 1000).toFixed(1)}s</span>
+                    <span>{((turn.liveElapsedMs ?? turn.run.elapsedMs) / 1000).toFixed(1)}s</span>
                     <span>{turn.run.usage.totalTokens} tokens</span>
                     {/* 步数 = 模型调用次数；工具调用可能一步并发多个，所以两个数字分开显示。 */}
                     {/* 平时只说用了几步：没设上限时那个分母（服务端兜底值）不该冒充"限制"。 */}
@@ -944,12 +960,11 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
       {historyOpen && (
         <HistoryRail
-          conversations={conversations}
+          items={railItems}
           loading={historyPending}
           activeId={conversationId}
           loadingId={loadingConversation}
           confirmingId={confirmingDelete}
-          busy={busy}
           onOpen={(id) => void openConversation(id)}
           onAskDelete={setConfirmingDelete}
           onCancelDelete={() => setConfirmingDelete(null)}

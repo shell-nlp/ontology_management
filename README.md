@@ -529,7 +529,11 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/reasoning/stream` | 流式问答（SSE：思考 / 正文 / 工具步 / 收尾） |
+| `POST` | `/api/reasoning/runs` | 起一轮问答（后台跑，立刻回 runId；界面走的就是这一条） |
+| `GET` | `/api/reasoning/runs` | 这个本体上还在跑 / 刚跑完没落库的那些运行 |
+| `GET` | `/api/reasoning/runs/:runId/events?after=N` | 接上这一轮（SSE，按游标补看 + 后续增量） |
+| `POST` | `/api/reasoning/runs/:runId/cancel` | 停止这一轮（只有它真的会停；断开连接只是不看了） |
+| `POST` | `/api/reasoning/stream` | 起一轮并就地看完（SSE，给脚本用；运行同样归服务端） |
 | `POST` | `/api/reasoning/run` | 非流式运行，给脚本与调试用 |
 | `GET` | `/api/reasoning/tools` | 工具清单与启用状态 |
 | `GET` | `/api/reasoning/status` | 模型与运行状态 |
