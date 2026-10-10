@@ -2047,3 +2047,16 @@ bkn 那边的形态是 `search_schema / query_object_instance / query_instance_s
   建草稿（`POST /api/ontology`）都是这类 —— 加新按钮前先看服务端那一行 `requirePermission`。
 - 验证办法：用一个只读角色（`ontology.read + instance.read + datasource.read + target.read + reasoning.use`）
   把每个页面点一遍，确认写按钮全是 disabled、页面没有 403（2026-10-10 实测通过）。
+
+## 全局提示：浮层吐司，不占页头（2026-10-10）
+
+用户口径：「当前账号没有这个权限。最好是弹出的，而不是在最上面」。
+
+- 工作台的全局提示（`notify()` / `fail()` 写进 `message` / `error` 状态的那些）统一走 `Toast`，
+  **底部居中浮层**，样式在 `globals.css` 的 `.toast-stack` / `.toast`（z-index 200，高于 `.dialog-backdrop` 的 120，
+  弹窗里保存失败也看得见）。
+- **别放右下角**：Next.js 开发模式那个圆形 dev 按钮就压在右下角，会挡住关闭按钮（2026-10-10 实测点不动，
+  Playwright 报 `<nextjs-portal>` intercepts pointer events）。
+- 时间语义别改：成功类提示由 `notify()` 的 5 秒计时器收起，错误类等用户自己点 ×。
+- 行内 `Notice` 只留给「长在内容里」的地方（登录卡片、面板里本来就在版面上的提示条）；
+  工作台页头那一行**不要再塞提示条**。

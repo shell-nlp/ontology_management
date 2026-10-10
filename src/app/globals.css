@@ -357,3 +357,15 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .detail-link b { color: #2f4648; }
 .detail-link-other { flex: 1; color: #4d5c5e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-link-type { color: #879392; font-size: 10px; }
+
+/* 全局提示吐司（2026-10-10）：底部居中浮出来，不占版面、也不往下顶内容。
+   不放右下角：Next.js 开发模式那个圆形 dev 按钮就压在右下角，会盖住关闭按钮。 */
+.toast-stack { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:200; display:grid; gap:10px; justify-items:center; width:max-content; max-width:min(560px, calc(100vw - 40px)); }
+.toast { display:flex; align-items:flex-start; gap:10px; padding:13px 14px; background:#fff; border:1px solid #dbe4e0; border-left:3px solid #64a97c; border-radius:5px; box-shadow:0 14px 34px rgba(16,30,31,.18); color:#32644d; font-size:12px; line-height:1.6; animation:toast-in .18s ease-out; }
+.toast.error { border-left-color:#cf6d58; color:#9b4536; }
+.toast > svg { flex:none; margin-top:1px; }
+.toast > span { flex:1; min-width:0; word-break:break-word; }
+.toast-close { flex:none; width:20px; height:20px; display:grid; place-items:center; border:0; border-radius:3px; background:transparent; color:inherit; opacity:.5; cursor:pointer; }
+.toast-close:hover { opacity:1; background:rgba(0,0,0,.06); }
+@keyframes toast-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width:550px) { .toast-stack { left:12px; right:12px; bottom:12px; transform:none; width:auto; max-width:none; justify-items:stretch; } }

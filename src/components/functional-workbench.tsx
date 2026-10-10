@@ -120,9 +120,32 @@ function sourceSummary(entity: EntityType) {
   return sources.length > 1 ? `${primary} +${sources.length - 1}` : primary;
 }
 
+/**
+ * 行内提示：长在内容里的那种（登录卡片）。工作台里的全局提示走下面的 `Toast`。
+ */
 function Notice({ message, error, onDismiss }: { message: string | null; error?: boolean; onDismiss?: () => void }) {
   if (!message) return null;
   return <div className={error ? "notice error" : "notice"}>{error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{message}{onDismiss && <button className="notice-close" onClick={onDismiss}><X size={14} /></button>}</div>;
+}
+
+/**
+ * 全局提示：**底部居中的浮层吐司**。用户口径（2026-10-10）：「当前账号没有这个权限。最好是弹出的，
+ * 而不是在最上面」—— 压在页头会把内容往下顶，而且滚到页面下半截就看不见了。
+ *
+ * 成功类提示由 `notify()` 的 5 秒计时器收起；错误（`error`）等用户自己关，权限类的话要让人读完。
+ * z-index 比 `.dialog-backdrop`（120）高：在弹窗里保存失败时也要看得见。
+ *
+ * 位置别挪回右下角：Next.js 开发模式那个圆形 dev 按钮就压在右下角，会盖住关闭按钮。
+ */
+function Toast({ message, error, onDismiss }: { message: string | null; error?: boolean; onDismiss?: () => void }) {
+  if (!message) return null;
+  return <div className="toast-stack" role="status" aria-live="polite">
+    <div className={error ? "toast error" : "toast"}>
+      {error ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}
+      <span>{message}</span>
+      {onDismiss && <button type="button" className="toast-close" title="关闭" onClick={onDismiss}><X size={14} /></button>}
+    </div>
+  </div>;
 }
 
 function entityTitle(node: Pick<EntityRow, "labels" | "properties">, definition: Definition | null = null) {
@@ -493,7 +516,7 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section, sectionIndex) => { const items = section.items.filter(([, , , code]) => code === null || may(user, code)); if (!items.length) return null; return <div className="nav-section" key={section.label || `root-${sectionIndex}`}>{section.label && <p className="nav-section-label">{section.label}</p>}{items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>; })}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Notice message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Toast message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
       {view === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(user); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
