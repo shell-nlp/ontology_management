@@ -68,6 +68,12 @@ describe("buildInstructions", () => {
     expect(instructions).toContain("概念分组：客户域（2 个：客户、用户）");
   });
 
+  it("结构化问数优先用 run_query，同时保留 run_sql 兜底", () => {
+    const instructions = buildInstructions(undefined, context());
+    expect(instructions).toContain("优先用 run_query");
+    expect(instructions).toContain("run_sql");
+    expect(instructions).toContain("兜底");
+  });
   it("空白（只打了空格）也算没配", () => {
     expect(buildInstructions("   \n  ", context()).startsWith(DEFAULT_SYSTEM_PROMPT)).toBe(true);
   });

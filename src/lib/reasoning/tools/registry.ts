@@ -180,7 +180,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_query",
     description:
-      "按本体查询 DSL 执行只读查询。P0 阶段先留在工具目录里灰着，不开放给模型；实现使用对象类型、属性、关系类型与指标，不接受 SQL、表名或列名。",
+      '按本体查询 DSL 执行只读查询，是结构化问数的优先入口。query 只使用对象类型、属性、关系类型、指标和参数，不接受 SQL、表名、列名。结构示例：{"version":"1.0","kind":"aggregate","from":{"object_type":"对象类型名"},"relationships":[{"alias":"area","type":"关系类型名","direction":"forward","optional":true}],"where":{"and":[{"field":{"alias":"root","property":"属性名"},"op":"eq","value":{"param":"p"}}]},"select":[{"field":{"alias":"root","property":"维度名"},"as":"维度"},{"metric":"指标名","as":"结果"}],"group_by":[{"alias":"root","property":"维度名"}],"order_by":[{"ref":"结果","direction":"desc"}],"limit":100}。DSL 暂不支持或需要排障时，仍可使用 run_sql。',
     parameters: {
       type: "object",
       properties: {
@@ -188,7 +188,6 @@ export const REASONING_TOOLS: ToolSpec[] = [
       },
       required: ["query"],
     },
-    disabled: true,
   },
   /*
    * 两个实例工具标记成 disabled：这一版只在对象类型 / 关系类型这一层推理，不查具体对象与数据行

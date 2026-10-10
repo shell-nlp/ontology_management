@@ -114,8 +114,8 @@ describe("工具范围", () => {
   it("定义层与实例工具都给模型用（实例工具走对象服务）", () => {
     const active = REASONING_TOOLS.filter((tool) => !tool.disabled).map((tool) => tool.name);
     // 2026-09-19：对象服务落地后实例工具重新开放（索引优先、没有就按主键回源）。
-    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "query_object_instance", "query_instance_subgraph", "list_actions", "list_metrics"]);
-    expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual(["run_query"]);
+    expect(active).toEqual(["search_schema", "get_object_type", "list_concept_groups", "list_interfaces", "traverse_object_types", "get_table_ddl", "run_sql", "run_query", "query_object_instance", "query_instance_subgraph", "list_actions", "list_metrics"]);
+    expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual([]);
   });
 
   it("每个工具的 JSON Schema 都能被 AI SDK 的 jsonSchema() 收下（数组/枚举参数拼错只会在这里炸）", () => {
