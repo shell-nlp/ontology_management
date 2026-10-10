@@ -1,5 +1,5 @@
 import type { DataSourceKind } from "@/lib/datasource/types";
-import type { LogicalPlan, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedScalar, ResolvedValue } from "../ast";
+import type { LogicalPlan, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "../ast";
 import { QueryDslError } from "../errors";
 
 export type CompiledSqlQuery = {
@@ -31,13 +31,22 @@ function quoteIdentifier(kind: DataSourceKind, value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+function entityTableRef(entity: LogicalPlan["root"], kind: DataSourceKind): string {
+  const source = entity.sources.find((item) => item.primary) ?? entity.sources[0];
+  if (!source) throw new QueryDslError("ENTITY_NOT_BOUND", `对象类型「${entity.entityTypeName}」没有物理来源。`);
+  return [source.schema, source.table].filter(Boolean).map((part) => quoteIdentifier(kind, part)).join(".");
+}
+
+function sourceTableRef(table: { schema: string; name: string }, kind: DataSourceKind): string {
+  return [table.schema, table.name].filter(Boolean).map((part) => quoteIdentifier(kind, part)).join(".");
+}
+
 function tableRef(plan: LogicalPlan, kind: DataSourceKind): string {
-  const table = [plan.root.schema, plan.root.table].filter(Boolean).map((part) => quoteIdentifier(kind, part)).join(".");
-  return `${table} ${quoteIdentifier(kind, plan.root.alias)}`;
+  return `${entityTableRef(plan.root, kind)} ${quoteIdentifier(kind, plan.root.alias)}`;
 }
 
 function columnRef(field: ResolvedField, kind: DataSourceKind): string {
-  return `${quoteIdentifier(kind, field.alias)}.${quoteIdentifier(kind, field.column)}`;
+  return `${quoteIdentifier(kind, field.sourceAlias)}.${quoteIdentifier(kind, field.column)}`;
 }
 
 function parameterValue(plan: LogicalPlan, value: ResolvedValue): ResolvedScalar {
@@ -183,10 +192,64 @@ function resolveOrderExpression(plan: LogicalPlan, ref: string, kind: DataSource
   throw new QueryDslError("INVALID_QUERY", `排序字段「${ref}」既不是输出列，也不是对象类型的属性。`);
 }
 
+function qualifiedColumn(alias: string, column: string, kind: DataSourceKind): string {
+  return `${quoteIdentifier(kind, alias)}.${quoteIdentifier(kind, column)}`;
+}
+
+function joinKeyword(optional: boolean): string {
+  return optional ? "LEFT JOIN" : "JOIN";
+}
+
+function compileEntitySourceJoins(entity: LogicalPlan["root"], kind: DataSourceKind): string[] {
+  const primary = entity.sources.find((item) => item.primary) ?? entity.sources[0];
+  if (!primary) return [];
+  return entity.sources.filter((source) => !source.primary).map((source) => {
+    const conditions = source.primaryKey.map((key, index) =>
+      `${qualifiedColumn(source.alias, key, kind)} = ${qualifiedColumn(primary.alias, primary.primaryKey[index], kind)}`,
+    );
+    const table = [source.schema, source.table].filter(Boolean).map((part) => quoteIdentifier(kind, part)).join(".");
+    return `LEFT JOIN ${table} ${quoteIdentifier(kind, source.alias)} ON ${conditions.join(" AND ")}`;
+  });
+}
+function compileRelationshipJoin(rel: ResolvedRelationship, kind: DataSourceKind): string[] {
+  const plan = rel.plan;
+  const newTable = entityTableRef(rel.toEntity, kind);
+  const newAlias = quoteIdentifier(kind, rel.toAlias);
+
+  if (plan.mode === "FOREIGN_KEY") {
+    const holderId = plan.keyHolder === "SOURCE" ? rel.sourceEntityTypeId : rel.targetEntityTypeId;
+    const referencedId = plan.foreignKeys.referenced.entityTypeId;
+    const holderAlias = holderId === rel.fromEntity.entityTypeId ? rel.fromAlias : rel.toAlias;
+    const referencedAlias = referencedId === rel.fromEntity.entityTypeId ? rel.fromAlias : rel.toAlias;
+    const conditions = plan.foreignKeys.rowColumns.map((rowColumn, index) =>
+      `${qualifiedColumn(referencedAlias, plan.foreignKeys.keyColumns[index], kind)} = ${qualifiedColumn(holderAlias, rowColumn, kind)}`,
+    );
+    return [`${joinKeyword(rel.optional)} ${newTable} ${newAlias} ON ${conditions.join(" AND ")}`];
+  }
+
+  const existingSide = rel.direction === "forward" ? plan.source : plan.target;
+  const newSide = rel.direction === "forward" ? plan.target : plan.source;
+  const linkAlias = `${rel.alias}__link`;
+  const linkTable = sourceTableRef(plan.table, kind);
+  const linkConditions = existingSide.pairs.map((pair) =>
+    `${qualifiedColumn(linkAlias, pair.rowColumn, kind)} = ${qualifiedColumn(rel.fromAlias, pair.keyColumn, kind)}`,
+  );
+  const newConditions = newSide.pairs.map((pair) =>
+    `${qualifiedColumn(rel.toAlias, pair.keyColumn, kind)} = ${qualifiedColumn(linkAlias, pair.rowColumn, kind)}`,
+  );
+  return [
+    `${joinKeyword(rel.optional)} ${linkTable} ${quoteIdentifier(kind, linkAlias)} ON ${linkConditions.join(" AND ")}`,
+    `${joinKeyword(rel.optional)} ${newTable} ${newAlias} ON ${newConditions.join(" AND ")}`,
+  ];
+}
 export function compileQuerySql(plan: LogicalPlan, kind: DataSourceKind): CompiledSqlQuery {
   const bag = new ParameterBag();
   const select = compileSelect(plan, kind, bag);
   const where = plan.where ? ` WHERE ${compileExpr(plan, plan.where, kind, bag)}` : "";
+  const joins = [
+    ...compileEntitySourceJoins(plan.root, kind),
+    ...plan.relationships.flatMap((rel) => [...compileRelationshipJoin(rel, kind), ...compileEntitySourceJoins(rel.toEntity, kind)]),
+  ].join(" ");
   const group = plan.query.kind === "aggregate" && plan.groupBy.length
     ? ` GROUP BY ${plan.groupBy.map((field) => columnRef(field, kind)).join(", ")}`
     : "";
@@ -195,7 +258,7 @@ export function compileQuerySql(plan: LogicalPlan, kind: DataSourceKind): Compil
     : "";
 
   return {
-    statement: `SELECT ${select.items.join(", ")} FROM ${tableRef(plan, kind)}${where}${group}${order}`,
+    statement: `SELECT ${select.items.join(", ")} FROM ${tableRef(plan, kind)}${joins ? ` ${joins}` : ""}${where}${group}${order}`,
     parameters: bag.all(),
     dataSourceId: plan.root.dataSourceId,
     columns: select.columns,
