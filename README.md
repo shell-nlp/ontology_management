@@ -48,6 +48,7 @@
 ## 目录
 
 - [能力概览](#能力概览)
+- [术语对照（中文 ↔ 代码 / 接口）](#术语对照中文--代码--接口)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
 - [Docker Compose 部署](#docker-compose-部署)
@@ -95,6 +96,26 @@
 | ✨ | **本体技能** | 三套建模技能（需求澄清 → 本体设计 → 出包交付），整包下载，或经 MCP 直接给 Agent 用 |
 | 🔍 | **对象检索** | 对象索引（全文 / 模糊 / 向量，当前落 PostgreSQL）+ 回源策略；海量业务对象不进进程内存 |
 | 🧾 | **审计记录** | 发布、导入、删除、改名等关键操作留痕，在「设置 → 审计记录」里按动作筛选 |
+
+## 术语对照（中文 ↔ 代码 / 接口）
+
+界面上和文档里用中文，代码目录与 URL 用英文 —— 这张表把两边对上。
+其中「本体管理」指的是**本体这个实体本身的增删改查**（列 / 建 / 改 / 删、导入导出、绑数据来源），
+跟「本体模型」（类型定义与版本）不是一回事：
+
+| 中文叫法 | 代码目录 | 接口 |
+| --- | --- | --- |
+| **本体管理**（本体台账：列 / 建 / 改 / 删、导入、导出、绑来源） | `src/lib/platform/ontologies.ts` | `/api/ontologies/*` |
+| **本体模型**（对象类型 / 关系类型 / 接口 / 指标 / 分组的定义，以及草稿→校验→发布→激活） | `src/lib/ontology/` · `src/lib/versioning/` | `/api/ontology/*` |
+| **本体实例**（对象 / 关系 / 实例图谱） | `src/lib/instance/` | `/api/instances/*` · `/api/objects/*` |
+| **数据资源**（外部业务库的只读连接与结构） | `src/lib/datasource/` | `/api/data-sources/*` |
+| **图引擎配置**（内置图 / Jena 连接） | `src/lib/platform/targets.ts` · `src/lib/framework/graph/` | `/api/targets/*` |
+| **能力验证**（智能问答 / MCP） | `src/lib/reasoning/` · `src/lib/mcp/` | `/api/reasoning/*` · `/api/mcp` |
+| **本体技能**（建模技能与整包下载） | `src/lib/skills/` · `skills/` | `/api/skills/*` |
+| **平台**（账号 / 角色 / 权限 / 审计） | `src/lib/platform/` | `/api/users` · `/api/roles` · `/api/audit` |
+
+同一份对照也用在 `/docs`：Swagger 里的分组名就是上表第一列（`/api/ontologies/*` 那组显示为「本体管理」，
+`/api/ontology/*` 那组显示为「本体模型」）。URL 段保持英文复数（REST 资源名惯例），不改成中文。
 
 ## 技术栈
 
