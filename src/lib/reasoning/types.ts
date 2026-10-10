@@ -86,9 +86,22 @@ export type ReasoningContext = {
 };
 
 export type ReasoningUsage = {
+  /** 累计输入 / 输出 / 合计：**所有模型调用相加**（工具循环每一步都要把整段上下文重发一遍，所以很大）。计费口径。 */
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * **最后一步这次调用**的用量（2026-10-10 用户口径：「模型返回的 token 数，不是累加」）。
+   *
+   * 工具循环一轮问答会调用模型很多次，每次返回的是一条 usage；`promptTokens` 那些是**累加值**，
+   * 10 步的 833.9k 会让用户以为"模型返回了 83 万 token"。这两个数说的是：
+   * - `lastInputTokens`：**当时模型真正看到的上下文有多大**（也是"离上下文上限还有多远"的度量）；
+   * - `lastOutputTokens`：最后一次回答写出来多少。
+   *
+   * 旧对话历史里的运行记录没有这两项，界面要能兜底（那就只显示累计）。
+   */
+  lastInputTokens?: number;
+  lastOutputTokens?: number;
 };
 
 export type ReasoningRun = {

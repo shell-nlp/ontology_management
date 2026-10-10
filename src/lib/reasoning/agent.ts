@@ -115,7 +115,14 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
   let answer = "";
   /** 当前这一轮已经流出去的文字；模型若在这一轮调工具，它就是过渡语。 */
   let stepText = "";
+  /**
+   * 用量分两笔记（2026-10-10 用户口径：「模型返回的 token 数，不是累加」）：
+   * - `usage`：所有步相加（`finish` 的 totalUsage）—— 计费口径，工具循环下会很大；
+   * - `lastStepUsage`：最后一步这次调用（`finish-step` 的 usage）—— 模型当时真正看到的上下文有多大。
+   * 两个都留着，界面上分开说；只显示累计会让人以为"模型返回了 83 万 token"。
+   */
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let lastStepUsage: { lastInputTokens?: number; lastOutputTokens?: number } = {};
   /**
    * 推理步数：一次「模型调用」算一步（AI SDK 的 step），一步里模型可以并发调多个工具。
    * 必须和 stopWhen 用同一个单位，否则"工具调用次数"会被当成"步数"提前报上限。
@@ -258,6 +265,14 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
           };
           break;
 
+        case "finish-step":
+          // 每一步都会来一条；留最后一条 = 收尾时上下文有多大。
+          lastStepUsage = {
+            ...(part.usage.inputTokens === undefined ? {} : { lastInputTokens: part.usage.inputTokens }),
+            ...(part.usage.outputTokens === undefined ? {} : { lastOutputTokens: part.usage.outputTokens }),
+          };
+          break;
+
         case "error":
           throw part.error instanceof Error ? part.error : new Error(String(part.error));
 
@@ -301,7 +316,7 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
     reasoning,
     steps,
     evidence: deduped,
-    usage,
+    usage: { ...usage, ...lastStepUsage },
     elapsedMs: Date.now() - startedAt,
     model: settings.modelId,
     stepCount,

@@ -25,6 +25,13 @@ export type LiveRun = RunViewState & {
   targetId: string;
   /** 这一轮属于哪段对话；还没落库的新对话是 null。 */
   conversationId: string | null;
+  /**
+   * **发起时**归属的那段对话（续聊时是它的 id，新对话是 null）。
+   *
+   * 它是这一段画面的稳定归属键：`conversationId` 会在落库那一刻从 null 变成真 id，
+   * 谁按它过滤，谁就会在"回答完"的瞬间把这一轮从画面上滤掉（2026-10-10 报的 bug）。
+   */
+  requestedConversationId: string | null;
   question: string;
   attachments: ReasoningAttachment[];
   thinkingOn: boolean;
@@ -106,6 +113,7 @@ function toLiveRun(run: MutableRun): LiveRun {
     targetId: run.targetId,
     // 落库之后以服务端给的 id 为准：新对话的第一轮跑完才拿到它。
     conversationId: state.savedConversationId ?? run.requestedConversationId,
+    requestedConversationId: run.requestedConversationId,
     question: run.question,
     attachments: run.attachments,
     thinkingOn: run.thinkingOn,
@@ -337,8 +345,11 @@ export async function syncLiveRuns(targetId: string): Promise<void> {
       finishedAtMs: summary.status === "running" ? null : Date.now(),
       stream: null,
       retries: 0,
-      // 接回来的是"服务端还在跑的那些"：它们本来就该待在后台那一栏（侧栏），不是当前这一段的。
-      detached: summary.conversationId === null,
+      /*
+       * 接回来的不算"被让到后台"：刷新页面之后，用户最想看的就是"我刚问的那一轮还在跑"。
+       * （"让到后台"是用户当场按「新对话」产生的状态，只在这一次页面会话里有意义。）
+       */
+      detached: false,
     };
     runs.set(summary.runId, record);
     if (record.running) void attach(record);
@@ -390,15 +401,21 @@ export function forgetLastSeenConversation(targetId: string): void {
 }
 
 /**
- * 用户按了「新对话」：把**还在跑**的那几轮让到后台。
+ * 用户按了「新对话」：把**现在这一段画面上**的那几轮让到后台。
  *
- * 这就是用户口径里的"新建聊天了，放后台运行" —— 中间那一栏让给它一段干净的对话，
- * 原来那一轮继续在服务端跑，侧栏上写着"运行中"，跑完就出现在历史里。
+ * 这就是用户口径里的"新建聊天了，放后台运行" —— 中间那一栏换上一段干净的对话；
+ * 还在跑的那一轮继续跑（侧栏显示"运行中"），已经跑完的那些就留在历史里。
+ *
+ * 注意**不能只摘"还在跑"的**：刚跑完、还没被让走的那一轮如果不摘，点了「新对话」
+ * 它还会跟着新画面一起出现（画面认的是"发起时归属的那段对话"）。
  */
-export function detachRunningRuns(targetId: string): void {
+export function detachRunsForView(targetId: string, conversationId: string | null): void {
   let changed = false;
   for (const run of runs.values()) {
-    if (run.targetId !== targetId || !run.running || run.detached) continue;
+    if (run.targetId !== targetId || run.detached) continue;
+    const live = toLiveRun(run);
+    // 认"发起时归属哪段"或"落库后属于哪段"，两者命中任一就是这一段画面上的。
+    if (run.requestedConversationId !== conversationId && live.conversationId !== conversationId) continue;
     run.detached = true;
     changed = true;
   }

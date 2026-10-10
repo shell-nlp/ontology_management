@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { MarkdownView } from "@/components/markdown-view";
 import { api } from "@/lib/api-client";
+import { formatCount, formatDuration } from "@/lib/format-units";
 import { authHeaders } from "@/lib/session-token";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
@@ -21,7 +22,7 @@ import {
 import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
 import { historyLabel } from "@/lib/reasoning/history";
 import type { ReasoningAttachment, ReasoningContext, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
-import { cancelLiveRun, detachRunningRuns, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
+import { cancelLiveRun, detachRunsForView, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
 import "./qa-studio.css";
 
 /**
@@ -163,7 +164,8 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
     if (!steps.length) return live ? "正在检索本体…" : "没有调用工具";
     const hits = steps.reduce((sum, step) => sum + step.evidence.length, 0);
     // 证据数为 0 时不写"证据 0 项"：这一轮本来就可能是纯查数据（不产生证据）。
-    return [`已调用工具 ${steps.length} 次`, hits ? `证据 ${hits} 项` : "", `${((totalMs || 0) / 1000).toFixed(1)}s`].filter(Boolean).join(" · ");
+    // 单位随量级变（ms / s / 分秒 / 小时）：10 步跑两分钟时写 111.5s 没人读得出量级。
+    return [`已调用工具 ${steps.length} 次`, hits ? `证据 ${hits} 项` : "", formatDuration(totalMs || 0)].filter(Boolean).join(" · ");
   }, [steps, live, totalMs]);
 
   return (
@@ -185,7 +187,7 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
                 <span className="qa-trail-args">{argumentSummary(step.arguments)}</span>
                 <span className="qa-trail-facts">
                   {step.ok ? step.summary ?? "已返回" : "出错"}
-                  <i>{step.elapsedMs}ms</i>
+                  <i>{formatDuration(step.elapsedMs)}</i>
                 </span>
               </button>
               {openStep === step.index && (
@@ -459,8 +461,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
    * 那一轮与本节里的 conversationId 同时接上，画面不跳。
    */
   const viewRuns = useMemo(
-    // 被「新对话」让到后台的那一轮不画在这里：它在侧栏上写着"运行中"，点开才看。
-    () => liveRuns.filter((run) => !run.detached && run.conversationId === conversationId),
+    /*
+     * 被「新对话」让到后台的那一轮不画在这里（它在侧栏上写着"运行中"，点开才看）。
+     *
+     * 归属认**两个键**：发起时是哪一段（requestedConversationId）与落库后属于哪一段（savedConversationId）。
+     * 只看落库后那个键会出事：一轮跑完落库时它的 id 从 null 变成真 id，画面当场把这一轮滤掉 ——
+     * 用户看到的就是"每次回答完，聊天窗口立马消失，历史里也找不到"（2026-10-10 报的 bug）。
+     */
+    () => liveRuns.filter((run) => !run.detached && (run.requestedConversationId === conversationId || run.savedConversationId === conversationId)),
     [liveRuns, conversationId],
   );
   const turns = useMemo(
@@ -588,10 +596,25 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       announced.current.add(run.runId);
       if (run.run && !run.stopped && !run.error) notify(`推理完成：${run.run.steps.length} 步，引用 ${run.run.evidence.length} 项证据。`);
       else if (run.savedWarning) notify(run.savedWarning);
-      // 让到后台的那一轮落库之后要出现在侧栏里：刷一下列表（它自己不会触发别的刷新）。
-      if (run.detached && run.savedConversationId) void refreshConversations();
     }
-  }, [liveRuns, notify, refreshConversations]);
+  }, [liveRuns, notify]);
+
+  /**
+   * 有运行落库就刷一次侧栏（**不管它是不是眼前这一段**）。
+   *
+   * 不刷的话，新对话的第一轮跑完只存在于画面上，侧栏要等刷新页面才出现
+   * —— 2026-10-10 用户报的"对话历史也找不到，必须刷新一下才能看到"。
+   * 每条对话只刷一次（用 ref 记着），避免 effect 反复触发。
+   */
+  const refreshedConversations = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const run of liveRuns) {
+      const saved = run.savedConversationId;
+      if (!saved || refreshedConversations.current.has(saved)) continue;
+      refreshedConversations.current.add(saved);
+      void refreshConversations();
+    }
+  }, [liveRuns, refreshConversations]);
 
   // 跟随到底部（整页滚动 + 底部吸底输入条，所以跟的是窗口）。
   useEffect(() => {
@@ -675,8 +698,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     // 正在跑的那一轮不受影响：它归运行登记处，这里只是把画面换到一段新对话上。
     // 也断掉"切走再回来接回上一轮"的那根线：用户明确要一段空对话。
     forgetLastSeenConversation(targetId);
-    // 还在跑的那一轮让到后台：中间换上一段空对话，它继续跑（侧栏显示"运行中"）。
-    detachRunningRuns(targetId);
+    // 这一段画面上的几轮都让到后台：还在跑的继续跑（侧栏显示"运行中"），跑完的留在历史里。
+    detachRunsForView(targetId, conversationId);
     setSession({ targetId, conversationId: null, turns: [] });
     setQuestion("");
     setAttachments([]);
@@ -684,7 +707,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     setConfirmingDelete(null);
     stickRef.current = true;
     inputRef.current?.focus();
-  }, [targetId]);
+  }, [conversationId, targetId]);
 
   const openConversation = useCallback(async (id: string) => {
     // 别的对话正在后台跑，不影响翻历史；只有这一段自己还在读的时候挡一下重复点。
@@ -858,8 +881,22 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
                   <Evidence run={turn.run} onOpenObject={onOpenObject} />
                   <footer className="qa-meta">
                     <span>{turn.run.model}</span>
-                    <span>{((turn.liveElapsedMs ?? turn.run.elapsedMs) / 1000).toFixed(1)}s</span>
-                    <span>{turn.run.usage.totalTokens} tokens</span>
+                    <span>{formatDuration(turn.liveElapsedMs ?? turn.run.elapsedMs)}</span>
+                    {/*
+                     * token 要分两个数说（2026-10-10 用户口径：「模型应该会返回 token 数，不是累加」）：
+                     * - 上下文 / 输出 = **最后一步这次调用**的用量（模型当时真正看到 / 写出多少）；
+                     * - 累计 = 所有步相加 —— 工具循环每一步都要把整段上下文重发一遍，所以它大得多，
+                     *   但那是**计费口径**。两个数各有各的用处，别只留一个。
+                     * 旧运行记录没有最后一步这两项，那就只显示累计。
+                     */}
+                    {turn.run.usage.lastInputTokens !== undefined && (
+                      <span title="最后一步这次模型调用：上下文 = 它当时看到的输入，输出 = 它写出的内容">
+                        上下文 {formatCount(turn.run.usage.lastInputTokens)} · 输出 {formatCount(turn.run.usage.lastOutputTokens ?? 0)} tokens
+                      </span>
+                    )}
+                    <span title="所有模型调用相加（每一步都会重发整段上下文，所以比上下文大得多）：这是计费口径">
+                      累计 {formatCount(turn.run.usage.totalTokens)}
+                    </span>
                     {/* 步数 = 模型调用次数；工具调用可能一步并发多个，所以两个数字分开显示。 */}
                     {/* 平时只说用了几步：没设上限时那个分母（服务端兜底值）不该冒充"限制"。 */}
                     <span>{turn.run.stepCount} 步 · 工具 {turn.run.steps.length} 次</span>
