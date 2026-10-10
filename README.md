@@ -354,17 +354,71 @@ REST 与智能问答 / MCP 是**两条入口、一层 lib**（工具侧只读，
 
 ```mermaid
 flowchart TB
-  UI["界面"] -->|"读写"| REST["REST：/api/ontologies/* · /api/ontology/*"]
-  QA["智能问答"] -->|"只读"| RUN["/api/reasoning/*"]
-  EXT["外部 MCP 客户端"] -->|"只读"| MCP["/api/mcp"]
-  RUN --> TOOLS["reasoning/tools/*"]
-  MCP --> TOOLS
-  REST --> LIB["同一层 lib：platform/ontologies · versioning/snapshot · versioning/published-ontology · framework/graph · instance/object-service · datasource/*"]
-  TOOLS --> LIB
-  LIB --> PG[("PostgreSQL：ontologies · ontology_versions · ontology_concepts · object_entries")]
-  LIB --> GRAPH[("图库：Jena / 内置图")]
-  LIB --> BIZ[("业务库（只读）")]
+  UI["界面（工作台 · 本体建模 · 版本记录）"]
+  QA["智能问答（问答页）"]
+  EXT["外部 MCP 客户端 / Agent"]
+
+  subgraph L_HTTP["HTTP 层 · src/app/api"]
+    REST["REST：/api/ontologies/* · /api/ontology/*"]
+    RUN["/api/reasoning/runs · stream"]
+    MCPE["/api/mcp · /api/mcp/&lt;ontologyId&gt;"]
+  end
+
+  subgraph L_TOOLS["工具层（只读）· reasoning/tools/"]
+    TOOLS["registry · search · projection · dispatch<br/>11 个只读工具：概念检索 / 类型详情 / 多跳遍历 / 概念分组 / 接口 / 指标 / 动作 / 表结构 / 列画像 / 只读 SQL"]
+  end
+
+  subgraph L_SERVICE["服务层 lib（两条入口共用 · 进程内直调，不走 HTTP）"]
+    ONTO["platform/ontologies.ts<br/>本体台账 · 受管图存储分配"]
+    SNAP["versioning/snapshot.ts<br/>版本 · 定义 · 实例快照 · 内容哈希"]
+    PUB["versioning/published-ontology.ts<br/>只取 status = PUBLISHED，工具侧读定义的唯一入口"]
+    SRCT["platform/targets · datasource/sources<br/>图引擎连接 · 数据资源登记 · 结构缓存 / 列画像"]
+    GRAPHS["framework/graph · instance/object-service<br/>图库读写（Jena / 内置图）· 对象索引与回源取数"]
+    PURE["ontology/*（纯函数）<br/>接口约束 · 关系键 · 数量关系 · 指标口径"]
+  end
+
+  subgraph L_STORE["存储"]
+    PG[("PostgreSQL · ontology_platform<br/>ontologies · ontology_versions（定义 + 快照）· ontology_concepts<br/>graph_targets · data_sources · object_entries · audit_entries · platform_settings")]
+    GRAPH[("图库：Jena / Fuseki 或内置类型图（embedded_graphs）<br/>发布后的投影，不是定义源")]
+    BIZ[("业务库（只读）：Oracle / PostgreSQL / MySQL<br/>只读事务 + SQL 护栏")]
+  end
+
+  UI -->|"读写"| REST
+  QA -->|"只读"| RUN
+  EXT -->|"只读"| MCPE
+  REST -->|&quot;写定义 / 发布 / 激活&quot;| SNAP
+  REST --> ONTO
+  REST --> SRCT
+  REST --> PURE
+  RUN --> TOOLS
+  MCPE --> TOOLS
+  TOOLS -->|"调工具实现"| SNAP
+  TOOLS --> PUB
+  TOOLS --> GRAPHS
+  ONTO --> PG
+  SNAP --> PG
+  SRCT --> PG
+  SRCT --> BIZ
+  GRAPHS --> PG
+  GRAPHS --> GRAPH
+
+  classDef write fill:#fdf6f4,stroke:#e2bbae,color:#a04c38;
+  classDef read fill:#f4faf6,stroke:#b9d8c6,color:#2f6b52;
+  classDef plain fill:#ffffff,stroke:#cfd9d4,color:#24383a;
+  class UI,REST write;
+  class QA,EXT,RUN,MCPE,TOOLS read;
+  class ONTO,SNAP,PUB,SRCT,GRAPHS,PURE,PG,GRAPH,BIZ plain;
+  linkStyle 0 stroke:#b4553f,stroke-width:2px;
+  linkStyle 1,2,7,8 stroke:#3d7c60,stroke-width:2px;
 ```
+
+两条入口只差三处，其余全部共用（工具实现只 `import` `@/lib/…`，不回头 fetch 自家的 `/api/ontology`，所以换存储时两边零改动）：
+
+| 差异 | REST（界面点按钮） | 智能问答 / MCP（模型与外部 Agent） |
+| --- | --- | --- |
+| 读写 | 可改定义、发布、激活、改实例 | **全部只读**（`run_sql` 走只读事务 + SQL 护栏） |
+| 看哪一版 | 草稿 + 全部历史版本 | **只认 `status = PUBLISHED`** |
+| 放行机制 | 13 个权限点（按模块分组） | 工具开关（全局默认 + 按本体覆盖）与访问令牌 |
 
 「能力验证」这一组是同一个能力的两种用法：**平台内的问答**与**对外的 MCP 服务**共用同一套只读工具，
 所以不会出现"界面上查得到、MCP 里查不到"的漂移。
