@@ -3,6 +3,7 @@ import { AuditVersionColumn0002 } from "@/lib/platform/db/migrations/0002-audit-
 import { ColumnProfiles0003 } from "@/lib/platform/db/migrations/0003-column-profiles";
 import { RbacRolesAndPermissions0004 } from "@/lib/platform/db/migrations/0004-rbac-roles-and-permissions";
 import { OntologyVersionsAndConcepts0005 } from "@/lib/platform/db/migrations/0005-ontology-versions";
+import { TableAndColumnComments0006 } from "@/lib/platform/db/migrations/0006-table-and-column-comments";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -14,4 +15,5 @@ export const PLATFORM_MIGRATIONS = [
   new ColumnProfiles0003(),
   new RbacRolesAndPermissions0004(),
   new OntologyVersionsAndConcepts0005(),
+  new TableAndColumnComments0006(),
 ];

@@ -84,6 +84,28 @@ describe.skipIf(!databaseUrl)("版本记录（平台库）", () => {
     expect(after).toBe(before);
   });
 
+  it("概念表带全文列，且能按词检索到（库支持时）", async () => {
+    const columns = await platformRepo(OntologyConceptEntity);
+    void columns;
+    const runner = (await platformRepo(OntologyConceptEntity)).manager.connection.createQueryRunner();
+    try {
+      const rows = (await runner.query(
+        `SELECT count(*)::int AS n FROM information_schema.columns
+          WHERE table_schema = 'ontology_platform' AND table_name = 'ontology_concepts' AND column_name = 'search_doc'`,
+      )) as { n: number }[];
+      // search_doc 是「库支持 pg_trgm / tsvector 时才有」的生成列：没有就跳过检索断言。
+      if (!rows[0]?.n) return;
+      const hits = (await runner.query(
+        `SELECT count(*)::int AS n FROM ontology_platform.ontology_concepts
+          WHERE version_id = $1 AND search_doc @@ to_tsquery('simple', $2)`,
+        [ids[0], "customer_id"],
+      )) as { n: number }[];
+      expect(hits[0].n).toBeGreaterThan(0);
+    } finally {
+      await runner.release();
+    }
+  });
+
   it("删单个版本后读不到", async () => {
     await deleteVersionRecordRow(ids[0]);
     expect(await getVersionRecordRow(ids[0])).toBeNull();

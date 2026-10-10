@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:object-index": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/object-index/postgres.contract.test.ts",
     "test:version-store": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/version-records.contract.test.ts",
+    "test:schema-comments": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/platform-schema-comments.contract.test.ts",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

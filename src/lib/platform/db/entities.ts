@@ -13,7 +13,7 @@ type JsonColumn = any;
 /**
  * 平台库（PostgreSQL，schema `ontology_platform`）的 TypeORM 实体。
  *
- * **为什么整层都走 ORM**（2026-09-19 用户要求："操作数据库一定要用 ORM，不能直接写 SQL"）：
+ * **为什么整层都走 ORM**（要求：操作数据库必须用 ORM，不直接写 SQL）：
  * 手写 SQL 把表名、方言、占位符、类型转换散在业务代码里，换一个库（或换一个存储实现）
  * 就得把每一处都翻一遍。实体 + 仓储把这件事收敛到一处：业务代码只说"要哪些行"，
  * 由驱动决定怎么问库。
@@ -23,7 +23,7 @@ type JsonColumn = any;
  * 建表与改列统一放 `migrations/`，由 `runMigrations()` 执行。
  */
 
-/** 角色 = 一组权限点（2026-10-09 RBAC）。内置三档由 `@/lib/permissions` 定义并在启动时同步。 */
+/** 角色 = 一组权限点。内置三档由 `@/lib/platform/permissions` 定义并在启动时同步。 */
 @Entity({ schema: "ontology_platform", name: "roles" })
 export class RoleEntity {
   @PrimaryColumn("text") id!: string;
@@ -105,11 +105,7 @@ export class EmbeddedGraphEntity {
 }
 
 /**
- * 本体版本记录：**本体定义（OntologyDefinition）就存在 `definition` 这一列**。
- *
- * 2026-10-10 之前定义是磁盘上的 `definition.json`（见迁移 0005 的说明），现在 PG 是唯一权威；
- * 磁盘只留实例快照 `nodes.csv` / `relationships.csv`。
- * 磁盘时代那个 `artifact_path`（快照目录）不再有对应文件，对外只作为「有没有快照」的标记。
+ * 本体版本记录：一行一个版本，**本体定义（OntologyDefinition）与实例快照各占一列**。
  */
 @Entity({ schema: "ontology_platform", name: "ontology_versions" })
 export class OntologyVersionEntity {
@@ -130,12 +126,11 @@ export class OntologyVersionEntity {
 }
 
 /**
- * 定义里概念的扁平索引（2026-10-10 建，**为向量检索做准备**）。
+ * 定义里概念的检索索引：一行一个概念（对象类型 / 属性 / 关系类型 / 接口 / 指标 / 动作 / 规则 / 分组）。
  *
- * 一行一个概念（对象类型 / 属性 / 关系类型 / 接口 / 指标 / 动作 / 规则 / 分组）。
- * 现在只填文本：全文列 `search_doc`（tsvector 生成列）、pg_trgm 索引、以及 pgvector 的
- * `embedding` 列都由 `@/lib/platform/version-records` 的 `ensureConceptSearchIndex()`
- * 在库支持时补，**这两列刻意不在实体里声明**（PG 专有，交给 synchronize 会被删）。
+ * 文本列是 `search_text`；全文列 `search_doc`（tsvector 生成列）与 pgvector 的 `embedding` 列
+ * 是 PG 专有列，由 `@/lib/platform/version-records` 在库支持时补建，注释也写在那边 ——
+ * **不在实体里声明**（交给 synchronize 会被当成多余列删掉）。
  */
 @Entity({ schema: "ontology_platform", name: "ontology_concepts" })
 export class OntologyConceptEntity {
@@ -224,7 +219,7 @@ export class ObjectEntryEntity {
 /**
  * 列画像缓存（采样结果，按天复用）。见 `@/lib/column-profile`。
  *
- * 主键是 `(数据资源, 模式.表)`：同一个数据资源下换表就换一行；建表在迁移 0003。
+ * 主键是 `(数据资源, 模式.表)`：同一个数据资源下换表就换一行。
  * 画像本体（每列的取值 / 空值率）整个存 jsonb —— 它是一份快照，按列拆表反而要 join 才能读回一份。
  */
 @Entity({ schema: "ontology_platform", name: "column_profiles" })

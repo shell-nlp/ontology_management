@@ -1,5 +1,6 @@
 import { jsonValue, platformRepo, withPlatformQueryRunner } from "@/lib/platform/db";
 import { OntologyConceptEntity, OntologyVersionEntity } from "@/lib/platform/db/entities";
+import { pgOnlyColumnComment } from "@/lib/platform/db/comments";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { conceptsOfDefinition, type OntologyConcept } from "@/lib/ontology/concepts";
 
@@ -163,6 +164,11 @@ export async function deleteTargetVersionRecords(targetId: string): Promise<numb
  * 列与索引由 `ensureConceptSearchIndex()` 在库支持时补（装不上就如实没有）。
  */
 export async function replaceVersionConcepts(versionId: string, targetId: string, definition: OntologyDefinition): Promise<number> {
+  // 全文列 / trigram 索引 / pgvector 列是**库特性**，第一次写概念时补齐；
+  // 装不上扩展就如实降级（文本照常，向量那一路等有扩展再说），所以这里吞掉错误只记一行。
+  await ensureConceptSearchIndex().catch((error) => {
+    console.warn("[version-records] 概念检索索引补建失败（不影响概念本身）：", error instanceof Error ? error.message : error);
+  });
   const repo = await platformRepo(OntologyConceptEntity);
   const concepts: OntologyConcept[] = conceptsOfDefinition(definition);
   await repo.delete({ versionId });
@@ -222,6 +228,11 @@ async function bootstrapConceptSearchIndex(): Promise<void> {
     if (vector) {
       await runner.query(`ALTER TABLE ontology_platform.ontology_concepts ADD COLUMN IF NOT EXISTS embedding vector(1536)`);
       await runner.query(`CREATE INDEX IF NOT EXISTS ontology_concepts_embedding_idx ON ontology_platform.ontology_concepts USING hnsw (embedding vector_cosine_ops)`);
+    }
+    // PG 专有列（生成列与 pgvector）不在实体与迁移里，注释在这里补（幂等）。
+    await runner.query(`COMMENT ON COLUMN ontology_platform.ontology_concepts.search_doc IS '${pgOnlyColumnComment("ontology_concepts", "search_doc").replace(/'/g, "''")}'`);
+    if (vector) {
+      await runner.query(`COMMENT ON COLUMN ontology_platform.ontology_concepts.embedding IS '${pgOnlyColumnComment("ontology_concepts", "embedding").replace(/'/g, "''")}'`);
     }
   });
 }

@@ -782,6 +782,19 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
   `build-bundle.mjs` 原样编译并顺手报"指到不存在的属性"；`check-bundle.mjs` 也会查一遍。
 - 单测：`tests/lib/relationship-keys.test.ts`（10 条）+ `tests/lib/version-snapshot.test.ts` 的发布门禁用例。
 
+## 数据表与字段必须有注释（2026-10-10 用户要求）
+
+用户口径：「构建数据库的时候，字段注释一定要有」「表也要有注释，因为我也不知道表是干什么的」
+「注释中不要出现形如 2026-10-10 之前定义是磁盘上的 definition.json……这是我的要求，而不是表的功能、作用」
+「重点是描述它的作用，不要啰嗦」。
+
+- **建表必须写表注释，加列必须写字段注释**，而且注释要进 PG（`COMMENT ON`）—— 只写在代码里不算。
+- 只写**作用**：表注释一句话说清「一行代表什么」；字段注释写「是什么 / 取值 / null 含义 / 指向哪张表」。
+  **不写改动史、背景、用户口径、日期**，也不要把字段名翻译一遍当注释。
+- 唯一出处是 `src/lib/platform/db/comments.ts`，迁移 `0006` 由它生成 `COMMENT ON`（幂等）；新增表或列先在那里补一条。
+- PG 专有列（`object_entries` / `ontology_concepts` 的 `search_doc`、`embedding`）由代码按扩展可用性补建，
+  注释写在**创建它们的那段代码**里。
+- 核对：查 `pg_description` / `information_schema`，**表与字段的注释一个都不能缺**。
 ## 平台库统一走 TypeORM（2026-09-19 用户要求）
 
 **口径：操作数据库一定要用 ORM，不能直接写 SQL；以前写在业务代码里的 SQL 也要改掉。**

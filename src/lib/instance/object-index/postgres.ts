@@ -2,6 +2,7 @@ import { type EntityManager } from "typeorm";
 import { In, Not } from "typeorm";
 import { ObjectEntryEntity, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformQueryRunner, withPlatformTransaction } from "@/lib/platform/db";
 import { planObjectSearch, type ObjectSearchFeatures } from "@/lib/instance/object-index/sql";
+import { pgOnlyColumnComment } from "@/lib/platform/db/comments";
 import type {
   ObjectIndex,
   ObjectIndexCapabilities,
@@ -98,6 +99,12 @@ async function ensureObjectIndexSchemaOnce(): Promise<ObjectSearchFeatures> {
           GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED
       `);
       if (features.vector) await runner.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS embedding vector(${EMBEDDING_DIM})`);
+
+      // PG 专有列的注释：文案与迁移 0006 同一份常量（幂等）。
+      await runner.query(`COMMENT ON COLUMN ${TABLE}.search_doc IS '${pgOnlyColumnComment("object_entries", "search_doc").replace(/'/g, "''")}'`);
+      if (features.vector) {
+        await runner.query(`COMMENT ON COLUMN ${TABLE}.embedding IS '${pgOnlyColumnComment("object_entries", "embedding").replace(/'/g, "''")}'`);
+      }
 
       await runner.query(`CREATE INDEX IF NOT EXISTS object_entries_labels_idx ON ${TABLE} USING GIN (labels)`);
       await runner.query(`CREATE INDEX IF NOT EXISTS object_entries_search_doc_idx ON ${TABLE} USING GIN (search_doc)`);
