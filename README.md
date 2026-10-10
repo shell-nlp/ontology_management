@@ -353,7 +353,7 @@ node scripts/import-ontology.mjs "你的文件.json" --publish
 REST 与智能问答 / MCP 是**两条入口、一层 lib**（工具侧只读，且只认已发布版本）：
 
 ```mermaid
-flowchart LR
+flowchart TB
   UI["界面"] -->|"读写"| REST["REST：/api/ontologies/* · /api/ontology/*"]
   QA["智能问答"] -->|"只读"| RUN["/api/reasoning/*"]
   EXT["外部 MCP 客户端"] -->|"只读"| MCP["/api/mcp"]
@@ -700,7 +700,7 @@ Oracle 注意两点：服务端版本较旧（11g 及更早）时必须用 Insta
 分层与依赖（mermaid，GitHub / 编辑器里可直接渲染）：
 
 ```mermaid
-flowchart LR
+flowchart TB
   UI["界面：工作台 · 本体建模 · 实例图谱 · 智能问答"]
   EXT["外部 MCP 客户端 / Agent"]
 
