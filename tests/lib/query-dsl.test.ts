@@ -81,6 +81,28 @@ describe("resolveQueryDsl", () => {
     expect(() => resolveQueryDsl(定义(), query)).toThrowError(/本体里没有对象类型「不存在的类型」/);
   });
 
+  it("操作符与属性类型不兼容时直接拒绝", () => {
+    const query = parseQueryDsl({
+      version: "1.0",
+      kind: "records",
+      from: { object_type: "专线产品用户" },
+      where: { field: { property: "业务状态" }, op: "gt", value: "A" },
+      select: [{ field: { property: "地市编码" }, as: "地市编码" }],
+    });
+
+    expect(() => resolveQueryDsl(定义(), query)).toThrowError(/操作符.*类型|不支持.*操作符/);
+  });
+
+  it("聚合方式与属性类型不兼容时直接拒绝", () => {
+    const query = parseQueryDsl({
+      version: "1.0",
+      kind: "aggregate",
+      from: { object_type: "专线产品用户" },
+      select: [{ aggregate: "SUM", property: "业务状态", as: "状态求和" }],
+    });
+
+    expect(() => resolveQueryDsl(定义(), query)).toThrowError(/聚合.*类型|不能对.*SUM/);
+  });
   it("拒绝对象类型里不存在的属性", () => {
     const query = parseQueryDsl({
       version: "1.0",

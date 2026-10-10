@@ -135,6 +135,46 @@ function resolveField(entities: Map<string, ResolvedEntity>, ref: FieldRef): Res
   };
 }
 
+const NUMERIC_TYPES = new Set(["INTEGER", "DECIMAL"]);
+const ORDERED_TYPES = new Set(["INTEGER", "DECIMAL", "DATE", "DATETIME"]);
+const SCALAR_TYPES = new Set(["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME"]);
+
+function assertOperatorCompatible(field: ResolvedField, op: CompareOperator): void {
+  if (op === "is_null" || op === "is_not_null") return;
+  if (["eq", "ne", "in", "not_in"].includes(op) && !SCALAR_TYPES.has(field.dataType)) {
+    throw new QueryDslError("INVALID_QUERY", `操作符「${op}」不支持属性「${field.name}」的类型 ${field.dataType}。`);
+  }
+  if (["gt", "gte", "lt", "lte", "in_range"].includes(op) && !ORDERED_TYPES.has(field.dataType)) {
+    throw new QueryDslError("INVALID_QUERY", `操作符「${op}」不支持属性「${field.name}」的类型 ${field.dataType}。`);
+  }
+  if (["contains", "starts_with", "ends_with"].includes(op) && field.dataType !== "TEXT") {
+    throw new QueryDslError("INVALID_QUERY", `操作符「${op}」只支持 TEXT 属性，「${field.name}」是 ${field.dataType}。`);
+  }
+  if (op === "enum_label" && !field.enumValues.length) {
+    throw new QueryDslError("INVALID_QUERY", `属性「${field.name}」没有定义 enumValues，不能用 enum_label。`);
+  }
+}
+
+function assertAggregationCompatible(
+  aggregation: ResolvedMetric["aggregation"],
+  field: ResolvedField | undefined,
+): void {
+  if (!field) {
+    if (aggregation !== "COUNT") throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property。`);
+    return;
+  }
+  if (["SUM", "AVG"].includes(aggregation) && !NUMERIC_TYPES.has(field.dataType)) {
+    throw new QueryDslError("INVALID_QUERY", `聚合 ${aggregation} 不能作用于 ${field.dataType} 类型属性「${field.name}」。`);
+  }
+  if (aggregation === "COUNT_DISTINCT" && !SCALAR_TYPES.has(field.dataType)) {
+    throw new QueryDslError("INVALID_QUERY", `聚合 COUNT_DISTINCT 不能作用于 ${field.dataType} 类型属性「${field.name}」。`);
+  }
+  if (aggregation === "MIN" || aggregation === "MAX") {
+    if (!ORDERED_TYPES.has(field.dataType) && field.dataType !== "TEXT") {
+      throw new QueryDslError("INVALID_QUERY", `聚合 ${aggregation} 不能作用于 ${field.dataType} 类型属性「${field.name}」。`);
+    }
+  }
+}
 function resolveValue(value: FilterValue | undefined, op: CompareOperator): ResolvedValue | undefined {
   if (op === "is_null" || op === "is_not_null") return undefined;
   if (value === undefined) throw new QueryDslError("INVALID_QUERY", `操作符「${op}」缺少比较值。`);
@@ -148,9 +188,14 @@ function resolveExpr(entities: Map<string, ResolvedEntity>, expr: QueryExpr): Re
   if ("or" in expr) return { kind: "or", items: expr.or.map((item) => resolveExpr(entities, item)) };
   if ("not" in expr) return { kind: "not", item: resolveExpr(entities, expr.not) };
   const value = resolveValue(expr.value, expr.op);
+  const field = resolveField(entities, expr.field);
+  assertOperatorCompatible(field, expr.op);
+  if (expr.op === "in_range" && (!Array.isArray(value) || value.length !== 2)) {
+    throw new QueryDslError("INVALID_QUERY", "in_range 需要提供 [from, to] 两个值。");
+  }
   return {
     kind: "condition",
-    field: resolveField(entities, expr.field),
+    field,
     op: expr.op,
     ...(value === undefined ? {} : { value }),
   };
@@ -210,12 +255,14 @@ function resolveMetric(
       );
     }
   }
+  const property = metric.property ? resolveField(entities, { alias: entityAlias, property: metric.property }) : undefined;
+  assertAggregationCompatible(metric.aggregation, property);
   return {
     id: metric.id,
     name: metric.name,
     description: metric.description,
     aggregation: metric.aggregation,
-    ...(metric.property ? { property: resolveField(entities, { alias: entityAlias, property: metric.property }) } : {}),
+    ...(property ? { property } : {}),
     filters: resolveMetricFilters(entities, entityAlias, metric),
     dimensions,
     status: metric.status,
@@ -236,10 +283,12 @@ function resolveSelect(
     return { kind: "metric", metric: resolveMetric(definition, entities, on, item.metric, groupBy), as: item.as };
   }
   const on = item.on ?? rootAlias;
+  const field = item.property ? resolveField(entities, { alias: on, property: item.property }) : undefined;
+  assertAggregationCompatible(item.aggregate, field);
   return {
     kind: "aggregate",
     aggregate: item.aggregate,
-    ...(item.property ? { field: resolveField(entities, { alias: on, property: item.property }) } : {}),
+    ...(field ? { field } : {}),
     on,
     as: item.as,
   };
