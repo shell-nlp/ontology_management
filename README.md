@@ -832,7 +832,8 @@ ontology_management/
 │   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
 │   ├── components/       # 界面组件；workbench/ 下按页面一个文件（本体建模 / 图谱 / 对象 / 关系 / 设置 …）
 │   └── lib/              # 领域与平台代码（根目录只有目录，没有散文件）
-│       ├── framework/    # 通用件：graph/（图存储抽象 + jena/embedded 适配器）· crypto · zip · ids · format-units …
+│       ├── framework/    # 通用件：graph/（图存储抽象 + jena/embedded）· object-index/（对象索引中间层 + clickhouse 适配器）· crypto · zip · ids · format-units …
+
 │       ├── platform/     # 平台自身：auth · users · permissions · audit · ontologies · targets · platform-db · db/（实体与迁移）
 │       ├── ontology/     # 本体模型：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检 · bkn 导入 · 关系键与数量关系
 │       ├── versioning/   # 版本：快照（定义 + 实例）· 发布 · 已发布定义

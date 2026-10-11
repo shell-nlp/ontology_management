@@ -7,7 +7,7 @@ import type { OntologyDefinition } from "@/lib/ontology";
 /**
  * 列画像的**真实通道**契约：真采一次 Oracle → 写平台库缓存 → 第二次命缓存 → 进取值索引 → 能被检索命中。
  *
- * **默认跳过**（和 `object-index/postgres.contract.test.ts` 同一个理由）：`pnpm test` 不该依赖数据库与业务库。
+ * **默认跳过**（和 `object-index/clickhouse.contract.test.ts` 同一个理由）：`pnpm test` 不该依赖数据库与业务库。
  * 要真跑，把两个坐标用环境变量传进来（挑一张**被对象类型绑定**的表，因为没绑定的表按设计不采）：
  *
  *   $env:DATABASE_URL="<平台库>"; $env:ONTOLOGY_PROFILE_DATA_SOURCE="oracle-test"; `

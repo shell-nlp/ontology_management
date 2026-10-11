@@ -6,6 +6,10 @@
 # 平台之外的依赖都不进编排：PostgreSQL 是平台库；Jena/Fuseki 是可选的外部图引擎。
 # 业务数据源（Oracle / PostgreSQL / MySQL）同样是被读取的外部系统，在「数据资源」里登记。
 #
+# 唯一的例外是**对象索引库 ClickHouse**：它是平台的组成部分（对象实例的检索索引），
+# 默认随 `docker compose up -d` 一起起来；只想跑平台本体、或已经有外部 ClickHouse 时，
+# 用 `docker compose up -d app` 只起本体，并把 CLICKHOUSE_URL 指到外部服务。
+#
 # 容器里访问宿主机上的服务要走 host.docker.internal（下面已经加了 host-gateway 映射）：
 #   DATABASE_URL = postgresql://用户:密码@host.docker.internal:5432/库名
 # 已登记的 Jena endpoint 若指向宿主机的 localhost:3030，app 容器会通过
@@ -34,6 +38,12 @@ services:
     environment:
       TZ: Asia/Shanghai
       PORT: "3000"
+      # 对象索引库 ClickHouse（列存）。默认指到编排里的 clickhouse 服务；
+      # 用外部 ClickHouse 时在 .env.docker 里覆盖，例如 http://host.docker.internal:8123。
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://clickhouse:8123}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-ontology_index}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
       # 本体定义与快照都存在平台库；这个目录只在旧部署升级时被读一次，
       # 用来把磁盘上的历史版本迁进 ontology_platform.ontology_versions。
       ONTOLOGY_VERSION_DIR: /data/ontology-versions
@@ -68,5 +78,38 @@ services:
       retries: 5
       start_period: 20s
 
+  # 对象索引库：对象实例的检索索引落在列存里（定义与版本仍在平台库 PostgreSQL）。
+  # 它是**派生数据**：随时可以从数据源与已发布快照重建，所以换机器不带数据也没关系。
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-clickhouse:26.9.8.3}
+    container_name: ontology-clickhouse
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 首次启动时由镜像入口脚本建库建用户；已有数据卷时这几个变量不生效。
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-ontology_index}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      # 本机开发服务（`pnpm dev`）用 localhost:8123 连的就是它；端口被占用时在 .env.docker 里改。
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    ulimits:
+      # ClickHouse 官方要求：并发查询多时文件句柄要放大。
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
 volumes:
   ontology-versions:
+  # 对象索引数据卷。索引可重建，删掉它只会让检索为空，重新发布/重建索引即可。
+  clickhouse-data:

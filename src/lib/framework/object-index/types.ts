@@ -5,12 +5,12 @@
  * 属性检索。Palantir 的做法是把它们拆开（元数据服务 + 对象存储/搜索索引 + 查询编排），
  * 图只是上面的应用层。这里落地其中的「检索索引」那一层。
  *
- * 检索索引是**派生数据**：任何时刻都能从已发布快照重建，索引坏了不影响本体正确性。
- * 当前只实现 PostgreSQL 一种后端（全文 + 模糊 + 向量），能力上暂时替代原计划的
- * Elasticsearch，换来的是零额外集群、零双写协调成本。将来要接 OpenSearch / Solr 时，
- * 实现这里的 ObjectIndex 即可，上层只认这个接口。
+ * 检索索引是**派生数据**：任何时刻都能从数据源与已发布快照重建，索引坏了不影响本体正确性。
+ * 现在的后端是 ClickHouse（列存：过滤 + 聚合 + 全文 + 暴力向量），本体定义与版本仍在平台库
+ * PostgreSQL 里。将来要接别的后端（OpenSearch / 专用对象库…）时，实现这里的 ObjectIndex 即可，
+ * 上层只认这个接口。
  */
-export type ObjectIndexKind = "POSTGRES";
+export type ObjectIndexKind = "CLICKHOUSE";
 
 /** 一条进入检索索引的对象。objectId 是平台身份，primaryKey 是业务主键（M1 落位后成为真身份）。 */
 export type ObjectIndexEntry = {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { buildIndexEntries, resolveObjectTitle } from "@/lib/instance/object-index/entries";
-import { escapeLike, normalizeSearchQuery, planObjectSearch } from "@/lib/instance/object-index/sql";
+import { normalizeSearchQuery } from "@/lib/framework/object-index/query";
+import { planClickHouseSearch } from "@/lib/framework/object-index/clickhouse/plan";
 
 const USER_CLASS_ID = "11111111-1111-4111-8111-111111111111";
 const ORDER_CLASS_ID = "22222222-2222-4222-8222-222222222222";
@@ -53,14 +54,6 @@ describe("buildIndexEntries", () => {
   });
 });
 
-describe("escapeLike", () => {
-  it("转义 ILIKE 通配符，避免用户输入的 % 变成匹配一切", () => {
-    expect(escapeLike("50%")).toBe("50\\%");
-    expect(escapeLike("a_b")).toBe("a\\_b");
-    expect(escapeLike("c\\d")).toBe("c\\\\d");
-  });
-});
-
 describe("normalizeSearchQuery", () => {
   it("夹取 limit / offset，去重 labels，丢掉没有值的过滤条件", () => {
     const normalized = normalizeSearchQuery({
@@ -81,26 +74,29 @@ describe("normalizeSearchQuery", () => {
   });
 });
 
-describe("planObjectSearch", () => {
-  it("关键字同时走全文与模糊，参数全部占位化", () => {
-    const plan = planObjectSearch({ targetId: "t", text: "张三" }, { trigram: true, vector: false });
+describe("planClickHouseSearch", () => {
+  const DB = "ontology_index";
+
+  it("关键字走子串 + 分词双通道，关键字本身是参数、不进 SQL 文本", () => {
+    const plan = planClickHouseSearch({ targetId: "t", text: "郑州客户" }, { vector: true }, DB);
     expect(plan.textMode).toBe("fulltext+trigram");
-    expect(plan.hits.text).toContain("plainto_tsquery('simple', $3)");
-    expect(plan.hits.text).toContain("similarity(e.search_text, $3)");
-    expect(plan.hits.values).toEqual(["t", "张三", "张三", 20, 0]);
-    // 总数查询只带 WHERE 用到的参数，排序与分页参数不能混进去。
-    expect(plan.count.values).toEqual(["t", "张三", "张三"]);
-    expect(plan.count.text).not.toContain("LIMIT");
+    expect(plan.hits.sql).toContain("positionCaseInsensitive");
+    expect(plan.hits.sql).toContain("hasTokenCaseInsensitive");
+    expect(plan.hits.sql).not.toContain("郑州客户");
+    expect(Object.values(plan.hits.params)).toContain("郑州客户");
+    // 总数查询只带 WHERE 用到的参数：分页参数混进去 CH 会直接报"参数未使用"。
+    expect(plan.count.sql).not.toContain("LIMIT");
+    expect(Object.values(plan.count.params)).toEqual(["t", "郑州客户"]);
   });
 
-  it("没有 pg_trgm 时退回只用全文与子串匹配", () => {
-    const plan = planObjectSearch({ targetId: "t", text: "张三" }, { trigram: false, vector: false });
-    expect(plan.textMode).toBe("fulltext");
-    expect(plan.hits.text).not.toContain("similarity(");
+  it("两个字的短关键字只走子串通道（CH 的分词通道至少要 3 个字符）", () => {
+    const plan = planClickHouseSearch({ targetId: "t", text: "张三" }, { vector: true }, DB);
+    expect(plan.hits.sql).toContain("positionCaseInsensitive");
+    expect(plan.hits.sql).not.toContain("hasTokenCaseInsensitive");
   });
 
   it("类过滤与属性过滤都走占位符，属性名不当字符串拼接", () => {
-    const plan = planObjectSearch(
+    const plan = planClickHouseSearch(
       {
         targetId: "t",
         labels: ["用户"],
@@ -109,43 +105,46 @@ describe("planObjectSearch", () => {
           { property: "等级", operator: "GT", value: "3" },
         ],
       },
-      { trigram: true, vector: false },
+      { vector: true },
+      DB,
     );
-    expect(plan.hits.text).toContain("e.labels && $2::text[]");
-    expect(plan.hits.text).toContain("e.properties @> $3::jsonb");
-    expect(plan.hits.text).toContain("::numeric > $5::numeric");
-    // 数字比较前先做正则校验，避免一条脏数据让整条查询报错。
-    expect(plan.hits.text).toContain("~ '^-?[0-9]+(\\.[0-9]+)?$'");
-    expect(plan.hits.text).not.toContain("状态");
+    expect(plan.hits.sql).toMatch(/hasAny\(labels, \{\w+:Array\(String\)\}\)/);
+    expect(plan.hits.sql).toMatch(/JSONExtractString\(properties, \{\w+:String\}\) = \{\w+:String\}/);
+    // 大小比较先确认属性值是数字再比，脏数据不会让整条查询报错。
+    expect(plan.hits.sql).toContain("match(JSONExtractString(properties,");
+    expect(plan.hits.sql).toContain("Float64");
+    expect(plan.hits.sql).not.toContain("状态");
+    expect(Object.values(plan.hits.params)).toContain("状态");
   });
 
-  it("大小比较的边界值不是数字时丢掉这条过滤，而不是让数据库报错", () => {
-    const plan = planObjectSearch(
+  it("大小比较的边界值不是数字时丢掉这条过滤，而不是让 ClickHouse 报错", () => {
+    const plan = planClickHouseSearch(
       { targetId: "t", filters: [{ property: "消费额", operator: "GT", value: "不是数字" }] },
-      { trigram: true, vector: false },
+      { vector: true },
+      DB,
     );
-    expect(plan.hits.text).not.toContain("::numeric");
-    expect(plan.hits.values).toEqual(["t", 20, 0]);
+    expect(plan.hits.sql).not.toContain("Float64");
+    expect(Object.values(plan.count.params)).toEqual(["t"]);
   });
 
   it("文本检索把相关度回传，前端拿到的 score 才是真的", () => {
-    const plan = planObjectSearch({ targetId: "t", text: "张三" }, { trigram: true, vector: false });
-    expect(plan.hits.text).toContain("AS score");
-    expect(plan.hits.text).not.toContain("0::real AS score");
+    const plan = planClickHouseSearch({ targetId: "t", text: "张三" }, { vector: true }, DB);
+    expect(plan.hits.sql).toContain("AS score");
+    expect(plan.hits.sql).not.toContain("0.0 AS score");
   });
 
-  it("给向量时以向量相似度为主排序，且向量参数不进入总数查询", () => {
-    const plan = planObjectSearch({ targetId: "t", vector: [0.1, 0.2] }, { trigram: true, vector: true });
+  it("给向量时以向量距离为主排序，且向量条件与参数不进入总数查询", () => {
+    const plan = planClickHouseSearch({ targetId: "t", vector: [0.1, 0.2] }, { vector: true }, DB);
     expect(plan.vectorUsed).toBe(true);
-    expect(plan.hits.text).toContain("<=> $2::vector");
-    expect(plan.hits.text).toContain("e.embedding IS NOT NULL");
-    expect(plan.count.values).toEqual(["t"]);
-    expect(plan.count.text).toContain("e.embedding IS NOT NULL");
+    expect(plan.hits.sql).toContain("cosineDistance(embedding, [0.1,0.2])");
+    expect(plan.hits.sql).toContain("notEmpty(embedding)");
+    expect(plan.count.sql).toContain("notEmpty(embedding)");
+    expect(Object.values(plan.count.params)).toEqual(["t"]);
   });
 
   it("没有向量能力时不生成向量相关 SQL", () => {
-    const plan = planObjectSearch({ targetId: "t", vector: [0.1, 0.2] }, { trigram: true, vector: false });
+    const plan = planClickHouseSearch({ targetId: "t", vector: [0.1, 0.2] }, { vector: false }, DB);
     expect(plan.vectorUsed).toBe(false);
-    expect(plan.hits.text).not.toContain("<=>");
+    expect(plan.hits.sql).not.toContain("cosineDistance");
   });
 });

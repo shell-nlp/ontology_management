@@ -22,7 +22,6 @@ export const PLATFORM_TABLE_COMMENTS: Record<string, string> = {
   platform_settings: "平台级设置。一行一个 key，值存 jsonb。",
   reasoning_conversations: "智能问答的对话。一行一段对话。",
   reasoning_messages: "一轮问答。一行一次提问：问题、回答、思考过程与运行记录。",
-  object_entries: "对象索引。一行一个对象实例，用于检索、分页与按类型统计。",
   column_profiles: "列画像缓存。一行一张表，存采样出来的列表征。",
 };
 
@@ -151,19 +150,6 @@ export const PLATFORM_COLUMN_COMMENTS: Record<string, Record<string, string>> = 
     error: "失败信息；成功为 null。",
     created_at: "提问时间。",
   },
-  object_entries: {
-    target_id: "本体存储（graph_targets.id）。",
-    object_id: "对象 id，与图库节点 id 一致。",
-    entity_type: "对象类型名。",
-    object_key: "业务主键拼成的键，用于回源取数。",
-    labels: "节点标签数组。",
-    title: "展示标题。",
-    properties: "对象全部属性（列名 -> 值）。",
-    primary_key: "主键列与值。",
-    search_text: "检索文本（标题 + 主要属性值）。",
-    version_id: "来自哪一版（ontology_versions.id）。",
-    updated_at: "重建索引时间。",
-  },
   column_profiles: {
     source_id: "数据资源 id（data_sources.id）。",
     table_key: "表的稳定键（schema.table）。",
@@ -194,8 +180,6 @@ export function platformCommentStatements(schema = "ontology_platform"): string[
  * 创建它们的那段代码也用这份常量，保证两处文案一致。
  */
 export const PLATFORM_PG_ONLY_COLUMN_COMMENTS: { table: string; column: string; comment: string }[] = [
-  { table: "object_entries", column: "search_doc", comment: "全文检索列：由 search_text 生成的 tsvector，内容与 search_text 始终一致。" },
-  { table: "object_entries", column: "embedding", comment: "对象向量（pgvector），供相似度检索；为空表示这条还没有向量。" },
   { table: "ontology_concepts", column: "search_doc", comment: "全文检索列：由 search_text 生成的 tsvector。" },
   { table: "ontology_concepts", column: "embedding", comment: "概念向量（pgvector），供相似度检索；为空表示这条还没有向量。" },
 ];

@@ -194,7 +194,7 @@ let conceptIndexPromise: Promise<void> | undefined;
 
 /**
  * 概念索引的"库特性"补丁：全文生成列 + GIN、名字的 trigram 索引，以及
- * **pgvector 可用时的 `embedding vector(1536)` 列 + hnsw 索引**（和 `object_entries` 一个套路）。
+ * **pgvector 可用时的 `embedding vector(1536)` 列 + hnsw 索引**。
  *
  * 装不上扩展就如实降级（不是错误）：文本检索照常，向量检索这一路等有扩展时再补。
  * 幂等，可以重复调用；只在第一次写入概念时触发。

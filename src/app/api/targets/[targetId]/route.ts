@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { encryptSecret } from "@/lib/framework/crypto";
-import { getObjectIndex } from "@/lib/instance/object-index";
+import { getObjectIndex } from "@/lib/framework/object-index";
 import { GraphTargetEntity, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";

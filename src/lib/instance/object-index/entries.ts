@@ -1,5 +1,5 @@
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { ObjectIndexEntry } from "@/lib/instance/object-index/types";
+import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
 import { fallbackObjectKey, objectKeyOf, primaryKeyFromProperties, type IdentityEntityType, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
 
 /** 快照节点进索引时只看这三项，正好是 VersionSnapshot 里节点的形状。 */

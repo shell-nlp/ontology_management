@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
-import { getObjectIndex } from "@/lib/instance/object-index";
+import { getObjectIndex } from "@/lib/framework/object-index";
 import { getTarget } from "@/lib/platform/targets";
 
 const filterSchema = z.object({

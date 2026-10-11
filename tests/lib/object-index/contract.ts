@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/instance/object-index/types";
+import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/framework/object-index/types";
 
 /**
  * **对象检索索引的后端契约**。
@@ -9,7 +9,7 @@ import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/insta
  * 只有跑一遍才知道。这份用例跟 PostgreSQL 无关，任何实现（PG / ES / OpenSearch）都应该跑过它。
  *
  * 用法：新后端写完后加一个 `<后端>.contract.test.ts`，把 `createIndex` 换成自己的实现即可。
- * 现在只有 PostgreSQL 一个实例，它在 `postgres.contract.test.ts` 里跑（需要 `DATABASE_URL`）。
+ * 现在只有 ClickHouse 一个实例，它在 `clickhouse.contract.test.ts` 里跑（需要 `CLICKHOUSE_URL`）。
  *
  * 约定：**每个用例一个全新 `targetId`**，前后端之间、用例之间互不干扰；跑完自己清干净。
  */

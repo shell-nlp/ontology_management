@@ -17,7 +17,7 @@ import type { QueryRunner } from "typeorm";
  *   动作 / 规则 / 分组）拍平成一行一条，**现在只存文本**；将来做向量检索时只差
  *   「算 embedding」这一步 —— 全文列、trigram 索引、pgvector 列与 hnsw 索引由
  *   `@/lib/platform/version-records` 的 `ensureConceptSearchIndex()` 按扩展是否可用补，
- *   装不上就如实降级（和 `object_entries` 一个套路）。
+ *   装不上就如实降级。
  *
  * 两支 `CREATE TABLE IF NOT EXISTS` 都是幂等的；`target_id` **刻意不加外键**：
  * 删除本体存储时版本先行清理（`deleteTargetVersions`），加外键反而会让清理顺序变成硬约束。

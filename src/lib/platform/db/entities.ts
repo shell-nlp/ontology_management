@@ -18,7 +18,7 @@ type JsonColumn = any;
  * 就得把每一处都翻一遍。实体 + 仓储把这件事收敛到一处：业务代码只说"要哪些行"，
  * 由驱动决定怎么问库。
  *
- * 表结构本身**不由 synchronize 生成**：`object_entries` 上有 tsvector / pgvector / GIN
+ * 表结构本身**不由 synchronize 生成**：`ontology_concepts` 上有 tsvector / pgvector / GIN
  * 这类 TypeORM 表达不了的列，交给 `synchronize` 会被当成"多余的列"删掉。
  * 建表与改列统一放 `migrations/`，由 `runMigrations()` 执行。
  */
@@ -191,29 +191,6 @@ export class ConversationMessageEntity {
   @Column("jsonb", { nullable: true }) run!: JsonColumn;
   @Column("text", { nullable: true }) error!: string | null;
   @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
-}
-
-/**
- * 对象检索索引（物化层）。
- *
- * `entity_type` / `object_key` 是对象身份（对象类型 + 主键）的落库形态：
- * 唯一键是 `(target_id, object_key)`，增量同步按它 upsert，不再整表替换。
- * `search_doc`（tsvector）与 `embedding`（pgvector）是 PG 专有列，实体里不声明 ——
- * 这两列的写入走 `object-index/postgres.ts` 里那一处显式 SQL。
- */
-@Entity({ schema: "ontology_platform", name: "object_entries" })
-export class ObjectEntryEntity {
-  @PrimaryColumn("text", { name: "target_id" }) targetId!: string;
-  @PrimaryColumn("text", { name: "object_id" }) objectId!: string;
-  @Column("text", { name: "entity_type" }) entityType!: string;
-  @Column("text", { name: "object_key" }) objectKey!: string;
-  @Column("text", { array: true }) labels!: string[];
-  @Column("text") title!: string;
-  @Column("jsonb") properties!: JsonColumn;
-  @Column("jsonb", { name: "primary_key" }) primaryKey!: JsonColumn;
-  @Column("text", { name: "search_text" }) searchText!: string;
-  @Column("text", { name: "version_id", nullable: true }) versionId!: string | null;
-  @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
 }
 
 /**

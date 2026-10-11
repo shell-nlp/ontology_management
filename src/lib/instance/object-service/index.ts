@@ -1,6 +1,6 @@
-import { getObjectIndex } from "@/lib/instance/object-index";
+import { getObjectIndex } from "@/lib/framework/object-index";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
-import type { ObjectIndexEntry } from "@/lib/instance/object-index/types";
+import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
 import { objectIdOf, objectKeyOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
 import { createDataSourceObjectSource } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";

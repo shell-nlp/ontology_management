@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
-import { getObjectIndex } from "@/lib/instance/object-index";
+import { getObjectIndex } from "@/lib/framework/object-index";
 import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";

@@ -9,7 +9,7 @@ import { GRAPH_TARGET_KINDS } from "@/lib/framework/graph/types";
  * 因为它由启动流程直接按顺序执行，没有版本表记账。新加列/表就在这里追加一支新的迁移类，
  * 不要在业务代码里写 DDL。
  *
- * 为什么要单独的迁移而不是 TypeORM 的 `synchronize: true`：`object_entries` 上有 tsvector /
+ * 为什么要单独的迁移而不是 TypeORM 的 `synchronize: true`：`ontology_concepts` 上有 tsvector /
  * pgvector / GIN 这些 TypeORM 表达不了的列，交给 synchronize 会被当成"多余的列"删掉。
  */
 export class PlatformSchema0001 {

@@ -19,7 +19,7 @@ import {
  *   pnpm test:version-store
  *   # = node --env-file=.env.local vitest run tests/lib/version-records.contract.test.ts
  *
- * `pnpm test`（不带 DATABASE_URL）时整块跳过 —— 和 `tests/lib/object-index/postgres.contract.test.ts` 一个套路。
+ * `pnpm test`（不带 DATABASE_URL）时整块跳过 —— 和 `tests/lib/object-index/clickhouse.contract.test.ts` 一个套路。
  * 用随机 targetId / versionId，跑完自己删干净。
  */
 const databaseUrl = process.env.DATABASE_URL;
