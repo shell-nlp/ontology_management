@@ -226,12 +226,14 @@ export type MaterializeTypeResult = {
 export async function materializeObjectType(
   context: ObjectContext,
   entityTypeName: string,
-  options: { pageSize?: number; maxRows?: number } = {},
+  options: { pageSize?: number; maxRows?: number | null; onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void; shouldCancel?: () => boolean } = {},
 ): Promise<MaterializeTypeResult> {
   const started = Date.now();
   const source = getObjectSource();
   const pageSize = clamp(options.pageSize, 1, 500, 500);
-  const maxRows = clamp(options.maxRows, 1, 200000, 50000);
+  // **默认不限制**（2026-10-12 用户口径）：不传 maxRows 就是"读到源读完"。
+  // 传了正数才是硬上限（撞上就 truncated=true 且不 prune，如实报数）。
+  const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
   const entries: ObjectIndexEntry[] = [];
   const warnings: string[] = [];
   let offset = 0;
@@ -240,9 +242,12 @@ export async function materializeObjectType(
   let total: number | null = null;
   let truncated = false;
 
+  let cancelled = false;
   while (scanned < maxRows) {
-    const limit = Math.min(pageSize, maxRows - scanned);
+    if (options.shouldCancel?.()) { cancelled = true; break; }
+    const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
     const result = await source.query(context.definition, entityTypeName, { entityType: entityTypeName, limit, offset });
+    options.onProgress?.({ scanned: scanned + result.rows.length, rows: entries.length + result.rows.length, pages: pages + 1 });
     warnings.push(...result.warnings);
     if (total === null && Number.isFinite(result.total)) total = result.total;
     pages += 1;
@@ -255,24 +260,25 @@ export async function materializeObjectType(
     // 这一页没读满 = 源读完了；读满就继续下一页。
     if (result.rows.length < limit) break;
     offset += result.rows.length;
-    if (scanned >= maxRows) truncated = true;
+    if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
   }
 
   const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
     versionId: context.versionId,
     origin: "MATERIALIZED",
-    prune: !truncated,
+    // 取消 / 截断都算"这份不完整"：不 prune，并如实记进清单。
+    prune: !truncated && !cancelled,
   });
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
     entityType: entityTypeName,
     rows: synced.upserted,
     scanned,
-    truncated,
+    truncated: truncated || cancelled,
     pages,
     completedAt: new Date().toISOString(),
   });
-  return { entityType: entityTypeName, rows: synced.upserted, scanned, truncated, pages, total, tookMs: Date.now() - started, warnings };
+  return { entityType: entityTypeName, rows: synced.upserted, scanned, truncated: truncated || cancelled, pages, total, tookMs: Date.now() - started, warnings };
 }
 
 /**

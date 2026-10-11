@@ -403,3 +403,23 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-state.none { color:#64748b; background:#f8fafc; border-color:#e2e8f0; }
 .index-actions { display:flex; justify-content:flex-end; }
 @media (max-width:760px) { .index-row { grid-template-columns:1fr; } .index-row.head { display:none; } }
+.index-jobs { border:1px solid var(--line); border-radius:4px; padding:10px 12px; margin-bottom:10px; background:#fbfcfe; }
+.index-jobs-head { display:flex; align-items:baseline; justify-content:space-between; }
+.index-jobs-head .eyebrow { margin:0; }
+.index-jobs-summary { color:#64748b; font-size:11.5px; font-variant-numeric:tabular-nums; }
+.index-job-bar { position:relative; height:3px; margin:8px 0 6px; background:#e5ebf3; border-radius:2px; overflow:hidden; }
+.index-job-bar i { position:absolute; inset:0 auto 0 0; width:36%; background:#2563eb; border-radius:2px; animation:index-job-slide 1.4s ease-in-out infinite; }
+@keyframes index-job-slide { 0% { left:-36%; } 100% { left:100%; } }
+.index-jobs-list { display:flex; flex-direction:column; }
+.index-job { display:grid; grid-template-columns:minmax(120px,1fr) 74px minmax(150px,1.2fr) auto auto; align-items:center; gap:10px; padding:7px 0; border-top:1px solid #eef2f7; font-size:12px; }
+.index-job:first-child { border-top:0; }
+.index-job b { color:#243b53; font-weight:600; }
+.index-job-progress { color:#41556b; font-variant-numeric:tabular-nums; }
+.index-job small { color:#b45309; }
+.index-job-state { font-size:11px; padding:2px 7px; border-radius:3px; border:1px solid; text-align:center; }
+.index-job-state.queued { color:#64748b; background:#f8fafc; border-color:#e2e8f0; }
+.index-job-state.running { color:#1e3a8a; background:#eef4ff; border-color:#d3e0f7; }
+.index-job-state.done { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; }
+.index-job-state.failed { color:#b91c1c; background:#fef2f2; border-color:#fecaca; }
+.index-job-state.cancelled { color:#b45309; background:#fffbeb; border-color:#fde68a; }
+.quiet-button.small { height:26px; padding:0 9px; font-size:11px; }

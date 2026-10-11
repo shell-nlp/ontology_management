@@ -24,6 +24,20 @@ type Materialization = {
   completedAt: string;
 };
 
+type JobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED";
+type MaterializeJob = {
+  id: string;
+  entityType: string;
+  status: JobStatus;
+  scanned: number;
+  rows: number;
+  pages: number;
+  truncated: boolean;
+  message: string | null;
+  queuedAt: string;
+  finishedAt: string | null;
+};
+
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
 type Stats = { entries: number; byLabel: { label: string; count: number }[]; updatedAt: string | null };
 
@@ -57,15 +71,17 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   const [onlyReadable, setOnlyReadable] = useState(true);
   /** 多选物化：勾中的类型名。 */
   const [selected, setSelected] = useState<string[]>([]);
-  const [batch, setBatch] = useState<{ done: number; total: number; current: string } | null>(null);
+  const [jobs, setJobs] = useState<MaterializeJob[]>([]);
+  const [queuing, setQueuing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api<{ materializations: Materialization[]; capabilities: Capabilities; stats: Stats }>(
+      const data = await api<{ materializations: Materialization[]; capabilities: Capabilities; stats: Stats; jobs: MaterializeJob[] }>(
         `/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}`,
       );
       setRows(data.materializations);
+      setJobs(data.jobs ?? []);
       setCapabilities(data.capabilities);
       setStats(data.stats);
     } catch (reason) {
@@ -76,6 +92,14 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   }, [targetId, fail]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 有活动任务时每 2 秒刷新一次（后台任务在服务端串行跑，这里只拉进度）。
+  const active = jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING");
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => { void load(); }, 2000);
+    return () => clearInterval(timer);
+  }, [active, load]);
 
   const materialize = async (entityType: string) => {
     setBusyType(entityType);
@@ -111,40 +135,37 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   };
 
   /**
-   * 依次物化一批类型（不并发）：并发会同时压业务库，而且进度与失败归因都会乱。
-   * 结果按"成功 / 截断 / 失败"三类汇总，一次说清楚。
+   * 排队一批物化任务：**服务端串行执行**（并发会同时压业务库），这里只负责入队。
+   * 进度与取消都在任务列表里看。
    */
-  const materializeMany = async (names: string[]) => {
+  const enqueue = async (names: string[]) => {
     const queue = names.filter((name) => types.find((type) => type.name === name)?.sourceLabel);
     if (!queue.length) return;
-    let rowsWritten = 0;
-    const truncated: string[] = [];
-    const failed: string[] = [];
-    for (const [index, name] of queue.entries()) {
-      setBatch({ done: index, total: queue.length, current: name });
-      setBusyType(name);
-      try {
-        const result = await api<{ rows: number; truncated: boolean }>("/api/objects/materialize-type", {
-          method: "POST",
-          body: JSON.stringify({ targetId, entityType: name }),
-        });
-        rowsWritten += result.rows;
-        if (result.truncated) truncated.push(name);
-      } catch {
-        failed.push(name);
+    setQueuing(true);
+    try {
+      for (const name of queue) {
+        await api("/api/objects/materialize-type", { method: "POST", body: JSON.stringify({ targetId, entityType: name }) });
       }
+      notify(`已排队 ${queue.length} 个物化任务：服务端逐个执行，进度在下面的任务列表里看。`);
+      setSelected([]);
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setQueuing(false);
     }
-    setBatch(null);
-    setBusyType(null);
-    setSelected([]);
-    await load();
-    const parts = [`已物化 ${queue.length - failed.length} 个类型、共 ${rowsWritten} 条`];
-    if (truncated.length) parts.push(`${truncated.length} 个撞到上限（${truncated.join("、")}）`);
-    if (failed.length) parts.push(`${failed.length} 个失败（${failed.join("、")}）`);
-    notify(`${parts.join("；")}。`);
   };
 
-  const busy = batch !== null || busyType !== null;
+  const cancel = async (jobId: string) => {
+    try {
+      await api(`/api/objects/materialize-type?jobId=${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      await load();
+    } catch (reason) {
+      fail(reason);
+    }
+  };
+
+  const busy = queuing;
 
   const snapshotCount = (name: string) => stats?.byLabel.find((item) => item.label === name)?.count ?? 0;
   const indexed = (name: string) => rows.find((item) => item.entityType === name);
@@ -183,14 +204,37 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
           <button type="button" className={onlyReadable ? "" : "selected"} onClick={() => { setOnlyReadable(false); setSelected([]); }}>全部（{types.length}）</button>
         </div>
         <span className="index-selected">已选 {selected.length} 个类型</span>
-        <button className="action compact primary" disabled={!mayWrite || busy || !selected.length} onClick={() => void materializeMany(selected)}>
-          {busy && batch ? "物化中…" : `物化选中（${selected.length}）`}
+        <button className="action compact primary" disabled={!mayWrite || busy || !selected.length} onClick={() => void enqueue(selected)}>
+          排队物化选中（{selected.length}）
         </button>
-        <button className="action compact" disabled={!mayWrite || busy || !readableTypes.length} onClick={() => void materializeMany(readableTypes.map((type) => type.name))}>
-          一键物化全部可读取（{readableTypes.length}）
+        <button className="action compact" disabled={!mayWrite || busy || !readableTypes.length} onClick={() => void enqueue(readableTypes.map((type) => type.name))}>
+          一键排队全部可读取（{readableTypes.length}）
         </button>
       </div>
-      {batch && <p className="subtle index-progress">正在整份物化 {batch.done + 1}/{batch.total}：{batch.current}…（逐个进行，避免同时压业务库）</p>}
+      {jobs.length > 0 && (() => {
+        const activeJobs = jobs.filter((job) => job.status === "QUEUED" || job.status === "RUNNING");
+        const doneJobs = jobs.filter((job) => job.status === "DONE").length;
+        const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
+        const labels: Record<JobStatus, string> = { QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败" };
+        return <div className="index-jobs">
+          <div className="index-jobs-head">
+            <span className="eyebrow">物化任务</span>
+            <span className="index-jobs-summary">
+              {activeJobs.length ? `进行中 ${activeJobs.length}` : "空闲"} · 已完成 {doneJobs}{failedJobs ? ` · 失败 ${failedJobs}` : ""}
+            </span>
+          </div>
+          {activeJobs.length > 0 && <div className="index-job-bar" role="progressbar" aria-label="物化进行中"><i /></div>}
+          <div className="index-jobs-list">
+            {jobs.slice(0, 5).map((job) => <div className="index-job" key={job.id}>
+              <b>{job.entityType}</b>
+              <span className={`index-job-state ${job.status.toLowerCase()}`}>{labels[job.status]}</span>
+              <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
+              {job.message && <small title={job.message}>{job.message}</small>}
+              {(job.status === "QUEUED" || job.status === "RUNNING") && <button className="quiet-button small" onClick={() => void cancel(job.id)}>取消</button>}
+            </div>)}
+          </div>
+        </div>;
+      })()}
       {!mayWrite && <p className="subtle">当前角色只能查看索引状态；整份物化与重建需要「编辑对象与关系」权限。</p>}
       {capabilities && !capabilities.available && <div className="notice error"><AlertCircle size={15} /><span>索引后端不可用：{capabilities.reason ?? "连接失败"}。对象检索会退回按需回源。</span></div>}
 
@@ -241,11 +285,11 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
             <span className="index-actions">
               <button
                 className="action compact"
-                disabled={!mayWrite || busyType === type.name || !type.sourceLabel}
+                disabled={!mayWrite || busy || !type.sourceLabel}
                 title={type.sourceLabel ? "把业务库里这个类型的对象整份写进索引" : "这个类型还没绑定数据资源"}
                 onClick={() => void materialize(type.name)}
               >
-                {busyType === type.name ? "物化中…" : "整份物化"}
+                整份物化
               </button>
             </span>
           </div>;
