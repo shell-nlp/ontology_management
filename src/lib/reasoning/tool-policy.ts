@@ -61,6 +61,8 @@ export function emptyToolPolicy(): ToolPolicy {
  * 出厂默认关掉的工具：**两层都没配**时生效。
  *
  * 2026-10-09 用户口径：动作定义 / 对象实例查询 / 关系子图查询「默认关闭」。
+ * 2026-10-11 用户口径：查询 DSL（`run_query`）也「默认关闭」—— 打开后它仍是结构化问数的优先入口，
+ * 关着的默认状态下模型走 `get_table_ddl` + `run_sql`。
  * **不含 `list_ontologies`** —— 平台级端点的客户端得靠它列出本体、拿 `ontology_id`，
  * 默认开着（同日用户追加：「平台级的本体列表工具要打开」）。
  * 不把这些标成工具上的 `disabled`（那是平台永久停用、开关都没了），
@@ -68,6 +70,7 @@ export function emptyToolPolicy(): ToolPolicy {
  */
 export const DEFAULT_DISABLED_TOOLS: readonly string[] = [
   "list_actions",
+  "run_query",
   "query_object_instance",
   "query_instance_subgraph",
 ];

@@ -41,9 +41,13 @@ describe("resolveToolPolicy", () => {
     expect(resolved.policy.disabledTools).toEqual(["run_sql"]);
   });
 
-  it("两层都没配 = 出厂默认（DEFAULT）：动作定义 / 两个实例工具默认关闭（本体列表默认开着）", () => {
+  it("两层都没配 = 出厂默认（DEFAULT）：动作定义 / 查询 DSL / 两个实例工具默认关闭（本体列表与 run_sql 默认开着）", () => {
     expect(resolveToolPolicy(null, null)).toEqual({ policy: defaultToolPolicy(), source: "DEFAULT" });
     expect(resolveToolPolicy(undefined, undefined).policy.disabledTools).toEqual(DEFAULT_DISABLED_TOOLS);
+    // 2026-10-11 用户口径：查询 DSL 出厂默认关闭（打开后仍是结构化问数的优先入口）。
+    expect(defaultToolPolicy().disabledTools).toContain("run_query");
+    expect(defaultToolPolicy().disabledTools).not.toContain("run_sql");
+    expect(defaultToolPolicy().disabledTools).not.toContain("list_ontologies");
   });
 
   it("脏数据会被归一化：不认识的工具名进不来，重复的去掉", () => {
