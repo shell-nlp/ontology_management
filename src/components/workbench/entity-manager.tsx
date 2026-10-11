@@ -2,8 +2,9 @@
 
 import { type User, may, type BusinessLink, type Target, type Version, type EntityRow, graphNoun, effectivePropertiesFor, entityTitle, propertySummary, ResizableManagerGrid } from "@/components/workbench/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, CircleDot, Link2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, CircleDot, Layers, Link2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { BindSourcesDialog } from "@/components/bind-sources-dialog";
+import { IndexStatusDialog } from "@/components/workbench/index-status-dialog";
 import { PropertyEditor } from "@/components/property-editor";
 import { api } from "@/lib/framework/api-client";
 import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
@@ -109,6 +110,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
   const [selectedId, setSelectedId] = useState<string | null>(focusEntityId ?? null);
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [indexOpen, setIndexOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   /**
    * 还差数据资源绑定的来源（没绑的 + 指向已删资源的）。
@@ -323,6 +325,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(label, search); }} placeholder="按显示名称搜索…" />
         <button className="action compact" onClick={() => void load(label, search)}><Search size={14} /></button>
         <button className="action compact" onClick={() => setCreateOpen(true)}><Plus size={14} />新建</button>
+          {target && <button className="action compact" onClick={() => setIndexOpen(true)}><Layers size={14} />索引与物化</button>}
       </div>
       <div className="manager-rows">{rows.map((row) => <button key={row.id} className={selectedId === row.id ? "manager-row selected" : "manager-row"} onClick={() => { setSelectedId(row.id); setDraftProps(Object.fromEntries(Object.entries(row.properties).filter(([key]) => key !== "fx" && key !== "fy"))); }}><CircleDot size={15} /><span><b>{entityTitle(row, version?.definition ?? null)}</b><small>{row.labels.join(", ")} · {propertySummary(row.properties)}</small></span></button>)}{!rows.length && <p className="empty">没有匹配的对象。</p>}</div>
     </div>
@@ -331,6 +334,18 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
     </div>
     {may(user, "instance.write") && createOpen && <EntityCreateDialog published={version} runtimeTypes={runtimeTypes} onClose={() => setCreateOpen(false)} onCreate={async (label, properties) => { try { if (!target) throw new Error("请先选择本体存储。"); const current = await ensureDraft(); await api("/api/instances/entities", { method: "POST", body: JSON.stringify({ targetId: target.id, versionId: current.id, entityType: label, properties }) }); notify("对象已加入草稿快照。"); setCreateOpen(false); await load(label, search, current.id); await onSnapshotChange(); } catch (reason) { fail(reason); } }} />}
     {bindOpen && <BindSourcesDialog ontologyId={ontologyId} onClose={() => setBindOpen(false)} onSaved={async (count) => { setBindOpen(false); notify(`已补齐 ${count} 个数据来源绑定。`); await onSnapshotChange(); await load(label, search); }} fail={fail} />}
+    {indexOpen && target && <IndexStatusDialog
+      targetId={target.id}
+      types={(version?.definition.entityTypes ?? []).map((item) => ({
+        name: item.name,
+        // 主来源的表名（「模式.表」）——面板上要能看出这个类型到底有没有可读的源。
+        sourceLabel: item.sources?.[0] ? `${item.sources[0].schema ? `${item.sources[0].schema}.` : ""}${item.sources[0].view}` : "",
+      }))}
+      mayWrite={may(user, "instance.write")}
+      onClose={() => setIndexOpen(false)}
+      notify={notify}
+      fail={fail}
+    />}
   </ResizableManagerGrid>;
 }
 

@@ -199,6 +199,43 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
       });
     });
 
+    /**
+     * 来源隔离（2026-10-12 用户口径）：手工/动作建的对象（SNAPSHOT）与整份物化的对象（MATERIALIZED）
+     * 必须互不覆盖 —— 发布与「重建索引」只替换 SNAPSHOT，不许把物化数据清掉。
+     */
+    it("来源隔离：SNAPSHOT 的 prune 与整体替换都不动 MATERIALIZED 的行", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetObjects(target, [entry("m1"), entry("m2")], { origin: "MATERIALIZED" });
+        await index.syncTargetObjects(target, [entry("s1")], { origin: "SNAPSHOT", prune: true });
+        expect((await index.stats(target)).entries).toBe(3);
+
+        const replaced = await index.replaceTargetObjects(target, [entry("s9")], { origin: "SNAPSHOT" });
+        expect(replaced.indexed).toBe(1);
+        expect((await index.stats(target)).entries).toBe(3);
+        expect(await index.readObject(target, entry("m1").objectKey)).not.toBeNull();
+        expect(await index.readObject(target, entry("s1").objectKey)).toBeNull();
+        expect(await index.readObject(target, entry("s9").objectKey)).not.toBeNull();
+      });
+    });
+
+    it("物化清单：记下并读回状态（含截断）", async () => {
+      await withIndex(async (index, target) => {
+        await index.saveMaterialization({
+          targetId: target,
+          entityType: "客户",
+          rows: 100,
+          scanned: 50000,
+          truncated: true,
+          pages: 100,
+          completedAt: new Date().toISOString(),
+        });
+        const list = await index.listMaterializations(target);
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, scanned: 50000, truncated: true, pages: 100 });
+        expect(list[0].completedAt).toBeTruthy();
+      });
+    });
+
     it("stats 报得出条数与按标签分布", async () => {
       await withIndex(async (index, target) => {
         await index.syncTargetObjects(target, [

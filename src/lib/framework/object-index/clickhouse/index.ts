@@ -11,6 +11,8 @@ import type {
   ObjectIndex,
   ObjectIndexCapabilities,
   ObjectIndexEntry,
+  ObjectIndexMaterialization,
+  ObjectIndexOrigin,
   ObjectIndexStats,
   ObjectIndexSyncResult,
   ObjectSearchHit,
@@ -59,6 +61,7 @@ async function ensureSchemaOnce(): Promise<void> {
       search_text   String,
       embedding     Array(Float32),
       version_id    Nullable(String),
+      origin        LowCardinality(String) DEFAULT 'SNAPSHOT',
       updated_at    DateTime64(3, 'UTC') DEFAULT now64(3),
       version       DateTime64(9, 'UTC') DEFAULT now64(9),
       INDEX object_entries_labels_idx labels TYPE bloom_filter(0.01) GRANULARITY 4,
@@ -67,6 +70,27 @@ async function ensureSchemaOnce(): Promise<void> {
     )
     ENGINE = ReplacingMergeTree(version)
     ORDER BY (target_id, object_key)
+  `);
+  // 老表补列（origin 是 2026-10-12 加的：手工/动作建的对象与整份物化的对象必须分得清）。
+  await clickHouseExecute(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS origin LowCardinality(String) DEFAULT 'SNAPSHOT'`);
+  /*
+   * 物化清单：**半份必须报数**。每个对象类型最近一次整份物化的结果都记一行（撞上限被截断也要如实写），
+   * 对象页与查询警告都读它 —— 不然"只物化了 100 条"会被看成"这个类型只有 100 个对象"。
+   */
+  await clickHouseExecute(`
+    CREATE TABLE IF NOT EXISTS ${database}.materialization_manifests
+    (
+      target_id    String,
+      entity_type  String,
+      rows         UInt64,
+      scanned      UInt64,
+      truncated    UInt8,
+      pages        UInt32,
+      completed_at DateTime64(3, 'UTC') DEFAULT now64(3),
+      version      DateTime64(9, 'UTC') DEFAULT now64(9)
+    )
+    ENGINE = ReplacingMergeTree(version)
+    ORDER BY (target_id, entity_type)
   `);
 }
 
@@ -114,7 +138,7 @@ function toEntry(row: EntryRow): ObjectIndexEntry {
   };
 }
 
-function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null) {
+function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null, origin: ObjectIndexOrigin) {
   return entries
     .map((entry) =>
       JSON.stringify({
@@ -129,20 +153,21 @@ function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], ver
         search_text: entry.searchText ?? "",
         embedding: entry.embedding ?? [],
         version_id: versionId,
+        origin,
       }),
     )
     .join("\n");
 }
 
-async function insertEntries(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null) {
+async function insertEntries(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null, origin: ObjectIndexOrigin) {
   if (!entries.length) return 0;
   const { database } = clickHouseConfig();
   for (const chunk of chunked(entries, INSERT_CHUNK)) {
     await clickHouseExecute(
       `INSERT INTO ${tableName(database)}
-        (target_id, object_key, object_id, entity_type, labels, title, properties, primary_key, search_text, embedding, version_id)
+        (target_id, object_key, object_id, entity_type, labels, title, properties, primary_key, search_text, embedding, version_id, origin)
        FORMAT JSONEachRow
-       ${insertLines(targetId, chunk, versionId)}`,
+       ${insertLines(targetId, chunk, versionId, origin)}`,
     );
   }
   return entries.length;
@@ -157,11 +182,25 @@ async function countTarget(targetId: string) {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** 只数某一来源（SNAPSHOT / MATERIALIZED）的条数：prune 与替换都以来源为界。 */
+async function countOrigin(targetId: string, origin: ObjectIndexOrigin) {
+  const { database } = clickHouseConfig();
+  const rows = await clickHouseQuery<{ n: number }>(
+    `SELECT count() AS n FROM ${tableName(database)} FINAL WHERE target_id = {target:String} AND origin = {origin:String}`,
+    { params: { target: targetId, origin } },
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** 删除（轻量 DELETE）。`mutations_sync=1` 让删除在返回前完成，否则紧接着的统计会读到旧行。 */
-async function deleteWhere(targetId: string, objectKeys: string[] | null) {
+async function deleteWhere(targetId: string, objectKeys: string[] | null, origin?: ObjectIndexOrigin) {
   const { database } = clickHouseConfig();
   const params: ClickHouseParams = { target: targetId };
   let condition = "target_id = {target:String}";
+  if (origin) {
+    params.origin = origin;
+    condition += " AND origin = {origin:String}";
+  }
   if (objectKeys) {
     if (!objectKeys.length) return;
     params.keys = clickHouseArrayParam(objectKeys);
@@ -187,22 +226,22 @@ async function readObject(targetId: string, objectKey: string): Promise<ObjectIn
 }
 
 /** 删除"这一批之外"的对象键（发布时的 prune）。 */
-async function deleteNotIn(targetId: string, objectKeys: string[]) {
+async function deleteNotIn(targetId: string, objectKeys: string[], origin: ObjectIndexOrigin) {
   const { database } = clickHouseConfig();
   await clickHouseExecute(
     `DELETE FROM ${tableName(database)}
-      WHERE target_id = {target:String} AND object_key NOT IN {keys:Array(String)}`,
-    { params: { target: targetId, keys: clickHouseArrayParam(objectKeys) }, settings: { mutations_sync: "1" } },
+      WHERE target_id = {target:String} AND origin = {origin:String} AND object_key NOT IN {keys:Array(String)}`,
+    { params: { target: targetId, origin, keys: clickHouseArrayParam(objectKeys) }, settings: { mutations_sync: "1" } },
   );
 }
 
 /** 数一遍"这一批之外"的键有多少（删除前先数，删除后就没有据可依了）。 */
-async function countNotIn(targetId: string, objectKeys: string[]) {
+async function countNotIn(targetId: string, objectKeys: string[], origin: ObjectIndexOrigin) {
   const { database } = clickHouseConfig();
   const rows = await clickHouseQuery<{ n: number }>(
     `SELECT count() AS n FROM ${tableName(database)} FINAL
-      WHERE target_id = {target:String} AND object_key NOT IN {keys:Array(String)}`,
-    { params: { target: targetId, keys: clickHouseArrayParam(objectKeys) } },
+      WHERE target_id = {target:String} AND origin = {origin:String} AND object_key NOT IN {keys:Array(String)}`,
+    { params: { target: targetId, origin, keys: clickHouseArrayParam(objectKeys) } },
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -256,7 +295,11 @@ async function stats(targetId: string): Promise<ObjectIndexStats> {
   return {
     entries,
     byLabel: labels.map((row) => ({ label: row.label, count: Number(row.count) })),
-    updatedAt: latest[0]?.updated_at && latest[0].updated_at.length ? latest[0].updated_at : null,
+    // 空集时 max(updated_at) 是 1970 纪元值：那不是"更新时间"，要当没有。
+    updatedAt:
+      latest[0]?.updated_at && latest[0].updated_at.length && !latest[0].updated_at.startsWith("1970-01-01T00:00:00")
+        ? latest[0].updated_at
+        : null,
   };
 }
 
@@ -266,17 +309,18 @@ export function createClickHouseObjectIndex(): ObjectIndex {
     async syncTargetObjects(targetId, entries, options): Promise<ObjectIndexSyncResult> {
       await ensureClickHouseObjectIndexSchema();
       const versionId = options?.versionId ?? null;
-      const upserted = await insertEntries(targetId, entries, versionId);
+      const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
+      const upserted = await insertEntries(targetId, entries, versionId, origin);
       let deleted = 0;
       if (options?.prune) {
         const keys = entries.map((entry) => entry.objectKey || `id:${entry.objectId}`);
         if (!keys.length) {
           // 这一批是空的 = 这个本体存储不该有对象了，整段清掉。
-          deleted = await countTarget(targetId);
-          await deleteWhere(targetId, null);
+          deleted = await countOrigin(targetId, origin);
+          await deleteWhere(targetId, null, origin);
         } else {
-          deleted = await countNotIn(targetId, keys);
-          if (deleted) await deleteNotIn(targetId, keys);
+          deleted = await countNotIn(targetId, keys, origin);
+          if (deleted) await deleteNotIn(targetId, keys, origin);
         }
       }
       return { upserted, deleted, total: await countTarget(targetId) };
@@ -301,16 +345,67 @@ export function createClickHouseObjectIndex(): ObjectIndex {
     },
     async replaceTargetObjects(targetId, entries, options) {
       await ensureClickHouseObjectIndexSchema();
-      await deleteWhere(targetId, null);
-      const indexed = await insertEntries(targetId, entries, options?.versionId ?? null);
+      const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
+      // 只替换这一来源的整份：发布 / 重建索引不许把整份物化的数据清掉。
+      await deleteWhere(targetId, null, origin);
+      const indexed = await insertEntries(targetId, entries, options?.versionId ?? null, origin);
       return { indexed };
     },
     searchObjects,
     async deleteTargetObjects(targetId) {
       await ensureClickHouseObjectIndexSchema();
       await deleteWhere(targetId, null);
+      // 清单是"这个本体存储的物化状态"，索引清了它也要清：否则会留着一条"已物化 100 条"的假状态。
+      const { database } = clickHouseConfig();
+      await clickHouseExecute(`DELETE FROM ${database}.materialization_manifests WHERE target_id = {target:String}`, {
+        params: { target: targetId },
+        settings: { mutations_sync: "1" },
+      });
     },
     stats,
+    async listMaterializations(targetId) {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const rows = await clickHouseQuery<{
+        entity_type: string;
+        rows: number;
+        scanned: number;
+        truncated: number;
+        pages: number;
+        completed_at: string;
+      }>(
+        `SELECT entity_type, rows, scanned, truncated, pages,
+                formatDateTime(completed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS completed_at
+           FROM ${database}.materialization_manifests FINAL
+          WHERE target_id = {target:String}
+          ORDER BY entity_type ASC`,
+        { params: { target: targetId } },
+      );
+      return rows.map((row) => ({
+        targetId,
+        entityType: row.entity_type,
+        rows: Number(row.rows ?? 0),
+        scanned: Number(row.scanned ?? 0),
+        truncated: Boolean(Number(row.truncated ?? 0)),
+        pages: Number(row.pages ?? 0),
+        completedAt: row.completed_at,
+      }));
+    },
+    async saveMaterialization(record) {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      await clickHouseExecute(
+        `INSERT INTO ${database}.materialization_manifests (target_id, entity_type, rows, scanned, truncated, pages) FORMAT JSONEachRow
+         ${JSON.stringify({
+           target_id: record.targetId,
+           entity_type: record.entityType,
+           rows: record.rows,
+           scanned: record.scanned,
+           truncated: record.truncated ? 1 : 0,
+           pages: record.pages,
+         })}`,
+      );
+    },
     async capabilities(): Promise<ObjectIndexCapabilities> {
       try {
         await ensureClickHouseObjectIndexSchema();

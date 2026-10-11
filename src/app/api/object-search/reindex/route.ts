@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
     const { indexed } = await getObjectIndex().replaceTargetObjects(
       target.id,
       buildIndexEntries(snapshot.definition, snapshot.nodes),
-      { versionId: record.id },
+      // 重建索引只重建"快照那一份"：整份物化进来的业务对象不在这次替换范围内。
+      { versionId: record.id, origin: "SNAPSHOT" },
     );
     const tookMs = Date.now() - started;
     await writeAuditEntry({

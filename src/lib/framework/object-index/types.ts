@@ -12,6 +12,17 @@
  */
 export type ObjectIndexKind = "CLICKHOUSE";
 
+/**
+ * 索引行的**来源**。
+ *
+ * - `SNAPSHOT`：随版本快照走的对象（手工建的、动作写进草稿的、取进草稿的业务对象）；
+ * - `MATERIALIZED`：按对象类型从业务库**整份物化**进来的对象。
+ *
+ * 两者必须分得清：发布与「重建索引」只替换 `SNAPSHOT` 那一份，**不许把物化数据清掉**；
+ * 反过来整份物化只动 `MATERIALIZED` 那一份，不碰本体自己建的对象。
+ */
+export type ObjectIndexOrigin = "SNAPSHOT" | "MATERIALIZED";
+
 /** 一条进入检索索引的对象。objectId 是平台身份，primaryKey 是业务主键（M1 落位后成为真身份）。 */
 export type ObjectIndexEntry = {
   objectId: string;
@@ -90,6 +101,27 @@ export type ObjectIndexStats = {
   updatedAt: string | null;
 };
 
+/**
+ * 某个对象类型的**物化清单**：最近一次整份物化的结果。
+ *
+ * 存在的理由就一条：**半份必须报数**（用户口径 2026-10-12）。索引里有多少条、源里扫了多少条、
+ * 是不是撞到上限被截断，都要能查得到 —— 否则页面会显示成"这个类型只有 N 个对象"，看起来像数据少了，
+ * 实际是只物化了一部分。
+ */
+export type ObjectIndexMaterialization = {
+  targetId: string;
+  entityType: string;
+  /** 写进索引的条数。 */
+  rows: number;
+  /** 从源里读过的行数（撞上限时 = 上限）。 */
+  scanned: number;
+  /** 撞到上限、源里可能还有更多。 */
+  truncated: boolean;
+  /** 读了多少页。 */
+  pages: number;
+  completedAt: string;
+};
+
 export type ObjectIndexCapabilities = {
   available: boolean;
   fullText: boolean;
@@ -110,7 +142,7 @@ export interface ObjectIndex {
   syncTargetObjects(
     targetId: string,
     entries: ObjectIndexEntry[],
-    options?: { versionId?: string | null; prune?: boolean },
+    options?: { versionId?: string | null; prune?: boolean; origin?: ObjectIndexOrigin },
   ): Promise<ObjectIndexSyncResult>;
   /**
    * 按对象键读一条原始条目（对象服务按主键定位对象用）。
@@ -123,10 +155,14 @@ export interface ObjectIndex {
   replaceTargetObjects(
     targetId: string,
     entries: ObjectIndexEntry[],
-    options?: { versionId?: string | null },
+    options?: { versionId?: string | null; origin?: ObjectIndexOrigin },
   ): Promise<{ indexed: number }>;
   searchObjects(query: ObjectSearchQuery): Promise<ObjectSearchResult>;
   deleteTargetObjects(targetId: string): Promise<void>;
   stats(targetId: string): Promise<ObjectIndexStats>;
+  /** 这个本体存储下各对象类型的物化清单（没有整份物化过的类型不在里面）。 */
+  listMaterializations(targetId: string): Promise<ObjectIndexMaterialization[]>;
+  /** 记下（覆盖）一个对象类型的物化清单。 */
+  saveMaterialization(record: ObjectIndexMaterialization): Promise<void>;
   capabilities(): Promise<ObjectIndexCapabilities>;
 }

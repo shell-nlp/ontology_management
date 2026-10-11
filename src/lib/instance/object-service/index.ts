@@ -105,12 +105,24 @@ export async function queryObjects(context: ObjectContext, query: ObjectQuery): 
       offset,
     });
     if (result.total > 0 || origin === "index") {
+      const warnings = result.textMode === "none" && query.text ? ["索引里没有可用的全文检索能力，这次只按属性过滤。"] : [];
+      // 半份必须报数（2026-10-12 用户口径）：这个类型如果上次物化撞了上限，就说清"只物化了 N 条"。
+      const truncated = await getObjectIndex()
+        .listMaterializations(context.targetId)
+        .then((items) => items.find((item) => item.entityType === query.entityType))
+        .catch(() => undefined);
+      if (truncated?.truncated) {
+        warnings.push(
+          `这个对象类型只物化了 ${truncated.rows} 条（扫描 ${truncated.scanned} 条时撞到上限），源里可能还有更多；` +
+          `要看全量请重新整份物化，或把来源切到「业务库」。`,
+        );
+      }
       return {
         entityType: query.entityType,
         rows: result.hits.map((hit) => recordFromEntry(hit, "index")),
         total: result.total,
         origin: "index",
-        warnings: result.textMode === "none" && query.text ? ["索引里没有可用的全文检索能力，这次只按属性过滤。"] : [],
+        warnings,
         tookMs: Date.now() - started,
       };
     }
@@ -141,6 +153,8 @@ export async function syncObjectsToIndex(
   const source = getObjectSource();
   const warnings: string[] = [];
   const entries: ObjectIndexEntry[] = [];
+  /** 不带 keys 的批量同步：这一批是否已经把源读完了（读满 limit 就当没读完）。 */
+  let batchComplete = true;
   const toEntry = (record: ObjectRecord) =>
     buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties });
 
@@ -151,16 +165,114 @@ export async function syncObjectsToIndex(
       if (record?.objectId) entries.push(toEntry(record));
     }
   } else {
+    const limit = clamp(options.limit, 1, 500, 100);
     const result = await source.query(context.definition, entityTypeName, {
       entityType: entityTypeName,
-      limit: clamp(options.limit, 1, 500, 100),
+      limit,
     });
     warnings.push(...result.warnings);
     for (const record of result.rows) if (record.objectId) entries.push(toEntry(record));
+    // 不带 keys 的批量同步只是"补一批"：读满了 limit 就说明源里可能还有，如实记成不完整。
+    batchComplete = result.rows.length < limit;
   }
 
-  const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, { versionId: context.versionId, prune: false });
+  // 这条路径写的是"从业务库同步过来的行" = MATERIALIZED 来源：发布（SNAPSHOT）不许把这些行清掉。
+  const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
+    versionId: context.versionId,
+    origin: "MATERIALIZED",
+    prune: false,
+  });
+  if (!options.keys?.length) {
+    await getObjectIndex()
+      .saveMaterialization({
+        targetId: context.targetId,
+        entityType: entityTypeName,
+        rows: synced.upserted,
+        scanned: entries.length,
+        truncated: !batchComplete,
+        pages: 1,
+        completedAt: new Date().toISOString(),
+      })
+      .catch(() => undefined);
+  }
   return { upserted: synced.upserted, total: synced.total, warnings };
+}
+
+/** 整份物化的结果。`truncated` 为真表示撞到上限，源里可能还有更多 —— 必须回给用户。 */
+export type MaterializeTypeResult = {
+  entityType: string;
+  /** 写进索引的条数。 */
+  rows: number;
+  /** 从源里读过的行数（撞上限时 = 上限）。 */
+  scanned: number;
+  truncated: boolean;
+  pages: number;
+  /** 源报告的总数（有的源不给）。 */
+  total: number | null;
+  tookMs: number;
+  warnings: string[];
+};
+
+/**
+ * **按对象类型整份物化**（S4 第一刀，2026-10-12 用户口径）。
+ *
+ * 口径：物化的粒度是**对象类型**，不是"一部分行" —— 半份物化会让 \`auto\` 读法静默截断
+ * （索引里 total > 0 就不再回源，页面显示成"这个类型只有 N 个对象"）。所以这里分页读到
+ * **源读完**才停；撞到 \`maxRows\` 就停下并如实回 \`truncated=true\`，此时**不做 prune**
+ * （读一半就删会把源里还有的行删掉）。
+ *
+ * 只写 \`MATERIALIZED\` 这一来源：发布与「重建索引」只替换 \`SNAPSHOT\`，两边互不覆盖。
+ */
+export async function materializeObjectType(
+  context: ObjectContext,
+  entityTypeName: string,
+  options: { pageSize?: number; maxRows?: number } = {},
+): Promise<MaterializeTypeResult> {
+  const started = Date.now();
+  const source = getObjectSource();
+  const pageSize = clamp(options.pageSize, 1, 500, 500);
+  const maxRows = clamp(options.maxRows, 1, 200000, 50000);
+  const entries: ObjectIndexEntry[] = [];
+  const warnings: string[] = [];
+  let offset = 0;
+  let pages = 0;
+  let scanned = 0;
+  let total: number | null = null;
+  let truncated = false;
+
+  while (scanned < maxRows) {
+    const limit = Math.min(pageSize, maxRows - scanned);
+    const result = await source.query(context.definition, entityTypeName, { entityType: entityTypeName, limit, offset });
+    warnings.push(...result.warnings);
+    if (total === null && Number.isFinite(result.total)) total = result.total;
+    pages += 1;
+    scanned += result.rows.length;
+    for (const record of result.rows) {
+      if (record.objectId) {
+        entries.push(buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties }));
+      }
+    }
+    // 这一页没读满 = 源读完了；读满就继续下一页。
+    if (result.rows.length < limit) break;
+    offset += result.rows.length;
+    if (scanned >= maxRows) truncated = true;
+  }
+
+  const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
+    versionId: context.versionId,
+    origin: "MATERIALIZED",
+    prune: !truncated,
+  });
+  await getObjectIndex().saveMaterialization({
+    targetId: context.targetId,
+    entityType: entityTypeName,
+    rows: synced.upserted,
+    scanned,
+    truncated,
+    pages,
+    completedAt: new Date().toISOString(),
+  });
+  return { entityType: entityTypeName, rows: synced.upserted, scanned, truncated, pages, total, tookMs: Date.now() - started, warnings };
 }
 
 /**
