@@ -194,6 +194,35 @@ export class ConversationMessageEntity {
 }
 
 /**
+ * 整份物化的**后台任务**（历史与状态落库）。
+ *
+ * 为什么落库：物化一个类型可能跑几分钟到几十分钟，任务状态只放内存的话，进程重启（含改代码热更新）
+ * 就什么都看不见了。落库之后：`GET` 能翻历史，重启时把遗留的 QUEUED/RUNNING 标成 INTERRUPTED
+ * （物化幂等，用户重新排队即可），`scanned/rows/pages` 也留了痕。
+ *
+ * `scanned` / `rows` 用 bigint：一次"不限制"的物化可能读到上亿行，integer 会溢出；
+ * 读出来是字符串，业务层用 `Number()` 转（JS 安全整数上限 2^53，够用）。
+ */
+@Entity({ schema: "ontology_platform", name: "materialization_jobs" })
+export class MaterializationJobEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "target_id" }) targetId!: string;
+  @Column("text", { name: "entity_type" }) entityType!: string;
+  /** QUEUED / RUNNING / DONE / CANCELLED / FAILED / INTERRUPTED（进程重启遗留）。 */
+  @Column("text") status!: string;
+  @Column("bigint", { default: 0 }) scanned!: string;
+  @Column("bigint", { default: 0 }) rows!: string;
+  @Column("integer", { default: 0 }) pages!: number;
+  @Column("boolean", { default: false }) truncated!: boolean;
+  /** 结束原因 / 失败信息；正常完成为 null。 */
+  @Column("text", { nullable: true }) message!: string | null;
+  @Column("timestamptz", { name: "queued_at" }) queuedAt!: Date;
+  @Column("timestamptz", { name: "started_at", nullable: true }) startedAt!: Date | null;
+  @Column("timestamptz", { name: "finished_at", nullable: true }) finishedAt!: Date | null;
+  @Column("text", { name: "created_by", nullable: true }) createdBy!: string | null;
+}
+
+/**
  * 列画像缓存（采样结果，按天复用）。见 `@/lib/column-profile`。
  *
  * 主键是 `(数据资源, 模式.表)`：同一个数据资源下换表就换一行。

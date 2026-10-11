@@ -23,6 +23,7 @@ export const PLATFORM_TABLE_COMMENTS: Record<string, string> = {
   reasoning_conversations: "智能问答的对话。一行一段对话。",
   reasoning_messages: "一轮问答。一行一次提问：问题、回答、思考过程与运行记录。",
   column_profiles: "列画像缓存。一行一张表，存采样出来的列表征。",
+  materialization_jobs: "整份物化的后台任务。一行一个对象类型的一次物化：状态、进度与结束原因。",
 };
 
 /** 表 -> 列 -> 一句话说明。 */
@@ -157,6 +158,21 @@ export const PLATFORM_COLUMN_COMMENTS: Record<string, Record<string, string>> = 
     table_name: "表名 / 视图名。",
     profile: "列画像（jsonb）：类型、取值样例、null 比例、min/max。",
     sampled_at: "采样时间，默认按天复用。",
+  },
+  materialization_jobs: {
+    id: "任务 id（UUID）。",
+    target_id: "本体存储（graph_targets.id）。",
+    entity_type: "被物化的对象类型名。",
+    status: "任务状态：QUEUED / RUNNING / DONE / CANCELLED / FAILED / INTERRUPTED（进程重启遗留）。",
+    scanned: "已从数据源读过的行数。",
+    rows: "已写进对象索引的条数。",
+    pages: "已读页数。",
+    truncated: "是否撞到单次上限（没读完）。",
+    message: "结束原因或失败信息；正常完成为空。",
+    queued_at: "入队时间。",
+    started_at: "开始执行时间。",
+    finished_at: "结束时间。",
+    created_by: "发起人（users.id）。",
   },
 };
 

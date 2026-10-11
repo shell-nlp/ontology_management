@@ -5,6 +5,7 @@ import { RbacRolesAndPermissions0004 } from "@/lib/platform/db/migrations/0004-r
 import { OntologyVersionsAndConcepts0005 } from "@/lib/platform/db/migrations/0005-ontology-versions";
 import { TableAndColumnComments0006 } from "@/lib/platform/db/migrations/0006-table-and-column-comments";
 import { DropObjectEntries0007 } from "@/lib/platform/db/migrations/0007-drop-object-entries";
+import { MaterializationJobs0008 } from "@/lib/platform/db/migrations/0008-materialization-jobs";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -18,4 +19,5 @@ export const PLATFORM_MIGRATIONS = [
   new OntologyVersionsAndConcepts0005(),
   new TableAndColumnComments0006(),
   new DropObjectEntries0007(),
+  new MaterializationJobs0008(),
 ];

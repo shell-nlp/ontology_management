@@ -423,3 +423,10 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-job-state.failed { color:#b91c1c; background:#fef2f2; border-color:#fecaca; }
 .index-job-state.cancelled { color:#b45309; background:#fffbeb; border-color:#fde68a; }
 .quiet-button.small { height:26px; padding:0 9px; font-size:11px; }
+.index-pagesize { display:inline-flex; align-items:center; gap:6px; color:#64748b; font-size:11.5px; }
+.index-pagesize select { height:28px; border:1px solid var(--line); border-radius:3px; background:#fff; color:#243b53; font-size:11.5px; padding:0 6px; }
+.index-policy { margin-left:7px; font-style:normal; font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid; vertical-align:middle; }
+.index-policy.auto { color:#64748b; background:#f8fafc; border-color:#e2e8f0; }
+.index-policy.indexed { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; }
+.index-policy.federated { color:#b45309; background:#fffbeb; border-color:#fde68a; }
+.index-job-state.interrupted { color:#475569; background:#f1f5f9; border-color:#cbd5e1; }

@@ -89,9 +89,31 @@ export async function getObject(
  * 列 / 检索对象。`auto` 的口径：索引里这个对象类型有数据就用索引，
  * 否则回源（典型场景：只建了类型、还没把业务数据物化进索引）。
  */
+/**
+ * 对象类型上配的**默认读法**（`entityTypes[].indexPolicy`）说了算：
+ * - `FEDERATED` → 一律回源（策略优先于这次查询里临时选的来源）；
+ * - `INDEXED` → 只读索引，没物化就明确告知，不静默回源；
+ * - `AUTO`（默认） → 按调用方这次的选择走（`auto` / `index` / `source`）。
+ * 纯函数，便于单测；老快照没有这个字段时读出 `AUTO`。
+ */
+export function resolveReadOrigin(
+  policy: "AUTO" | "INDEXED" | "FEDERATED" | undefined,
+  requested: "auto" | ObjectOrigin | undefined,
+): "auto" | ObjectOrigin {
+  if (policy === "FEDERATED") return "source";
+  if (policy === "INDEXED") return "index";
+  return requested ?? "auto";
+}
+
 export async function queryObjects(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
   const started = Date.now();
-  const origin = query.origin ?? "auto";
+  // 类型上配了策略就按策略，没配（老快照 / AUTO）才看这次调用临时选的来源。
+  const policy = context.definition.entityTypes.find((item) => item.name === query.entityType)?.indexPolicy ?? "AUTO";
+  const origin = resolveReadOrigin(policy, query.origin);
+  const policyWarning =
+    policy === "FEDERATED"
+      ? ["这个对象类型按策略走业务库（FEDERATED）：不能跨类型 join、多跳遍历不完整、聚合受限。"]
+      : [];
   const limit = clamp(query.limit, 1, 200, 20);
   const offset = clamp(query.offset, 0, 100000, 0);
 
@@ -105,7 +127,13 @@ export async function queryObjects(context: ObjectContext, query: ObjectQuery): 
       offset,
     });
     if (result.total > 0 || origin === "index") {
-      const warnings = result.textMode === "none" && query.text ? ["索引里没有可用的全文检索能力，这次只按属性过滤。"] : [];
+      const warnings = [
+        ...policyWarning,
+        ...(result.textMode === "none" && query.text ? ["索引里没有可用的全文检索能力，这次只按属性过滤。"] : []),
+        ...(policy === "INDEXED" && result.total === 0
+          ? ["这个对象类型要求走索引（INDEXED），但索引里没有它的对象：先到「索引与物化」整份物化；策略下不会自动回源。"]
+          : []),
+      ];
       // 半份必须报数（2026-10-12 用户口径）：这个类型如果上次物化撞了上限，就说清"只物化了 N 条"。
       const truncated = await getObjectIndex()
         .listMaterializations(context.targetId)
@@ -134,7 +162,7 @@ export async function queryObjects(context: ObjectContext, query: ObjectQuery): 
     rows: source.rows,
     total: source.total,
     origin: source.rows.length ? "source" : "none",
-    warnings: source.warnings,
+    warnings: [...policyWarning, ...source.warnings],
     tookMs: Date.now() - started,
   };
 }

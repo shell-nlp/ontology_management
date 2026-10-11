@@ -340,6 +340,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         name: item.name,
         // 主来源的表名（「模式.表」）——面板上要能看出这个类型到底有没有可读的源。
         sourceLabel: item.sources?.[0] ? `${item.sources[0].schema ? `${item.sources[0].schema}.` : ""}${item.sources[0].view}` : "",
+        indexPolicy: item.indexPolicy ?? "AUTO",
       }))}
       mayWrite={may(user, "instance.write")}
       onClose={() => setIndexOpen(false)}

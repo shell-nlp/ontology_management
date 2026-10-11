@@ -62,12 +62,13 @@ export async function GET(request: NextRequest) {
     await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim();
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
-    const [materializations, capabilities, stats] = await Promise.all([
+    const [materializations, capabilities, stats, jobs] = await Promise.all([
       getObjectIndex().listMaterializations(targetId),
       getObjectIndex().capabilities(),
       getObjectIndex().stats(targetId),
+      listMaterializeJobs(targetId),
     ]);
-    return NextResponse.json({ materializations, capabilities, stats, jobs: listMaterializeJobs(targetId) });
+    return NextResponse.json({ materializations, capabilities, stats, jobs });
   } catch (error) {
     const unauthorized = isUnauthorized(error);
     return NextResponse.json(

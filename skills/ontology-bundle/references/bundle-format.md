@@ -93,6 +93,7 @@ metrics[].entityTypeId               → entityTypes[].id
 | `implements` | 实现的接口 id 列表 |
 | `properties[]` | 属性，见下 |
 | `sources[]` | 数据来源，见第 3 节；不接数据就写 `[]` |
+| `indexPolicy` | 默认读法（可选，缺省 `AUTO`）：`AUTO` 索引里有就用、没有就回源；`INDEXED` 只读索引（发布后要整份物化）；`FEDERATED` 直接读业务库、不进索引 |
 
 `properties[]`：
 

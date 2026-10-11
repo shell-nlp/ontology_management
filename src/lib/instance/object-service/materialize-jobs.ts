@@ -1,4 +1,5 @@
 import { materializeObjectType, resolveObjectContext } from "@/lib/instance/object-service";
+import { MaterializationJobEntity, platformRepo } from "@/lib/platform/db";
 
 /**
  * 整份物化的**后台任务**（2026-10-12 用户要求：默认不限制 + 放后台跑 + 能看进度）。
@@ -10,7 +11,7 @@ import { materializeObjectType, resolveObjectContext } from "@/lib/instance/obje
  * 3. **状态在内存**（挂 `globalThis`，与智能问答的 run-registry 同一条口径）：接口进程重启会丢任务，
  *    但物化本身是幂等的（重跑一遍即可），所以不值得为它先落一张任务表。要跨重启续跑就得落库 —— Backlog 未排期。
  */
-export type MaterializeJobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED";
+export type MaterializeJobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED" | "INTERRUPTED";
 
 export type MaterializeJob = {
   id: string;
@@ -62,12 +63,97 @@ const snapshot = (job: JobState): MaterializeJob => ({
   finishedAt: job.finishedAt,
 });
 
-export function listMaterializeJobs(targetId?: string | null): MaterializeJob[] {
+/** 写一行任务状态（入队 / 开始 / 每页 / 结束都调它）。失败不影响主流程 —— 物化本身照跑。 */
+async function persist(job: JobState): Promise<void> {
+  try {
+    const repo = await platformRepo(MaterializationJobEntity);
+    await repo.upsert(
+      {
+        id: job.id,
+        targetId: job.targetId,
+        entityType: job.entityType,
+        status: job.status,
+        scanned: String(Math.trunc(job.scanned)),
+        rows: String(Math.trunc(job.rows)),
+        pages: job.pages,
+        truncated: job.truncated,
+        message: job.message,
+        queuedAt: new Date(job.queuedAt),
+        startedAt: job.startedAt ? new Date(job.startedAt) : null,
+        finishedAt: job.finishedAt ? new Date(job.finishedAt) : null,
+        createdBy: null,
+      },
+      ["id"],
+    );
+  } catch {
+    // 落库失败不该让物化失败：任务照跑，只是这次记录没留下。
+  }
+}
+
+/**
+ * 进程启动后第一次读历史时，把上一轮进程遗留的 QUEUED / RUNNING 标成 INTERRUPTED。
+ * 物化是幂等的（重跑一遍即可），所以这里只如实标注，不尝试续跑。
+ */
+async function reconcileInterruptedOnce(): Promise<void> {
+  const holder = globalThis as typeof globalThis & { __ontologyMaterializeReconciled?: boolean };
+  if (holder.__ontologyMaterializeReconciled) return;
+  holder.__ontologyMaterializeReconciled = true;
+  try {
+    const repo = await platformRepo(MaterializationJobEntity);
+    /*
+     * **只标"上一轮进程遗留"的行**：本进程内存里正在排队/运行的 id 要排除掉，
+     * 否则第一次读历史会把当前正在跑的任务也标成 INTERRUPTED（真踩过）。
+     */
+    const liveIds = [...registry().jobs.values()]
+      .filter((job) => job.status === "QUEUED" || job.status === "RUNNING")
+      .map((job) => job.id);
+    const query = repo
+      .createQueryBuilder()
+      .update()
+      .set({ status: "INTERRUPTED", message: "进程重启，任务被中断（物化幂等，可以重新排队）。", finishedAt: new Date() })
+      .where("status IN (:...statuses)", { statuses: ["QUEUED", "RUNNING"] });
+    if (liveIds.length) query.andWhere("id NOT IN (:...liveIds)", { liveIds });
+    await query.execute();
+  } catch {
+    holder.__ontologyMaterializeReconciled = false;
+  }
+}
+
+/** 任务列表 = 库里的历史 ∪ 内存里正在跑的那几个（内存里的更新，同 id 覆盖库里的）。 */
+export async function listMaterializeJobs(targetId?: string | null): Promise<MaterializeJob[]> {
+  await reconcileInterruptedOnce();
   const id = (targetId ?? "").trim();
-  return [...registry().jobs.values()]
-    .filter((job) => !id || job.targetId === id)
-    .sort((left, right) => right.queuedAt.localeCompare(left.queuedAt))
-    .map(snapshot);
+  let stored: MaterializeJob[] = [];
+  try {
+    const repo = await platformRepo(MaterializationJobEntity);
+    const rows = await repo.find({
+      where: id ? { targetId: id } : {},
+      order: { queuedAt: "DESC" },
+      take: 50,
+    });
+    stored = rows.map((row) => ({
+      id: row.id,
+      targetId: row.targetId,
+      entityType: row.entityType,
+      status: row.status as MaterializeJobStatus,
+      scanned: Number(row.scanned ?? 0),
+      rows: Number(row.rows ?? 0),
+      pages: row.pages ?? 0,
+      truncated: row.truncated ?? false,
+      message: row.message,
+      queuedAt: new Date(row.queuedAt).toISOString(),
+      startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : null,
+      finishedAt: row.finishedAt ? new Date(row.finishedAt).toISOString() : null,
+      // 历史行不记源侧总数（表里没这列）：显示成"—"即可，进度看 scanned / rows。
+      total: null,
+    }));
+  } catch {
+    stored = [];
+  }
+  const live = [...registry().jobs.values()].filter((job) => !id || job.targetId === id).map(snapshot);
+  const byId = new Map(stored.map((job) => [job.id, job]));
+  for (const job of live) byId.set(job.id, job);
+  return [...byId.values()].sort((left, right) => right.queuedAt.localeCompare(left.queuedAt)).slice(0, 50);
 }
 
 export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
@@ -81,6 +167,7 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
     job.finishedAt = new Date().toISOString();
     job.message = "排队时被取消。";
     state.queue = state.queue.filter((id) => id !== jobId);
+    void persist(job);
   }
   return snapshot(job);
 }
@@ -115,6 +202,7 @@ export function enqueueMaterializeJob(input: {
   };
   state.jobs.set(job.id, job);
   state.queue.push(job.id);
+  void persist(job);
   void drain();
   return snapshot(job);
 }
@@ -132,6 +220,7 @@ async function drain(): Promise<void> {
       if (!job || job.status !== "QUEUED") continue;
       job.status = "RUNNING";
       job.startedAt = new Date().toISOString();
+      void persist(job);
       try {
         const context = await resolveObjectContext(job.targetId, job.versionId);
         const result = await materializeObjectType(context, job.entityType, {
@@ -141,6 +230,8 @@ async function drain(): Promise<void> {
             job.scanned = progress.scanned;
             job.rows = progress.rows;
             job.pages = progress.pages;
+            // 每页一次（onProgress 本来就是按页触发的），不每行写。
+            void persist(job);
           },
           shouldCancel: () => job.cancelRequested,
         });
@@ -160,6 +251,7 @@ async function drain(): Promise<void> {
         job.message = error instanceof Error ? error.message : "物化失败。";
       } finally {
         job.finishedAt = new Date().toISOString();
+        void persist(job);
       }
     }
   } finally {

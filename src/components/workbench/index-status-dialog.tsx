@@ -24,7 +24,7 @@ type Materialization = {
   completedAt: string;
 };
 
-type JobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED";
+type JobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED" | "INTERRUPTED";
 type MaterializeJob = {
   id: string;
   entityType: string;
@@ -41,7 +41,7 @@ type MaterializeJob = {
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
 type Stats = { entries: number; byLabel: { label: string; count: number }[]; updatedAt: string | null };
 
-export type IndexTypeRow = { name: string; sourceLabel: string };
+export type IndexTypeRow = { name: string; sourceLabel: string; indexPolicy: "AUTO" | "INDEXED" | "FEDERATED" };
 
 type Props = {
   targetId: string;
@@ -73,6 +73,8 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   const [selected, setSelected] = useState<string[]>([]);
   const [jobs, setJobs] = useState<MaterializeJob[]>([]);
   const [queuing, setQueuing] = useState(false);
+  /** 每页读多少行（源侧分页大小）。上限 500 —— 页面越大，单次查询越重。 */
+  const [pageSize, setPageSize] = useState(500);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,7 +146,7 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
     setQueuing(true);
     try {
       for (const name of queue) {
-        await api("/api/objects/materialize-type", { method: "POST", body: JSON.stringify({ targetId, entityType: name }) });
+        await api("/api/objects/materialize-type", { method: "POST", body: JSON.stringify({ targetId, entityType: name, pageSize }) });
       }
       notify(`已排队 ${queue.length} 个物化任务：服务端逐个执行，进度在下面的任务列表里看。`);
       setSelected([]);
@@ -169,7 +171,8 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
 
   const snapshotCount = (name: string) => stats?.byLabel.find((item) => item.label === name)?.count ?? 0;
   const indexed = (name: string) => rows.find((item) => item.entityType === name);
-  const readableTypes = types.filter((type) => Boolean(type.sourceLabel));
+  // FEDERATED 按策略就不进索引：不列进"可物化"，避免做出与策略相反的索引数据。
+  const readableTypes = types.filter((type) => Boolean(type.sourceLabel) && type.indexPolicy !== "FEDERATED");
   const visibleTypes = onlyReadable ? readableTypes : types;
   const toggle = (name: string) =>
     setSelected((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
@@ -204,6 +207,14 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
           <button type="button" className={onlyReadable ? "" : "selected"} onClick={() => { setOnlyReadable(false); setSelected([]); }}>全部（{types.length}）</button>
         </div>
         <span className="index-selected">已选 {selected.length} 个类型</span>
+        <label className="index-pagesize" title="每次从业务库读多少行；页面越大，单次查询越重（单次上限 500）">
+          每页
+          <select value={pageSize} disabled={busy} onChange={(event) => setPageSize(Number(event.target.value))}>
+            <option value={100}>100 行</option>
+            <option value={200}>200 行</option>
+            <option value={500}>500 行</option>
+          </select>
+        </label>
         <button className="action compact primary" disabled={!mayWrite || busy || !selected.length} onClick={() => void enqueue(selected)}>
           排队物化选中（{selected.length}）
         </button>
@@ -215,7 +226,7 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
         const activeJobs = jobs.filter((job) => job.status === "QUEUED" || job.status === "RUNNING");
         const doneJobs = jobs.filter((job) => job.status === "DONE").length;
         const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
-        const labels: Record<JobStatus, string> = { QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败" };
+        const labels: Record<JobStatus, string> = { QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败", INTERRUPTED: "已中断" };
         return <div className="index-jobs">
           <div className="index-jobs-head">
             <span className="eyebrow">物化任务</span>
@@ -272,7 +283,7 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
               />
             </span>
             <span className="index-type">
-              <b>{type.name}</b>
+              <b>{type.name}<em className={`index-policy ${type.indexPolicy.toLowerCase()}`}>{type.indexPolicy === "AUTO" ? "AUTO" : type.indexPolicy === "INDEXED" ? "只读索引" : "走业务库"}</em></b>
               <small>{type.sourceLabel || "未绑定数据资源"}</small>
             </span>
             <span className={type.sourceLabel ? "index-cell" : "index-cell muted"}>{type.sourceLabel ? "可读取" : "不可读"}</span>
@@ -283,14 +294,16 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
             </span>
             <span className="index-cell">{snapshotCount(type.name)} 条</span>
             <span className="index-actions">
-              <button
-                className="action compact"
-                disabled={!mayWrite || busy || !type.sourceLabel}
-                title={type.sourceLabel ? "把业务库里这个类型的对象整份写进索引" : "这个类型还没绑定数据资源"}
-                onClick={() => void materialize(type.name)}
-              >
-                整份物化
-              </button>
+              {type.indexPolicy === "FEDERATED"
+                ? <span className="index-cell muted" title="这个类型按策略走业务库，不进索引；要物化请先到对象类型编辑里把读法改成 AUTO 或 INDEXED">按策略走业务库</span>
+                : <button
+                    className="action compact"
+                    disabled={!mayWrite || busy || !type.sourceLabel}
+                    title={type.sourceLabel ? "把业务库里这个类型的对象整份写进索引" : "这个类型还没绑定数据资源"}
+                    onClick={() => void materialize(type.name)}
+                  >
+                    整份物化
+                  </button>}
             </span>
           </div>;
         })}

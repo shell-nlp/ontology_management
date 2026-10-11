@@ -77,6 +77,8 @@ export type ReviewableEntityType = {
   displayProperty?: string;
   groupId?: string;
   implements?: readonly string[];
+  /** 默认读法（老快照没有这个字段，当作 AUTO）。 */
+  indexPolicy?: "AUTO" | "INDEXED" | "FEDERATED";
   properties?: readonly ReviewableProperty[];
   sources?: readonly ReviewableSource[];
 };
@@ -280,6 +282,25 @@ function reviewSourceMapping(model: ReviewableDefinition): ModelingFinding[] {
         "ENTITY_REQUIRED_PROPERTY_UNMAPPED", "WARN", "OBJECT_TYPE", entity,
         `对象类型「${entity.name}」的必填属性「${unmappedRequired.map((property) => property.name).join("、")}」没有映射列。`,
         "必填属性在写入时会被校验，取不到值就写不进去：要么补映射列，要么取消必填。",
+      ));
+    }
+
+    /*
+     * 默认读法（indexPolicy）的两条体检：本体层只能看定义，看不到"索引里到底有没有"，
+     * 所以这里只提示"该物化的别忘了物化""只回源却没绑源"这两种能静态判断的问题。
+     */
+    if (entity.indexPolicy === "INDEXED") {
+      findings.push(finding(
+        "ENTITY_INDEX_POLICY_INDEXED", "WARN", "OBJECT_TYPE", entity,
+        `对象类型「${entity.name}」的默认读法是 INDEXED（只读索引）。`,
+        "这个类型的对象只从索引读、不会自动回源：发布后到「对象」页的「索引与物化」整份物化一次，否则对象页只会提示「没有物化」而查不到数据。",
+      ));
+    }
+    if (entity.indexPolicy === "FEDERATED" && !bound.length) {
+      findings.push(finding(
+        "ENTITY_INDEX_POLICY_FEDERATED_NO_SOURCE", "WARN", "OBJECT_TYPE", entity,
+        `对象类型「${entity.name}」的默认读法是 FEDERATED（直接读业务库），但它没有绑定数据来源。`,
+        "FEDERATED 不进索引、每次直接回源：不绑数据来源就一条也读不到。要么补绑定，要么把读法改回 AUTO / INDEXED。",
       ));
     }
   }

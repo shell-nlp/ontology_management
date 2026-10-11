@@ -11,7 +11,18 @@ export class TableAndColumnComments0006 {
   name = "TableAndColumnComments0006";
 
   async up(queryRunner: QueryRunner): Promise<void> {
+    /*
+     * 只给**已经存在**的表补注释：注释清单是"库里应该有哪些表"的全集，而迁移是按顺序跑的 ——
+     * 后加的表（例如 0008 的 materialization_jobs）在这支迁移跑的时候还不存在，
+     * 直接 `COMMENT ON TABLE` 会报 `relation ... does not exist`，整个启动都起不来。
+     */
+    const existing = (await queryRunner.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'ontology_platform'`,
+    )) as { table_name: string }[];
+    const present = new Set(existing.map((row) => row.table_name));
     for (const statement of platformCommentStatements()) {
+      const match = /^COMMENT ON (?:TABLE|COLUMN) ontology_platform\.([a-z_]+)/.exec(statement);
+      if (match && !present.has(match[1])) continue;
       await queryRunner.query(statement);
     }
     // PG 专有列（tsvector 生成列 / pgvector）由代码按扩展可用性补建：存在才补注释，文案与代码同一份。

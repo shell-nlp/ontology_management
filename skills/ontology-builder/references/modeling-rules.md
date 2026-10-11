@@ -118,6 +118,8 @@
 | `ENTITY_SOURCE_UNMAPPED` | 该改 | 绑了表，但没有任何属性映射到列 |
 | `ENTITY_PRIMARY_KEY_UNMAPPED` | 该改 | 主键列没有属性接住（对象身份拿不到值） |
 | `ENTITY_REQUIRED_PROPERTY_UNMAPPED` | 该改 | 必填属性没有映射列 |
+| `ENTITY_INDEX_POLICY_INDEXED` | 该改 | 默认读法是 INDEXED（只读索引），发布后要整份物化，否则查不到数据 |
+| `ENTITY_INDEX_POLICY_FEDERATED_NO_SOURCE` | 该改 | 默认读法是 FEDERATED（直接读业务库）却没有绑定数据来源，一条也读不到 |
 | `ENTITY_ORPHAN` | 该改 | 孤悬：没绑数据、不连任何关系类型、也没有动作作用在它身上 |
 | `ENTITY_DUPLICATE_NAME` | 该改 | 对象类型重名（只是大小写或空格不同） |
 | `RELATION_DUPLICATE_NAME` | 该改 | 关系类型重名 |

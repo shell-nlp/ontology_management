@@ -11,6 +11,7 @@ import {
   DataSourceEntity,
   EmbeddedGraphEntity,
   GraphTargetEntity,
+  MaterializationJobEntity,
   OntologyConceptEntity,
   OntologyEntity,
   OntologyVersionEntity,
@@ -62,6 +63,7 @@ export const PLATFORM_ENTITIES = [
   ColumnProfileEntity,
   OntologyVersionEntity,
   OntologyConceptEntity,
+  MaterializationJobEntity,
 ];
 
 type PlatformCache = {

@@ -23,6 +23,8 @@ export type EntityType = {
   groupId?: string;
   /** 实现的接口（`Definition.interfaces` 里的 id）；一个对象类型可以实现多个接口。 */
   implements?: string[];
+  /** 默认读法：AUTO（索引有就用、没有回源）/ INDEXED（只读索引）/ FEDERATED（直接读业务库，不进索引）。老快照读出来是 AUTO。 */
+  indexPolicy?: "AUTO" | "INDEXED" | "FEDERATED";
   /** 接口属性的显式映射：接口属性名 → 本对象类型的属性名。没写就按同名匹配。 */
   interfaceMappings?: { interfaceId: string; properties: Record<string, string>; actions?: Record<string, string> }[];
   properties: Property[];

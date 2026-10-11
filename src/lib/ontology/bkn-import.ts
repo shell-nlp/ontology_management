@@ -121,7 +121,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
 
     if (!resourceName) {
       if (primaryKeys.length) warnings.push(`对象类型「${name}」没有数据来源，主键（${primaryKeys.join("、")}）改记在属性上：标成必填 + 唯一。`);
-      return { id: newId, name, description: text(item.comment), displayProperty: displayKey, groupId: "", implements: [], interfaceMappings: [], properties, sources: [] } as OntologyDefinition["entityTypes"][number];
+      return { id: newId, name, description: text(item.comment), displayProperty: displayKey, groupId: "", implements: [], interfaceMappings: [], properties, sources: [], indexPolicy: "AUTO" } as OntologyDefinition["entityTypes"][number];
     }
 
     // "GISTOOLS.TB_MK_GRP_LINE_LIST_DAY" → schema=GISTOOLS, view=TB_MK_GRP_LINE_LIST_DAY
@@ -134,6 +134,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       name,
       description: text(item.comment),
       displayProperty: displayKey,
+      indexPolicy: "AUTO",
       implements: [],
       interfaceMappings: [],
       groupId: "",

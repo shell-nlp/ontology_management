@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X, Layers } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
 import { effectiveInterfaceProperties } from "@/lib/ontology/interfaces";
 import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
@@ -31,6 +31,7 @@ export type TypeEditPayload = {
   name: string;
   description?: string;
   displayProperty?: string;
+  indexPolicy?: "AUTO" | "INDEXED" | "FEDERATED";
   /** 概念分组名（业务域）：空串表示不归组、没见过的名字由调用方新建一条分组。 */
   groupName?: string;
 
@@ -92,6 +93,10 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [name, setName] = useState(kind === "entity" ? entity?.name ?? "" : relation?.name ?? "");
   const [description, setDescription] = useState(kind === "entity" ? entity?.description ?? "" : relation?.description ?? "");
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
+  /** 默认读法：这个类型的对象平时从索引读、还是直接问业务库（2026-10-12 用户要求）。 */
+  const [indexPolicy, setIndexPolicy] = useState<"AUTO" | "INDEXED" | "FEDERATED">(
+    kind === "entity" ? entity?.indexPolicy ?? "AUTO" : "AUTO",
+  );
   const [groupName, setGroupName] = useState(kind === "entity" ? groups.find((item) => item.id === entity?.groupId)?.name ?? "" : "");
   const [implementsList, setImplementsList] = useState<string[]>(kind === "entity" ? entity?.implements ?? [] : []);
   const [source, setSource] = useState(relation?.sourceEntityTypeId ?? "");
@@ -361,7 +366,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     setBusy(true);
     try {
       await onSave(kind === "entity"
-        ? { name, description, displayProperty, groupName, implements: implementsList, properties, sources: normalizedSources }
+        ? { name, description, displayProperty, groupName, implements: implementsList, indexPolicy, properties, sources: normalizedSources }
         : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, cardinality, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys), linkSource });
       onClose();
     } finally {
@@ -424,6 +429,19 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   <small>{groups.length
                     ? "从「概念分组」页维护的分组里挑一个；留空就是这个对象类型不属于任何分组。"
                     : "还没有概念分组。去左侧「概念分组」页按业务域建几个，再回来挑。"}</small>
+                </label>
+                <label className="ted-field">
+                  <span><Layers size={12} />默认读法</span>
+                  <select className="ted-select" value={indexPolicy} onChange={(event) => setIndexPolicy(event.target.value as typeof indexPolicy)}>
+                    <option value="AUTO">AUTO · 索引里有就用索引，没有就回源</option>
+                    <option value="INDEXED">INDEXED · 只读索引（必须先整份物化）</option>
+                    <option value="FEDERATED">FEDERATED · 不进索引，每次直接读业务库</option>
+                  </select>
+                  <small>{indexPolicy === "AUTO"
+                    ? "默认：索引里这个类型的对象就用索引，没有就回源业务库 —— 过渡期最省事，但行为会随索引里有没有而变。"
+                    : indexPolicy === "INDEXED"
+                      ? "只从索引读：没整份物化就不会回源，而是明确告诉你「先去物化」——适合字典、需要检索/过滤/聚合的类型。"
+                      : "直接读业务库、不进索引：适合数据量大或变化快、只做点查的类型；代价是不能跨类型 join、多跳遍历不完整、聚合受限。"}</small>
                 </label>
                 <div className="ted-field">
                   <span className="ted-iface-head"><Boxes size={12} />实现接口{implementsList.length > 0 && <em>已实现 {implementsList.length}</em>}{implementsList.length > 0 && <button type="button" className="ted-iface-clear" onClick={() => setImplementsList([])}>全部取消</button>}</span>

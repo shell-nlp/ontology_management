@@ -389,6 +389,13 @@ export const ontologyDefinitionSchema = z.object({
     })).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
+    /**
+     * 这个对象类型的**默认读法**（2026-10-12 用户要求，对齐 S4）：
+     * - `AUTO`（默认）：索引里有这个类型就用索引，没有就回源业务库 —— 老快照读出来就是它，不需要迁移；
+     * - `INDEXED`：只读索引；没整份物化就明确报错，**不静默回源**（行为可预测，配"不许半份"的口径）；
+     * - `FEDERATED`：不进索引，每次直接读业务库（大表/点查型），代价是不能跨类型 join、多跳不完整、聚合受限。
+     */
+    indexPolicy: z.enum(["AUTO", "INDEXED", "FEDERATED"]).default("AUTO"),
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
     source: legacyEntitySourceSchema.optional(),
   }).transform(({ source, ...entity }) => {
