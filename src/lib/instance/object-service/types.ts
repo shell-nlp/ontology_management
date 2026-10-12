@@ -47,6 +47,8 @@ export type ObjectQuery = {
   offset?: number;
   /** auto = 索引里有这个对象类型的条目就用索引，否则回源。 */
   origin?: "auto" | ObjectOrigin;
+  /** 回源时是否顺带统计总数（默认 true）。整份物化逐页翻时传 false，省掉每页一次 COUNT(*)。 */
+  count?: boolean;
 };
 
 export type ObjectQueryResult = {

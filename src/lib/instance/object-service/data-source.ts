@@ -107,7 +107,7 @@ export async function selectRowsBy(
   source: { schema: string; view: string },
   columns: string[],
   filters: DataSourceRowFilter[],
-  options: { limit: number; search?: { text: string; columns: string[] } },
+  options: { limit: number; offset?: number; search?: { text: string; columns: string[] } },
   warnings: string[],
 ): Promise<DataSourceRows> {
   const { connector, label } = await connectorFor(dataSourceId);
@@ -120,6 +120,7 @@ export async function selectRowsBy(
     filters,
     ...(options.search ? { search: options.search } : {}),
     limit: options.limit,
+    offset: Math.max(0, Math.floor(options.offset ?? 0)),
   });
   if (result.truncated) warnings.push(`命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
   return result;
@@ -199,25 +200,37 @@ export function createDataSourceObjectSource(): ObjectSource {
         filters.push({ column, operator: filter.operator as DataSourceRowFilter["operator"], value: filter.value as DataSourceRowFilter["value"] });
       }
       const limit = Math.min(MAX_SOURCE_ROWS, Math.max(1, Math.floor(query.limit ?? DEFAULT_SOURCE_ROWS)));
+      /*
+       * 翻页偏移**必须传下去**：连接器的 selectRows 已经支持 offset（Oracle 用 ROWNUM 条件限行、
+       * PG/MySQL 用 LIMIT/OFFSET）。以前这里把 query.offset 丢了，于是每一页都返回同一段第一页 ——
+       * 整份物化会永远翻不到下一页（2026-10-12：837 行的表被报成 28000 条）。
+       */
+      const offset = Math.max(0, Math.floor(query.offset ?? 0));
       const search = query.text?.trim()
         ? { text: query.text.trim(), columns: columns.slice(0, MAX_SEARCH_COLUMNS) }
         : undefined;
-      const rows = await selectRowsBy(main.dataSourceId, main, columns, filters, { limit, search }, warnings);
+      const rows = await selectRowsBy(main.dataSourceId, main, columns, filters, { limit, offset, search }, warnings);
       const records = rows.rows.map((row) => recordOf(entityTypeName, entityType, rowProperties(entityType, row), warnings));
 
       let total: number | null = null;
-      try {
-        const { connector } = await connectorFor(main.dataSourceId);
-        if (connector.countRows) {
-          total = await connector.countRows({
-            view: { schema: main.schema || undefined, name: main.view },
-            filters,
-            ...(search ? { search } : {}),
-          });
+      /*
+       * 总数是可选的：对象页要它（分页 / 总量），**整份物化不要** —— 物化每翻一页都 COUNT(*) 一次
+       * 是白白的开销（几百行的小表会变成几十次 COUNT）。所以调用方可以传 count: false 关掉。
+       */
+      if (query.count !== false) {
+        try {
+          const { connector } = await connectorFor(main.dataSourceId);
+          if (connector.countRows) {
+            total = await connector.countRows({
+              view: { schema: main.schema || undefined, name: main.view },
+              filters,
+              ...(search ? { search } : {}),
+            });
+          }
+        } catch (error) {
+          // 总数拿不到不影响结果本身：如实说明，不把整次查询判失败。
+          warnings.push(`总数统计失败：${error instanceof Error ? error.message : "未知错误"}`);
         }
-      } catch (error) {
-        // 总数拿不到不影响结果本身：如实说明，不把整次查询判失败。
-        warnings.push(`总数统计失败：${error instanceof Error ? error.message : "未知错误"}`);
       }
       return { rows: records, total, warnings };
     },

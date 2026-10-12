@@ -82,8 +82,12 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   /** 每页读多少行（源侧分页大小）。上限 500 —— 页面越大，单次查询越重。 */
   const [pageSize, setPageSize] = useState(500);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `silent` = 后台轮询用的静默刷新：**不碰 loading**，所以表格不会被"读取中…"整块顶掉。
+   * 不静默的话，跑任务时每 2 秒刷新一次就把整张表清空再填回来 —— 界面一直在闪。
+   */
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     try {
       const data = await api<{ materializations: Materialization[]; capabilities: Capabilities; stats: Stats; jobs: MaterializeJob[] }>(
         `/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}`,
@@ -95,7 +99,7 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
     } catch (reason) {
       fail(reason);
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   }, [targetId, fail]);
 
@@ -105,7 +109,8 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   const active = jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING");
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(() => { void load(); }, 2000);
+    // 静默刷新：不置 loading，表格不会被整块顶掉再填回来（那看着就是在闪）。
+    const timer = setInterval(() => { void load({ silent: true }); }, 2000);
     return () => clearInterval(timer);
   }, [active, load]);
 

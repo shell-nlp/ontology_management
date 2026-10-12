@@ -50,9 +50,13 @@
   `POST /api/objects/materialize-type { targetId, entityType, resumeFromJobId }` —— 服务端取那个任务的 `scanned` 当起点，从那里接着读；
   界面对 `INTERRUPTED / CANCELLED / FAILED` 的任务给「从断点继续」。
   **续跑的那一趟绝不 prune**（内存里只有后半段，prune 会把前半段删掉），只有"从 0 读到尾且没取消没截断"才允许 prune。
-- **前提（必须先修）**：断点续跑依赖**源侧 offset 分页**，而当前 `src/lib/instance/object-service/data-source.ts` 的取数只传 `limit`、**不传 offset**
-  —— 于是"翻页"其实反复读同一段，大表会读不全（也可能重复）。做真正的大表物化之前，必须先给对象来源补分页
-  （Oracle 用 `ROWNUM` 包一层，PG / MySQL 用 `LIMIT/OFFSET`，或改成"按主键 > 上一页最后一个键"的游标翻页）。
+- **源侧分页必须把 offset 传下去**（2026-10-12 修）：`data-source.ts` 的 `query()` 以前把 `query.offset` 丢了，
+  每页都返回同一段第一页 —— 整份物化永远翻不到下一页（实测：837 行的表被报成 28000 条 / 56 页，索引里只有第一页 500 条）。
+  连接器的 `selectRows` 本来就支持 `offset`（Oracle 用 `ROWNUM` 条件限行、PG / MySQL 用 `LIMIT/OFFSET`），**传下去就对了**。
+  同时新增 `ObjectQuery.count`（默认 true）：回源时是否顺带 `COUNT(*)`；**整份物化只在第一页要总数**，其余页传 `false`，省掉每页一次 COUNT。
+  **兜底**：`materializeObjectType` 比对相邻两页的对象身份，一旦"翻页没前进"立刻停下并报 `truncated=true` + 说明（绝不空转、绝不把重复计数当条数）。
+  **仍未做**：Oracle 的 ROWNUM 深翻页上限 `ORACLE_MAX_OFFSET = 5000` —— 超过它的表会被兜底拦住、如实报"只物化了第一页"；
+  要读几万行以上，得改成"按主键 > 上一页最后一个键"的游标翻页（Backlog）。
 - **删除与重建（2026-10-12）**：
   - 按类型清物化：`DELETE /api/objects/materialize-type?targetId=&entityType=` —— 只删该类型 `origin=MATERIALIZED` 的行**并删它的物化清单**
     （面板行内「清除物化」，两次点击确认）；快照对象与业务库不动。

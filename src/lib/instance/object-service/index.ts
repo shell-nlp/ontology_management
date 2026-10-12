@@ -280,10 +280,14 @@ export async function materializeObjectType(
   let truncated = false;
 
   let cancelled = false;
+  /** 上一页的"身份签名"：整整一页跟上一页一模一样 = 源侧分页没前进。 */
+  let previousPageKey: string | null = null;
+  let stalled = false;
   while (scanned < maxRows) {
     if (options.shouldCancel?.()) { cancelled = true; break; }
     const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
-    const result = await source.query(context.definition, entityTypeName, { entityType: entityTypeName, limit, offset });
+    // 只有第一页问总数：物化不需要每页都 COUNT(*)。
+    const result = await source.query(context.definition, entityTypeName, { entityType: entityTypeName, limit, offset, count: pages === 0 });
     options.onProgress?.({ scanned: scanned + result.rows.length, rows: entries.length + result.rows.length, pages: pages + 1 });
     warnings.push(...result.warnings);
     if (total === null && Number.isFinite(result.total)) total = result.total;
@@ -296,25 +300,40 @@ export async function materializeObjectType(
     }
     // 这一页没读满 = 源读完了；读满就继续下一页。
     if (result.rows.length < limit) break;
+    /*
+     * **翻页没前进就停**（绝不空转）：源侧分页一旦不生效（offset 被丢、或 Oracle 的 ROWNUM
+     * 深翻页到了上限），每页都会"读满"，循环就会永远跑下去、scanned 越报越大，而索引里其实
+     * 只有第一页那几百条（2026-10-12 真踩过：837 行的表被报成 28000 条 / 56 页）。
+     * 判据是"这一页的对象身份跟上一页完全相同" —— 正常数据不会连续两页一模一样。
+     */
+    const pageKey = JSON.stringify(result.rows.map((record) => record.objectRef || record.objectId || record.title));
+    if (pageKey === previousPageKey) { stalled = true; break; }
+    previousPageKey = pageKey;
     offset += result.rows.length;
     if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
   }
 
+  if (stalled) {
+    warnings.push(
+      "源侧分页没有前进（每页读到的还是上一批对象），已停止：这个对象类型只物化了第一页。" +
+      "请先把数据来源的分页 / 深翻页上限修好，再重新整份物化。",
+    );
+  }
   const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
     versionId: context.versionId,
     origin: "MATERIALIZED",
     /*
-     * 只有"从头读到尾、没取消没截断"才允许 prune：
+     * 只有"从头读到尾、没取消、没截断、没卡住"才允许 prune：
      * 断点续跑的那一趟内存里只有后半段的条目，prune 会把前半段的索引行删掉（真踩过）。
      */
-    prune: !truncated && !cancelled && startOffset === 0,
+    prune: !truncated && !cancelled && !stalled && startOffset === 0,
   });
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
     entityType: entityTypeName,
     rows: synced.upserted,
     scanned,
-    truncated: truncated || cancelled,
+    truncated: truncated || cancelled || stalled,
     pages,
     completedAt: new Date().toISOString(),
   });
@@ -323,7 +342,7 @@ export async function materializeObjectType(
     // rows 是"这一次写进去的条数"；断点续跑时它只是后半段。
     rows: synced.upserted,
     scanned,
-    truncated: truncated || cancelled,
+    truncated: truncated || cancelled || stalled,
     pages,
     total,
     tookMs: Date.now() - started,
