@@ -371,6 +371,8 @@ export async function materializeObjectType(
      * 断点续跑的那一趟内存里只有后半段的条目，prune 会把前半段的索引行删掉（真踩过）。
      */
     prune: !truncated && !cancelled && !stalled && startOffset === 0,
+    // prune 只在这个对象类型里生效：否则物化 A 会把 B 的物化数据一起删掉（见 pruneLabel 的说明）。
+    pruneLabel: entityTypeName,
   });
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,

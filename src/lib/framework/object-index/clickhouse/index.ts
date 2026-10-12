@@ -34,6 +34,13 @@ import type {
  *    这样对象类型的属性是"数据"而不是"表结构"—— 加一个属性不需要改 DDL（PG 那版用 jsonb 同理）。
  */
 const INSERT_CHUNK = 500;
+/**
+ * 一次 prune 删除里塞多少个对象键。
+ * **键是拼进 URL 参数的**，而 ClickHouse 对表单字段值有上限（Poco 的 Field value too long）：
+ * 2026-10-12 物化 `专线产品用户` 1688 条时，一整批 key URL-encode 之后冲破了它、HTTP 500。
+ * 200 个键 encode 完约 20KB，离上限很远。
+ */
+const PRUNE_DELETE_CHUNK = 200;
 
 let schemaPromise: Promise<void> | undefined;
 
@@ -192,14 +199,29 @@ async function countOrigin(targetId: string, origin: ObjectIndexOrigin) {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** 只数某个对象类型 + 某一来源的条数（按类型 prune 时用）。 */
+async function countTypeOrigin(targetId: string, entityType: string, origin: ObjectIndexOrigin) {
+  const { database } = clickHouseConfig();
+  const rows = await clickHouseQuery<{ n: number }>(
+    `SELECT count() AS n FROM ${tableName(database)} FINAL
+      WHERE target_id = {target:String} AND entity_type = {type:String} AND origin = {origin:String}`,
+    { params: { target: targetId, type: entityType, origin } },
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** 删除（轻量 DELETE）。`mutations_sync=1` 让删除在返回前完成，否则紧接着的统计会读到旧行。 */
-async function deleteWhere(targetId: string, objectKeys: string[] | null, origin?: ObjectIndexOrigin) {
+async function deleteWhere(targetId: string, objectKeys: string[] | null, origin?: ObjectIndexOrigin, entityType?: string) {
   const { database } = clickHouseConfig();
   const params: ClickHouseParams = { target: targetId };
   let condition = "target_id = {target:String}";
   if (origin) {
     params.origin = origin;
     condition += " AND origin = {origin:String}";
+  }
+  if (entityType) {
+    params.type = entityType;
+    condition += " AND entity_type = {type:String}";
   }
   if (objectKeys) {
     if (!objectKeys.length) return;
@@ -225,25 +247,31 @@ async function readObject(targetId: string, objectKey: string): Promise<ObjectIn
   return rows[0] ? toEntry(rows[0]) : null;
 }
 
-/** 删除"这一批之外"的对象键（发布时的 prune）。 */
-async function deleteNotIn(targetId: string, objectKeys: string[], origin: ObjectIndexOrigin) {
+/**
+ * 删掉「这一批之外」的对象键（prune），返回删掉的条数。
+ *
+ * **键绝不进 URL 参数**：以前把整批 key 拼成一个 `param_keys`，几千个键 URL-encode 之后会超过
+ * ClickHouse 的表单字段上限（`Field value too long`，2026-10-12 真 500 过）。现在反过来做：
+ * 先把现存的键读回来（只读键、不读整行），本地算差集，再分小块按 `object_key IN (…)` 删。
+ */
+async function pruneNotIn(targetId: string, keepKeys: string[], origin: ObjectIndexOrigin, entityType?: string) {
   const { database } = clickHouseConfig();
-  await clickHouseExecute(
-    `DELETE FROM ${tableName(database)}
-      WHERE target_id = {target:String} AND origin = {origin:String} AND object_key NOT IN {keys:Array(String)}`,
-    { params: { target: targetId, origin, keys: clickHouseArrayParam(objectKeys) }, settings: { mutations_sync: "1" } },
+  const params: ClickHouseParams = { target: targetId, origin };
+  let condition = "target_id = {target:String} AND origin = {origin:String}";
+  if (entityType) {
+    params.type = entityType;
+    condition += " AND entity_type = {type:String}";
+  }
+  const rows = await clickHouseQuery<{ object_key: string }>(
+    `SELECT object_key FROM ${tableName(database)} FINAL WHERE ${condition}`,
+    { params },
   );
-}
-
-/** 数一遍"这一批之外"的键有多少（删除前先数，删除后就没有据可依了）。 */
-async function countNotIn(targetId: string, objectKeys: string[], origin: ObjectIndexOrigin) {
-  const { database } = clickHouseConfig();
-  const rows = await clickHouseQuery<{ n: number }>(
-    `SELECT count() AS n FROM ${tableName(database)} FINAL
-      WHERE target_id = {target:String} AND origin = {origin:String} AND object_key NOT IN {keys:Array(String)}`,
-    { params: { target: targetId, origin, keys: clickHouseArrayParam(objectKeys) } },
-  );
-  return Number(rows[0]?.n ?? 0);
+  const keep = new Set(keepKeys);
+  const doomed = rows.map((row) => row.object_key).filter((key) => key && !keep.has(key));
+  for (const chunk of chunked(doomed, PRUNE_DELETE_CHUNK)) {
+    await deleteWhere(targetId, chunk, origin, entityType);
+  }
+  return doomed.length;
 }
 
 async function searchObjects(query: ObjectSearchQuery): Promise<ObjectSearchResult> {
@@ -313,14 +341,19 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       const upserted = await insertEntries(targetId, entries, versionId, origin);
       let deleted = 0;
       if (options?.prune) {
+        /*
+         * `pruneLabel` = 只在这个对象类型里 prune。整份物化是「一个类型一批」，不收窄的话
+         * 物化 A 会把 B 的物化数据一起删掉（2026-10-12 真踩过：物化 `集团成员` 之后，
+         * `专线产品用户` / `个人用户` 的物化数据全没了，对象页与图谱看起来就是空的）。
+         */
+        const label = options.pruneLabel;
         const keys = entries.map((entry) => entry.objectKey || `id:${entry.objectId}`);
         if (!keys.length) {
-          // 这一批是空的 = 这个本体存储不该有对象了，整段清掉。
-          deleted = await countOrigin(targetId, origin);
-          await deleteWhere(targetId, null, origin);
+          // 这一批是空的 = 这个范围不该有对象了，整段清掉。
+          deleted = label ? await countTypeOrigin(targetId, label, origin) : await countOrigin(targetId, origin);
+          await deleteWhere(targetId, null, origin, label);
         } else {
-          deleted = await countNotIn(targetId, keys, origin);
-          if (deleted) await deleteNotIn(targetId, keys, origin);
+          deleted = await pruneNotIn(targetId, keys, origin, label);
         }
       }
       return { upserted, deleted, total: await countTarget(targetId) };

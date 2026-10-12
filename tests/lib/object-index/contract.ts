@@ -218,6 +218,34 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
       });
     });
 
+    /*
+     * 整份物化是「一个对象类型一批」跑的：带 `pruneLabel` 的 prune 只能在这个类型里生效，
+     * 不然物化 A 会把 B 的物化数据一起删掉（2026-10-12 真踩过 —— 索引里最后只剩最近物化的那一个类型，
+     * 对象页与图谱看着就是空的）。
+     */
+    it("prune:true + pruneLabel 只删这个对象类型，别的类型原样留着", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetObjects(
+          target,
+          [
+            entry("a1", { entityType: "类型A", labels: ["类型A"], objectKey: "[\"类型A\",\"CUST_ID=a1\"]" }),
+            entry("a2", { entityType: "类型A", labels: ["类型A"], objectKey: "[\"类型A\",\"CUST_ID=a2\"]" }),
+            entry("b1", { entityType: "类型B", labels: ["类型B"], objectKey: "[\"类型B\",\"CUST_ID=b1\"]" }),
+          ],
+          { origin: "MATERIALIZED" },
+        );
+        // 物化「类型A」只留 a2：b1 必须活着。
+        const pruned = await index.syncTargetObjects(
+          target,
+          [entry("a2", { entityType: "类型A", labels: ["类型A"], objectKey: "[\"类型A\",\"CUST_ID=a2\"]" })],
+          { origin: "MATERIALIZED", prune: true, pruneLabel: "类型A" },
+        );
+        expect(pruned.deleted).toBe(1);
+        expect((await index.searchObjects({ targetId: target, labels: ["类型A"] })).total).toBe(1);
+        expect((await index.searchObjects({ targetId: target, labels: ["类型B"] })).total).toBe(1);
+      });
+    });
+
     it("物化清单：记下并读回状态（含截断）", async () => {
       await withIndex(async (index, target) => {
         await index.saveMaterialization({

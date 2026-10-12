@@ -138,11 +138,14 @@ export interface ObjectIndex {
    *
    * 这是发布与"改一行同步一行"走的路：不整表替换，没变的行原样留着。
    * `prune` 为真时，把这次没出现的键删掉（发布时用：快照才是权威）；为假时只增不删（同步单行用）。
+   * `pruneLabel` 把 prune 收窄到**一个对象类型**：整份物化是「一个类型一批」跑的，
+   * 不收窄的话，物化 A 会把 B 的物化数据一起删掉（2026-10-12 真踩过）。发布快照这种
+   * 「整份都在这一批里」的场景不传它，语义就是「这个本体的这一来源以这批为准」。
    */
   syncTargetObjects(
     targetId: string,
     entries: ObjectIndexEntry[],
-    options?: { versionId?: string | null; prune?: boolean; origin?: ObjectIndexOrigin },
+    options?: { versionId?: string | null; prune?: boolean; origin?: ObjectIndexOrigin; pruneLabel?: string },
   ): Promise<ObjectIndexSyncResult>;
   /**
    * 按对象键读一条原始条目（对象服务按主键定位对象用）。
