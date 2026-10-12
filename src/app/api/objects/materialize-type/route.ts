@@ -99,9 +99,28 @@ export async function GET(request: NextRequest) {
 /** 取消一个还没跑完的物化任务（跑完的取消无效）。 */
 export async function DELETE(request: NextRequest) {
   try {
-    await requirePermission("instance.write");
-    const jobId = request.nextUrl.searchParams.get("jobId")?.trim();
-    if (!jobId) return NextResponse.json({ error: "jobId 不能为空。" }, { status: 400 });
+    const user = await requirePermission("instance.write");
+    const url = request.nextUrl;
+    const entityType = url.searchParams.get("entityType")?.trim();
+    if (entityType) {
+      /*
+       * 清除某个对象类型的**物化数据**（保留快照里的手工/动作对象）：
+       * 行按 `origin = MATERIALIZED` 删，物化清单一起删（否则面板会留着一条"已物化 N 条"的假状态）。
+       */
+      const targetId = url.searchParams.get("targetId")?.trim();
+      if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
+      const deleted = await getObjectIndex().deleteTypeObjects(targetId, entityType, { origin: "MATERIALIZED" });
+      await getObjectIndex().deleteMaterialization(targetId, entityType);
+      await writeAuditEntry({
+        actorId: user.id,
+        targetId,
+        action: "OBJECT_TYPE_MATERIALIZATION_CLEARED",
+        details: { entityType, deleted },
+      });
+      return NextResponse.json({ cleared: deleted, entityType });
+    }
+    const jobId = url.searchParams.get("jobId")?.trim();
+    if (!jobId) return NextResponse.json({ error: "jobId 或 entityType 至少给一个。" }, { status: 400 });
     const job = cancelMaterializeJob(jobId);
     if (!job) return NextResponse.json({ error: "任务不存在（进程重启会丢掉内存里的任务）。" }, { status: 404 });
     return NextResponse.json({ job });

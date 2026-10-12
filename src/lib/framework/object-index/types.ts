@@ -151,6 +151,13 @@ export interface ObjectIndex {
   readObject(targetId: string, objectKey: string): Promise<ObjectIndexEntry | null>;
   /** 按对象键批量删除，返回实际删除的行数。 */
   deleteObjects(targetId: string, objectKeys: string[]): Promise<number>;
+  /**
+   * 只删**某个对象类型**索引行（可按来源再收窄），返回实际删除的行数。
+   * 用途：把某个类型的物化数据清掉（保留快照对象），或按类型重来一遍。
+   */
+  deleteTypeObjects(targetId: string, entityType: string, options?: { origin?: ObjectIndexOrigin }): Promise<number>;
+  /** 只删**某一来源**的全部索引行（例如"把整库的物化数据清掉、保留快照"），返回删除的行数。 */
+  deleteOriginObjects(targetId: string, origin: ObjectIndexOrigin): Promise<number>;
   /** 用给定对象整体替换该本体存储的索引；失败时旧索引保持可用。 */
   replaceTargetObjects(
     targetId: string,
@@ -164,5 +171,7 @@ export interface ObjectIndex {
   listMaterializations(targetId: string): Promise<ObjectIndexMaterialization[]>;
   /** 记下（覆盖）一个对象类型的物化清单。 */
   saveMaterialization(record: ObjectIndexMaterialization): Promise<void>;
+  /** 删掉某个对象类型的物化清单（连同它的物化数据一起清时用）。 */
+  deleteMaterialization(targetId: string, entityType: string): Promise<void>;
   capabilities(): Promise<ObjectIndexCapabilities>;
 }

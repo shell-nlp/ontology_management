@@ -343,6 +343,35 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       }
       return deleted;
     },
+    async deleteTypeObjects(targetId, entityType, options) {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const origin = options?.origin;
+      const params: ClickHouseParams = { target: targetId, type: entityType };
+      let condition = "target_id = {target:String} AND entity_type = {type:String}";
+      if (origin) {
+        params.origin = origin;
+        condition += " AND origin = {origin:String}";
+      }
+      const rows = await clickHouseQuery<{ n: number }>(
+        `SELECT count() AS n FROM ${tableName(database)} FINAL WHERE ${condition}`,
+        { params },
+      );
+      const deleted = Number(rows[0]?.n ?? 0);
+      if (deleted) {
+        await clickHouseExecute(`DELETE FROM ${tableName(database)} WHERE ${condition}`, {
+          params,
+          settings: { mutations_sync: "1" },
+        });
+      }
+      return deleted;
+    },
+    async deleteOriginObjects(targetId, origin) {
+      await ensureClickHouseObjectIndexSchema();
+      const deleted = await countOrigin(targetId, origin);
+      if (deleted) await deleteWhere(targetId, null, origin);
+      return deleted;
+    },
     async replaceTargetObjects(targetId, entries, options) {
       await ensureClickHouseObjectIndexSchema();
       const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
@@ -404,6 +433,14 @@ export function createClickHouseObjectIndex(): ObjectIndex {
            truncated: record.truncated ? 1 : 0,
            pages: record.pages,
          })}`,
+      );
+    },
+    async deleteMaterialization(targetId, entityType) {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      await clickHouseExecute(
+        `DELETE FROM ${database}.materialization_manifests WHERE target_id = {target:String} AND entity_type = {type:String}`,
+        { params: { target: targetId, type: entityType }, settings: { mutations_sync: "1" } },
       );
     },
     async capabilities(): Promise<ObjectIndexCapabilities> {

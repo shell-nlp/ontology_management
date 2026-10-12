@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Database, Layers, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Database, Layers, RefreshCw, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
 
 /**
@@ -137,6 +137,48 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   };
 
   /**
+   * 整库重建：清掉物化那一份与它的清单 → 按发布快照重建快照索引 → 把可物化的类型重新排队。
+   * 会重读业务库，所以点之前先确认。
+   */
+  const rebuildAll = async () => {
+    if (!window.confirm("整库重建会清掉所有物化数据（快照对象保留），并重新排队物化所有可读取的类型 —— 会重读业务库。继续？")) return;
+    setReindexing(true);
+    try {
+      const result = await api<{ indexed: number; clearedMaterialized: number; requeued: number }>("/api/object-search/reindex", {
+        method: "POST",
+        body: JSON.stringify({ targetId, rebuildMaterialized: true }),
+      });
+      notify(`整库重建完成：清掉物化 ${result.clearedMaterialized} 条、重建快照对象 ${result.indexed} 条，已重新排队 ${result.requeued} 个类型。`);
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setReindexing(false);
+    }
+  };
+
+  /** 清除某个类型的物化数据（保留快照对象），行内二次确认。 */
+  const [confirmClear, setConfirmClear] = useState<string | null>(null);
+  const clearMaterialized = async (entityType: string) => {
+    if (confirmClear !== entityType) {
+      setConfirmClear(entityType);
+      setTimeout(() => setConfirmClear((current) => (current === entityType ? null : current)), 3000);
+      return;
+    }
+    setConfirmClear(null);
+    setQueuing(true);
+    try {
+      const result = await api<{ cleared: number }>(`/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}&entityType=${encodeURIComponent(entityType)}`, { method: "DELETE" });
+      notify(`已清除「${entityType}」的物化数据（${result.cleared} 条）——快照对象保留。`);
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setQueuing(false);
+    }
+  };
+
+  /**
    * 排队一批物化任务：**服务端串行执行**（并发会同时压业务库），这里只负责入队。
    * 进度与取消都在任务列表里看。
    */
@@ -216,6 +258,9 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
         <span className="index-summary-item">最近更新<b>{formatTime(stats?.updatedAt ?? null)}</b></span>
         <button className="action compact" onClick={() => void reindex()} disabled={!mayWrite || reindexing} title="按当前发布版本的快照重建快照来源的索引；整份物化的对象不受影响">
           <RefreshCw size={13} />{reindexing ? "重建中…" : "重建快照索引"}
+        </button>
+        <button className="action compact" onClick={() => void rebuildAll()} disabled={!mayWrite || reindexing} title="清掉全部物化数据与清单，按发布快照重建，再把可物化的类型重新排队（会重读业务库）">
+          <RotateCcw size={13} />整库重建
         </button>
       </div>
       <div className="index-toolbar">
@@ -324,6 +369,11 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
                   >
                     整份物化
                   </button>}
+              {type.indexPolicy !== "FEDERATED" && state !== "none" && (
+                <button className={confirmClear === type.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy} title="只清这个类型的物化数据，快照对象保留" onClick={() => void clearMaterialized(type.name)}>
+                  {confirmClear === type.name ? "确认清除？" : "清除物化"}
+                </button>
+              )}
             </span>
           </div>;
         })}

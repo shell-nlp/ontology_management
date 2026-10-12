@@ -48,6 +48,14 @@
 - **前提（必须先修）**：断点续跑依赖**源侧 offset 分页**，而当前 `src/lib/instance/object-service/data-source.ts` 的取数只传 `limit`、**不传 offset**
   —— 于是"翻页"其实反复读同一段，大表会读不全（也可能重复）。做真正的大表物化之前，必须先给对象来源补分页
   （Oracle 用 `ROWNUM` 包一层，PG / MySQL 用 `LIMIT/OFFSET`，或改成"按主键 > 上一页最后一个键"的游标翻页）。
+- **删除与重建（2026-10-12）**：
+  - 按类型清物化：`DELETE /api/objects/materialize-type?targetId=&entityType=` —— 只删该类型 `origin=MATERIALIZED` 的行**并删它的物化清单**
+    （面板行内「清除物化」，两次点击确认）；快照对象与业务库不动。
+  - 单条从索引移除：`DELETE /api/objects/index`（body 与同步接口一致：`{ targetId, entityType, keys: ["列=值&…"] }`）——只删检索副本，
+    下次发布 / 整份物化会再写回来（对象页对"来自索引"的对象给这个入口）。
+  - 整库重建：`POST /api/object-search/reindex { rebuildMaterialized: true }` —— 清掉全部物化数据与清单 → 按发布快照重建 SNAPSHOT →
+    把可物化的类型重新排队（`FEDERATED` 与没绑来源的跳过）。**会重读业务库**，界面点击前必须确认。
+  - 语义提醒：删完物化后，`AUTO` 类型的读路径会回源；`INDEXED` 类型会明确报"要求走索引但还没物化"，不会偷偷回源。
 - 权威仍在数据源，索引可重建；本体自建对象（动作 / 手工）走自己的持久层，不回源。
 
 ## 版本快照内容哈希的口径（2026-10-12）
