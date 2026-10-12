@@ -30,6 +30,8 @@ export type MaterializeJob = {
   queuedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** 已请求取消、但当前这一页还没读完（取消只在页边界生效，界面显示「取消中…」）。 */
+  cancelRequested: boolean;
 };
 
 type JobState = MaterializeJob & {
@@ -38,7 +40,6 @@ type JobState = MaterializeJob & {
   maxRows: number | null;
   /** 断点：这一趟从第几条开始读（0 = 从头）。 */
   startOffset: number;
-  cancelRequested: boolean;
 };
 
 type Registry = { jobs: Map<string, JobState>; queue: string[]; running: boolean };
@@ -63,6 +64,7 @@ const snapshot = (job: JobState): MaterializeJob => ({
   queuedAt: job.queuedAt,
   startedAt: job.startedAt,
   finishedAt: job.finishedAt,
+  cancelRequested: job.cancelRequested,
 });
 
 /** 写一行任务状态（入队 / 开始 / 每页 / 结束都调它）。失败不影响主流程 —— 物化本身照跑。 */
@@ -148,6 +150,8 @@ export async function listMaterializeJobs(targetId?: string | null): Promise<Mat
       finishedAt: row.finishedAt ? new Date(row.finishedAt).toISOString() : null,
       // 历史行不记源侧总数（表里没这列）：显示成"—"即可，进度看 scanned / rows。
       total: null,
+      // 库里没有"取消中"这个态：历史行一律 false，正在跑的由内存快照覆盖。
+      cancelRequested: false,
     }));
   } catch {
     stored = [];
@@ -162,7 +166,7 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
   const state = registry();
   const job = state.jobs.get(jobId);
   if (!job) return null;
-  if (job.status === "DONE" || job.status === "FAILED" || job.status === "CANCELLED") return snapshot(job);
+  if (job.status === "DONE" || job.status === "FAILED" || job.status === "CANCELLED" || job.status === "INTERRUPTED") return snapshot(job);
   job.cancelRequested = true;
   if (job.status === "QUEUED") {
     job.status = "CANCELLED";
@@ -170,8 +174,40 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
     job.message = "排队时被取消。";
     state.queue = state.queue.filter((id) => id !== jobId);
     void persist(job);
+  } else if (job.status === "RUNNING") {
+    /*
+     * **取消只在页边界生效**：正在跑的源查询掐不断（Oracle 一页可能几十秒），所以这里只把
+     * "要取消"写进快照与库里（界面显示「取消中…」），等这一页读完，drain 再把它转成 CANCELLED。
+     * **不要在这里把状态改成 CANCELLED** —— 任务其实还在写索引。没有这句反馈，用户会以为"点了取消没反应"。
+     */
+    job.message = "取消中…（正在读完当前这一页，读完就停）";
+    void persist(job);
   }
   return snapshot(job);
+}
+
+/**
+ * 从任务列表里**删掉一条记录**（2026-10-12 用户要求：取消之后要能删掉这条记录）。
+ *
+ * 只允许删**不在跑**的任务：排队/运行中的任务删了会被 drain 重新写回来（库里那行还会复活），
+ * 所以口径是"先取消、等它变成已取消/失败/中断，再删"。删的是任务记录本身，**不动物化数据**
+ * （要清数据走「清除物化」）。进程重启后内存里的任务会丢，只剩库里那一行 —— 这种情况直接删库里的行。
+ */
+export async function deleteMaterializeJob(jobId: string): Promise<{ ok: true } | { ok: false; reason: "RUNNING" | "NOT_FOUND" }> {
+  const state = registry();
+  const job = state.jobs.get(jobId);
+  if (job && (job.status === "QUEUED" || job.status === "RUNNING")) return { ok: false, reason: "RUNNING" };
+  let existed = Boolean(job);
+  try {
+    const repo = await platformRepo(MaterializationJobEntity);
+    const result = await repo.delete({ id: jobId });
+    existed = existed || (result.affected ?? 0) > 0;
+  } catch {
+    if (!job) return { ok: false, reason: "NOT_FOUND" };
+  }
+  state.jobs.delete(jobId);
+  state.queue = state.queue.filter((id) => id !== jobId);
+  return existed ? { ok: true } : { ok: false, reason: "NOT_FOUND" };
 }
 
 /**

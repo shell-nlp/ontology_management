@@ -41,6 +41,11 @@
   任务**已落库**（`ontology_platform.materialization_jobs`，迁移 0008）：入队 / 开始 / 每页 / 结束都写状态与进度（scanned / rows / pages / truncated / message），
   `GET` 合并"库里的历史 + 内存里正在跑的"；进程启动后**第一次读历史**时把上一轮遗留的 `QUEUED`/`RUNNING` 标成 `INTERRUPTED`
   （**必须排除本进程正在跑的 id**，否则会把当前任务也标掉）。物化幂等，被中断的重新排队即可。
+- **取消与删除任务记录**（2026-10-12 用户口径：「无法取消」「取消后无法删除这个记录」）：取消 `DELETE ?jobId=` **只在页边界生效** ——
+  正在跑的源查询掐不断，所以运行中的任务被取消时先标 `cancelRequested=true` + message「取消中…」（界面按钮变「取消中…」、状态牌变「取消中」），
+  等这一页读完 drain 才转 `CANCELLED`；排队中的任务立刻转 `CANCELLED`。**删记录**走另一个参数 `DELETE ?deleteJobId=`：
+  只删**不在跑**（非 QUEUED / RUNNING）的任务（删内存 + 库里那一行），**不动物化数据**（清数据另有 `?entityType=&targetId=`）；删运行中的任务回 `409`。
+  **取消 ≠ 删除**：取消让任务最终变成 CANCELLED，删除是把那条记录从列表里抹掉 —— 两个意图在接口上分开。
 - **断点续跑**（2026-10-12）：任务带上"已读到第几条"（= `scanned`，每页落库），续跑走
   `POST /api/objects/materialize-type { targetId, entityType, resumeFromJobId }` —— 服务端取那个任务的 `scanned` 当起点，从那里接着读；
   界面对 `INTERRUPTED / CANCELLED / FAILED` 的任务给「从断点继续」。

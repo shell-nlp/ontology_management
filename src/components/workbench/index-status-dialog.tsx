@@ -36,6 +36,8 @@ type MaterializeJob = {
   message: string | null;
   queuedAt: string;
   finishedAt: string | null;
+  /** 已请求取消、但当前这一页还没读完（取消只在页边界生效）。 */
+  cancelRequested: boolean;
 };
 
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
@@ -73,6 +75,10 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   const [selected, setSelected] = useState<string[]>([]);
   const [jobs, setJobs] = useState<MaterializeJob[]>([]);
   const [queuing, setQueuing] = useState(false);
+  /** 已点取消、还在等服务端回执的任务 id（这一小段时间界面先显示「取消中…」）。 */
+  const [cancelling, setCancelling] = useState<string[]>([]);
+  /** 正在删记录的任务 id。 */
+  const [deleting, setDeleting] = useState<string[]>([]);
   /** 每页读多少行（源侧分页大小）。上限 500 —— 页面越大，单次查询越重。 */
   const [pageSize, setPageSize] = useState(500);
 
@@ -218,11 +224,26 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
   };
 
   const cancel = async (jobId: string) => {
+    setCancelling((current) => (current.includes(jobId) ? current : [...current, jobId]));
     try {
       await api(`/api/objects/materialize-type?jobId=${encodeURIComponent(jobId)}`, { method: "DELETE" });
       await load();
     } catch (reason) {
       fail(reason);
+      setCancelling((current) => current.filter((id) => id !== jobId));
+    }
+  };
+
+  // 删掉一条任务记录（不动物化数据）：只对不在跑的任务开放，正在跑的会被服务端拒绝。
+  const deleteJob = async (jobId: string) => {
+    setDeleting((current) => (current.includes(jobId) ? current : [...current, jobId]));
+    try {
+      await api(`/api/objects/materialize-type?deleteJobId=${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setDeleting((current) => current.filter((id) => id !== jobId));
     }
   };
 
@@ -298,16 +319,27 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
           </div>
           {activeJobs.length > 0 && <div className="index-job-bar" role="progressbar" aria-label="物化进行中"><i /></div>}
           <div className="index-jobs-list">
-            {jobs.slice(0, 5).map((job) => <div className="index-job" key={job.id}>
-              <b>{job.entityType}</b>
-              <span className={`index-job-state ${job.status.toLowerCase()}`}>{labels[job.status]}</span>
-              <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
-              {job.message && <small title={job.message}>{job.message}</small>}
-              {(job.status === "QUEUED" || job.status === "RUNNING") && <button className="quiet-button small" onClick={() => void cancel(job.id)}>取消</button>}
-              {(job.status === "INTERRUPTED" || job.status === "CANCELLED" || job.status === "FAILED") && (
-                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
-              )}
-            </div>)}
+            {jobs.map((job) => {
+              const runningLike = job.status === "QUEUED" || job.status === "RUNNING";
+              const cancellingThis = job.cancelRequested || cancelling.includes(job.id);
+              return <div className="index-job" key={job.id}>
+                <b>{job.entityType}</b>
+                <span className={`index-job-state ${job.status.toLowerCase()}${runningLike && cancellingThis ? " cancelling" : ""}`}>{runningLike && cancellingThis ? "取消中" : labels[job.status]}</span>
+                <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
+                <small className="index-job-msg" title={job.message ?? ""}>{job.message ?? ""}</small>
+                <span className="index-job-actions">
+                  {runningLike && (cancellingThis
+                    ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
+                    : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
+                  {(job.status === "INTERRUPTED" || job.status === "CANCELLED" || job.status === "FAILED") && (
+                    <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
+                  )}
+                  {!runningLike && (
+                    <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="从任务列表里删掉这条记录（不影响已物化的数据）" onClick={() => void deleteJob(job.id)}>删除</button>
+                  )}
+                </span>
+              </div>;
+            })}
           </div>
         </div>;
       })()}

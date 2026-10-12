@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
-import { materializeObjectType, resolveObjectContext } from "@/lib/instance/object-service";
-import { cancelMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
+import { cancelMaterializeJob, deleteMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 const materializeInput = z.object({
@@ -96,7 +95,12 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** 取消一个还没跑完的物化任务（跑完的取消无效）。 */
+/**
+ * 物化任务操作（2026-10-12）：
+ * - `?jobId=` 取消一个还没跑完的任务（排队中立刻取消；运行中先标「取消中…」，等页边界再转 CANCELLED）；
+ * - `?deleteJobId=` 删掉一条**不在跑**的任务记录（不动物化数据，也删不动正在跑的任务）；
+ * - `?entityType=&targetId=` 清除某个对象类型的物化数据（保留快照对象）。
+ */
 export async function DELETE(request: NextRequest) {
   try {
     const user = await requirePermission("instance.write");
@@ -119,8 +123,25 @@ export async function DELETE(request: NextRequest) {
       });
       return NextResponse.json({ cleared: deleted, entityType });
     }
+    /*
+     * **删掉一条任务记录**：`?deleteJobId=`。与 `?jobId=`（取消）分开，是为了让两个意图在接口上也分得清 ——
+     * 取消让任务最终变成 CANCELLED，删除是把那条记录从列表里抹掉。只删记录，不动物化数据。
+     */
+    const deleteJobId = url.searchParams.get("deleteJobId")?.trim();
+    if (deleteJobId) {
+      const result = await deleteMaterializeJob(deleteJobId);
+      if (!result.ok) {
+        const running = result.reason === "RUNNING";
+        return NextResponse.json(
+          { error: running ? "任务还在跑：先取消，等它变成「已取消」再删。" : "任务记录不存在（可能已经删过了）。" },
+          { status: running ? 409 : 404 },
+        );
+      }
+      await writeAuditEntry({ actorId: user.id, action: "OBJECT_TYPE_MATERIALIZE_JOB_DELETED", details: { jobId: deleteJobId } });
+      return NextResponse.json({ deleted: deleteJobId });
+    }
     const jobId = url.searchParams.get("jobId")?.trim();
-    if (!jobId) return NextResponse.json({ error: "jobId 或 entityType 至少给一个。" }, { status: 400 });
+    if (!jobId) return NextResponse.json({ error: "jobId、deleteJobId 或 entityType 至少给一个。" }, { status: 400 });
     const job = cancelMaterializeJob(jobId);
     if (!job) return NextResponse.json({ error: "任务不存在（进程重启会丢掉内存里的任务）。" }, { status: 404 });
     return NextResponse.json({ job });
