@@ -224,6 +224,8 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
       warnings.push(plan.reason);
       continue;
     }
+    // 计划自己带的说明也如实转出去（例如"外键式自动判断：外键在起点、表取它的主来源"）。
+    warnings.push(...plan.warnings);
     const filters = query.seed ? linkSeedFilters(plan, query.seed) : [];
     if (filters === null) continue; // 这条关系类型跟这个对象无关，不是问题，别报。
     relationshipTypes.push(relation.name);

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X, Layers } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
 import { effectiveInterfaceProperties } from "@/lib/ontology/interfaces";
-import { keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
+import { inferForeignKeySide, keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
 import { CARDINALITY_OPTIONS } from "@/lib/ontology/relationship-cardinality";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
@@ -112,8 +112,10 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     dataSourceId: relation?.linkSource?.dataSourceId ?? "",
     schema: relation?.linkSource?.schema ?? "",
     view: relation?.linkSource?.view ?? "",
-    foreignKeySide: relation?.linkSource?.foreignKeySide === "TARGET" ? "TARGET" : "SOURCE",
+    foreignKeySide: relation?.linkSource?.foreignKeySide === "SOURCE" || relation?.linkSource?.foreignKeySide === "TARGET" ? relation.linkSource.foreignKeySide : "AUTO",
   }));
+  // 外键式的表默认取"外键端对象类型的主来源"：只有手动指定过（或点了按钮）才展开那两个格子。
+  const [manualLinkTable, setManualLinkTable] = useState(Boolean(relation?.linkSource?.view));
   const [linkViewsState, setLinkViewsState] = useState<{ dataSourceId: string; rows: DataViewSummary[] }>({ dataSourceId: "", rows: [] });
   const [linkFieldsState, setLinkFieldsState] = useState<{ key: string; rows: DataViewField[] }>({ key: "", rows: [] });
   const linkViewListId = useId();
@@ -159,6 +161,40 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const color = graphColor(trimmedName);
   const sourceEntity = entityTypes.find((item) => item.id === source) ?? null;
   const targetEntity = entityTypes.find((item) => item.id === target) ?? null;
+  /*
+   * 外键式是**零配置**的：外键在哪一端按键映射推断（一侧填该端主键、另一侧填外键），表与数据来源就用那一端
+   * 对象类型的**主来源**。这里用的是跟后端 `planLinkSource` 同一个推断函数，口径只有一处。
+   */
+  const inferredHolderSide = inferForeignKeySide(sourceEntity, targetEntity, keyMappingRows(sourceKeys), keyMappingRows(targetKeys));
+  const holderSide = linkSource.foreignKeySide === "AUTO" ? inferredHolderSide : linkSource.foreignKeySide;
+  const holderEntity = holderSide === "TARGET" ? targetEntity : holderSide === "SOURCE" ? sourceEntity : null;
+  const holderPrimarySource = holderEntity?.sources?.[0] ?? null;
+  const autoLinkTable = holderPrimarySource ? [holderPrimarySource.schema, holderPrimarySource.view].filter(Boolean).join(".") : "";
+  /** 连接表式、以及外键式点了「手动指定表」之后，都用这格（数据资源 + 表）。 */
+  const renderLinkTableFields = () => (
+    <div className="ted-grid-2">
+      <label className="ted-field">
+        <span>数据资源</span>
+        <select className="ted-select" value={linkSource.dataSourceId} onChange={(event) => setLinkSource({ ...linkSource, dataSourceId: event.target.value, schema: "", view: "" })}>
+          <option value="">不配（只做建模）</option>
+          {linkSource.dataSourceId && !dataSources.some((item) => item.id === linkSource.dataSourceId) && <option value={linkSource.dataSourceId}>这个数据资源已不在清单里</option>}
+          {dataSources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kindLabel}</option>)}
+        </select>
+      </label>
+      <label className="ted-field">
+        <span><Table2 size={12} />{linkSource.mode === "JOIN_TABLE" ? "连接表" : "外键表"}</span>
+        <input
+          className="ted-input"
+          list={linkViewListId}
+          value={linkSource.view}
+          disabled={!linkSource.dataSourceId}
+          onChange={(event) => setLinkSource({ ...linkSource, view: event.target.value, schema: linkViewRows.find((item) => item.name === event.target.value)?.schema ?? linkSource.schema })}
+          placeholder={linkSource.dataSourceId ? (linkSource.mode === "JOIN_TABLE" ? "输入或从下拉里选连接表" : "留空就用外键端的表") : "先选数据资源"}
+        />
+        <datalist id={linkViewListId}>{linkViewRows.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
+      </label>
+    </div>
+  );
   const previewProperties = properties.slice(0, 8);
   const primarySourceId = sourceDrafts[0]?.id ?? "";
   const primaryKeyColumns = sourceDrafts[0]?.primaryKey ?? [];
@@ -531,9 +567,9 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <section className="ted-section">
                   <div className="ted-section-head">
                     <h3><Database size={13} />关系的数据来源</h3>
-                    <em>{linkSource.dataSourceId ? (linkSource.mode === "JOIN_TABLE" ? "连接表式" : "外键式") : "未配"}</em>
+                    <em>{linkSource.mode === "JOIN_TABLE" ? (linkSource.dataSourceId ? "连接表式" : "未配连接表") : linkSource.view || linkSource.dataSourceId ? "外键式（已指定表）" : "外键式（自动）"}</em>
                   </div>
-                  <p className="ted-key-hint">关系实例（边）从哪儿读：多对多就指一张连接表，多对一就写清外键长在哪一端。**不配也合法** —— 那条关系类型只在类型层存在，图上看不到它的边。</p>
+                  <p className="ted-key-hint">关系实例（边）从哪儿读。**外键式（多对一 / 一对一）零配置**：两端键映射填好就行 —— 外键在哪一端自动判断，表和数据资源用那一端对象类型的主来源。**连接表式（多对多）必须选一张连接表**（连接行在那张表里，别处无从得知）。两端键映射都不填 = 只做类型层建模，图上看不到它的边。</p>
                   <div className="ted-grid-2">
                     <label className="ted-field">
                       <span>怎么连</span>
@@ -542,38 +578,23 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         <option value="FOREIGN_KEY">外键（多对一 / 一对一）</option>
                       </select>
                     </label>
-                    <label className="ted-field">
-                      <span>数据资源</span>
-                      <select className="ted-select" value={linkSource.dataSourceId} onChange={(event) => setLinkSource({ ...linkSource, dataSourceId: event.target.value, schema: "", view: "" })}>
-                        <option value="">不配（只做建模）</option>
-                        {linkSource.dataSourceId && !dataSources.some((item) => item.id === linkSource.dataSourceId) && <option value={linkSource.dataSourceId}>这个数据资源已不在清单里</option>}
-                        {dataSources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kindLabel}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="ted-grid-2">
-                    <label className="ted-field">
-                      <span><Table2 size={12} />{linkSource.mode === "JOIN_TABLE" ? "连接表" : "外键表（留空 = 用外键端对象类型的主来源表）"}</span>
-                      <input
-                        className="ted-input"
-                        list={linkViewListId}
-                        value={linkSource.view}
-                        disabled={!linkSource.dataSourceId}
-                        onChange={(event) => setLinkSource({ ...linkSource, view: event.target.value, schema: linkViewRows.find((item) => item.name === event.target.value)?.schema ?? linkSource.schema })}
-                        placeholder={linkSource.dataSourceId ? (linkSource.mode === "JOIN_TABLE" ? "输入或从下拉里选连接表" : "留空就用外键端的表") : "先选数据资源"}
-                      />
-                      <datalist id={linkViewListId}>{linkViewRows.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
-                    </label>
                     {linkSource.mode === "FOREIGN_KEY" && (
                       <label className="ted-field">
                         <span>外键长在哪一端</span>
                         <select className="ted-select" value={linkSource.foreignKeySide} onChange={(event) => setLinkSource({ ...linkSource, foreignKeySide: event.target.value as RelationshipSource["foreignKeySide"] })}>
+                          <option value="AUTO">自动（按键映射判断{inferredHolderSide ? `：${inferredHolderSide === "SOURCE" ? sourceEntity?.name ?? "起始端" : targetEntity?.name ?? "终止端"}` : "，当前判断不出来，请手动选"}）</option>
                           <option value="SOURCE">起始端（{sourceEntity?.name ?? "未选"}）</option>
                           <option value="TARGET">终止端（{targetEntity?.name ?? "未选"}）</option>
                         </select>
                       </label>
                     )}
                   </div>
+                  {linkSource.mode === "JOIN_TABLE" || manualLinkTable ? renderLinkTableFields() : (
+                    <p className="ted-key-hint">
+                      表：自动用外键所在端对象类型的主来源表 <b>{autoLinkTable || "（那一端还没绑数据来源 —— 先给对象类型绑来源，或点右边手动指定）"}</b>，数据资源跟着它走。
+                      <button type="button" className="quiet-button small" onClick={() => setManualLinkTable(true)}>手动指定表</button>
+                    </p>
+                  )}
                   {linkFieldRows.length > 0 && <small>{linkSource.view} 读到 {linkFieldRows.length} 个字段；下面「连接属性」的输入框可以直接从下拉里挑。</small>}
                 </section>
                 <section className="ted-section ted-key">

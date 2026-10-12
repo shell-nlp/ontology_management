@@ -80,6 +80,8 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
   const [selected, setSelected] = useState<string[]>([]);
   const [jobs, setJobs] = useState<MaterializeJob[]>([]);
   const [queuing, setQueuing] = useState(false);
+  /** 任务列表默认只列"还需要你管的"（排队/进行中/失败/中断/已取消）；已完成的收起来 —— 它已经在下面那张类型表里。 */
+  const [onlyPending, setOnlyPending] = useState(true);
   /** 已点取消、还在等服务端回执的任务 id（这一小段时间界面先显示「取消中…」）。 */
   const [cancelling, setCancelling] = useState<string[]>([]);
   /** 正在删记录的任务 id。 */
@@ -337,20 +339,35 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
         </button>
       </div>
       {jobs.length > 0 && (() => {
+        // 服务端已经"一个类型只留最近一条"，这里只管"要不要把已完成的一起列出来"。
         const activeJobs = jobs.filter((job) => job.status === "QUEUED" || job.status === "RUNNING");
         const doneJobs = jobs.filter((job) => job.status === "DONE").length;
         const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
+        const visibleJobs = onlyPending ? jobs.filter((job) => job.status !== "DONE") : jobs;
         const labels: Record<JobStatus, string> = { QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败", INTERRUPTED: "已中断" };
         return <div className="index-jobs">
           <div className="index-jobs-head">
             <span className="eyebrow">物化任务</span>
             <span className="index-jobs-summary">
               {activeJobs.length ? `进行中 ${activeJobs.length}` : "空闲"} · 已完成 {doneJobs}{failedJobs ? ` · 失败 ${failedJobs}` : ""}
+              <button
+                type="button"
+                className="quiet-button small index-jobs-filter"
+                title={onlyPending ? "现在只列未完成的；点一下连已完成的也列出来" : "现在连已完成的一起列；点一下只看未完成的"}
+                onClick={() => setOnlyPending((value) => !value)}
+              >
+                {onlyPending ? "只看未完成" : "全部（含已完成）"}
+              </button>
             </span>
           </div>
           {activeJobs.length > 0 && <div className="index-job-bar" role="progressbar" aria-label="物化进行中"><i /></div>}
           <div className="index-jobs-list">
-            {jobs.map((job) => {
+            {!visibleJobs.length && (
+              <div className="index-job index-job-empty">
+                <span className="subtle">{doneJobs ? `没有未完成的任务：${doneJobs} 个类型已完成，状态见下面那张表。` : "还没有物化任务。"}</span>
+              </div>
+            )}
+            {visibleJobs.map((job) => {
               const runningLike = job.status === "QUEUED" || job.status === "RUNNING";
               const cancellingThis = job.cancelRequested || cancelling.includes(job.id);
               return <div className="index-job" key={job.id}>

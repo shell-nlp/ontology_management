@@ -435,3 +435,5 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-job-actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
 .index-job-kind { margin-left:6px; font-style:normal; font-size:10px; padding:1px 5px; border-radius:3px; border:1px solid #d3e0f7; background:#eef4ff; color:#1e3a8a; vertical-align:middle; }
 .index-table + .index-table { margin-top:10px; }
+.index-jobs-filter { margin-left:8px; }
+.index-job-empty { grid-template-columns:1fr; }

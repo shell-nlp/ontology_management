@@ -166,7 +166,21 @@ export async function listMaterializeJobs(targetId?: string | null): Promise<Mat
   const live = [...registry().jobs.values()].filter((job) => !id || job.targetId === id).map(snapshot);
   const byId = new Map(stored.map((job) => [job.id, job]));
   for (const job of live) byId.set(job.id, job);
-  return [...byId.values()].sort((left, right) => right.queuedAt.localeCompare(left.queuedAt)).slice(0, 50);
+  const ordered = [...byId.values()].sort((left, right) => right.queuedAt.localeCompare(left.queuedAt));
+  /*
+   * **一个类型只留最近一条**（用户口径 2026-10-12）。
+   *
+   * 同一个类型重跑几次，库里就会留好几行历史（还有进程重启遗留下来的 INTERRUPTED），列表里重复显示
+   * 既看不出"这个类型现在怎么样了"，也没法对着某一条操作。最近那条就是它的现状（后面盖过前面）。
+   * 要把某个类型的物化从头再来，对着下面那张类型表点「整份物化」就行 —— 不需要历史行。
+   * 键用 `kind|entityType`：对象类型和关系类型可以重名，两者互不覆盖。
+   */
+  const latest = new Map<string, MaterializeJob>();
+  for (const job of ordered) {
+    const key = `${job.kind}|${job.entityType}`;
+    if (!latest.has(key)) latest.set(key, job);
+  }
+  return [...latest.values()].slice(0, 50);
 }
 
 export function cancelMaterializeJob(jobId: string): MaterializeJob | null {

@@ -52,6 +52,32 @@ describe("planLinkSource", () => {
     expect(plan.ok === false && plan.reason).toContain("还没选数据资源");
   });
 
+  it("外键式零配置：不选数据资源也能排出计划（外键端、表、来源全按键映射与对象类型主来源推出来）", () => {
+    // 起点映射自己的主键（客户）→ 它是被引用端；终点映射的是非主键属性 customer_ref（外键）→ 它是外键所在端。
+    const def = definition({
+      sourceKeyMappings: [{ entityProperty: "customer_id" }],
+      targetKeyMappings: [{ entityProperty: "customer_ref" }],
+    });
+    const plan = planLinkSource(def, def.relationshipTypes[0]);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.mode).toBe("FOREIGN_KEY");
+    expect(plan.keyHolder).toBe("TARGET");
+    expect(plan.dataSourceId).toBe(DS_ID);
+    expect(plan.table).toEqual({ schema: "GISTOOLS", name: "TB_ACCT" });
+    expect(linkSourceViolations(def)).toHaveLength(0);
+  });
+
+  it("外键式判断不出哪一端（两侧都映射自己的主键）-> 明确让人指定，不瞎猜", () => {
+    const def = definition({
+      sourceKeyMappings: [{ entityProperty: "customer_id" }],
+      targetKeyMappings: [{ entityProperty: "account_id" }],
+    });
+    const plan = planLinkSource(def, def.relationshipTypes[0]);
+    expect(plan.ok).toBe(false);
+    expect(plan.ok === false && plan.reason).toContain("判断不出外键长在哪一端");
+  });
+
   it("连接表式：键映射两侧都要覆盖主键列，列对不上就说清缺哪一列", () => {
     const def = definition({
       linkSource: { mode: "JOIN_TABLE", dataSourceId: DS_ID, schema: "GISTOOLS", view: "TB_CUST_ACCT" },
@@ -151,6 +177,6 @@ describe("linkSourceViolations", () => {
 
 describe("normalizeLinkSource", () => {
   it("老快照没有这一项 -> 读出来是「连接表式、没配」", () => {
-    expect(normalizeLinkSource(undefined)).toEqual({ mode: "JOIN_TABLE", dataSourceId: "", schema: "", view: "", foreignKeySide: "SOURCE" });
+    expect(normalizeLinkSource(undefined)).toEqual({ mode: "JOIN_TABLE", dataSourceId: "", schema: "", view: "", foreignKeySide: "AUTO" });
   });
 });

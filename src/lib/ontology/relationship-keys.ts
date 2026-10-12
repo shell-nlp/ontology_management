@@ -70,6 +70,33 @@ export function primaryKeyPropertyNames(entity: KeyMappableEntity | null | undef
   return [...names];
 }
 
+/**
+ * 按两端键映射判断"外键长在哪一端"：**映射到该端非主键属性的一侧**就是持有外键的那一端，
+ * 另一侧映射的是它自己的主键（被引用的对象）。
+ * 两侧都像主键、或两侧都不像主键（含键映射为空）时判不出来 → null，交给人在界面上指定。
+ *
+ * 住在这一层（而不是 `link-source.ts`）是因为**浏览器也要用**：关系类型的编辑面板要当场算出"表会自动取哪一张"。
+ */
+export function inferForeignKeySide(
+  source: KeyMappableEntity | null | undefined,
+  target: KeyMappableEntity | null | undefined,
+  sourceRows: readonly KeyMapping[],
+  targetRows: readonly KeyMapping[],
+): "SOURCE" | "TARGET" | null {
+  const mapsOwnKey = (entity: KeyMappableEntity | null | undefined, rows: readonly KeyMapping[]) => {
+    const keys = new Set(primaryKeyPropertyNames(entity));
+    return rows.length > 0 && rows.every((row) => {
+      const property = (row.entityProperty ?? "").trim();
+      return Boolean(property) && keys.has(property);
+    });
+  };
+  const sourceIsReferenced = mapsOwnKey(source, sourceRows);
+  const targetIsReferenced = mapsOwnKey(target, targetRows);
+  if (targetIsReferenced && !sourceIsReferenced) return "SOURCE";
+  if (sourceIsReferenced && !targetIsReferenced) return "TARGET";
+  return null;
+}
+
 /** 一句话说清一条映射，给界面与模型工具共用：`CUST_ID → 客户标识`。 */
 export function keyMappingLabel(row: KeyMapping) {
   const link = (row.linkProperty ?? "").trim();

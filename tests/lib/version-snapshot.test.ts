@@ -73,17 +73,17 @@ describe("version snapshot", () => {
       sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "名称" }],
       targetKeyMappings: [{ linkProperty: "ORDER_NO", entityProperty: "编号" }],
     };
-    expect(validateVersionSnapshot(ok)).toEqual([]);
+    // 这条关系填了连接列（连接表式）却没配连接表/数据资源 → 按新口径只出一条 WARN，**不挡发布**。
+    expect(validateVersionSnapshot(ok).filter((item) => item.severity !== "WARN")).toEqual([]);
 
     const broken = validSnapshot();
     broken.definition.relationshipTypes[0] = {
       ...broken.definition.relationshipTypes[0],
       sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "没有这个属性" }],
     };
-    const violations = validateVersionSnapshot(broken);
-    expect(violations).toHaveLength(1);
-    expect(violations[0].message).toContain("不存在的属性「没有这个属性」");
-    expect(violations[0].severity).toBeUndefined();
+    const blocked = validateVersionSnapshot(broken).filter((item) => item.severity !== "WARN");
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].message).toContain("不存在的属性「没有这个属性」");
   });
 });
 

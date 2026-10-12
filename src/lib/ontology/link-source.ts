@@ -160,6 +160,10 @@ export function planLinkSource(definition: LinkSourceDefinition, relation: LinkS
   const mappedSourceRows = keyMappingRows(relation.sourceKeyMappings);
   const mappedTargetRows = keyMappingRows(relation.targetKeyMappings);
   const junctionStyle = mappedSourceRows.some((row) => row.linkProperty) || mappedTargetRows.some((row) => row.linkProperty);
+  // 什么都没配（没数据资源、两端键映射也空）= 只在类型层声明 —— 直说"还没配"，别拿外键式的报错去糊人。
+  if (!config.dataSourceId && !mappedSourceRows.length && !mappedTargetRows.length) {
+    return { ok: false, reason: `关系类型「${relation.name}」还没选数据资源（两端键映射也还空着）。` };
+  }
 
   if (config.mode !== "FOREIGN_KEY" && junctionStyle) {
     if (!config.dataSourceId) return { ok: false, reason: `关系类型「${relation.name}」还没选数据资源。` };
@@ -277,7 +281,9 @@ export type LinkSourceViolation = { rule: string; message: string; count: number
 export function linkSourceViolations(definition: LinkSourceDefinition): LinkSourceViolation[] {
   const violations: LinkSourceViolation[] = [];
   for (const relation of definition.relationshipTypes) {
-    if (!hasKeyMappings(relation)) continue;
+    // 只在"什么都没配"时跳过：没键映射也没显式配来源 = 纯类型层声明，合法。
+    // 配了来源却没键映射（或反之）照样要报 —— 那是"配了但取不出实例"。
+    if (!hasKeyMappings(relation) && !isLinkSourceConfigured(relation.linkSource)) continue;
     const plan = planLinkSource(definition, relation);
     if (plan.ok) continue;
     violations.push({ rule: `${relation.name}.数据来源`, message: plan.reason + "配上之前，这条关系类型读不出实例（图上看不到它连的边）。", count: 1, severity: "WARN" });
