@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { materializeObjectType, resolveObjectContext } from "@/lib/instance/object-service";
-import { cancelMaterializeJob, enqueueMaterializeJob, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
+import { cancelMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 const materializeInput = z.object({
@@ -14,6 +14,8 @@ const materializeInput = z.object({
   pageSize: z.number().int().min(1).max(500).optional(),
   /** 这次最多读多少行；撞到它就停下并如实回 truncated=true。 */
   maxRows: z.number().int().min(1).max(200000).optional(),
+  /** 断点续跑：传上一轮任务的 id，从它已读到的位置接着读（取它的 scanned 当起点）。 */
+  resumeFromJobId: z.string().uuid().optional(),
 });
 
 /**
@@ -32,18 +34,34 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requirePermission("instance.write");
     const input = materializeInput.parse(await request.json());
+    let startOffset = 0;
+    if (input.resumeFromJobId) {
+      const cursor = await jobCursor(input.resumeFromJobId);
+      if (cursor === null) {
+        return NextResponse.json({ error: "要续跑的那个任务找不到（内存与库里都没有）。" }, { status: 404 });
+      }
+      startOffset = cursor;
+    }
     const job = enqueueMaterializeJob({
       targetId: input.targetId,
       entityType: input.entityType,
       versionId: input.versionId,
       pageSize: input.pageSize,
       maxRows: input.maxRows ?? null,
+      startOffset,
     });
     await writeAuditEntry({
       actorId: user.id,
       targetId: input.targetId,
       action: "OBJECT_TYPE_MATERIALIZE_QUEUED",
-      details: { entityType: input.entityType, jobId: job.id, pageSize: input.pageSize ?? 500, maxRows: input.maxRows ?? null },
+      details: {
+        entityType: input.entityType,
+        jobId: job.id,
+        pageSize: input.pageSize ?? 500,
+        maxRows: input.maxRows ?? null,
+        resumedFrom: input.resumeFromJobId ?? null,
+        startOffset,
+      },
     });
     return NextResponse.json({ job }, { status: 202 });
   } catch (error) {

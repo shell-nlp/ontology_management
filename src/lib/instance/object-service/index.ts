@@ -254,7 +254,14 @@ export type MaterializeTypeResult = {
 export async function materializeObjectType(
   context: ObjectContext,
   entityTypeName: string,
-  options: { pageSize?: number; maxRows?: number | null; onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void; shouldCancel?: () => boolean } = {},
+  options: {
+    pageSize?: number;
+    maxRows?: number | null;
+    /** 断点续跑：从第几条开始接着读（上一轮任务已读的条数）。默认 0 = 从头读。 */
+    startOffset?: number;
+    onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void;
+    shouldCancel?: () => boolean;
+  } = {},
 ): Promise<MaterializeTypeResult> {
   const started = Date.now();
   const source = getObjectSource();
@@ -264,9 +271,11 @@ export async function materializeObjectType(
   const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
   const entries: ObjectIndexEntry[] = [];
   const warnings: string[] = [];
-  let offset = 0;
+  // 断点续跑：offset/scanned 从断点开始（第一页就是"接着上次没读完的那一行"）。
+  const startOffset = Math.max(0, Math.floor(options.startOffset ?? 0));
+  let offset = startOffset;
   let pages = 0;
-  let scanned = 0;
+  let scanned = startOffset;
   let total: number | null = null;
   let truncated = false;
 
@@ -294,8 +303,11 @@ export async function materializeObjectType(
   const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
     versionId: context.versionId,
     origin: "MATERIALIZED",
-    // 取消 / 截断都算"这份不完整"：不 prune，并如实记进清单。
-    prune: !truncated && !cancelled,
+    /*
+     * 只有"从头读到尾、没取消没截断"才允许 prune：
+     * 断点续跑的那一趟内存里只有后半段的条目，prune 会把前半段的索引行删掉（真踩过）。
+     */
+    prune: !truncated && !cancelled && startOffset === 0,
   });
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
@@ -306,7 +318,17 @@ export async function materializeObjectType(
     pages,
     completedAt: new Date().toISOString(),
   });
-  return { entityType: entityTypeName, rows: synced.upserted, scanned, truncated: truncated || cancelled, pages, total, tookMs: Date.now() - started, warnings };
+  return {
+    entityType: entityTypeName,
+    // rows 是"这一次写进去的条数"；断点续跑时它只是后半段。
+    rows: synced.upserted,
+    scanned,
+    truncated: truncated || cancelled,
+    pages,
+    total,
+    tookMs: Date.now() - started,
+    warnings,
+  };
 }
 
 /**

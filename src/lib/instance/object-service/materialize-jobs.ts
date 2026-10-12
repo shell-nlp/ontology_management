@@ -36,6 +36,8 @@ type JobState = MaterializeJob & {
   versionId: string | null;
   pageSize: number;
   maxRows: number | null;
+  /** 断点：这一趟从第几条开始读（0 = 从头）。 */
+  startOffset: number;
   cancelRequested: boolean;
 };
 
@@ -172,6 +174,22 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
   return snapshot(job);
 }
 
+/**
+ * 取一个任务的**断点**（已经读到第几条）：内存里在跑/刚跑完的优先，其次读库里的历史行
+ * （进程重启后任务只剩库里那一行，靠它才能续跑）。任务不存在返回 null。
+ */
+export async function jobCursor(jobId: string): Promise<number | null> {
+  const live = registry().jobs.get(jobId);
+  if (live) return live.scanned;
+  try {
+    const repo = await platformRepo(MaterializationJobEntity);
+    const row = await repo.findOne({ where: { id: jobId } });
+    return row ? Number(row.scanned ?? 0) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 排队一个类型的整份物化；返回任务的当前快照（立刻可查进度）。 */
 export function enqueueMaterializeJob(input: {
   targetId: string;
@@ -179,8 +197,14 @@ export function enqueueMaterializeJob(input: {
   versionId?: string | null;
   pageSize?: number;
   maxRows?: number | null;
+  /** 从哪条记录断点续跑（传上一轮任务的 id）：取它的 scanned 当起点。 */
+  resumeFromJobId?: string | null;
+  /** 或直接给起点条数（内部用；与 resumeFromJobId 二选一）。 */
+  startOffset?: number;
 }): MaterializeJob {
   const state = registry();
+  const previous = input.resumeFromJobId ? state.jobs.get(input.resumeFromJobId) : undefined;
+  const startOffset = Math.max(0, Math.floor(input.startOffset ?? previous?.scanned ?? 0));
   const job: JobState = {
     id: crypto.randomUUID(),
     targetId: input.targetId,
@@ -191,13 +215,14 @@ export function enqueueMaterializeJob(input: {
     pages: 0,
     total: null,
     truncated: false,
-    message: null,
+    message: startOffset > 0 ? `从第 ${startOffset} 条继续（断点续跑）。` : null,
     queuedAt: new Date().toISOString(),
     startedAt: null,
     finishedAt: null,
     versionId: input.versionId ?? null,
     pageSize: input.pageSize ?? 500,
     maxRows: typeof input.maxRows === "number" && input.maxRows > 0 ? input.maxRows : null,
+    startOffset,
     cancelRequested: false,
   };
   state.jobs.set(job.id, job);
@@ -226,6 +251,7 @@ async function drain(): Promise<void> {
         const result = await materializeObjectType(context, job.entityType, {
           pageSize: job.pageSize,
           maxRows: job.maxRows,
+          startOffset: job.startOffset,
           onProgress: (progress) => {
             job.scanned = progress.scanned;
             job.rows = progress.rows;

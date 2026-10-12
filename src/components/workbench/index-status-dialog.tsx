@@ -158,6 +158,23 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
     }
   };
 
+  /** 断点续跑：把这一个任务从它已读到的位置接着跑（服务端取它的 scanned 当起点）。 */
+  const resume = async (job: { id: string; entityType: string }) => {
+    setQueuing(true);
+    try {
+      await api("/api/objects/materialize-type", {
+        method: "POST",
+        body: JSON.stringify({ targetId, entityType: job.entityType, resumeFromJobId: job.id }),
+      });
+      notify(`「${job.entityType}」已从断点继续排队（服务端接着上次没读完的位置读）。`);
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setQueuing(false);
+    }
+  };
+
   const cancel = async (jobId: string) => {
     try {
       await api(`/api/objects/materialize-type?jobId=${encodeURIComponent(jobId)}`, { method: "DELETE" });
@@ -242,6 +259,9 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
               <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
               {job.message && <small title={job.message}>{job.message}</small>}
               {(job.status === "QUEUED" || job.status === "RUNNING") && <button className="quiet-button small" onClick={() => void cancel(job.id)}>取消</button>}
+              {(job.status === "INTERRUPTED" || job.status === "CANCELLED" || job.status === "FAILED") && (
+                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
+              )}
             </div>)}
           </div>
         </div>;

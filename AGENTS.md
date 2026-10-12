@@ -40,7 +40,14 @@
   入队接口立刻回 `202 {job}`，进度用 `GET` 拉（`jobs`），能取消（`DELETE ?jobId=`）。
   任务**已落库**（`ontology_platform.materialization_jobs`，迁移 0008）：入队 / 开始 / 每页 / 结束都写状态与进度（scanned / rows / pages / truncated / message），
   `GET` 合并"库里的历史 + 内存里正在跑的"；进程启动后**第一次读历史**时把上一轮遗留的 `QUEUED`/`RUNNING` 标成 `INTERRUPTED`
-  （**必须排除本进程正在跑的 id**，否则会把当前任务也标掉）。物化幂等，被中断的重新排队即可；**断点续跑**仍未做。
+  （**必须排除本进程正在跑的 id**，否则会把当前任务也标掉）。物化幂等，被中断的重新排队即可。
+- **断点续跑**（2026-10-12）：任务带上"已读到第几条"（= `scanned`，每页落库），续跑走
+  `POST /api/objects/materialize-type { targetId, entityType, resumeFromJobId }` —— 服务端取那个任务的 `scanned` 当起点，从那里接着读；
+  界面对 `INTERRUPTED / CANCELLED / FAILED` 的任务给「从断点继续」。
+  **续跑的那一趟绝不 prune**（内存里只有后半段，prune 会把前半段删掉），只有"从 0 读到尾且没取消没截断"才允许 prune。
+- **前提（必须先修）**：断点续跑依赖**源侧 offset 分页**，而当前 `src/lib/instance/object-service/data-source.ts` 的取数只传 `limit`、**不传 offset**
+  —— 于是"翻页"其实反复读同一段，大表会读不全（也可能重复）。做真正的大表物化之前，必须先给对象来源补分页
+  （Oracle 用 `ROWNUM` 包一层，PG / MySQL 用 `LIMIT/OFFSET`，或改成"按主键 > 上一页最后一个键"的游标翻页）。
 - 权威仍在数据源，索引可重建；本体自建对象（动作 / 手工）走自己的持久层，不回源。
 
 ## Git 约定
