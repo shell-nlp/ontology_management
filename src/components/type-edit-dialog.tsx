@@ -6,6 +6,7 @@ import { api } from "@/lib/framework/api-client";
 import { effectiveInterfaceProperties } from "@/lib/ontology/interfaces";
 import { inferForeignKeySide, keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
 import { CARDINALITY_OPTIONS } from "@/lib/ontology/relationship-cardinality";
+import { planLinkSource } from "@/lib/ontology/link-source";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
@@ -139,6 +140,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const reportedFields = useRef<Record<string, { key: string; fields: DataViewField[] }>>({});
   // 连接属性的候选列表用 datalist，id 每个弹窗一份，免得同页两个弹窗互相串。
   const linkPropertyListId = useId();
+  /**
+   * 名称输入框的锚点。名称是必填的，而它在表单最上面 —— 用户滚下去填完键映射回来，看不出"其实是名称空了"。
+   * 所以页脚那条提示要能一键把名称框滚回视野里、并聚焦（focus 会顺带滚动到它）。
+   */
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   /** 每份来源各读各的结构，读到的字段按来源 id 汇总到这里，属性映射才有列可选。 */
   const rememberFields = useCallback((sourceId: string, key: string, fields: DataViewField[]) => {
@@ -371,6 +377,24 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
    */
   const keyMappingCount = keyMappingRows(sourceKeys).length + keyMappingRows(targetKeys).length;
   /**
+   * 这条关系类型现在到底读不读得出实例 —— 调后端同一个 `planLinkSource`
+   * （`link-source.ts` 是浏览器可用的纯函数），所以编辑器里说的"读不出"和真正物化时的报错一定是同一句话。
+   * 只传 `entityTypes` 就够：它只按 id 去定义里找两个端点对象类型。
+   */
+  const relationPlan = kind === "relation"
+    ? planLinkSource(
+        { entityTypes, relationshipTypes: [] },
+        {
+          name: name.trim() || relation?.name || "未命名关系类型",
+          sourceEntityTypeId: source,
+          targetEntityTypeId: target,
+          sourceKeyMappings: keyMappingRows(sourceKeys),
+          targetKeyMappings: keyMappingRows(targetKeys),
+          linkSource,
+        },
+      )
+    : null;
+  /**
    * 键映射区块的锚点：上面那条"读不出边"的提示要能一键跳过去 ——
    * 提示只说后果，落点得离"该填哪儿"近一点，不然看完提示还得自己找。
    */
@@ -407,7 +431,13 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (busy || !name.trim()) return;
+    if (busy) return;
+    // 名称空着就不保存，但**不静默**：把名称框滚回视野并聚焦，页脚也紧挨着按钮说明原因
+    //（以前只有一份灰按钮 —— 底色是写死的，看着和可用时一模一样，用户只会觉得"点不动"）。
+    if (!name.trim()) {
+      nameInputRef.current?.focus();
+      return;
+    }
     const blockers = sourceIssues.filter((issue) => issue.severity !== "WARN");
     if (blockers.length) { setLocalError(blockers.map((issue) => issue.message).join("；")); return; }
     setBusy(true);
@@ -450,7 +480,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <div className="ted-grid-2">
                   <label className="ted-field">
                     <span>名称</span>
-                    <input className="ted-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required />
+                    <input className="ted-input" autoFocus ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：客户" required />
                     <small>对象类型的名称，也是它在画布上的标题和取色依据。</small>
                   </label>
                   <label className="ted-field">
@@ -534,7 +564,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <div className="ted-grid-2">
                   <label className="ted-field">
                     <span>名称</span>
-                    <input className="ted-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：负责" required />
+                    <input className="ted-input" autoFocus ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：负责" required />
                     <small>画布上这条连线标注的关系类型名。</small>
                   </label>
                   <div className="ted-field">
@@ -590,6 +620,20 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         外键式（多对一 / 一对一）两端各填一条就够 —— 外键端填自己的外键属性，被引用端填主键；多对多还要再选一张连接表。
                       </span>
                       <button type="button" className="quiet-button small" onClick={jumpToKeyMappings}>去填两端的键映射</button>
+                    </div>
+                  </div>
+                )}
+                {/*
+                 * 填了却还读不出（典型：两端都填了自己的主键，判断不出外键长在哪一端；或多对多没选连接表）。
+                 * 这种状态以前界面上**完全没有提示** —— 用户填完以为配好了，图上看不到边才发现不对。
+                 */}
+                {keyMappingCount > 0 && relationPlan && !relationPlan.ok && (
+                  <div className="ted-callout warn">
+                    <AlertTriangle size={14} />
+                    <div>
+                      <b>键映射填了，但这条关系类型还读不出实例</b>
+                      <span>{relationPlan.reason}解决之前，实例图谱上没有它的边，也整份物化不了。</span>
+                      <button type="button" className="quiet-button small" onClick={jumpToKeyMappings}>去改两端的键映射</button>
                     </div>
                   </div>
                 )}
@@ -867,9 +911,13 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
         <footer className="ted-foot">
           {localError
             ? <p className="ted-error"><AlertTriangle size={13} />{localError}</p>
-            : <p className="ted-hint">按 Ctrl / ⌘ + Enter 保存</p>}
+            : busy
+              ? <p className="ted-hint">正在保存：先把这次改动写进草稿，再重新加载定义 —— 通常几秒（首次可能要建草稿，会慢一点）。别关窗口。</p>
+              : !name.trim()
+                ? <p className="ted-error"><AlertTriangle size={13} />名称是空的，填上名称才能保存。<button type="button" className="ted-error-link" onClick={() => nameInputRef.current?.focus()}>去填名称</button></p>
+                : <p className="ted-hint">按 Ctrl / ⌘ + Enter 保存</p>}
           <div className="ted-foot-actions">
-            <button type="button" className="quiet-button" onClick={onClose}>取消</button>
+            <button type="button" className="quiet-button" disabled={busy} onClick={onClose}>取消</button>
             <button className="primary-button" disabled={busy || !name.trim()}>{busy ? "保存中…" : mode === "create" ? "加入草稿" : "保存修改"}</button>
           </div>
         </footer>

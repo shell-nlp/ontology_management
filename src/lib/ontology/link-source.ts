@@ -130,6 +130,19 @@ function sidePairs(entity: LinkSourceEntity, rows: readonly KeyMapping[]): LinkK
     .filter((pair) => pair.keyColumn);
 }
 
+/**
+ * 这一端**自己的身份列**：绑了来源就用来源声明的列；**只有定义、没绑来源**的抽象类型退回属性层
+ * （导入约定把主键记成「必填 + 唯一」），拿属性名当列名 —— 那是它唯一有的"列"。
+ *
+ * 为什么必须有这条兜底：`用户`、`客户` 这类抽象类型在平台里没有表（实例散在一堆按 USER_ID 建的明细表里），
+ * 不兜底的话计划会报"这不是主键列"，而它明明标着「必填 + 唯一」—— 提示把用户往错的方向带。
+ */
+function identityColumns(entity: LinkSourceEntity): string[] {
+  const columns = primaryKeyColumns(entity);
+  if (columns.length) return columns;
+  return primaryKeyPropertyNames(entity).map((name) => columnForProperty(entity, name)).filter(Boolean);
+}
+
 /** 一侧的键映射有没有把该端主键列覆盖全 —— 覆盖不全，算出来的对象身份跟对象服务对不上，边会悬空。 */
 function sideProblems(label: string, relationName: string, entity: LinkSourceEntity, rows: readonly KeyMapping[], pairs: readonly LinkKeyPair[]) {
   const problems: string[] = [];
@@ -168,7 +181,24 @@ export function planLinkSource(definition: LinkSourceDefinition, relation: LinkS
   }
 
   if (config.mode !== "FOREIGN_KEY" && junctionStyle) {
-    if (!config.dataSourceId) return { ok: false, reason: `关系类型「${relation.name}」还没选数据资源。` };
+    if (!config.dataSourceId) {
+      /*
+       * 两端填的都是**各自主键**（左边那格往往是「添加映射」默认填成自己的键列）时，多半想说的是
+       * "这两个对象类型共用一个键值"（用户 = 专线产品用户，键值都是 USER_ID），不是中间表 —— 这种写法里
+       * 左边那格根本不是"连接表的列"。只丢一句"还没选数据资源"，用户看不出该改哪儿，所以直说两条出路。
+       */
+      const mapsOwnKey = (entity: LinkSourceEntity, rows: readonly KeyMapping[]) => {
+        const keys = new Set(primaryKeyPropertyNames(entity));
+        return rows.length > 0 && rows.every((row) => Boolean((row.entityProperty ?? "").trim()) && keys.has((row.entityProperty ?? "").trim()));
+      };
+      const sharedKeyLooksLike = mapsOwnKey(source, mappedSourceRows) && mapsOwnKey(target, mappedTargetRows);
+      return {
+        ok: false,
+        reason: sharedKeyLooksLike
+          ? `关系类型「${relation.name}」两端填的都是各自主键。若这两个对象类型**共用一个键值**（一对一，例如 用户.user_id = 专线产品用户.USER_ID）：把两端左边的「连接属性」清空，再在「外键长在哪一端」里选有数据来源的那一端 —— 平台会读那一端的表，按同一个键值配对。若是中间表式（多对多）：请选一条连接表。`
+          : `关系类型「${relation.name}」还没选数据资源。`,
+      };
+    }
     if (!config.view) return { ok: false, reason: `关系类型「${relation.name}」还没选连接表。` };
     const sourceRows = mappedSourceRows;
     const targetRows = mappedTargetRows;
@@ -223,11 +253,20 @@ export function planLinkSource(definition: LinkSourceDefinition, relation: LinkS
   }
   if (!foreignKeyRowColumns.length) problems.push(`关系类型「${relation.name}」${holderLabel}没写外键属性`);
   if (foreignKeyRowColumns.length !== keyColumns.length) problems.push(`关系类型「${relation.name}」的外键式映射两侧条数不一样（${foreignKeyRowColumns.length} / ${keyColumns.length}），按顺序一一对应，要一样多`);
-  const holderKeyColumns = primaryKeyColumns(holderEntity);
-  if (!holderKeyColumns.length) problems.push(`关系类型「${relation.name}」${holderLabel}的对象类型「${holderEntity.name}」还没配主键，读不出它是哪个对象`);
-  const referencedKeys = primaryKeyColumns(referencedEntity);
+  const holderKeyColumns = identityColumns(holderEntity);
+  if (!holderKeyColumns.length) {
+    problems.push((holderEntity.sources ?? []).length
+      ? `关系类型「${relation.name}」${holderLabel}的对象类型「${holderEntity.name}」还没配主键，读不出它是哪个对象`
+      : `关系类型「${relation.name}」${holderLabel}的对象类型「${holderEntity.name}」还没绑数据来源，平台也拿不到它的主键列 —— 读不出它是哪个对象`);
+  }
+  const referencedKeys = identityColumns(referencedEntity);
   const uncovered = keyColumns.filter((column) => !referencedKeys.includes(column)).join("、");
-  if (uncovered) problems.push(`关系类型「${relation.name}」${referencedLabel}的键映射指向了对象类型「${referencedEntity.name}」的非主键列（${uncovered}）`);
+  if (uncovered) {
+    const abstractKeys = primaryKeyPropertyNames(referencedEntity).join("、");
+    problems.push((referencedEntity.sources ?? []).length
+      ? `关系类型「${relation.name}」${referencedLabel}的键映射指向了对象类型「${referencedEntity.name}」的非主键列（${uncovered}）`
+      : `关系类型「${relation.name}」的对象类型「${referencedEntity.name}」还没绑数据来源：它只有属性定义（键属性 ${abstractKeys || "未标注"}），平台拿不到它的主键列，读不出它这一侧的实例`);
+  }
   if (problems.length) return { ok: false, reason: [...new Set(problems)].join("；") + "。" };
 
   // 表与数据资源：显式指定优先；否则用外键所在端对象类型的主来源（这就是"外键式零配置"）。

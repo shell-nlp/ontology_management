@@ -55,6 +55,14 @@ export type IndexLinkRow = { name: string; sourceLabel: string; readable: boolea
 
 type Props = {
   targetId: string;
+  /**
+   * 面板按哪一版定义算「读得出 / 读不出」，物化就让服务端读哪一版 —— **有草稿就是草稿**。
+   * 不传的话服务端会退回已发布版本：于是出现"面板说能读、点下去说读不了"（草稿里刚配好的键映射，
+   * 已发布版本里还没有）。
+   */
+  versionId?: string | null;
+  /** 这一版在界面上的叫法（如「v2 草稿」）；只用来显示，让"物化的是哪一版"看得见。 */
+  versionLabel?: string | null;
   types: IndexTypeRow[];
   links: IndexLinkRow[];
   mayWrite: boolean;
@@ -94,7 +102,7 @@ function formatTime(value: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, notify, fail }: Props) {
+export function IndexStatusDialog({ targetId, versionId, versionLabel, types, links, mayWrite, onClose, notify, fail }: Props) {
   const [rows, setRows] = useState<Materialization[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -161,7 +169,8 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
     try {
       await api("/api/objects/materialize-type", {
         method: "POST",
-        body: JSON.stringify({ targetId, kind, entityType, pageSize }),
+        // 带上我正在看的这一版：面板按它算的可读性，物化就必须按它取数，否则两边各说各话。
+        body: JSON.stringify({ targetId, kind, entityType, pageSize, ...(versionId ? { versionId } : {}) }),
       });
       notify(`「${entityType}」已排队物化：进度在下面的任务列表里看。`);
       await load();
@@ -271,12 +280,13 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
   };
 
   /** 断点续跑：把这一个任务从它已读到的位置接着跑（服务端取它的 scanned 当起点）。 */
-  const resume = async (job: { id: string; entityType: string }) => {
+  const resume = async (job: { id: string; entityType: string; kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE" }) => {
     setQueuing(true);
     try {
       await api("/api/objects/materialize-type", {
         method: "POST",
-        body: JSON.stringify({ targetId, entityType: job.entityType, resumeFromJobId: job.id }),
+        // `kind` 必须一起带上：不带的话服务端按对象类型重跑，关系类型的续跑会去定义里找一个不存在的对象类型。
+        body: JSON.stringify({ targetId, kind: job.kind, entityType: job.entityType, resumeFromJobId: job.id, ...(versionId ? { versionId } : {}) }),
       });
       notify(`「${job.entityType}」已从断点继续排队（服务端接着上次没读完的位置读）。`);
       await load();
@@ -369,6 +379,7 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
         <span className="index-summary-item">能力<b>{capabilityLabels}</b></span>
         <span className="index-summary-item">索引条目<b>{stats?.entries ?? 0}</b></span>
         <span className="index-summary-item">最近更新<b>{formatTime(stats?.updatedAt ?? null)}</b></span>
+        {versionLabel && <span className="index-summary-item">物化版本<b>{versionLabel}</b></span>}
         <button className="action compact" onClick={() => void reindex()} disabled={!mayWrite || reindexing} title="按当前发布版本的快照重建快照来源的索引；整份物化的对象不受影响">
           <RefreshCw size={13} />{reindexing ? "重建中…" : "重建快照索引"}
         </button>

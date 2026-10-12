@@ -68,6 +68,88 @@ describe("planLinkSource", () => {
     expect(linkSourceViolations(def)).toHaveLength(0);
   });
 
+  /**
+   * 起始端是**只有定义、没绑来源**的抽象类型（`用户`）：身份只能靠属性层（`user_id` 标着「必填 + 唯一」）。
+   * 这正是 V5 的形态 —— 用户/客户/字典这些抽象类型没有表，实例散在按 USER_ID 建的各类明细表里。
+   */
+  function abstractDefinition(opts: { foreignKeySide: "SOURCE" | "TARGET" }): LinkSourceDefinition {
+    return ontologyDefinitionSchema.parse({
+      entityTypes: [
+        {
+          id: SOURCE_ID,
+          name: "用户",
+          properties: [
+            { name: "user_id", dataType: "TEXT", required: true, unique: true, description: "用户实例的唯一标识。" },
+            { name: "customer_id", dataType: "TEXT" },
+          ],
+          sources: [],
+        },
+        {
+          id: TARGET_ID,
+          name: "专线产品用户",
+          properties: [{ name: "USER_ID", dataType: "TEXT", sourceField: "USER_ID", required: true, unique: true }],
+          sources: [{ id: "primary", dataSourceId: DS_ID, schema: "GISTOOLS", view: "TB_MK_GRP_LINE_LIST_DAY", primaryKey: ["USER_ID"] }],
+        },
+      ],
+      relationshipTypes: [
+        {
+          id: "33333333-3333-4333-8333-333333333331",
+          name: "用户包含集团专线产品用户",
+          sourceEntityTypeId: SOURCE_ID,
+          targetEntityTypeId: TARGET_ID,
+          sourceKeyMappings: [{ entityProperty: "user_id" }],
+          targetKeyMappings: [{ entityProperty: "USER_ID" }],
+          linkSource: { mode: "FOREIGN_KEY", foreignKeySide: opts.foreignKeySide },
+        },
+      ],
+    }) as unknown as LinkSourceDefinition;
+  }
+
+  it("抽象类型当被引用端：按属性层主键认身份，外键端有表就能排出计划", () => {
+    const def = abstractDefinition({ foreignKeySide: "TARGET" });
+    const plan = planLinkSource(def, def.relationshipTypes[0]);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok || plan.mode !== "FOREIGN_KEY") throw new Error("应该是外键式");
+    expect(plan.keyHolder).toBe("TARGET");
+    expect(plan.table).toEqual({ schema: "GISTOOLS", name: "TB_MK_GRP_LINE_LIST_DAY" });
+    expect(plan.holder).toMatchObject({ entityTypeName: "专线产品用户", keyColumns: ["USER_ID"] });
+    // 被引用端只有属性定义：它的"列"就是属性名（对象身份在属性层也是按它算的）。
+    expect(plan.foreignKeys.rowColumns).toEqual(["USER_ID"]);
+    expect(plan.foreignKeys.keyColumns).toEqual(["user_id"]);
+  });
+
+  it("两端填的都是各自主键、又没选连接表：提示直接点破\"共用一个键值\"该怎么改", () => {
+    const def = definition({
+      sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "customer_id" }],
+      targetKeyMappings: [{ linkProperty: "ACCT_ID", entityProperty: "account_id" }],
+    });
+    const plan = planLinkSource(def, def.relationshipTypes[0]);
+    expect(plan.ok).toBe(false);
+    const reason = plan.ok === false ? plan.reason : "";
+    expect(reason).toContain("两端填的都是各自主键");
+    expect(reason).toContain("共用一个键值");
+    expect(reason).not.toBe("关系类型「客户拥有账户」还没选数据资源。");
+  });
+
+  it("抽象类型当外键所在端：说清是\"没绑数据来源\"，不再误报成非主键列", () => {
+    const def = abstractDefinition({ foreignKeySide: "SOURCE" });
+    const plan = planLinkSource(def, def.relationshipTypes[0]);
+    expect(plan.ok).toBe(false);
+    expect(plan.ok === false && plan.reason).toContain("还没绑数据来源");
+  });
+
+  it("抽象类型的键映射指向没标注主键的属性：提示写成\"没绑数据来源 + 只有属性定义\"", () => {
+    const def = abstractDefinition({ foreignKeySide: "TARGET" });
+    const relation = def.relationshipTypes[0];
+    relation.sourceKeyMappings = [{ entityProperty: "customer_id" }];
+    const plan = planLinkSource(def, relation);
+    expect(plan.ok).toBe(false);
+    const reason = plan.ok === false ? plan.reason : "";
+    expect(reason).toContain("还没绑数据来源");
+    expect(reason).toContain("user_id");
+    expect(reason).not.toContain("非主键列");
+  });
+
   it("外键式判断不出哪一端（两侧都映射自己的主键）-> 明确让人指定，不瞎猜", () => {
     const def = definition({
       sourceKeyMappings: [{ entityProperty: "customer_id" }],

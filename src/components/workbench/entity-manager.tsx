@@ -379,6 +379,9 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
     {bindOpen && <BindSourcesDialog ontologyId={ontologyId} onClose={() => setBindOpen(false)} onSaved={async (count) => { setBindOpen(false); notify(`已补齐 ${count} 个数据来源绑定。`); await onSnapshotChange(); await load(label, search); }} fail={fail} />}
     {indexOpen && target && <IndexStatusDialog
       targetId={target.id}
+      // 面板与物化认同一版：有草稿就是草稿（`version` 就是「草稿优先」的那一版）。
+      versionId={version?.id ?? null}
+      versionLabel={version ? `v${version.version_number} ${draft && draft.id === version.id ? "草稿" : "已发布"}` : null}
       types={(version?.definition.entityTypes ?? []).map((item) => ({
         name: item.name,
         // 主来源的表名（「模式.表」）——面板上要能看出这个类型到底有没有可读的源。

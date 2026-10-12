@@ -119,7 +119,13 @@
 .ted-foot { display: flex; align-items: center; gap: 14px; padding: 13px 24px; border-top: 1px solid var(--ted-line); background: #fbfcfe; }
 .ted-error { display: flex; align-items: center; gap: 7px; margin: 0; color: #a04a3a; font-size: 11px; }
 .ted-error svg { flex: none; }
+/* 页脚那条"为什么不能保存"里的行动入口：把用户送回出问题的那个字段，别只报错不改。 */
+.ted-error-link { margin-left: 6px; padding: 0; border: 0; background: transparent; color: #8d3a2b; font-size: 11px; text-decoration: underline; cursor: pointer; }
+.ted-error-link:hover { color: #6d291d; }
 .ted-hint { margin: 0; color: var(--ted-soft); font-size: 10.5px; }
+/* 禁用要看得出来：主按钮底色是写死的，Chrome 不会替我们灰掉 —— 不灰化的话"点不动"看起来就是"点了没反应"。 */
+.ted-foot-actions .primary-button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.ted-foot-actions .quiet-button:disabled { opacity: .5; cursor: not-allowed; }
 .ted-foot-actions { display: flex; gap: 8px; margin-left: auto; }
 
 .ted-dialog button:focus-visible, .ted-toggle:focus-within { outline: 2px solid #1d4ed8; outline-offset: 2px; }
