@@ -1,5 +1,5 @@
 import { columnForProperty, primaryKeyColumns, type IdentityEntityType } from "@/lib/instance/object-identity";
-import { keyMappingRows, type KeyMapping } from "@/lib/ontology/relationship-keys";
+import { keyMappingRows, primaryKeyPropertyNames, type KeyMapping } from "@/lib/ontology/relationship-keys";
 
 /**
  * 关系类型的数据来源（backlog D2）：把「这条关系类型的实例存在哪儿」翻译成**一次取数计划**。
@@ -22,7 +22,8 @@ export type LinkSourceConfig = {
   dataSourceId: string;
   schema: string;
   view: string;
-  foreignKeySide: "SOURCE" | "TARGET";
+  /** FOREIGN_KEY：外键长在哪一端；AUTO = 按两端键映射推断。 */
+  foreignKeySide: "SOURCE" | "TARGET" | "AUTO";
 };
 
 export type LinkSourceEntity = IdentityEntityType & {
@@ -83,14 +84,41 @@ export function normalizeLinkSource(source: Partial<LinkSourceConfig> | null | u
     dataSourceId: (source?.dataSourceId ?? "").trim(),
     schema: (source?.schema ?? "").trim(),
     view: (source?.view ?? "").trim(),
-    foreignKeySide: source?.foreignKeySide === "TARGET" ? "TARGET" : "SOURCE",
+    foreignKeySide: source?.foreignKeySide === "SOURCE" || source?.foreignKeySide === "TARGET" ? source.foreignKeySide : "AUTO",
   };
 }
 
-/** 这条关系类型配没配数据来源（配了才谈得上取实例）。 */
+/** 这条关系类型**显式**配了数据来源（外键式现在可以零配置，判"有没有边可读"用 `hasKeyMappings` + `planLinkSource`）。 */
 export function isLinkSourceConfigured(source: Partial<LinkSourceConfig> | null | undefined) {
   const config = normalizeLinkSource(source);
   return Boolean(config.dataSourceId);
+}
+
+/** 两端键映射填了内容吗。没有 = 这条关系类型只在类型层声明，读不出实例（合法）。 */
+export function hasKeyMappings(relation: LinkSourceRelation) {
+  return keyMappingRows(relation.sourceKeyMappings).length > 0 || keyMappingRows(relation.targetKeyMappings).length > 0;
+}
+
+/**
+ * 按两端键映射判断"外键长在哪一端"：**映射到该端非主键属性的一侧**就是持有外键的那一端，
+ * 另一侧映射的是它自己的主键（被引用的对象）。
+ * 两侧都像主键、或两侧都不像主键（含键映射为空）时判不出来 → null，交给人在界面上指定。
+ */
+export function inferForeignKeySide(
+  source: LinkSourceEntity,
+  target: LinkSourceEntity,
+  sourceRows: readonly { entityProperty: string }[],
+  targetRows: readonly { entityProperty: string }[],
+): "SOURCE" | "TARGET" | null {
+  const mapsOwnKey = (entity: LinkSourceEntity, rows: readonly { entityProperty: string }[]) => {
+    const keys = new Set(primaryKeyPropertyNames(entity));
+    return rows.length > 0 && rows.every((row) => row.entityProperty && keys.has(row.entityProperty));
+  };
+  const sourceIsReferenced = mapsOwnKey(source, sourceRows);
+  const targetIsReferenced = mapsOwnKey(target, targetRows);
+  if (targetIsReferenced && !sourceIsReferenced) return "SOURCE";
+  if (sourceIsReferenced && !targetIsReferenced) return "TARGET";
+  return null;
 }
 
 function sidePairs(entity: LinkSourceEntity, rows: readonly KeyMapping[]): LinkKeyPair[] {
@@ -116,18 +144,28 @@ function sideProblems(label: string, relationName: string, entity: LinkSourceEnt
 /**
  * 把一条关系类型的 `linkSource` + 两侧键映射翻译成取数计划。
  * 失败一律给"人话原因"：调用方直接拿去当界面提示 / 校验提醒。
+ *
+ * **形态由键映射决定，不用人再选一遍**：
+ * - 任一侧填了「连接列」(`linkProperty`) = 中间表式（多对多）—— 连接行在**第三张表**里，必须说清是哪张；
+ * - 两侧都只有「属性」(`entityProperty`) = 外键式（多对一 / 一对一）—— 连接行就是**外键所在端自己的表**里的一行，
+ *   表与数据来源都能从那一端对象类型的主来源推出来，所以**外键式可以零配置**。
+ * `mode` 只在显式选了外键式时当约束用（外键式不该填连接列）。
  */
 export function planLinkSource(definition: LinkSourceDefinition, relation: LinkSourceRelation): LinkPlan {
   const config = normalizeLinkSource(relation.linkSource);
-  if (!config.dataSourceId) return { ok: false, reason: `关系类型「${relation.name}」还没选数据资源。` };
   const source = definition.entityTypes.find((entity) => entity.id === relation.sourceEntityTypeId);
   const target = definition.entityTypes.find((entity) => entity.id === relation.targetEntityTypeId);
   if (!source || !target) return { ok: false, reason: `关系类型「${relation.name}」的起始端 / 终止端对象类型还没选全。` };
 
-  if (config.mode === "JOIN_TABLE") {
+  const mappedSourceRows = keyMappingRows(relation.sourceKeyMappings);
+  const mappedTargetRows = keyMappingRows(relation.targetKeyMappings);
+  const junctionStyle = mappedSourceRows.some((row) => row.linkProperty) || mappedTargetRows.some((row) => row.linkProperty);
+
+  if (config.mode !== "FOREIGN_KEY" && junctionStyle) {
+    if (!config.dataSourceId) return { ok: false, reason: `关系类型「${relation.name}」还没选数据资源。` };
     if (!config.view) return { ok: false, reason: `关系类型「${relation.name}」还没选连接表。` };
-    const sourceRows = keyMappingRows(relation.sourceKeyMappings);
-    const targetRows = keyMappingRows(relation.targetKeyMappings);
+    const sourceRows = mappedSourceRows;
+    const targetRows = mappedTargetRows;
     const sourcePairs = sidePairs(source, sourceRows);
     const targetPairs = sidePairs(target, targetRows);
     const problems = [
@@ -148,7 +186,15 @@ export function planLinkSource(definition: LinkSourceDefinition, relation: LinkS
     };
   }
 
-  const keyHolder = config.foreignKeySide;
+  /* ---------------- 外键式（多对一 / 一对一） ---------------- */
+  const inferredSide = config.foreignKeySide === "AUTO" ? inferForeignKeySide(source, target, mappedSourceRows, mappedTargetRows) : null;
+  const keyHolder = config.foreignKeySide === "AUTO" ? inferredSide : config.foreignKeySide;
+  if (!keyHolder) {
+    return {
+      ok: false,
+      reason: `关系类型「${relation.name}」判断不出外键长在哪一端：两端键映射看起来不满足"一侧填该端主键、另一侧填外键"。请在关系类型里手动指定外键所在端，或者改填连接列走连接表式。`,
+    };
+  }
   const holderEntity = keyHolder === "SOURCE" ? source : target;
   const referencedEntity = keyHolder === "SOURCE" ? target : source;
   const holderRows = keyMappingRows(keyHolder === "SOURCE" ? relation.sourceKeyMappings : relation.targetKeyMappings);
@@ -178,22 +224,31 @@ export function planLinkSource(definition: LinkSourceDefinition, relation: LinkS
   if (uncovered) problems.push(`关系类型「${relation.name}」${referencedLabel}的键映射指向了对象类型「${referencedEntity.name}」的非主键列（${uncovered}）`);
   if (problems.length) return { ok: false, reason: [...new Set(problems)].join("；") + "。" };
 
-  // 表：显式指定就用指定的；否则用外键所在端对象类型的主来源表。
+  // 表与数据资源：显式指定优先；否则用外键所在端对象类型的主来源（这就是"外键式零配置"）。
   const holderPrimary = (holderEntity.sources ?? [])[0];
+  const dataSourceId = config.dataSourceId || (holderPrimary?.dataSourceId ?? "");
   const schema = config.schema || (holderPrimary?.schema ?? "");
   const name = config.view || (holderPrimary?.view ?? "");
+  if (!dataSourceId) {
+    return {
+      ok: false,
+      reason: `关系类型「${relation.name}」读不出边：外键所在端的对象类型「${holderEntity.name}」还没绑数据来源，也没在这条关系类型上指定。`,
+    };
+  }
   if (!name) return { ok: false, reason: `关系类型「${relation.name}」没选表，而外键所在端的对象类型「${holderEntity.name}」也没有主来源表可依。` };
   const columns = [...new Set([...holderKeyColumns, ...foreignKeyRowColumns])];
   return {
     ok: true,
     mode: "FOREIGN_KEY",
-    dataSourceId: config.dataSourceId,
+    dataSourceId,
     table: { schema, name },
     columns,
     keyHolder,
     holder: { entityTypeId: holderEntity.id, entityTypeName: holderEntity.name, keyColumns: holderKeyColumns },
     foreignKeys: { rowColumns: foreignKeyRowColumns, keyColumns, referenced: { entityTypeId: referencedEntity.id, entityTypeName: referencedEntity.name } },
-    warnings: [],
+    warnings: inferredSide
+      ? [`外键式（自动判断）：外键在「${holderLabel}」(${holderEntity.name})，表取它的主来源 ${[schema, name].filter(Boolean).join(".")}。`]
+      : [],
   };
 }
 
@@ -214,13 +269,15 @@ export type LinkSourceViolation = { rule: string; message: string; count: number
 /**
  * 关系类型数据来源的自检。
  *
- * 口径和来源绑定一致：**没配不算错**（纯类型层建模允许），
- * 只有"配了但自相矛盾 / 取不出实例"才说话，而且一律 WARN —— 它影响的是能不能读实例，不影响定义自洽。
+ * 口径和来源绑定一致：**没配不算错**（纯类型层建模允许）。
+ * 判据是"两端键映射填了吗"，不是"配了数据资源吗" —— 外键式可以零配置（表/来源/外键端全按两端键映射推断），
+ * 只有**填了键映射却排不出取数计划**才说话（典型：中间表式没选连接表），而且一律 WARN ——
+ * 它影响的是能不能读实例，不影响定义自洽。
  */
 export function linkSourceViolations(definition: LinkSourceDefinition): LinkSourceViolation[] {
   const violations: LinkSourceViolation[] = [];
   for (const relation of definition.relationshipTypes) {
-    if (!isLinkSourceConfigured(relation.linkSource)) continue;
+    if (!hasKeyMappings(relation)) continue;
     const plan = planLinkSource(definition, relation);
     if (plan.ok) continue;
     violations.push({ rule: `${relation.name}.数据来源`, message: plan.reason + "配上之前，这条关系类型读不出实例（图上看不到它连的边）。", count: 1, severity: "WARN" });

@@ -212,9 +212,13 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
   const load = useCallback(async (nextLabel: string, nextSearch: string, versionId = version?.id): Promise<EntityRow[]> => {
     if (!target) return [];
     try {
-      // 已发布视图 + 选了具体对象类型：走对象服务（索引/回源），于是业务数据也能出现在对象页。
-      if (objectServiceView && nextLabel) {
-        const params = new URLSearchParams({ targetId: target.id, entityType: nextLabel, limit: String(entityLimit), origin });
+      /*
+       * 已发布视图一律走对象服务（索引/回源），于是业务数据也能出现在对象页。
+       * **没选类型（「全部标签」）也走它** —— 那种情况下没有单一来源可回源，只读索引（接口侧如实说明）。
+       */
+      if (objectServiceView) {
+        const params = new URLSearchParams({ targetId: target.id, limit: String(entityLimit), origin });
+        if (nextLabel) params.set("entityType", nextLabel);
         if (nextSearch) params.set("text", nextSearch);
         // 带上正在看的那一版：草稿里刚补好的来源绑定要当场生效，不用发布才认。
         if (versionId) params.set("versionId", versionId);
@@ -229,7 +233,8 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
          * 明明副本已经在草稿里、该让他编辑了。所以再对一次草稿快照：这一版里有这个对象才算"已物化"。
          */
         const localIds = new Set<string>();
-        if (versionId) {
+        // 草稿快照只在选了类型时对一次（不带类型就取不出草稿里那一类的对象）。
+        if (versionId && nextLabel) {
           const query = new URLSearchParams({ targetId: target.id, versionId, label: nextLabel, limit: String(entityLimit) });
           const local = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${query.toString()}`).catch(() => ({ rows: [] as EntityRow[] }));
           for (const row of local.rows) localIds.add(row.id);
@@ -254,12 +259,11 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
 
   useEffect(() => {
     if (!target) return;
-    const versionParam = version ? `&versionId=${version.id}` : "";
-    void api<{ rows: EntityRow[] }>(`/api/instances/entities?targetId=${encodeURIComponent(target.id)}${versionParam}&limit=${entityLimit}`).then((data) => {
-      setRows(data.rows);
+    // 初始也是「全部标签」：已发布视图下走对象服务（索引），草稿视图才读快照。
+    void load("", "", version?.id).then((rows) => {
       // 带着目标对象进来时，把编辑缓冲也初始化成它的业务属性，否则点"保存"会用空值覆盖。
       if (focusEntityId) {
-        const hit = data.rows.find((row) => row.id === focusEntityId);
+        const hit = rows.find((row) => row.id === focusEntityId);
         if (hit) setDraftProps(Object.fromEntries(Object.entries(hit.properties).filter(([key]) => key !== "fx" && key !== "fy")));
         onFocusHandled?.();
       }
@@ -330,7 +334,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
     <div className="panel functional-panel result-list">
       <span className="eyebrow">对象</span>
       <h2>{rows.length} 条{total !== null && total !== rows.length ? ` · 共 ${total} 条` : ""}</h2>
-      <p className="subtle">{objectServiceView ? "选中一个对象类型后可以切换数据来源：已物化的对象（本体里有的）或业务库实时取数（表里有多少就能看多少）。" : "草稿视图读的是正在编辑的那一版快照；数据源里的对象要先「取进草稿」才能编辑。"}</p>
+      <p className="subtle">{objectServiceView ? "选中一个对象类型后可以切换数据来源：已物化的对象（本体里有的）或业务库实时取数（表里有多少就能看多少）；「全部标签」时读对象索引（跨对象类型）。" : "草稿视图读的是正在编辑的那一版快照；数据源里的对象要先「取进草稿」才能编辑。"}</p>
       {brokenSources.length > 0 && <div className="notice error">
         <AlertCircle size={15} />
         <span>{brokenSources.length} 个来源还没绑到数据资源（{brokenSources.slice(0, 2).map((item) => `${item.entityTypeName} · ${item.label}`).join("、")}{brokenSources.length > 2 ? " 等" : ""}），这些对象类型读不出数据。</span>
@@ -359,6 +363,13 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         sourceLabel: item.sources?.[0] ? `${item.sources[0].schema ? `${item.sources[0].schema}.` : ""}${item.sources[0].view}` : "",
         indexPolicy: item.indexPolicy ?? "AUTO",
       }))}
+      links={(version?.definition.relationshipTypes ?? [])
+        // 只有配了数据来源（连接表）的关系类型才物化得了；标签就是那张表。
+        .filter((item) => item.linkSource?.dataSourceId)
+        .map((item) => ({
+          name: item.name,
+          sourceLabel: item.linkSource?.view ? `${item.linkSource.schema ? `${item.linkSource.schema}.` : ""}${item.linkSource.view}` : "",
+        }))}
       mayWrite={may(user, "instance.write")}
       onClose={() => setIndexOpen(false)}
       notify={notify}

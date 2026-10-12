@@ -38,16 +38,21 @@ type MaterializeJob = {
   finishedAt: string | null;
   /** 已请求取消、但当前这一页还没读完（取消只在页边界生效）。 */
   cancelRequested: boolean;
+  /** 这个任务物化的是对象类型（节点）还是关系类型（边）。 */
+  kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE";
 };
 
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
-type Stats = { entries: number; byLabel: { label: string; count: number }[]; updatedAt: string | null };
+type Stats = { entries: number; byLabel: { label: string; count: number }[]; links: number; byRelationship: { label: string; count: number }[]; updatedAt: string | null };
 
 export type IndexTypeRow = { name: string; sourceLabel: string; indexPolicy: "AUTO" | "INDEXED" | "FEDERATED" };
+/** 关系类型（边）：配了数据来源（连接表）的才物化得了，`sourceLabel` 就是那张表。 */
+export type IndexLinkRow = { name: string; sourceLabel: string };
 
 type Props = {
   targetId: string;
   types: IndexTypeRow[];
+  links: IndexLinkRow[];
   mayWrite: boolean;
   onClose: () => void;
   notify: (message: string) => void;
@@ -62,7 +67,7 @@ function formatTime(value: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, fail }: Props) {
+export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, notify, fail }: Props) {
   const [rows, setRows] = useState<Materialization[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -114,18 +119,18 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
     return () => clearInterval(timer);
   }, [active, load]);
 
-  const materialize = async (entityType: string) => {
+  /**
+   * 排队一个类型的整份物化（对象类型或关系类型）—— 接口是异步的，入队就返回，
+   * 所以这里只说"已排队"，进度去下面的任务列表看（以前这里按同步结果播报，数字是 undefined）。
+   */
+  const enqueueOne = async (entityType: string, kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE") => {
     setBusyType(entityType);
     try {
-      const result = await api<{ rows: number; scanned: number; truncated: boolean; pages: number }>("/api/objects/materialize-type", {
+      await api("/api/objects/materialize-type", {
         method: "POST",
-        body: JSON.stringify({ targetId, entityType }),
+        body: JSON.stringify({ targetId, kind, entityType, pageSize }),
       });
-      notify(
-        result.truncated
-          ? `「${entityType}」物化了 ${result.rows} 条（扫描 ${result.scanned} 条时撞到上限，源里可能还有更多）。`
-          : `「${entityType}」已整份物化 ${result.rows} 条，共读 ${result.pages} 页。`,
-      );
+      notify(`「${entityType}」已排队物化：进度在下面的任务列表里看。`);
       await load();
     } catch (reason) {
       fail(reason);
@@ -133,6 +138,9 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
       setBusyType(null);
     }
   };
+
+  const materialize = (entityType: string) => enqueueOne(entityType, "OBJECT_TYPE");
+  const materializeLink = (relationshipType: string) => enqueueOne(relationshipType, "RELATIONSHIP_TYPE");
 
   const reindex = async () => {
     setReindexing(true);
@@ -170,6 +178,8 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
 
   /** 清除某个类型的物化数据（保留快照对象），行内二次确认。 */
   const [confirmClear, setConfirmClear] = useState<string | null>(null);
+  /** 「清除物化」要按两下确认：第二次才真删（关系类型那份）。 */
+  const [linkConfirm, setLinkConfirm] = useState<string | null>(null);
   const clearMaterialized = async (entityType: string) => {
     if (confirmClear !== entityType) {
       setConfirmClear(entityType);
@@ -181,6 +191,22 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
     try {
       const result = await api<{ cleared: number }>(`/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}&entityType=${encodeURIComponent(entityType)}`, { method: "DELETE" });
       notify(`已清除「${entityType}」的物化数据（${result.cleared} 条）——快照对象保留。`);
+      await load();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setQueuing(false);
+    }
+  };
+
+  /** 清除某个关系类型的物化边（不动对象、不动快照）。 */
+  const clearLink = async (relationshipType: string) => {
+    if (linkConfirm !== relationshipType) { setLinkConfirm(relationshipType); return; }
+    setLinkConfirm(null);
+    setQueuing(true);
+    try {
+      const result = await api<{ cleared: number }>(`/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}&relationshipType=${encodeURIComponent(relationshipType)}`, { method: "DELETE" });
+      notify(`已清除「${relationshipType}」的物化边（${result.cleared} 条）——对象与快照都保留。`);
       await load();
     } catch (reason) {
       fail(reason);
@@ -273,8 +299,8 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
       <span className="eyebrow">对象来源</span>
       <h2>索引与物化</h2>
       <p className="subtle">
-        对象索引是可以重建的副本（权威仍在业务库）：这里按对象类型把业务库整份物化进来，供检索、过滤与聚合使用。
-        手工建的、动作写的、取进草稿的对象走另一条路，随版本快照发布。两条来源互不覆盖。
+        对象索引是可以重建的副本（权威仍在业务库）：这里按**对象类型**把业务库整份物化进来，供检索、过滤与聚合使用；
+        **关系类型**的边单独物化（一条边一行，双向共用）。手工建的、动作写的、取进草稿的对象走另一条路，随版本快照发布。
       </p>
 
       <div className="index-summary">
@@ -328,7 +354,7 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
               const runningLike = job.status === "QUEUED" || job.status === "RUNNING";
               const cancellingThis = job.cancelRequested || cancelling.includes(job.id);
               return <div className="index-job" key={job.id}>
-                <b>{job.entityType}</b>
+                <b>{job.entityType}{job.kind === "RELATIONSHIP_TYPE" ? <em className="index-job-kind">边</em> : null}</b>
                 <span className={`index-job-state ${job.status.toLowerCase()}${runningLike && cancellingThis ? " cancelling" : ""}`}>{runningLike && cancellingThis ? "取消中" : labels[job.status]}</span>
                 <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
                 <small className="index-job-msg" title={job.message ?? ""}>{job.message ?? ""}</small>
@@ -409,6 +435,53 @@ export function IndexStatusDialog({ targetId, types, mayWrite, onClose, notify, 
               {type.indexPolicy !== "FEDERATED" && state !== "none" && (
                 <button className={confirmClear === type.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy} title="只清这个类型的物化数据，快照对象保留" onClick={() => void clearMaterialized(type.name)}>
                   {confirmClear === type.name ? "确认清除？" : "清除物化"}
+                </button>
+              )}
+            </span>
+          </div>;
+        })}
+      </div>
+      {/*
+       * 关系类型（边）。**单独一段**：边和对象是两条并行的物化线，混在一张表里会让人以为
+       * "物化了对象类型就有边了" —— 其实必须各自物化，而且两端对象类型没物化时图上画不出边。
+       */}
+      <div className="index-table" role="table" aria-label="关系类型物化状态">
+        <div className="index-row head" role="row">
+          <span role="columnheader" className="index-check" />
+          <span role="columnheader">关系类型（边）</span>
+          <span role="columnheader">连接表</span>
+          <span role="columnheader">索引（物化）</span>
+          <span role="columnheader">索引里的边</span>
+          <span role="columnheader" />
+        </div>
+        {loading && <div className="index-row"><span className="subtle">读取中…</span></div>}
+        {!loading && !links.length && <div className="index-row"><span className="subtle">还没有配数据来源的关系类型：到「关系类型」里给它选一张连接表，这里就能物化边了。</span></div>}
+        {!loading && links.map((link) => {
+          const item = indexed(link.name);
+          const state = item ? (item.truncated ? "partial" : "full") : "none";
+          const edgeCount = stats?.byRelationship?.find((row) => row.label === link.name)?.count ?? 0;
+          return <div className="index-row" key={`rel:${link.name}`} role="row">
+            <span className="index-check" />
+            <span className="index-type"><b>{link.name}</b><small>{link.sourceLabel || "未配连接表"}</small></span>
+            <span className={link.sourceLabel ? "index-cell" : "index-cell muted"}>{link.sourceLabel || "不可读"}</span>
+            <span className="index-cell">
+              {state === "none" && <em className="index-state none">未物化</em>}
+              {state === "full" && <em className="index-state full">已整份物化 {item?.rows ?? 0} 条</em>}
+              {state === "partial" && <em className="index-state partial">只补过一批 · {item?.rows ?? 0} 条</em>}
+            </span>
+            <span className="index-cell">{edgeCount} 条</span>
+            <span className="index-actions">
+              <button
+                className="action compact"
+                disabled={!mayWrite || busy || !link.sourceLabel}
+                title={link.sourceLabel ? "把这张连接表里的边整份写进索引（两端对象类型也要物化，图上才画得出边）" : "这个关系类型还没配数据来源"}
+                onClick={() => void materializeLink(link.name)}
+              >
+                整份物化
+              </button>
+              {state !== "none" && (
+                <button className={linkConfirm === link.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy} title="只清这个关系类型的物化边；对象与快照都保留" onClick={() => void clearLink(link.name)}>
+                  {linkConfirm === link.name ? "确认清除？" : "清除物化"}
                 </button>
               )}
             </span>

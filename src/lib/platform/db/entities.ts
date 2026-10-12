@@ -207,6 +207,8 @@ export class ConversationMessageEntity {
 export class MaterializationJobEntity {
   @PrimaryColumn("text") id!: string;
   @Column("text", { name: "target_id" }) targetId!: string;
+  /** OBJECT_TYPE = 对象类型（节点）；RELATIONSHIP_TYPE = 关系类型（边）。 */
+  @Column("text", { default: "OBJECT_TYPE" }) kind!: string;
   @Column("text", { name: "entity_type" }) entityType!: string;
   /** QUEUED / RUNNING / DONE / CANCELLED / FAILED / INTERRUPTED（进程重启遗留）。 */
   @Column("text") status!: string;

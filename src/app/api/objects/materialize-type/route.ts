@@ -7,6 +7,9 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 
 const materializeInput = z.object({
   targetId: z.string().uuid(),
+  /** 物化什么：默认对象类型（节点）；RELATIONSHIP_TYPE = 关系类型（边）。 */
+  kind: z.enum(["OBJECT_TYPE", "RELATIONSHIP_TYPE"]).optional(),
+  /** 对象类型名或关系类型名（由 `kind` 决定怎么解释）。 */
   entityType: z.string().trim().min(1).max(200),
   versionId: z.string().uuid().optional(),
   /** 每页读多少行（源侧分页大小）。 */
@@ -18,7 +21,8 @@ const materializeInput = z.object({
 });
 
 /**
- * **整份物化一个对象类型**（S4 第一刀）。
+ * **整份物化一个类型**（S4 第一刀）：`kind` 决定是对象类型（节点）还是关系类型（边），
+ * 两者都是"一个任务 = 一个类型"，进度 / 取消 / 断点续跑 / 清单完全对等。
  *
  * 口径（2026-10-12 用户要求）：物化的粒度是**对象类型**，不是"一部分行" —— 半份物化会让 `auto`
  * 读法静默截断（索引里 total > 0 就不再回源，页面显示成"这个类型只有 N 个对象"）。所以这里
@@ -43,6 +47,7 @@ export async function POST(request: NextRequest) {
     }
     const job = enqueueMaterializeJob({
       targetId: input.targetId,
+      kind: input.kind,
       entityType: input.entityType,
       versionId: input.versionId,
       pageSize: input.pageSize,
@@ -54,6 +59,7 @@ export async function POST(request: NextRequest) {
       targetId: input.targetId,
       action: "OBJECT_TYPE_MATERIALIZE_QUEUED",
       details: {
+        kind: job.kind,
         entityType: input.entityType,
         jobId: job.id,
         pageSize: input.pageSize ?? 500,
@@ -99,7 +105,8 @@ export async function GET(request: NextRequest) {
  * 物化任务操作（2026-10-12）：
  * - `?jobId=` 取消一个还没跑完的任务（排队中立刻取消；运行中先标「取消中…」，等页边界再转 CANCELLED）；
  * - `?deleteJobId=` 删掉一条**不在跑**的任务记录（不动物化数据，也删不动正在跑的任务）；
- * - `?entityType=&targetId=` 清除某个对象类型的物化数据（保留快照对象）。
+ * - `?entityType=&targetId=` 清除某个**对象类型**的物化数据（保留快照对象）；
+ * - `?relationshipType=&targetId=` 清除某个**关系类型**的物化边。
  */
 export async function DELETE(request: NextRequest) {
   try {
@@ -124,6 +131,24 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ cleared: deleted, entityType });
     }
     /*
+     * 清除某个**关系类型**的物化边：只删边表里 `origin = MATERIALIZED` 的那些行，清单一起删。
+     * 关系类型是双向的，所以不区分方向、一条边只删一次。
+     */
+    const relationshipType = url.searchParams.get("relationshipType")?.trim();
+    if (relationshipType) {
+      const targetId = url.searchParams.get("targetId")?.trim();
+      if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
+      const deleted = await getObjectIndex().deleteRelationshipLinks(targetId, relationshipType, { origin: "MATERIALIZED" });
+      await getObjectIndex().deleteMaterialization(targetId, relationshipType);
+      await writeAuditEntry({
+        actorId: user.id,
+        targetId,
+        action: "RELATIONSHIP_TYPE_MATERIALIZATION_CLEARED",
+        details: { relationshipType, deleted },
+      });
+      return NextResponse.json({ cleared: deleted, relationshipType });
+    }
+    /*
      * **删掉一条任务记录**：`?deleteJobId=`。与 `?jobId=`（取消）分开，是为了让两个意图在接口上也分得清 ——
      * 取消让任务最终变成 CANCELLED，删除是把那条记录从列表里抹掉。只删记录，不动物化数据。
      */
@@ -141,7 +166,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ deleted: deleteJobId });
     }
     const jobId = url.searchParams.get("jobId")?.trim();
-    if (!jobId) return NextResponse.json({ error: "jobId、deleteJobId 或 entityType 至少给一个。" }, { status: 400 });
+    if (!jobId) return NextResponse.json({ error: "jobId、deleteJobId、entityType 或 relationshipType 至少给一个。" }, { status: 400 });
     const job = cancelMaterializeJob(jobId);
     if (!job) return NextResponse.json({ error: "任务不存在（进程重启会丢掉内存里的任务）。" }, { status: 404 });
     return NextResponse.json({ job });

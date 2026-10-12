@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
-import { getObject, queryObjects, resolveObjectContext } from "@/lib/instance/object-service";
+import { getObject, queryAllObjects, queryObjects, resolveObjectContext } from "@/lib/instance/object-service";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),
@@ -15,6 +15,7 @@ const filterSchema = z.object({
  *
  * - `GET /api/objects?targetId=&entityType=&key=列=值&…` —— 按主键取一个对象；
  * - `GET /api/objects?targetId=&entityType=&text=&filter=…` —— 检索 / 过滤 / 分页；
+ * - `GET /api/objects?targetId=&text=…`（不带 entityType）—— 「全部标签」：跨对象类型读索引；
  * - `origin=auto|index|source` 决定"看索引"还是"回业务库取"，默认 auto。
  *
  * 这一层不认识图库、索引表或业务表：全交给 `@/lib/object-service`，
@@ -47,9 +48,22 @@ export async function GET(request: NextRequest) {
     const targetId = params.get("targetId");
     const entityType = params.get("entityType");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
-    if (!entityType) return NextResponse.json({ error: "entityType 不能为空。" }, { status: 400 });
     const origin = (params.get("origin") ?? "auto") as "auto" | "index" | "source";
     const context = await resolveObjectContext(targetId, params.get("versionId"));
+
+    const toNumber = (value: string | null) => (value === null ? undefined : Number(value));
+    /*
+     * 「全部标签」= 不传 entityType：没有单一对象类型，回源无从谈起，只能读对象索引
+     * （索引里没有就如实说没物化）。界面上的"来源：业务库"在全部标签下不适用。
+     */
+    if (!entityType) {
+      const all = await queryAllObjects(context, {
+        text: params.get("text") ?? undefined,
+        limit: toNumber(params.get("limit")),
+        offset: toNumber(params.get("offset")),
+      });
+      return NextResponse.json(all);
+    }
 
     const key = params.get("key");
     if (key) {
@@ -57,8 +71,6 @@ export async function GET(request: NextRequest) {
       if (!record) return NextResponse.json({ error: "没有找到这个对象。", entityType, key }, { status: 404 });
       return NextResponse.json({ object: record, origin: record.origin });
     }
-
-    const toNumber = (value: string | null) => (value === null ? undefined : Number(value));
     const result = await queryObjects(context, {
       entityType,
       text: params.get("text") ?? undefined,

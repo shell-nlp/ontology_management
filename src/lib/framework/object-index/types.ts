@@ -98,7 +98,55 @@ export type ObjectSearchResult = {
 export type ObjectIndexStats = {
   entries: number;
   byLabel: { label: string; count: number }[];
+  /** 关系（边）行数；图谱与多跳遍历靠它。 */
+  links: number;
+  /** 按关系类型的边数分布。 */
+  byRelationship: { label: string; count: number }[];
   updatedAt: string | null;
+};
+
+/**
+ * 一条进入检索索引的**关系（边）**。
+ *
+ * 唯一键 = (关系类型, 起点对象键, 终点对象键) —— 跟对象服务里 `linkRef` 的口径一致
+ * （`关系类型/起点引用->终点引用`），这样索引、图谱、问答认的是同一条边。
+ * 关系类型是双向的，所以**一条边只存一行**，读的时候两个方向都查。
+ */
+export type ObjectIndexLink = {
+  /** 关系类型名（唯一键的一部分）。 */
+  relationshipType: string;
+  /** 关系类型 id：关系类型改名之后还能对上。 */
+  relationshipTypeId: string;
+  source: { entityType: string; objectKey: string; objectId: string };
+  target: { entityType: string; objectKey: string; objectId: string };
+  properties: Record<string, unknown>;
+};
+
+/** 一次边的增量同步结果。 */
+export type ObjectIndexLinkSyncResult = {
+  upserted: number;
+  deleted: number;
+  /** 这个本体存储同步后总共有多少条边。 */
+  total: number;
+};
+
+export type ObjectLinkSearchQuery = {
+  targetId: string;
+  /** 限定关系类型（名字或 id）；不传 = 不限。 */
+  relationshipTypes?: string[];
+  /**
+   * 只看以这些对象键为**任一端**的边（双向都算）。
+   * 图谱"取一批节点、再看它们之间的边"就是这么查的。
+   */
+  nodeKeys?: string[];
+  limit?: number;
+  offset?: number;
+};
+
+export type ObjectLinkSearchResult = {
+  links: ObjectIndexLink[];
+  total: number;
+  tookMs: number;
 };
 
 /**
@@ -168,6 +216,25 @@ export interface ObjectIndex {
     options?: { versionId?: string | null; origin?: ObjectIndexOrigin },
   ): Promise<{ indexed: number }>;
   searchObjects(query: ObjectSearchQuery): Promise<ObjectSearchResult>;
+  /**
+   * 增量写入关系（边）：按 (关系类型, 起点对象键, 终点对象键) upsert。
+   * `prune` 为真时把这次没出现的边删掉；**`pruneRelationshipType` 把 prune 收窄到一个关系类型**
+   * —— 整份物化是「一个关系类型一批」跑的，不收窄会删掉别的关系类型的边（对象侧踩过同一个坑）。
+   */
+  syncTargetLinks(
+    targetId: string,
+    links: ObjectIndexLink[],
+    options?: {
+      versionId?: string | null;
+      prune?: boolean;
+      origin?: ObjectIndexOrigin;
+      pruneRelationshipType?: string;
+    },
+  ): Promise<ObjectIndexLinkSyncResult>;
+  /** 读边：按关系类型 + 对象键（任一端）查。图谱与多跳遍历用它。 */
+  searchLinks(query: ObjectLinkSearchQuery): Promise<ObjectLinkSearchResult>;
+  /** 只删某个关系类型的边（可按来源收窄），返回删除条数。 */
+  deleteRelationshipLinks(targetId: string, relationshipType: string, options?: { origin?: ObjectIndexOrigin }): Promise<number>;
   deleteTargetObjects(targetId: string): Promise<void>;
   stats(targetId: string): Promise<ObjectIndexStats>;
   /** 这个本体存储下各对象类型的物化清单（没有整份物化过的类型不在里面）。 */

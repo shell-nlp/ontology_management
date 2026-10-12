@@ -217,9 +217,11 @@ export const relationshipKeyMappingSchema = z.object({
  * 三种支撑方式里平台先做两种（第三种"由对象自己支撑"用不到额外配置，先不做）：
  * - `JOIN_TABLE`：多对多，有一张中间表。两端的键映射写「连接表的列 → 对象类型的主键属性」；
  * - `FOREIGN_KEY`：外键长在某一端对象类型的表上。两端的键映射都不写连接列（`linkProperty` 留空），
- *   外键那一端填外键属性，另一端填被引用的属性；`view` 留空就用外键所在端的主来源表。
+ *   外键那一端填外键属性，另一端填被引用的属性；`view` / `dataSourceId` 留空就用外键所在端的**主来源**，
+ *   `foreignKeySide = AUTO` 时外键在哪一端也按键映射推断 —— 外键式**可以整块不配**。
  *
- * 没配这一项 = 这条关系类型只在类型层声明了业务语义，读不出实例。**不配不算错**。
+ * 没配这一项、两端键映射也空 = 这条关系类型只在类型层声明了业务语义，读不出实例。**不配不算错**。
+ * **中间表式（多对多）必须配**：连接行在第三张表里，键映射只说"哪一列对上哪一端"，没有别的地方能知道那张表是谁。
  */
 export const relationshipSourceSchema = z.object({
   mode: z.enum(["JOIN_TABLE", "FOREIGN_KEY"]).default("JOIN_TABLE"),
@@ -229,12 +231,12 @@ export const relationshipSourceSchema = z.object({
   schema: z.string().trim().max(200).default(""),
   /** 连接表（JOIN_TABLE）或持有外键的那张表（FOREIGN_KEY 留空 = 用外键端对象类型自己的主来源）。 */
   view: z.string().trim().max(200).default(""),
-  /** FOREIGN_KEY：外键长在哪一端。 */
-  foreignKeySide: z.enum(["SOURCE", "TARGET"]).default("SOURCE"),
+  /** FOREIGN_KEY：外键长在哪一端；AUTO = 按两端键映射推断（推不出来才要求人指定）。 */
+  foreignKeySide: z.enum(["SOURCE", "TARGET", "AUTO"]).default("AUTO"),
 });
 
 /** 「还没配数据来源」的那一份。zod 的 `.default()` 不会回头再解析内层默认值，所以这里写全。 */
-export const EMPTY_LINK_SOURCE: RelationshipSource = { mode: "JOIN_TABLE", dataSourceId: "", schema: "", view: "", foreignKeySide: "SOURCE" };
+export const EMPTY_LINK_SOURCE: RelationshipSource = { mode: "JOIN_TABLE", dataSourceId: "", schema: "", view: "", foreignKeySide: "AUTO" };
 
 /**
  * 一个类的数据来源清单，也就是 Palantir 的多来源对象类型（column-wise MDO）。

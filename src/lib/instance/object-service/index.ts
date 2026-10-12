@@ -2,8 +2,11 @@ import { getObjectIndex } from "@/lib/framework/object-index";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
 import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
-import { createDataSourceObjectSource } from "@/lib/instance/object-service/data-source";
+import { connectorFor, createDataSourceObjectSource, selectRowsBy } from "@/lib/instance/object-service/data-source";
+import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
+import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
 import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
+import type { ObjectIndexLink } from "@/lib/framework/object-index/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
 
@@ -163,6 +166,36 @@ export async function queryObjects(context: ObjectContext, query: ObjectQuery): 
     total: source.total,
     origin: source.rows.length ? "source" : "none",
     warnings: [...policyWarning, ...source.warnings],
+    tookMs: Date.now() - started,
+  };
+}
+
+/**
+ * **不限对象类型**地查对象（对象页「全部标签」用它）。
+ *
+ * 只能走索引：回源得先知道是哪张表，「全部标签」没有单一来源可回。
+ * 所以索引里没有就如实说"还没物化"，不假装有数据。
+ */
+export async function queryAllObjects(
+  context: ObjectContext,
+  query: { text?: string; limit?: number; offset?: number } = {},
+): Promise<ObjectQueryResult> {
+  const started = Date.now();
+  const limit = clamp(query.limit, 1, 200, 20);
+  const offset = clamp(query.offset, 0, 100000, 0);
+  const result = await getObjectIndex().searchObjects({
+    targetId: context.targetId,
+    labels: [],
+    text: query.text,
+    limit,
+    offset,
+  });
+  return {
+    entityType: "",
+    rows: result.hits.map((hit) => recordFromEntry(hit, "index")),
+    total: result.total,
+    origin: "index",
+    warnings: result.total > 0 ? [] : ["对象索引里还没有对象：先在「索引与物化」整份物化，或发布一版快照。"],
     tookMs: Date.now() - started,
   };
 }
@@ -386,6 +419,155 @@ export async function materializeObjectType(
   return {
     entityType: entityTypeName,
     // rows 是"这一次写进去的条数"；断点续跑时它只是后半段。
+    rows: synced.upserted,
+    scanned,
+    truncated: truncated || cancelled || stalled,
+    pages,
+    total,
+    tookMs: Date.now() - started,
+    warnings,
+  };
+}
+
+/** 行里的列名大小写由库决定（Oracle 折成大写）：按小写找，取**原始值**（游标要用原值绑回去）。 */
+function rawColumn(row: Record<string, unknown>, column: string): unknown {
+  const target = column.trim().toLowerCase();
+  for (const [key, value] of Object.entries(row)) {
+    if (key.toLowerCase() === target) return value;
+  }
+  return undefined;
+}
+
+/**
+ * **按关系类型整份物化**（边）。
+ *
+ * 和对象侧对称：一个任务 = 一个关系类型，默认读到连接表读完；撞 `maxRows` 才截断且不 prune。
+ * 三条与对象侧一致的口径：
+ * 1. **游标翻页**（按键映射落到的那些列排序），offset 恒为 0 —— 深表不受 Oracle 的 OFFSET 上限影响；
+ *    断点续跑只存了条数、还原不出游标，所以续跑那趟退回 offset。
+ * 2. **翻页没前进就停**：相邻两页解出来的边完全相同 = 分页卡住，停下并如实报，绝不空转。
+ * 3. **prune 只在这个关系类型里**（`pruneRelationshipType`）——否则物化 A 会删掉 B 的边。
+ *
+ * 两端对象类型没物化也能先物化边：读的时候端点解析不出来会被如实报数（不静默丢）。
+ */
+export async function materializeRelationshipType(
+  context: ObjectContext,
+  relationshipTypeName: string,
+  options: {
+    pageSize?: number;
+    maxRows?: number | null;
+    startOffset?: number;
+    onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void;
+    shouldCancel?: () => boolean;
+  } = {},
+): Promise<MaterializeTypeResult> {
+  const started = Date.now();
+  const definition = context.definition as unknown as LinkSourceDefinition;
+  const relation = definition.relationshipTypes.find((item) => item.name === relationshipTypeName || item.id === relationshipTypeName);
+  if (!relation) throw new Error(`本体里没有关系类型「${relationshipTypeName}」。`);
+  const plan = planLinkSource(definition, relation);
+  if (!plan.ok) throw new Error(plan.reason);
+
+  const pageSize = clamp(options.pageSize, 1, 500, 500);
+  const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
+  const startOffset = Math.max(0, Math.floor(options.startOffset ?? 0));
+  const columns = linkReadColumns(relation, plan);
+  const table = { schema: plan.table.schema, view: plan.table.name };
+  const orderColumns = startOffset === 0 ? linkOrderColumns(plan) : [];
+  let cursorActive = orderColumns.length > 0;
+  let cursorValues: unknown[] | null = null;
+  let offset = startOffset;
+  let pages = 0;
+  let scanned = startOffset;
+  let total: number | null = null;
+  let truncated = false;
+  let cancelled = false;
+  let stalled = false;
+  let previousPageKey: string | null = null;
+  const warnings: string[] = [];
+  const links: ObjectIndexLink[] = [];
+  const seen = new Set<string>();
+  const connector = (await connectorFor(plan.dataSourceId)).connector;
+
+  while (scanned < maxRows) {
+    if (options.shouldCancel?.()) { cancelled = true; break; }
+    const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
+    const cursor = cursorActive ? { columns: orderColumns, ...(cursorValues ? { values: cursorValues } : {}) } : null;
+    const result = await selectRowsBy(
+      plan.dataSourceId,
+      table,
+      columns,
+      [],
+      cursor
+        ? { limit, offset: 0, orderBy: cursor.columns, after: cursor.values }
+        : { limit, offset },
+      warnings,
+    );
+    if (total === null && connector.countRows) {
+      try {
+        total = await connector.countRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name } });
+      } catch { total = null; }
+    }
+    const decoded = linksFromRows(relation, plan, result.rows);
+    for (const link of decoded.links) {
+      const key = `${link.relationshipTypeId}|${link.source.objectId}|${link.target.objectId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      links.push({
+        relationshipType: link.relationshipType,
+        relationshipTypeId: link.relationshipTypeId,
+        source: { entityType: link.source.entityType, objectKey: objectKeyOf(link.source.entityType, link.source.primaryKey), objectId: link.source.objectId },
+        target: { entityType: link.target.entityType, objectKey: objectKeyOf(link.target.entityType, link.target.primaryKey), objectId: link.target.objectId },
+        properties: link.properties,
+      });
+    }
+    if (decoded.skipped) {
+      warnings.push(`关系类型「${relation.name}」有 ${decoded.skipped} 行的键不全（连接列是空值），这些行没有取成边。`);
+    }
+    options.onProgress?.({ scanned: scanned + result.rows.length, rows: links.length, pages: pages + 1 });
+    pages += 1;
+    scanned += result.rows.length;
+    if (result.rows.length < limit) break;
+    const pageKey = JSON.stringify(result.rows.map((row) => orderColumns.map((column) => rawColumn(row, column)).join("\u0001")));
+    if (pageKey === previousPageKey) { stalled = true; break; }
+    previousPageKey = pageKey;
+    if (cursorActive) {
+      const last = result.rows[result.rows.length - 1];
+      const next = last ? orderColumns.map((column) => {
+        const value = rawColumn(last, column);
+        return typeof value === "string" ? value.trim() : value;
+      }) : null;
+      if (next && next.every((value) => value !== undefined && value !== null && value !== "")) cursorValues = next;
+      else { cursorActive = false; cursorValues = null; }
+    }
+    offset += result.rows.length;
+    if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
+  }
+
+  if (stalled) {
+    warnings.push(
+      "连接表分页没有前进（每页读到的还是上一批），已停止：这个关系类型只物化了第一页。" +
+      "请先把连接表的分页 / 排序键修好，再重新整份物化。",
+    );
+  }
+  const synced = await getObjectIndex().syncTargetLinks(context.targetId, links, {
+    versionId: context.versionId,
+    origin: "MATERIALIZED",
+    // 只有「从头读到尾、没取消、没截断、没卡住」才允许 prune；且只在这个关系类型里。
+    prune: !truncated && !cancelled && !stalled && startOffset === 0,
+    pruneRelationshipType: relation.name,
+  });
+  await getObjectIndex().saveMaterialization({
+    targetId: context.targetId,
+    entityType: relation.name,
+    rows: synced.upserted,
+    scanned,
+    truncated: truncated || cancelled || stalled,
+    pages,
+    completedAt: new Date().toISOString(),
+  });
+  return {
+    entityType: relation.name,
     rows: synced.upserted,
     scanned,
     truncated: truncated || cancelled || stalled,

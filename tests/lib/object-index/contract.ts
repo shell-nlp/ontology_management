@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind } from "@/lib/framework/object-index/types";
+import type { ObjectIndex, ObjectIndexEntry, ObjectIndexKind, ObjectIndexLink } from "@/lib/framework/object-index/types";
 
 /**
  * **对象检索索引的后端契约**。
@@ -261,6 +261,68 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
         expect(list).toHaveLength(1);
         expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, scanned: 50000, truncated: true, pages: 100 });
         expect(list[0].completedAt).toBeTruthy();
+      });
+    });
+
+    /* ------------------------------------------------------------------
+     * 关系（边）。唯一键 = (关系类型, 起点对象键, 终点对象键)；关系类型双向，一条边只存一行。
+     * ------------------------------------------------------------------ */
+    const link = (id: string, overrides: Partial<ObjectIndexLink> = {}): ObjectIndexLink => ({
+      relationshipType: overrides.relationshipType ?? "客户拥有账户",
+      relationshipTypeId: overrides.relationshipTypeId ?? "rel-1",
+      source: overrides.source ?? { entityType: "客户", objectKey: `["客户","CUST_ID=${id}"]`, objectId: `c-${id}` },
+      target: overrides.target ?? { entityType: "账户", objectKey: `["账户","ACCT_ID=${id}"]`, objectId: `a-${id}` },
+      properties: overrides.properties ?? {},
+    });
+
+    it("边：写进去能按对象键（任一端）和关系类型查回来", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetLinks(target, [link("1"), link("2")], { origin: "MATERIALIZED" });
+        expect((await index.searchLinks({ targetId: target })).total).toBe(2);
+        // 起点侧命中：只有第 1 条
+        const bySource = await index.searchLinks({ targetId: target, nodeKeys: [link("1").source.objectKey] });
+        expect(bySource.links.map((item) => item.target.objectKey)).toEqual([link("1").target.objectKey]);
+        // 终点侧也命中（关系类型是双向的，一条边只存一行）
+        const byTarget = await index.searchLinks({ targetId: target, nodeKeys: [link("2").target.objectKey] });
+        expect(byTarget.total).toBe(1);
+        // 按关系类型筛
+        expect((await index.searchLinks({ targetId: target, relationshipTypes: ["客户拥有账户"] })).total).toBe(2);
+        expect((await index.searchLinks({ targetId: target, relationshipTypes: ["别的类型"] })).total).toBe(0);
+        // 同一个键再写一次是 upsert，不是新增
+        await index.syncTargetLinks(target, [link("1", { properties: { SINCE: "2026" } })], { origin: "MATERIALIZED" });
+        const again = await index.searchLinks({ targetId: target });
+        expect(again.total).toBe(2);
+        expect(again.links.find((item) => item.target.objectId === "a-1")?.properties.SINCE).toBe("2026");
+      });
+    });
+
+    it("边：prune 只删这个关系类型，别的类型的边原样留着", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetLinks(
+          target,
+          [link("1"), link("2"), link("9", { relationshipType: "别的类型" })],
+          { origin: "MATERIALIZED" },
+        );
+        const pruned = await index.syncTargetLinks(target, [link("2")], {
+          origin: "MATERIALIZED",
+          prune: true,
+          pruneRelationshipType: "客户拥有账户",
+        });
+        expect(pruned.deleted).toBe(1);
+        expect((await index.searchLinks({ targetId: target, relationshipTypes: ["客户拥有账户"] })).total).toBe(1);
+        expect((await index.searchLinks({ targetId: target, relationshipTypes: ["别的类型"] })).total).toBe(1);
+      });
+    });
+
+    it("边：deleteRelationshipLinks 只删这个关系类型，stats 能报出边数", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetLinks(target, [link("1"), link("2"), link("9", { relationshipType: "别的类型" })], { origin: "MATERIALIZED" });
+        expect((await index.stats(target)).links).toBe(3);
+        const deleted = await index.deleteRelationshipLinks(target, "客户拥有账户");
+        expect(deleted).toBe(2);
+        const stats = await index.stats(target);
+        expect(stats.links).toBe(1);
+        expect(stats.byRelationship.find((item) => item.label === "别的类型")?.count).toBe(1);
       });
     });
 

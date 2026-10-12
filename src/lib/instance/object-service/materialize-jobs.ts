@@ -1,11 +1,11 @@
-import { materializeObjectType, resolveObjectContext } from "@/lib/instance/object-service";
+import { materializeObjectType, materializeRelationshipType, resolveObjectContext } from "@/lib/instance/object-service";
 import { MaterializationJobEntity, platformRepo } from "@/lib/platform/db";
 
 /**
  * 整份物化的**后台任务**（2026-10-12 用户要求：默认不限制 + 放后台跑 + 能看进度）。
  *
  * 三个刻意的设计：
- * 1. **一个任务 = 一个对象类型**：批量物化就是排一串任务；进度按类型报，取消也按类型取消，
+ * 1. **一个任务 = 一个类型**（对象类型或关系类型）：批量物化就是排一串任务；进度按类型报，取消也按类型取消，
  *    不做"一个大任务里塞 42 个类型"那种没法局部重试的形态。
  * 2. **全局串行**（并发 1）：并行物化会同时压业务库，进度与失败归因也会乱。
  * 3. **状态在内存**（挂 `globalThis`，与智能问答的 run-registry 同一条口径）：接口进程重启会丢任务，
@@ -13,9 +13,13 @@ import { MaterializationJobEntity, platformRepo } from "@/lib/platform/db";
  */
 export type MaterializeJobStatus = "QUEUED" | "RUNNING" | "DONE" | "CANCELLED" | "FAILED" | "INTERRUPTED";
 
+/** 物化的东西是**对象类型**还是**关系类型**（边）—— 两者都是"一个类型一批"。 */
+export type MaterializeJobKind = "OBJECT_TYPE" | "RELATIONSHIP_TYPE";
+
 export type MaterializeJob = {
   id: string;
   targetId: string;
+  kind: MaterializeJobKind;
   entityType: string;
   status: MaterializeJobStatus;
   /** 已读行数（进行中的进度）。 */
@@ -53,6 +57,7 @@ function registry(): Registry {
 const snapshot = (job: JobState): MaterializeJob => ({
   id: job.id,
   targetId: job.targetId,
+  kind: job.kind,
   entityType: job.entityType,
   status: job.status,
   scanned: job.scanned,
@@ -75,6 +80,7 @@ async function persist(job: JobState): Promise<void> {
       {
         id: job.id,
         targetId: job.targetId,
+        kind: job.kind,
         entityType: job.entityType,
         status: job.status,
         scanned: String(Math.trunc(job.scanned)),
@@ -138,6 +144,7 @@ export async function listMaterializeJobs(targetId?: string | null): Promise<Mat
     stored = rows.map((row) => ({
       id: row.id,
       targetId: row.targetId,
+      kind: (row.kind as MaterializeJobKind) ?? "OBJECT_TYPE",
       entityType: row.entityType,
       status: row.status as MaterializeJobStatus,
       scanned: Number(row.scanned ?? 0),
@@ -226,9 +233,11 @@ export async function jobCursor(jobId: string): Promise<number | null> {
   }
 }
 
-/** 排队一个类型的整份物化；返回任务的当前快照（立刻可查进度）。 */
+/** 排队一个类型（对象类型 / 关系类型）的整份物化；返回任务的当前快照（立刻可查进度）。 */
 export function enqueueMaterializeJob(input: {
   targetId: string;
+  /** 不传 = 对象类型（老调用点不用改）。 */
+  kind?: MaterializeJobKind;
   entityType: string;
   versionId?: string | null;
   pageSize?: number;
@@ -244,6 +253,7 @@ export function enqueueMaterializeJob(input: {
   const job: JobState = {
     id: crypto.randomUUID(),
     targetId: input.targetId,
+    kind: input.kind ?? "OBJECT_TYPE",
     entityType: input.entityType,
     status: "QUEUED",
     scanned: 0,
@@ -284,11 +294,11 @@ async function drain(): Promise<void> {
       void persist(job);
       try {
         const context = await resolveObjectContext(job.targetId, job.versionId);
-        const result = await materializeObjectType(context, job.entityType, {
+        const runOptions = {
           pageSize: job.pageSize,
           maxRows: job.maxRows,
           startOffset: job.startOffset,
-          onProgress: (progress) => {
+          onProgress: (progress: { scanned: number; rows: number; pages: number }) => {
             job.scanned = progress.scanned;
             job.rows = progress.rows;
             job.pages = progress.pages;
@@ -296,7 +306,10 @@ async function drain(): Promise<void> {
             void persist(job);
           },
           shouldCancel: () => job.cancelRequested,
-        });
+        };
+        const result = job.kind === "RELATIONSHIP_TYPE"
+          ? await materializeRelationshipType(context, job.entityType, runOptions)
+          : await materializeObjectType(context, job.entityType, runOptions);
         job.scanned = result.scanned;
         job.rows = result.rows;
         job.pages = result.pages;

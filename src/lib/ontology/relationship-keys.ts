@@ -11,7 +11,7 @@ export type KeyMapping = { linkProperty?: string; entityProperty?: string };
  * 入参用结构类型而不是 `OntologyDefinition`：这里的规则只关心属性名与主键列，
  * 这样单测可以摆一个最小对象、工具也不必先过一遍 zod（和 modeling-review.ts 的做法一致）。
  */
-export type KeyMappableProperty = { name: string; required?: boolean; unique?: boolean; sourceField?: string; sourceId?: string };
+export type KeyMappableProperty = { name: string; required?: boolean; unique?: boolean; sourceField?: string | null; sourceId?: string | null };
 export type KeyMappableEntity = {
   id?: string;
   properties?: readonly KeyMappableProperty[];

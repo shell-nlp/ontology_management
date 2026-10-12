@@ -1,5 +1,5 @@
 import type { DataSourceRowFilter } from "@/lib/datasource/types";
-import { isLinkSourceConfigured, planLinkSource, type LinkPlan, type LinkSourceDefinition, type LinkSourceRelation } from "@/lib/ontology/link-source";
+import { hasKeyMappings, planLinkSource, type LinkPlan, type LinkSourceDefinition, type LinkSourceRelation } from "@/lib/ontology/link-source";
 import { objectIdOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
 import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
@@ -121,10 +121,86 @@ export function linkSeedFilters(plan: LinkPlan, seed: { entityType: string; keys
 function relationsToRead(context: ObjectContext, query: ObjectLinkQuery): LinkSourceRelation[] {
   const wanted = (query.relationshipType ?? "").trim();
   return context.definition.relationshipTypes.filter((relation) => {
-    if (!isLinkSourceConfigured(relation.linkSource)) return false;
+    // 外键式可以零配置（表和来源都从外键端主来源推断），所以判据是"键映射填了吗"。
+    if (!hasKeyMappings(relation)) return false;
     if (!wanted) return true;
     return relation.name === wanted || relation.id === wanted;
   });
+}
+
+/** 这条关系类型要从连接表里取的列：键映射落到的列 + 关系类型自己属性落到的列。 */
+export function linkReadColumns(relation: LinkSourceRelation, plan: LinkPlan & { ok: true }): string[] {
+  const propertyColumns = (relation as { properties?: readonly { name: string; sourceField?: string }[] }).properties ?? [];
+  return [...new Set([...plan.columns, ...propertyColumns.map((property) => (property.sourceField ?? "").trim()).filter(Boolean)])];
+}
+
+/**
+ * 整份读连接表时按哪些列排序 / 做游标：键映射落到的那些**真实列**。
+ * 这些列组合起来能唯一认出一行连接行，所以拿它当键集分页的排序键。
+ */
+export function linkOrderColumns(plan: LinkPlan & { ok: true }): string[] {
+  return plan.mode === "JOIN_TABLE"
+    ? [...new Set([...plan.source.pairs.map((pair) => pair.rowColumn), ...plan.target.pairs.map((pair) => pair.rowColumn)])]
+    : [...new Set([...plan.holder.keyColumns, ...plan.foreignKeys.rowColumns])];
+}
+
+/**
+ * 把一个连接行批次解码成边。**取数方式不同、解码只有这一处** ——
+ * 按需读（一跳展开）与整份物化（落进索引）必须产出同一批边，不然两边迟早各说各话。
+ */
+export function linksFromRows(
+  relation: LinkSourceRelation,
+  plan: LinkPlan & { ok: true },
+  rows: readonly Record<string, unknown>[],
+): { links: ObjectLinkRecord[]; skipped: number } {
+  const propertyColumns = (relation as { properties?: readonly { name: string; sourceField?: string }[] }).properties ?? [];
+  const links: ObjectLinkRecord[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const read = reader(row);
+    let sourceKey: ObjectPrimaryKey | null;
+    let targetKey: ObjectPrimaryKey | null;
+    let sourceType: string;
+    let targetType: string;
+    if (plan.mode === "JOIN_TABLE") {
+      sourceKey = keyFromPairs(plan.source.pairs, read);
+      targetKey = keyFromPairs(plan.target.pairs, read);
+      sourceType = plan.source.entityTypeName;
+      targetType = plan.target.entityTypeName;
+    } else {
+      const holderKey: ObjectPrimaryKey = {};
+      for (const column of plan.holder.keyColumns) {
+        const value = read(column);
+        if (value) holderKey[column] = value;
+      }
+      const referencedKey: ObjectPrimaryKey = {};
+      for (const [index, keyColumn] of plan.foreignKeys.keyColumns.entries()) {
+        const value = read(plan.foreignKeys.rowColumns[index]);
+        if (value) referencedKey[keyColumn] = value;
+      }
+      const holderIsSource = plan.keyHolder === "SOURCE";
+      const holderComplete = plan.holder.keyColumns.every((column) => holderKey[column]);
+      const referencedComplete = plan.foreignKeys.keyColumns.every((column) => referencedKey[column]);
+      sourceKey = holderIsSource ? (holderComplete ? holderKey : null) : referencedComplete ? referencedKey : null;
+      targetKey = holderIsSource ? (referencedComplete ? referencedKey : null) : holderComplete ? holderKey : null;
+      sourceType = holderIsSource ? plan.holder.entityTypeName : plan.foreignKeys.referenced.entityTypeName;
+      targetType = holderIsSource ? plan.foreignKeys.referenced.entityTypeName : plan.holder.entityTypeName;
+    }
+    const source = sourceKey && endpoint(sourceType, sourceKey);
+    const target = targetKey && endpoint(targetType, targetKey);
+    if (!source || !target) { skipped += 1; continue; }
+    links.push({
+      relationshipTypeId: relation.id ?? "",
+      relationshipType: relation.name,
+      source,
+      target,
+      properties: Object.fromEntries(propertyColumns.map((property) => [property.name, read(property.sourceField ?? property.name)]).filter(([, value]) => value !== "")),
+      origin: "source",
+      linkRef: `${relation.name}/${source.objectRef}->${target.objectRef}`,
+      warnings: [],
+    });
+  }
+  return { links, skipped };
 }
 
 /**
@@ -157,8 +233,7 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
       warnings.push(`数据资源「${label}」不支持结构化取行，读不出关系类型「${relation.name}」的实例。`);
       continue;
     }
-    const propertyColumns = (relation as { properties?: readonly { name: string; sourceField?: string }[] }).properties ?? [];
-    const wanted = [...new Set([...plan.columns, ...propertyColumns.map((property) => (property.sourceField ?? "").trim()).filter(Boolean)])];
+    const wanted = linkReadColumns(relation, plan);
     const result = await connector.selectRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, columns: wanted, filters, limit });
     if (result.truncated) warnings.push(`关系类型「${relation.name}」命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
     counted = true;
@@ -170,52 +245,9 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
       total = null;
     }
 
-    let skipped = 0;
-    for (const row of result.rows) {
-      const read = reader(row);
-      let sourceKey: ObjectPrimaryKey | null;
-      let targetKey: ObjectPrimaryKey | null;
-      let sourceType: string;
-      let targetType: string;
-      if (plan.mode === "JOIN_TABLE") {
-        sourceKey = keyFromPairs(plan.source.pairs, read);
-        targetKey = keyFromPairs(plan.target.pairs, read);
-        sourceType = plan.source.entityTypeName;
-        targetType = plan.target.entityTypeName;
-      } else {
-        const holderKey: ObjectPrimaryKey = {};
-        for (const column of plan.holder.keyColumns) {
-          const value = read(column);
-          if (value) holderKey[column] = value;
-        }
-        const referencedKey: ObjectPrimaryKey = {};
-        for (const [index, keyColumn] of plan.foreignKeys.keyColumns.entries()) {
-          const value = read(plan.foreignKeys.rowColumns[index]);
-          if (value) referencedKey[keyColumn] = value;
-        }
-        const holderIsSource = plan.keyHolder === "SOURCE";
-        const holderComplete = plan.holder.keyColumns.every((column) => holderKey[column]);
-        const referencedComplete = plan.foreignKeys.keyColumns.every((column) => referencedKey[column]);
-        sourceKey = holderIsSource ? (holderComplete ? holderKey : null) : referencedComplete ? referencedKey : null;
-        targetKey = holderIsSource ? (referencedComplete ? referencedKey : null) : holderComplete ? holderKey : null;
-        sourceType = holderIsSource ? plan.holder.entityTypeName : plan.foreignKeys.referenced.entityTypeName;
-        targetType = holderIsSource ? plan.foreignKeys.referenced.entityTypeName : plan.holder.entityTypeName;
-      }
-      const source = sourceKey && endpoint(sourceType, sourceKey);
-      const target = targetKey && endpoint(targetType, targetKey);
-      if (!source || !target) { skipped += 1; continue; }
-      links.push({
-        relationshipTypeId: relation.id ?? "",
-        relationshipType: relation.name,
-        source,
-        target,
-        properties: Object.fromEntries(propertyColumns.map((property) => [property.name, read(property.sourceField ?? property.name)]).filter(([, value]) => value !== "")),
-        origin: "source",
-        linkRef: `${relation.name}/${source.objectRef}->${target.objectRef}`,
-        warnings: [],
-      });
-    }
-    if (skipped) warnings.push(`关系类型「${relation.name}」有 ${skipped} 行的键不全（连接行里的连接列是空值），这些行没有取成边。`);
+    const decoded = linksFromRows(relation, plan, result.rows);
+    links.push(...decoded.links);
+    if (decoded.skipped) warnings.push(`关系类型「${relation.name}」有 ${decoded.skipped} 行的键不全（连接行里的连接列是空值），这些行没有取成边。`);
   }
 
   // 同一个 (关系类型, 起点, 终点) 只留一条：连接表里重复行不该在图上画出两条边。

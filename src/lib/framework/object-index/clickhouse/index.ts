@@ -11,10 +11,14 @@ import type {
   ObjectIndex,
   ObjectIndexCapabilities,
   ObjectIndexEntry,
+  ObjectIndexLink,
+  ObjectIndexLinkSyncResult,
   ObjectIndexMaterialization,
   ObjectIndexOrigin,
   ObjectIndexStats,
   ObjectIndexSyncResult,
+  ObjectLinkSearchQuery,
+  ObjectLinkSearchResult,
   ObjectSearchHit,
   ObjectSearchQuery,
   ObjectSearchResult,
@@ -41,6 +45,9 @@ const INSERT_CHUNK = 500;
  * 200 个键 encode 完约 20KB，离上限很远。
  */
 const PRUNE_DELETE_CHUNK = 200;
+/** 一次读边最多返回多少条（图谱一屏画不下更多）。 */
+const MAX_LINK_SEARCH_ROWS = 2000;
+const DEFAULT_LINK_SEARCH_ROWS = 500;
 
 let schemaPromise: Promise<void> | undefined;
 
@@ -84,6 +91,38 @@ async function ensureSchemaOnce(): Promise<void> {
    * 物化清单：**半份必须报数**。每个对象类型最近一次整份物化的结果都记一行（撞上限被截断也要如实写），
    * 对象页与查询警告都读它 —— 不然"只物化了 100 条"会被看成"这个类型只有 100 个对象"。
    */
+  /*
+   * **关系（边）索引**。对象表只存节点，边必须单独一张表：
+   * 一条边 = (关系类型, 起点对象键, 终点对象键) + 属性，`link_key` 是这三者的规范化串（唯一键）。
+   * 关系类型是双向的，**一条边只存一行**，读的时候两个方向都查（source_key / target_key）。
+   * ORDER BY 用 link_key 是为了 ReplacingMergeTree 能按「一条边」去重；
+   * 按节点展开靠 source_key / target_key 上的 bloom 跳数索引。
+   */
+  await clickHouseExecute(`
+    CREATE TABLE IF NOT EXISTS ${linksTable(database)}
+    (
+      target_id            String,
+      link_key             String,
+      relationship_type    String,
+      relationship_type_id String,
+      source_key           String,
+      target_key           String,
+      source_entity_type   String,
+      target_entity_type   String,
+      source_object_id     String,
+      target_object_id     String,
+      properties           String,
+      version_id           Nullable(String),
+      origin               LowCardinality(String) DEFAULT 'SNAPSHOT',
+      updated_at           DateTime64(3, 'UTC') DEFAULT now64(3),
+      version              DateTime64(9, 'UTC') DEFAULT now64(9),
+      INDEX object_links_source_idx source_key TYPE bloom_filter(0.01) GRANULARITY 4,
+      INDEX object_links_target_idx target_key TYPE bloom_filter(0.01) GRANULARITY 4,
+      INDEX object_links_rel_idx relationship_type TYPE bloom_filter(0.01) GRANULARITY 4
+    )
+    ENGINE = ReplacingMergeTree(version)
+    ORDER BY (target_id, link_key)
+  `);
   await clickHouseExecute(`
     CREATE TABLE IF NOT EXISTS ${database}.materialization_manifests
     (
@@ -145,6 +184,17 @@ function toEntry(row: EntryRow): ObjectIndexEntry {
   };
 }
 
+export function linksTable(database: string) {
+  return `${database}.object_links`;
+}
+
+/** 一条边的唯一键：`[关系类型, 起点对象键, 终点对象键]` 的 JSON 串（转义安全、不会撞）。 */
+function linkKeyOf(link: { relationshipType: string; source: { objectKey: string; objectId: string }; target: { objectKey: string; objectId: string } }) {
+  const source = link.source.objectKey || `id:${link.source.objectId}`;
+  const target = link.target.objectKey || `id:${link.target.objectId}`;
+  return JSON.stringify([link.relationshipType, source, target]);
+}
+
 function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null, origin: ObjectIndexOrigin) {
   return entries
     .map((entry) =>
@@ -180,6 +230,51 @@ async function insertEntries(targetId: string, entries: readonly ObjectIndexEntr
   return entries.length;
 }
 
+function linkInsertLines(targetId: string, links: readonly ObjectIndexLink[], versionId: string | null, origin: ObjectIndexOrigin) {
+  return links
+    .map((link) =>
+      JSON.stringify({
+        target_id: targetId,
+        link_key: linkKeyOf(link),
+        relationship_type: link.relationshipType,
+        relationship_type_id: link.relationshipTypeId,
+        source_key: link.source.objectKey || `id:${link.source.objectId}`,
+        target_key: link.target.objectKey || `id:${link.target.objectId}`,
+        source_entity_type: link.source.entityType,
+        target_entity_type: link.target.entityType,
+        source_object_id: link.source.objectId,
+        target_object_id: link.target.objectId,
+        properties: JSON.stringify(link.properties ?? {}),
+        version_id: versionId,
+        origin,
+      }),
+    )
+    .join("\n");
+}
+
+async function insertLinks(targetId: string, links: readonly ObjectIndexLink[], versionId: string | null, origin: ObjectIndexOrigin) {
+  if (!links.length) return 0;
+  const { database } = clickHouseConfig();
+  for (const chunk of chunked(links, INSERT_CHUNK)) {
+    await clickHouseExecute(
+      `INSERT INTO ${linksTable(database)}
+        (target_id, link_key, relationship_type, relationship_type_id, source_key, target_key, source_entity_type, target_entity_type, source_object_id, target_object_id, properties, version_id, origin)
+       FORMAT JSONEachRow
+       ${linkInsertLines(targetId, chunk, versionId, origin)}`,
+    );
+  }
+  return links.length;
+}
+
+async function countTargetLinks(targetId: string) {
+  const { database } = clickHouseConfig();
+  const rows = await clickHouseQuery<{ n: number }>(
+    `SELECT count() AS n FROM ${linksTable(database)} FINAL WHERE target_id = {target:String}`,
+    { params: { target: targetId } },
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 async function countTarget(targetId: string) {
   const { database } = clickHouseConfig();
   const rows = await clickHouseQuery<{ n: number }>(
@@ -208,6 +303,19 @@ async function countTypeOrigin(targetId: string, entityType: string, origin: Obj
     { params: { target: targetId, type: entityType, origin } },
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+/** 按 `link_key` 小批量删边（键进 URL 参数，调用方负责按 PRUNE_DELETE_CHUNK 切好）。 */
+async function deleteLinksByKeys(targetId: string, linkKeys: string[], origin: ObjectIndexOrigin, relationshipType?: string) {
+  if (!linkKeys.length) return;
+  const { database } = clickHouseConfig();
+  const params: ClickHouseParams = { target: targetId, origin, keys: clickHouseArrayParam(linkKeys) };
+  let condition = "target_id = {target:String} AND origin = {origin:String} AND link_key IN {keys:Array(String)}";
+  if (relationshipType) {
+    params.rel = relationshipType;
+    condition += " AND relationship_type = {rel:String}";
+  }
+  await clickHouseExecute(`DELETE FROM ${linksTable(database)} WHERE ${condition}`, { params, settings: { mutations_sync: "1" } });
 }
 
 /** 删除（轻量 DELETE）。`mutations_sync=1` 让删除在返回前完成，否则紧接着的统计会读到旧行。 */
@@ -274,6 +382,67 @@ async function pruneNotIn(targetId: string, keepKeys: string[], origin: ObjectIn
   return doomed.length;
 }
 
+type LinkRow = {
+  link_key: string;
+  relationship_type: string;
+  relationship_type_id: string;
+  source_key: string;
+  target_key: string;
+  source_entity_type: string;
+  target_entity_type: string;
+  source_object_id: string;
+  target_object_id: string;
+  properties: string;
+};
+
+function toLink(row: LinkRow): ObjectIndexLink {
+  return {
+    relationshipType: row.relationship_type ?? "",
+    relationshipTypeId: row.relationship_type_id ?? "",
+    source: { entityType: row.source_entity_type ?? "", objectKey: row.source_key ?? "", objectId: row.source_object_id ?? "" },
+    target: { entityType: row.target_entity_type ?? "", objectKey: row.target_key ?? "", objectId: row.target_object_id ?? "" },
+    properties: parseJsonObject<Record<string, unknown>>(row.properties, {}),
+  };
+}
+
+/** 边过滤条件（关系类型 + 任一端命中给定的对象键）—— 查询与计数共用一份，别两处各写一遍。 */
+function linkWhere(query: ObjectLinkSearchQuery) {
+  const conditions: string[] = ["target_id = {target:String}"];
+  const params: ClickHouseParams = { target: query.targetId };
+  const types = (query.relationshipTypes ?? []).map((value) => value.trim()).filter(Boolean);
+  if (types.length) {
+    params.types = clickHouseArrayParam(types);
+    conditions.push("(relationship_type IN {types:Array(String)} OR relationship_type_id IN {types:Array(String)})");
+  }
+  const nodeKeys = (query.nodeKeys ?? []).map((value) => value.trim()).filter(Boolean);
+  if (nodeKeys.length) {
+    params.nodes = clickHouseArrayParam(nodeKeys);
+    conditions.push("(source_key IN {nodes:Array(String)} OR target_key IN {nodes:Array(String)})");
+  }
+  return { condition: conditions.join(" AND "), params };
+}
+
+async function searchLinks(query: ObjectLinkSearchQuery): Promise<ObjectLinkSearchResult> {
+  await ensureClickHouseObjectIndexSchema();
+  const { database } = clickHouseConfig();
+  const started = Date.now();
+  const limit = Math.min(MAX_LINK_SEARCH_ROWS, Math.max(1, Math.floor(query.limit ?? DEFAULT_LINK_SEARCH_ROWS)));
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const { condition, params } = linkWhere(query);
+  const [rows, counts] = await Promise.all([
+    clickHouseQuery<LinkRow>(
+      `SELECT link_key, relationship_type, relationship_type_id, source_key, target_key, source_entity_type, target_entity_type, source_object_id, target_object_id, properties
+         FROM ${linksTable(database)} FINAL
+        WHERE ${condition}
+        ORDER BY relationship_type ASC, source_key ASC, target_key ASC
+        LIMIT ${limit} OFFSET ${offset}`,
+      { params },
+    ),
+    clickHouseQuery<{ total: number }>(`SELECT count() AS total FROM ${linksTable(database)} FINAL WHERE ${condition}`, { params }),
+  ]);
+  return { links: rows.map(toLink), total: Number(counts[0]?.total ?? 0), tookMs: Date.now() - started };
+}
+
 async function searchObjects(query: ObjectSearchQuery): Promise<ObjectSearchResult> {
   await ensureClickHouseObjectIndexSchema();
   const { database } = clickHouseConfig();
@@ -306,12 +475,18 @@ async function stats(targetId: string): Promise<ObjectIndexStats> {
   await ensureClickHouseObjectIndexSchema();
   const { database } = clickHouseConfig();
   const table = tableName(database);
-  const [entries, labels, latest] = await Promise.all([
+  const [entries, labels, links, linkLabels, latest] = await Promise.all([
     countTarget(targetId),
     clickHouseQuery<{ label: string; count: number }>(
       `SELECT label, count() AS count FROM (
          SELECT arrayJoin(labels) AS label FROM ${table} FINAL WHERE target_id = {target:String}
        ) GROUP BY label ORDER BY count DESC, label ASC`,
+      { params: { target: targetId } },
+    ),
+    countTargetLinks(targetId),
+    clickHouseQuery<{ label: string; count: number }>(
+      `SELECT relationship_type AS label, count() AS count FROM ${linksTable(database)} FINAL
+        WHERE target_id = {target:String} GROUP BY relationship_type ORDER BY count DESC, label ASC`,
       { params: { target: targetId } },
     ),
     clickHouseQuery<{ updated_at: string }>(
@@ -323,6 +498,8 @@ async function stats(targetId: string): Promise<ObjectIndexStats> {
   return {
     entries,
     byLabel: labels.map((row) => ({ label: row.label, count: Number(row.count) })),
+    links,
+    byRelationship: linkLabels.map((row) => ({ label: row.label, count: Number(row.count) })),
     // 空集时 max(updated_at) 是 1970 纪元值：那不是"更新时间"，要当没有。
     updatedAt:
       latest[0]?.updated_at && latest[0].updated_at.length && !latest[0].updated_at.startsWith("1970-01-01T00:00:00")
@@ -357,6 +534,56 @@ export function createClickHouseObjectIndex(): ObjectIndex {
         }
       }
       return { upserted, deleted, total: await countTarget(targetId) };
+    },
+    /**
+     * 增量写入边。`pruneRelationshipType` 把 prune 收窄到一个关系类型 —— 整份物化是
+     * 「一个关系类型一批」，不收窄会删掉别的关系类型的边（对象侧踩过同一个坑）。
+     */
+    async syncTargetLinks(targetId, links, options): Promise<ObjectIndexLinkSyncResult> {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const versionId = options?.versionId ?? null;
+      const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
+      const upserted = await insertLinks(targetId, links, versionId, origin);
+      let deleted = 0;
+      if (options?.prune) {
+        const rel = options.pruneRelationshipType;
+        const keep = new Set(links.map((link) => linkKeyOf(link)));
+        const params: ClickHouseParams = { target: targetId, origin };
+        let condition = "target_id = {target:String} AND origin = {origin:String}";
+        if (rel) {
+          params.rel = rel;
+          condition += " AND relationship_type = {rel:String}";
+        }
+        // 键不进 URL 的一次性大参数：读回现存键、本地算差集、再分小块删（见 PRUNE_DELETE_CHUNK）。
+        const existing = await clickHouseQuery<{ link_key: string }>(
+          `SELECT link_key FROM ${linksTable(database)} FINAL WHERE ${condition}`,
+          { params },
+        );
+        const doomed = existing.map((row) => row.link_key).filter((key) => key && !keep.has(key));
+        for (const chunk of chunked(doomed, PRUNE_DELETE_CHUNK)) {
+          await deleteLinksByKeys(targetId, chunk, origin, rel);
+        }
+        deleted = doomed.length;
+      }
+      return { upserted, deleted, total: await countTargetLinks(targetId) };
+    },
+    searchLinks,
+    async deleteRelationshipLinks(targetId, relationshipType, options) {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const params: ClickHouseParams = { target: targetId, rel: relationshipType };
+      let condition = "target_id = {target:String} AND relationship_type = {rel:String}";
+      if (options?.origin) {
+        params.origin = options.origin;
+        condition += " AND origin = {origin:String}";
+      }
+      const rows = await clickHouseQuery<{ n: number }>(`SELECT count() AS n FROM ${linksTable(database)} FINAL WHERE ${condition}`, { params });
+      const deleted = Number(rows[0]?.n ?? 0);
+      if (deleted) {
+        await clickHouseExecute(`DELETE FROM ${linksTable(database)} WHERE ${condition}`, { params, settings: { mutations_sync: "1" } });
+      }
+      return deleted;
     },
     readObject,
     async deleteObjects(targetId, objectKeys) {
@@ -416,9 +643,14 @@ export function createClickHouseObjectIndex(): ObjectIndex {
     searchObjects,
     async deleteTargetObjects(targetId) {
       await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      // 边表一起清：删本体存储不能留下孤儿边。
+      await clickHouseExecute(`DELETE FROM ${linksTable(database)} WHERE target_id = {target:String}`, {
+        params: { target: targetId },
+        settings: { mutations_sync: "1" },
+      });
       await deleteWhere(targetId, null);
       // 清单是"这个本体存储的物化状态"，索引清了它也要清：否则会留着一条"已物化 100 条"的假状态。
-      const { database } = clickHouseConfig();
       await clickHouseExecute(`DELETE FROM ${database}.materialization_manifests WHERE target_id = {target:String}`, {
         params: { target: targetId },
         settings: { mutations_sync: "1" },
