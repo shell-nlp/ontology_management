@@ -1,4 +1,4 @@
-import { columnForProperty, primaryKeyColumns, type IdentityEntityType } from "@/lib/instance/object-identity";
+import { columnForProperty, primaryKeyColumns, type IdentityEntityType } from "@/lib/ontology/fields";
 import { keyMappingRows, primaryKeyPropertyNames, type KeyMapping } from "@/lib/ontology/relationship-keys";
 
 /**
@@ -6,7 +6,9 @@ import { keyMappingRows, primaryKeyPropertyNames, type KeyMapping } from "@/lib/
  *
  * 为什么单开一层：定义层说的是属性（`entityProperty`）、键映射说的是连接属性（`linkProperty`），
  * 而 SQL 只认真实列名。这三者的换算只能有一处，否则每加一种模式就要在服务、接口、界面各写一遍。
- * 本文件是**纯函数**（不连库、不认识 TypeORM），单测可以直接摆最小定义。
+ * 本文件是**纯函数**（不连库、不认识 TypeORM），单测可以直接摆最小定义；
+ * 也**不引 node:crypto**（属性 ↔ 列的换算取 `@/lib/ontology/fields`），所以**浏览器里也能直接调它** ——
+ * 界面要当场说清"这条关系类型读不读得出边"，口径必须和真正物化时用的是同一处。
  *
  * 两种支撑方式（对齐 Palantir 的 link type backing datasource）：
  * - `JOIN_TABLE`：多对多。连接行从中间表读，两端的键映射各自指明"中间表的哪一列 = 该端主键的哪一列"；

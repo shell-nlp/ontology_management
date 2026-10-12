@@ -11,6 +11,7 @@ import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
 import { type Definition } from "@/lib/ontology/draft";
 import { brokenSourcesOf } from "@/lib/datasource/source-binding";
 import { primaryKeyFromProperties } from "@/lib/ontology/fields";
+import { planLinkSource } from "@/lib/ontology/link-source";
 
 
 
@@ -276,6 +277,27 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
   const definitions = selected ? effectivePropertiesFor(version?.definition ?? null, selected.labels) : null;
   const managed = Boolean(definitions);
 
+  /**
+   * 「索引与物化」里关系类型那一段的行。
+   *
+   * 判据不能只看"选了数据资源"：外键式是**零配置**的（两端键映射填了就行，表和来源都从外键端对象类型推），
+   * 按老判据这种关系类型会被整行藏掉，用户反而看不到"还差什么"。这里直接调后端同一个 `planLinkSource` ——
+   * 面板上说的"读得出 / 读不出"和真正物化时的结论才是同一处算出来的。
+   */
+  const indexLinkRows = useMemo(() => {
+    const definition = version?.definition;
+    if (!definition) return [];
+    return definition.relationshipTypes.map((item) => {
+      const plan = planLinkSource(definition, item);
+      return {
+        name: item.name,
+        sourceLabel: plan.ok ? [plan.table.schema, plan.table.name].filter(Boolean).join(".") : "",
+        readable: plan.ok,
+        reason: plan.ok ? "" : plan.reason,
+      };
+    });
+  }, [version?.definition]);
+
   const save = async () => {
     if (!target || !selected) return;
     try { setBusy(true); const current = await ensureDraft(); const updated = await api<EntityRow>(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((rows) => rows.map((row) => row.id === updated.id ? updated : row)); await onSnapshotChange(); notify(`对象属性已保存到草稿快照，发布前不会影响 ${graphNoun(target)}。`); } catch (reason) { fail(reason); } finally { setBusy(false); }
@@ -363,13 +385,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         sourceLabel: item.sources?.[0] ? `${item.sources[0].schema ? `${item.sources[0].schema}.` : ""}${item.sources[0].view}` : "",
         indexPolicy: item.indexPolicy ?? "AUTO",
       }))}
-      links={(version?.definition.relationshipTypes ?? [])
-        // 只有配了数据来源（连接表）的关系类型才物化得了；标签就是那张表。
-        .filter((item) => item.linkSource?.dataSourceId)
-        .map((item) => ({
-          name: item.name,
-          sourceLabel: item.linkSource?.view ? `${item.linkSource.schema ? `${item.linkSource.schema}.` : ""}${item.linkSource.view}` : "",
-        }))}
+      links={indexLinkRows}
       mayWrite={may(user, "instance.write")}
       onClose={() => setIndexOpen(false)}
       notify={notify}

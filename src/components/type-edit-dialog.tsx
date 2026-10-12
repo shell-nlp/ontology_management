@@ -370,6 +370,17 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
    * 新加的一行默认落在"主键对主键"上 —— 多数关系类型点一下「添加映射」就够，不用两个框都手填。
    */
   const keyMappingCount = keyMappingRows(sourceKeys).length + keyMappingRows(targetKeys).length;
+  /**
+   * 键映射区块的锚点：上面那条"读不出边"的提示要能一键跳过去 ——
+   * 提示只说后果，落点得离"该填哪儿"近一点，不然看完提示还得自己找。
+   */
+  const keySectionRef = useRef<HTMLElement | null>(null);
+  const [keySectionFlash, setKeySectionFlash] = useState(false);
+  const jumpToKeyMappings = () => {
+    keySectionRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setKeySectionFlash(true);
+    window.setTimeout(() => setKeySectionFlash(false), 1600);
+  };
   const keySides = [
     { side: "source" as const, label: "起始端", entity: sourceEntity, rows: sourceKeys, setRows: setSourceKeys },
     { side: "target" as const, label: "终止端", entity: targetEntity, rows: targetKeys, setRows: setTargetKeys },
@@ -564,12 +575,30 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   </select>
                   <small>{CARDINALITY_OPTIONS.find((option) => option.value === cardinality)?.hint}它只说明数据上的数量关系，不影响「关系类型是双向的」 —— 两个方向照样都能走。</small>
                 </label>
+                {/*
+                 * 两端键映射空着时的**显眼提示**：键映射是选填的（不填也能发布），但后果不是"少填一项"，
+                 * 而是**这条关系类型读不出实例** —— 图上看不到边、也物化不了。选填项更要让人看见代价，
+                 * 所以不缩在键映射区块里用一句小字带过，而是摆在这一段最前面。
+                 */}
+                {keyMappingCount === 0 && (
+                  <div className="ted-callout warn">
+                    <AlertTriangle size={14} />
+                    <div>
+                      <b>两端的键映射还空着 —— 这条关系类型读不出实例</b>
+                      <span>
+                        不填不算错、也不挡发布，但实例图谱上不会出现它的边，也没法整份物化。
+                        外键式（多对一 / 一对一）两端各填一条就够 —— 外键端填自己的外键属性，被引用端填主键；多对多还要再选一张连接表。
+                      </span>
+                      <button type="button" className="quiet-button small" onClick={jumpToKeyMappings}>去填两端的键映射</button>
+                    </div>
+                  </div>
+                )}
                 <section className="ted-section">
                   <div className="ted-section-head">
                     <h3><Database size={13} />关系的数据来源</h3>
                     <em>{linkSource.mode === "JOIN_TABLE" ? (linkSource.dataSourceId ? "连接表式" : "未配连接表") : linkSource.view || linkSource.dataSourceId ? "外键式（已指定表）" : "外键式（自动）"}</em>
                   </div>
-                  <p className="ted-key-hint">关系实例（边）从哪儿读。**外键式（多对一 / 一对一）零配置**：两端键映射填好就行 —— 外键在哪一端自动判断，表和数据资源用那一端对象类型的主来源。**连接表式（多对多）必须选一张连接表**（连接行在那张表里，别处无从得知）。两端键映射都不填 = 只做类型层建模，图上看不到它的边。</p>
+                  <p className="ted-key-hint">关系实例（边）从哪儿读。<b>外键式（多对一 / 一对一）零配置</b>：两端键映射填好就行 —— 外键在哪一端自动判断，表和数据资源用那一端对象类型的主来源。<b>连接表式（多对多）必须选一张连接表</b>（连接行在那张表里，别处无从得知）。两端键映射都不填 = 只做类型层建模，图上看不到它的边。</p>
                   <div className="ted-grid-2">
                     <label className="ted-field">
                       <span>怎么连</span>
@@ -597,12 +626,12 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   )}
                   {linkFieldRows.length > 0 && <small>{linkSource.view} 读到 {linkFieldRows.length} 个字段；下面「连接属性」的输入框可以直接从下拉里挑。</small>}
                 </section>
-                <section className="ted-section ted-key">
+                <section className={keySectionFlash ? "ted-section ted-key flash" : "ted-section ted-key"} ref={keySectionRef}>
                   <div className="ted-section-head">
                     <h3><KeyRound size={13} />两端的键映射</h3>
-                    <em>{keyMappingCount ? `${keyMappingCount} 条` : "空"}</em>
+                    <em className={keyMappingCount ? undefined : "ted-section-warn"}>{keyMappingCount ? `${keyMappingCount} 条` : "还没填 · 图上看不到边"}</em>
                   </div>
-                  <p className="ted-key-hint">这条关系类型在数据上怎么把两个对象类型接起来：左边写关系类型这一侧的连接属性（连接表的列名），右边挑该侧对象类型上的属性。写多条就是复合键。留空只表示还没配，不影响发布。</p>
+                  <p className="ted-key-hint">这条关系类型在数据上怎么把两个对象类型接起来：左边写关系类型这一侧的连接属性（连接表的列名），右边挑该侧对象类型上的属性。写多条就是复合键。<b>留空不影响发布，但这条关系类型会读不出实例</b> —— 实例图谱上没有它的边，也整份物化不了。</p>
                   <div className="ted-key-cols">
                     {keySides.map(({ side, label, entity: sideEntity, rows }) => {
                       const sideKeyProperties = new Set(primaryKeyPropertyNames(sideEntity));
@@ -632,7 +661,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                               </select>
                               <button type="button" className="ted-key-remove" onClick={() => removeKeyMapping(side, index)} aria-label={`删除${label}的这一条映射`}><Trash2 size={13} /></button>
                             </div>
-                          )) : <p className="ted-props-empty">还没有映射。两端都绑了表、又想让模型知道它们按哪几个字段对得上时再配。</p>}
+                          )) : <p className="ted-props-empty warn">还没有映射 —— 这条关系类型读不出实例：图上看不到它的边，也整份物化不了。外键式两端各加一条就够。</p>}
                         </div>
                       );
                     })}

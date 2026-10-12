@@ -463,7 +463,9 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   <b>键映射</b>
                   {selectedRelationKeys.map((item, index) => <p key={`${item.label}-${index}`}><span>{item.label}</span>{item.text}</p>)}
                 </div>
-              ) : null}
+              ) : (
+                <p className="ob-inspector-warning"><AlertTriangle size={13} />两端的键映射还空着：这条关系类型读不出实例，图上看不到它的边，也整份物化不了。点「编辑」在「两端的键映射」里补上。</p>
+              )}
               <InvolvedActions definition={definition} relationTypeId={selectedRelation.id} onOpen={onOpenActions} />
               <div className="graph-inspector-actions">
                 <button className="graph-action primary" disabled={!canEdit} onClick={() => setDialog({ kind: "relation", mode: "edit", id: selectedRelation.id })}><Pencil size={13} />编辑</button>

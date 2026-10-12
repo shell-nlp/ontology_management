@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Database, Layers, RefreshCw, RotateCcw, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Database, Layers, RefreshCw, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
 
 /**
@@ -46,8 +46,12 @@ type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; v
 type Stats = { entries: number; byLabel: { label: string; count: number }[]; links: number; byRelationship: { label: string; count: number }[]; updatedAt: string | null };
 
 export type IndexTypeRow = { name: string; sourceLabel: string; indexPolicy: "AUTO" | "INDEXED" | "FEDERATED" };
-/** 关系类型（边）：配了数据来源（连接表）的才物化得了，`sourceLabel` 就是那张表。 */
-export type IndexLinkRow = { name: string; sourceLabel: string };
+/**
+ * 关系类型（边）那一行。`readable` = 能排出取数计划（外键式只要两端键映射填了就算，不用另选数据资源）。
+ * 读不出的那些**不进这张表**，只在表尾用一条提示说清有几条、为什么 —— 类型层声明本身合法，
+ * 不该假装它们"配好了"，也不必占一整行。
+ */
+export type IndexLinkRow = { name: string; sourceLabel: string; readable: boolean; reason: string };
 
 type Props = {
   targetId: string;
@@ -330,15 +334,18 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
   // 完成度先分好堆再按档位取，数量与行用的是同一份判断，不会出现"数字说有、表里没有"。
   const pendingTypes = shownTypes.filter((type) => !isSettled("OBJECT_TYPE", type.name));
   const doneTypes = shownTypes.filter((type) => isSettled("OBJECT_TYPE", type.name));
-  const pendingLinks = links.filter((link) => !isSettled("RELATIONSHIP_TYPE", link.name));
-  const doneLinks = links.filter((link) => isSettled("RELATIONSHIP_TYPE", link.name));
+  // 读不出的关系类型单独拎出来：表格只列读得出的，读不出的收在表尾那条提示里催人去补键映射。
+  const readableLinks = links.filter((link) => link.readable);
+  const blockedLinks = links.filter((link) => !link.readable);
+  const pendingLinks = readableLinks.filter((link) => !isSettled("RELATIONSHIP_TYPE", link.name));
+  const doneLinks = readableLinks.filter((link) => isSettled("RELATIONSHIP_TYPE", link.name));
   const rowCount = {
-    ALL: shownTypes.length + links.length,
+    ALL: shownTypes.length + readableLinks.length,
     PENDING: pendingTypes.length + pendingLinks.length,
     DONE: doneTypes.length + doneLinks.length,
   };
   const visibleTypes = completionFilter === "PENDING" ? pendingTypes : completionFilter === "DONE" ? doneTypes : shownTypes;
-  const visibleLinks = completionFilter === "PENDING" ? pendingLinks : completionFilter === "DONE" ? doneLinks : links;
+  const visibleLinks = completionFilter === "PENDING" ? pendingLinks : completionFilter === "DONE" ? doneLinks : readableLinks;
   const toggle = (name: string) =>
     setSelected((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
   const allVisibleSelected = visibleTypes.length > 0 && visibleTypes.every((type) => !type.sourceLabel || selected.includes(type.name));
@@ -353,8 +360,8 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
       <span className="eyebrow">对象来源</span>
       <h2>索引与物化</h2>
       <p className="subtle">
-        对象索引是可以重建的副本（权威仍在业务库）：这里按**对象类型**把业务库整份物化进来，供检索、过滤与聚合使用；
-        **关系类型**的边单独物化（一条边一行，双向共用）。手工建的、动作写的、取进草稿的对象走另一条路，随版本快照发布。
+        对象索引是可以重建的副本（权威仍在业务库）：这里按<b>对象类型</b>把业务库整份物化进来，供检索、过滤与聚合使用；
+        <b>关系类型</b>的边单独物化（一条边一行，双向共用）。手工建的、动作写的、取进草稿的对象走另一条路，随版本快照发布。
       </p>
 
       <div className="index-summary">
@@ -509,8 +516,8 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
           <span role="columnheader" />
         </div>
         {loading && <div className="index-row"><span className="subtle">读取中…</span></div>}
-        {!loading && !links.length && <div className="index-row"><span className="subtle">还没有能读实例的关系类型：外键式把两端键映射填上就行，连接表式再选一张连接表。</span></div>}
-        {!loading && links.length > 0 && !visibleLinks.length && <div className="index-row"><span className="subtle">{completionFilter === "DONE" ? "这个范围里还没有已完成的关系类型。" : "关系类型都没有未完成的 —— 都整份物化过了（要一起看就切到「已完成」）。"}</span></div>}
+        {!loading && !readableLinks.length && <div className="index-row"><span className="subtle">还没有能读实例的关系类型：外键式把两端键映射填上就行，连接表式再选一张连接表。</span></div>}
+        {!loading && readableLinks.length > 0 && !visibleLinks.length && <div className="index-row"><span className="subtle">{completionFilter === "DONE" ? "这个范围里还没有已完成的关系类型。" : "关系类型都没有未完成的 —— 都整份物化过了（要一起看就切到「已完成」）。"}</span></div>}
         {!loading && visibleLinks.map((link) => {
           const item = indexed(link.name);
           const state = item ? (item.truncated ? "partial" : "full") : "none";
@@ -554,6 +561,23 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
             </span>
           </div>;
         })}
+        {/*
+         * 读不出实例的关系类型：**不占一行一行**，收成表尾一条提示。
+         * 用户口径 2026-10-12：键映射是选填的，但不能让人以为"这面板没东西" —— 有几条、为什么、去哪儿补，都要写清。
+         */}
+        {!loading && blockedLinks.length > 0 && (
+          <div className="index-row" role="row">
+            <span className="index-warn" title={blockedLinks.slice(0, 8).map((link) => `${link.name}：${link.reason}`).join("\n")}>
+              <AlertTriangle size={14} />
+              <span>
+                <b>还有 {blockedLinks.length} 条关系类型读不出实例</b>
+                （本份本体共 {links.length} 条）：两端键映射还空着，或者连接表式还没选连接表 ——
+                这些类型在读实例时看不到边，也不能整份物化（{blockedLinks.slice(0, 5).map((link) => link.name).join("、")}{blockedLinks.length > 5 ? " 等" : ""}）。
+                到「本体建模」点开关系类型，在「两端的键映射」里补上就行：外键式两端各填一条，多对多再选一张连接表。
+              </span>
+            </span>
+          </div>
+        )}
       </div>
       {rows.some((item) => item.truncated) && <div className="notice error">
         <AlertCircle size={15} />

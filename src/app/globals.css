@@ -281,6 +281,11 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .target-dialog { width:min(560px, 100%); }
 /* 类清单里的数据来源标记：只有把类绑到表上的时候才出现。 */
 .type-row .type-source { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; color: #1d4ed8; background: #eef4ff; border: 1px solid #d9e4ff; font-size: 10.5px; font-style: normal; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; }
+/* 关系类型清单里的键映射状态：一行扫完"哪些还没配"，不用逐条点开（用户口径 2026-10-12）。
+   用 inline-block 而不是 inline-flex —— 长映射要能被 max-width 截断成省略号，flex 容器里 text-overflow 不生效。 */
+.type-row .type-key { display: inline-block; max-width: 300px; padding: 1px 6px; color: #41556b; background: #f4f7fb; border: 1px solid #dde6f0; font-size: 10.5px; font-style: normal; font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.type-row .type-key svg { margin-right: 4px; vertical-align: -2px; }
+.type-row .type-key.warn { color: #a1620a; background: #fff8ea; border-color: #f0d29a; }
 
 /* ---------- 分档切换器（跨页共用：本体技能 / MCP 调试） ---------- */
 /*
@@ -412,6 +417,10 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-actions .action, .index-actions .quiet-button { white-space:nowrap; }
 /* 只有一句说明的空态行：让它横跨整行，别挤在第一列（28px）里一个字一行。 */
 .index-row > .subtle { grid-column:1 / -1; }
+/* 关系类型那段"读不出实例"的提示：整行铺开，别挤进 28px 的勾选列里一个字一行。 */
+.index-row > .index-warn { grid-column:1 / -1; display:flex; align-items:flex-start; gap:8px; padding:9px 10px; border:1px solid #f3d9a6; border-radius:4px; background:#fff9ec; color:#8a5a10; font-size:11.5px; line-height:1.65; }
+.index-row > .index-warn svg { flex:none; margin-top:1px; }
+.index-row > .index-warn b { color:#8a4b06; }
 @media (max-width:760px) { .index-row { grid-template-columns:1fr; } .index-row.head { display:none; } }
 .index-jobs { border:1px solid var(--line); border-radius:4px; padding:10px 12px; margin-bottom:10px; background:#fbfcfe; }
 .index-jobs-head { display:flex; align-items:baseline; justify-content:space-between; }

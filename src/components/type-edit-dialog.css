@@ -232,3 +232,16 @@
 .ted-key-remove:hover { color: #8c3b26; background: #fff2ee; border-color: #dfb0a2; }
 .ted-key-hint { margin: 0; color: var(--ted-soft); font-size: 10.5px; line-height: 1.6; }
 .ted-key > small { color: var(--ted-soft); font-size: 10px; line-height: 1.55; }
+
+/*
+ * 「读不出实例」的提示（选填项的后果）与键映射标题上的红字牌：
+ * 键映射不填也能发布，所以不能靠按钮禁用去挡 —— 只能把代价写在它旁边，并且让人一眼看到。
+ */
+.ted-callout { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 11px 12px; border: 1px solid #efd9ac; border-left: 3px solid #c2740c; border-radius: 5px; background: #fffaf0; }
+.ted-callout > svg { margin-top: 1px; color: #b4700c; }
+.ted-callout b { display: block; color: #7c4a06; font-size: 12px; }
+.ted-callout span { display: block; margin-top: 4px; color: #7b5c2c; font-size: 11px; line-height: 1.6; }
+.ted-callout button { margin-top: 8px; }
+.ted-section-head em.ted-section-warn { padding: 1px 7px; border: 1px solid #f0d29a; border-radius: 99px; background: #fff6e6; color: #a1620a; letter-spacing: 0; }
+.ted-key.flash { border-radius: 4px; box-shadow: 0 0 0 3px rgba(194,116,12,.18); transition: box-shadow .2s ease; }
+.ted-props-empty.warn { color: #a1620a; }
