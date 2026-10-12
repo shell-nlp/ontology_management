@@ -67,7 +67,12 @@ const relationshipRefSchema = z.strictObject({
 });
 
 export const queryDslSchema = z.strictObject({
-  version: z.literal("1.0"),
+  /*
+   * DSL 语法版本：声明这份 JSON 按哪一版查询语言写的，和本体版本（已发布 / 草稿）无关 ——
+   * 本体版本由运行上下文决定，调用方不需要、也没法在 query 里指定。
+   * 缺省按 "1.0" 处理（当前也只接受这一版）：模型漏写不该被判成"结构不合法"，它没有别的版本可选。
+   */
+  version: z.literal("1.0").default("1.0"),
   kind: z.enum(["records", "aggregate"]),
   from: z.strictObject({
     object_type: z.string().trim().min(1),

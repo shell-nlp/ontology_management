@@ -68,6 +68,16 @@ describe("query-dsl schema", () => {
     expect(query.limit).toBe(100);
     expect(query.relationships).toEqual([]);
   });
+
+  it("省略 version 时按 1.0 处理（DSL 语法版本与本体版本无关）", () => {
+    const query = parseQueryDsl({
+      kind: "records",
+      from: { object_type: "专线产品用户" },
+      select: [{ field: { property: "统计日期" }, as: "统计日期" }],
+    });
+
+    expect(query.version).toBe("1.0");
+  });
 });
 
 describe("resolveQueryDsl", () => {
