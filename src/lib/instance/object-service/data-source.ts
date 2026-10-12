@@ -107,7 +107,7 @@ export async function selectRowsBy(
   source: { schema: string; view: string },
   columns: string[],
   filters: DataSourceRowFilter[],
-  options: { limit: number; offset?: number; search?: { text: string; columns: string[] } },
+  options: { limit: number; offset?: number; search?: { text: string; columns: string[] }; orderBy?: string[]; after?: unknown[] },
   warnings: string[],
 ): Promise<DataSourceRows> {
   const { connector, label } = await connectorFor(dataSourceId);
@@ -121,6 +121,8 @@ export async function selectRowsBy(
     ...(options.search ? { search: options.search } : {}),
     limit: options.limit,
     offset: Math.max(0, Math.floor(options.offset ?? 0)),
+    ...(options.orderBy?.length ? { orderBy: options.orderBy } : {}),
+    ...(options.after?.length ? { after: options.after } : {}),
   });
   if (result.truncated) warnings.push(`命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
   return result;
@@ -209,7 +211,18 @@ export function createDataSourceObjectSource(): ObjectSource {
       const search = query.text?.trim()
         ? { text: query.text.trim(), columns: columns.slice(0, MAX_SEARCH_COLUMNS) }
         : undefined;
-      const rows = await selectRowsBy(main.dataSourceId, main, columns, filters, { limit, offset, search }, warnings);
+      // 游标翻页：列是**源列**，与 offset 互斥（给了排序就不再用 offset）。第一页只有 columns、没有 values。
+      const cursor = query.cursor?.columns?.length ? query.cursor : null;
+      const rows = await selectRowsBy(
+        main.dataSourceId,
+        main,
+        columns,
+        filters,
+        cursor
+          ? { limit, offset: 0, search, orderBy: cursor.columns, after: cursor.values }
+          : { limit, offset, search },
+        warnings,
+      );
       const records = rows.rows.map((row) => recordOf(entityTypeName, entityType, rowProperties(entityType, row), warnings));
 
       let total: number | null = null;

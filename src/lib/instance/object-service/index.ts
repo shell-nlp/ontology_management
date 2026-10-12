@@ -1,7 +1,7 @@
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
-import { objectIdOf, objectKeyOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
+import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
 import { createDataSourceObjectSource } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
 import { getTarget } from "@/lib/platform/targets";
@@ -279,6 +279,28 @@ export async function materializeObjectType(
   let total: number | null = null;
   let truncated = false;
 
+  /*
+   * 深表翻页走**键集（游标）**：按主键列升序排，下一页只取"排序键 > 上一页最后一个键"的行。
+   * 为什么：OFFSET 在深表上又慢（Oracle 要把前面几页读出来再丢掉，还有硬上限），
+   * 而游标每页都等价于点查。只有"从头读"才用游标 —— 断点续跑只存了条数（scanned），还原不出游标。
+   * 主键列没配全、或某一列没映射到属性时，退回 OFFSET 翻页（此时靠下面的"翻页没前进"兜底）。
+   */
+  const cursorColumns: string[] = [];
+  const cursorProperties: string[] = [];
+  if (startOffset === 0) {
+    const entityType = context.definition.entityTypes.find((item) => item.name === entityTypeName);
+    if (entityType) {
+      const columns = primaryKeyColumns(entityType);
+      const properties = columns.map((column) => propertyForColumn(entityType, column));
+      if (columns.length && properties.every(Boolean)) {
+        cursorColumns.push(...columns);
+        cursorProperties.push(...properties);
+      }
+    }
+  }
+  let cursorActive = cursorColumns.length > 0;
+  let cursorValues: unknown[] | null = null;
+
   let cancelled = false;
   /** 上一页的"身份签名"：整整一页跟上一页一模一样 = 源侧分页没前进。 */
   let previousPageKey: string | null = null;
@@ -286,8 +308,16 @@ export async function materializeObjectType(
   while (scanned < maxRows) {
     if (options.shouldCancel?.()) { cancelled = true; break; }
     const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
-    // 只有第一页问总数：物化不需要每页都 COUNT(*)。
-    const result = await source.query(context.definition, entityTypeName, { entityType: entityTypeName, limit, offset, count: pages === 0 });
+    // 第一页也按同一组列排序（此时还没有 values）：否则第一页无序，游标会从中间插进去 —— 既漏行又重复读。
+    const useCursor = cursorActive ? { columns: cursorColumns, ...(cursorValues ? { values: cursorValues } : {}) } : null;
+    // 只有第一页问总数：物化不需要每页都 COUNT(*)；游标翻页时 offset 让位给游标（传 0）。
+    const result = await source.query(context.definition, entityTypeName, {
+      entityType: entityTypeName,
+      limit,
+      offset: useCursor ? 0 : offset,
+      count: pages === 0,
+      ...(useCursor ? { cursor: useCursor } : {}),
+    });
     options.onProgress?.({ scanned: scanned + result.rows.length, rows: entries.length + result.rows.length, pages: pages + 1 });
     warnings.push(...result.warnings);
     if (total === null && Number.isFinite(result.total)) total = result.total;
@@ -309,6 +339,20 @@ export async function materializeObjectType(
     const pageKey = JSON.stringify(result.rows.map((record) => record.objectRef || record.objectId || record.title));
     if (pageKey === previousPageKey) { stalled = true; break; }
     previousPageKey = pageKey;
+    /*
+     * 下一页的游标 = 这一页最后一行的主键值（取**原始列值**，不是规范化后的字符串：
+     * 日期之类按原始类型绑回去才比得准）。主键值拿不全就退回 OFFSET 翻页，绝不带半个游标往下走。
+     */
+    if (cursorActive) {
+      const last = result.rows[result.rows.length - 1];
+      const next = last ? cursorProperties.map((property) => last.properties[property]) : null;
+      if (next && next.every((value) => value !== undefined && value !== null)) {
+        cursorValues = next;
+      } else {
+        cursorActive = false;
+        cursorValues = null;
+      }
+    }
     offset += result.rows.length;
     if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
   }

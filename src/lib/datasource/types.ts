@@ -284,6 +284,13 @@ export type DataSourceRowQuery = {
   search?: { text: string; columns: string[] };
   limit: number;
   offset?: number;
+  /**
+   * 键集（游标）翻页用：先按这些列升序排，再只取"排序键严格大于 after"的行。
+   * 列名是库里真实列名，`after` 与它一一对应（一般就是主键列）。
+   * 给了它就不再走 `offset` —— 深翻页每页都等价于点查，不用把前面几页读出来再丢掉。
+   */
+  orderBy?: string[];
+  after?: unknown[];
 };
 
 export type DataSourceRows = {

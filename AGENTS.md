@@ -55,8 +55,15 @@
   连接器的 `selectRows` 本来就支持 `offset`（Oracle 用 `ROWNUM` 条件限行、PG / MySQL 用 `LIMIT/OFFSET`），**传下去就对了**。
   同时新增 `ObjectQuery.count`（默认 true）：回源时是否顺带 `COUNT(*)`；**整份物化只在第一页要总数**，其余页传 `false`，省掉每页一次 COUNT。
   **兜底**：`materializeObjectType` 比对相邻两页的对象身份，一旦"翻页没前进"立刻停下并报 `truncated=true` + 说明（绝不空转、绝不把重复计数当条数）。
-  **仍未做**：Oracle 的 ROWNUM 深翻页上限 `ORACLE_MAX_OFFSET = 5000` —— 超过它的表会被兜底拦住、如实报"只物化了第一页"；
-  要读几万行以上，得改成"按主键 > 上一页最后一个键"的游标翻页（Backlog）。
+  **深表翻页走主键游标**（2026-10-12）：对象类型的主键列**全都映射到属性**时，整份物化按主键升序做**键集翻页**
+  （`(k0 > :k0) OR (k0 = :k0 AND k1 > :k1) …`），每页等价于点查、offset 恒为 0 —— Oracle 的 ROWNUM 深翻页上限
+  （`ORACLE_MAX_OFFSET = 5000`）因此不再是拦路虎。三条铁律：
+  1. **第一页也必须带排序列**（只有 `columns`、没有 `values`）。第一页一旦无序，游标就是从**键序中间**插进去的，
+     既漏行又重复读 —— 2026-10-12 真踩过：837 行的表读成 840 行、索引里只剩 759 个对象。
+  2. **Oracle 上要先排序再限量**：`SELECT * FROM (<inner ORDER BY …>) WHERE ROWNUM <= n`。直接写 `WHERE ROWNUM <= n … ORDER BY`
+     是先取 n 行再排（游标会漏行）。
+  3. 游标值取**原始列值**，不是规范化后的字符串（日期之类按原始类型绑回去才比得准）；主键没配全 / 没映射到属性、
+     或**断点续跑**（只存了条数、还原不出游标）时退回 OFFSET，由上面的兜底保护。
 - **删除与重建（2026-10-12）**：
   - 按类型清物化：`DELETE /api/objects/materialize-type?targetId=&entityType=` —— 只删该类型 `origin=MATERIALIZED` 的行**并删它的物化清单**
     （面板行内「清除物化」，两次点击确认）；快照对象与业务库不动。
@@ -97,6 +104,8 @@
     `tests/lib/graph/embedded.test.ts` 会这样（抢 CPU 时 5s 超时，单跑 1.4 秒过）。
   - 判定口径：**结果以并行那一次为准**，别因为一次抖动就把命令改回串行。
 - 能并行的验证就并行发起（例如 `tsc --noEmit` 与 `vitest run` 同时跑），别串着等。
+- **验证用独立端口，别碰用户的 dev server**（2026-10-12 用户要求）：3000 是用户自己在用的，**不要占用、更不要去杀它的进程**；
+  自己起验证实例换端口（例如 `next dev -p 3100`），**用完关掉**。
 
 ## CodeGraph（找代码优先用它）
 

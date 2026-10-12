@@ -49,6 +49,12 @@ export type ObjectQuery = {
   origin?: "auto" | ObjectOrigin;
   /** 回源时是否顺带统计总数（默认 true）。整份物化逐页翻时传 false，省掉每页一次 COUNT(*)。 */
   count?: boolean;
+  /**
+   * 键集（游标）翻页：按这些**源列**升序排；给了 `values` 就只取排序键严格大于它的行。
+   * **第一页也要带 `columns`**（不带 values）—— 不然第一页是无序的，游标会从中间插进去，既漏行又重复读。
+   * 整份物化读深表用它（`columns` 就是主键列）—— 比 OFFSET 稳、也不再受 Oracle 深翻页上限限制。
+   */
+  cursor?: { columns: string[]; values?: unknown[] };
 };
 
 export type ObjectQueryResult = {

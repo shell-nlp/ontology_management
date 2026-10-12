@@ -671,7 +671,7 @@ function rowQueryBuilder(
   kind: DataSourceKind,
   hit: CatalogObject,
   container: string,
-  query: Pick<DataSourceRowQuery, "columns" | "filters" | "search">,
+  query: Pick<DataSourceRowQuery, "columns" | "filters" | "search" | "orderBy" | "after">,
   padded: ReadonlySet<string>,
 ) {
   const schema = hit.schema || container;
@@ -724,7 +724,28 @@ function rowQueryBuilder(
     const parts = searchColumns.map((column) => `UPPER(${alias}.${quoteIdentifier(kind, column)}) LIKE UPPER(:p${index}) ESCAPE '\\'`);
     conditions.push(`(${parts.join(" OR ")})`);
   }
+  /*
+   * 键集（游标）翻页：`(k0 > :k0) OR (k0 = :k0 AND k1 > :k1) OR …`。
+   * 排序键一般就是主键列（唯一），所以这个条件等价于"排在上一页最后一行之后" —— 不依赖 OFFSET，
+   * 翻多深都是同一次点查。Oracle 的 ROWNUM 方案翻不深（越翻越慢、还有硬上限），只能靠它。
+   * 比较一律走 equalityColumn：定长 CHAR 列要 RTRIM 之后再比，否则尾空格会把排序键比错。
+   */
+  const orderColumns = (query.orderBy ?? []).map((column) => column.trim()).filter(Boolean);
+  const after = query.after ?? [];
+  if (orderColumns.length && after.length === orderColumns.length) {
+    const parts = orderColumns.map((column, position) => {
+      const equalities = orderColumns.slice(0, position).map((earlier, i) => `${equalityColumn(earlier)} = :k${i}`);
+      return [...equalities, `${equalityColumn(column)} > :k${position}`].join(" AND ");
+    });
+    conditions.push(`(${parts.join(" OR ")})`);
+    orderColumns.forEach((_, position) => builder.setParameter(`k${position}`, after[position] ?? null));
+  }
   if (conditions.length) builder.where(conditions.join(" AND "));
+  orderColumns.forEach((column, position) => {
+    const expression = equalityColumn(column);
+    if (position === 0) builder.orderBy(expression, "ASC");
+    else builder.addOrderBy(expression, "ASC");
+  });
   return builder;
 }
 
@@ -940,11 +961,23 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           // rows + 1：套了行数上限之后再也查不出更多行，靠多出来的那一行判断"还有没有剩下的"。
           const schema = hit.schema || container || "";
           const builder = rowQueryBuilder(connection, kind, hit, container, query, await paddedColumnsFor(connection, hit, schema));
-          const offset = Math.max(0, Math.floor(query.offset ?? 0));
+          const ordered = (query.orderBy ?? []).some((column) => column.trim());
+          // 游标翻页自己带着"从哪继续"，不再用 OFFSET —— OFFSET 在深表上又慢又有上限。
+          const offset = ordered ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
           let raw: Record<string, unknown>[];
           let statement: string;
           try {
-            if (kind === "ORACLE") {
+            if (kind === "ORACLE" && ordered) {
+              /*
+               * 有序取行必须"先排序、再限量"：`WHERE ROWNUM <= n … ORDER BY x` 在 Oracle 里是**先取 n 行再排**，
+               * 拿到的是任意 n 行（游标会因此漏行）。所以套一层子查询：内层排好序，外层用 ROWNUM 截断。
+               * 绑定参数仍是位置化的 `:1`，照原样传下去即可。
+               */
+              const [sql, values] = builder.getQueryAndParameters();
+              statement = `SELECT * FROM (${sql}) WHERE ROWNUM <= ${rows + 1}`;
+              const binds = Object.fromEntries(values.map((value, index) => [String(index + 1), value]));
+              raw = (await runner.query(statement, binds)) as Record<string, unknown>[];
+            } else if (kind === "ORACLE") {
               /*
                * Oracle 11g 没有 `FETCH NEXT`（TypeORM 的 limit/offset 会生成它，旧库直接 ORA-03001），
                * 所以这里用**条件**限行：`ROWNUM <= take + skip`，前几页在内存里丢掉（offset 有上限）。
