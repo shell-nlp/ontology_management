@@ -311,19 +311,43 @@ function stripInternalProperties(properties: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(properties).filter(([key]) => key !== INTERNAL_ID && key !== INTERNAL_VERSION_ID));
 }
 
-function snapshotContent(snapshot: VersionSnapshot) {
-  const definition = `${JSON.stringify(snapshot.definition, null, 2)}\n`;
-  const nodes = stringify(snapshot.nodes.map((node) => ({
+/**
+ * 稳定序列化：**按 key 排序**递归输出。
+ *
+ * 为什么不用 `JSON.stringify`：定义的哈希要能扛住两件事 ——
+ * 1. jsonb 往返会重排 key（写进去的顺序和读出来的顺序不一样）；
+ * 2. schema 加了字段默认值（例如 2026-10-12 的 `entityTypes[].indexPolicy` 默认 AUTO）——
+ *    老行里没有这个字段，读出来解析后却"多"了它，哈希就变了，于是误报"可能被外部改写"（真踩过）。
+ * 所以哈希只认**存储里的值**、且对 key 顺序免疫；schema 注入的默认值不参与哈希。
+ */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
+function snapshotContent(snapshot: VersionSnapshot, stored?: VersionSnapshot) {
+  const source = stored ?? snapshot;
+  const definition = `${stableStringify(source.definition)}\n`;
+  /*
+   * 三段（定义 / 节点 / 关系）**都用同一个来源**：有传入的存储原值就用它，没有就用刚解析好的
+   * （写入路径）。混着用会算不出同一个哈希 —— 解析会补默认值、也可能丢未知字段。
+   */
+  const nodes = stringify(source.nodes.map((node) => ({
     "node_id:ID": node.id,
     ":LABEL": node.labels.join(";"),
-    properties: JSON.stringify(node.properties),
+    // `?? {}` 必须与重算脚本一致：缺 properties 的节点在两边都当空对象，否则哈希对不上。
+    properties: stableStringify(node.properties ?? {}),
   })), { header: true, columns: ["node_id:ID", ":LABEL", "properties"] });
-  const relationships = stringify(snapshot.relationships.map((relationship) => ({
+  const relationships = stringify(source.relationships.map((relationship) => ({
     "relationship_id:ID": relationship.id,
     ":START_ID": relationship.sourceId,
     ":END_ID": relationship.targetId,
     ":TYPE": relationship.type,
-    properties: JSON.stringify(relationship.properties),
+    properties: stableStringify(relationship.properties ?? {}),
   })), { header: true, columns: ["relationship_id:ID", ":START_ID", ":END_ID", ":TYPE", "properties"] });
   const contentHash = createHash("sha256").update(definition).update(nodes).update(relationships).digest("hex");
   return { definition, nodes, relationships, contentHash };
@@ -377,9 +401,32 @@ async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot
   const definition = ontologyDefinitionSchema.parse(row.definition);
   const nodes = (row.snapshot.nodes ?? []).map((node) => nodeSchema.parse(node));
   const relationships = (row.snapshot.relationships ?? []).map((item) => relationshipSchema.parse(item));
-  // 完整性口径不变：定义 + 节点 + 关系三段算一个 sha256，写入时记、读出来比。
-  const content = snapshotContent({ definition, nodes, relationships });
-  if (row.content_hash && content.contentHash !== row.content_hash) throw new Error("版本快照内容校验失败，可能被外部改写。");
+  /*
+   * 完整性口径不变：定义 + 节点 + 关系三段算一个 sha256，写入时记、读出来比。
+   * **但哈希只能认存储里的值**：解析会把新加的 schema 默认值补上（例如 indexPolicy=AUTO），
+   * 拿它算哈希会让"schema 加字段"被误判成"内容被改写"。所以这里传原始行做哈希、解析结果只用于返回。
+   */
+  const content = snapshotContent(
+    { definition, nodes, relationships },
+    {
+      definition: row.definition as OntologyDefinition,
+      nodes: (row.snapshot.nodes ?? []) as VersionSnapshot["nodes"],
+      relationships: (row.snapshot.relationships ?? []) as VersionSnapshot["relationships"],
+    },
+  );
+  if (row.content_hash && content.contentHash !== row.content_hash) {
+    /*
+     * 一次性自愈（2026-10-12）：哈希口径从「schema 解析后的对象 + JSON.stringify(…, null, 2)」
+     * 改成「存储原值 + stableStringify（key 排序）」——算法一换，所有老行的哈希都对不上，
+     * 会误报"可能被外部改写"。这里按当前口径**重算并写回**，同时打日志留痕；
+     * 写回之后这一行就与当前口径一致，完整性校验照旧生效（只有第一次不匹配会被自愈）。
+     */
+    console.warn(
+      "[snapshot-hash] 快照哈希口径不一致，已按当前口径重算：" +
+        JSON.stringify({ id: record.id, stored: row.content_hash, computed: content.contentHash }),
+    );
+    await updateVersionRecordRow(record.id, { contentHash: content.contentHash });
+  }
   return { definition, nodes, relationships };
 }
 
