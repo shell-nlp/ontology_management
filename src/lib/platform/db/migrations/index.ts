@@ -7,6 +7,7 @@ import { TableAndColumnComments0006 } from "@/lib/platform/db/migrations/0006-ta
 import { DropObjectEntries0007 } from "@/lib/platform/db/migrations/0007-drop-object-entries";
 import { MaterializationJobs0008 } from "@/lib/platform/db/migrations/0008-materialization-jobs";
 import { MaterializationJobKind0009 } from "@/lib/platform/db/migrations/0009-materialization-job-kind";
+import { OrphanTargetCleanup0010 } from "@/lib/platform/db/migrations/0010-orphan-target-cleanup";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -22,4 +23,5 @@ export const PLATFORM_MIGRATIONS = [
   new DropObjectEntries0007(),
   new MaterializationJobs0008(),
   new MaterializationJobKind0009(),
+  new OrphanTargetCleanup0010(),
 ];

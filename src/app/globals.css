@@ -371,7 +371,11 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 @media (max-width:550px) { .toast-stack { left:12px; right:12px; bottom:12px; transform:none; width:auto; max-width:none; justify-items:stretch; } }
 
 /* 索引与物化面板（对象页）：一行一个对象类型，三格状态 = 源 / 索引（物化）/ 快照，状态本身就是信息 */
-.index-dialog { width:min(880px,100%); }
+/*
+ * 索引与物化是个**宽表格**面板：列多（类型 / 源 / 索引 / 快照 / 操作 + 关系类型那张），
+ * 880px 会把操作列挤成竖排的字（实测"整份物化"被拆成四行）。给到 1280 的上限，窄屏退回 100%。
+ */
+.index-dialog { width:min(1280px,100%); }
 .index-summary { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin:12px 0 14px; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:#fbfcfe; }
 .index-badge { display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 8px; border-radius:3px; font-size:11px; font-weight:700; }
 .index-badge.ok { color:#1e3a8a; background:#eef4ff; border:1px solid #d3e0f7; }
@@ -379,7 +383,9 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-summary-item { display:flex; flex-direction:column; gap:2px; font-size:10px; text-transform:uppercase; letter-spacing:.6px; color:#8695a8; }
 .index-summary-item b { font-size:12px; font-weight:600; text-transform:none; letter-spacing:0; color:#243b53; font-variant-numeric:tabular-nums; }
 .index-summary .action.compact { margin-left:auto; }
-.index-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 10px; }
+.index-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 8px; }
+.index-filter-group { display:inline-flex; align-items:center; gap:6px; }
+.index-filter-caption { font-size:10.5px; color:#8695a8; }
 .index-filter { display:inline-flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
 .index-filter button { border:0; background:#fff; color:#5a6b80; height:30px; padding:0 12px; font-size:11.5px; }
 .index-filter button + button { border-left:1px solid var(--line); }
@@ -387,10 +393,10 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-selected { color:#8695a8; font-size:11.5px; font-variant-numeric:tabular-nums; }
 .index-toolbar .action.compact.primary { margin-left:auto; }
 .index-progress { margin:0 0 10px; color:#1e3a8a !important; }
-.index-table { border:1px solid var(--line); border-radius:4px; max-height:46vh; overflow:auto; }
+.index-table { border:1px solid var(--line); border-radius:4px; max-height:50vh; overflow:auto; }
 .index-check { display:flex; align-items:center; }
 .index-check input { width:14px; height:14px; accent-color:#2563eb; }
-.index-row { display:grid; grid-template-columns:28px minmax(170px,1.4fr) .7fr 1.3fr .9fr 104px; align-items:center; gap:10px; padding:11px 14px; border-top:1px solid #eef2f7; font-size:12px; }
+.index-row { display:grid; grid-template-columns:28px minmax(170px,1.25fr) minmax(88px,.6fr) minmax(210px,1.4fr) minmax(88px,.7fr) minmax(236px,auto); align-items:center; gap:10px; padding:11px 14px; border-top:1px solid #eef2f7; font-size:12px; }
 .index-row:first-child { border-top:0; }
 .index-row.head { background:#f7f9fc; font-size:10px; text-transform:uppercase; letter-spacing:.6px; color:#8695a8; font-weight:700; }
 .index-type b { display:block; color:#243b53; font-size:12.5px; }
@@ -401,7 +407,11 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-state.full { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; }
 .index-state.partial { color:#b45309; background:#fffbeb; border-color:#fde68a; }
 .index-state.none { color:#64748b; background:#f8fafc; border-color:#e2e8f0; }
-.index-actions { display:flex; justify-content:flex-end; }
+/* 操作列：三个按钮一行排得下（"整份物化"绝不能再被拆成竖排的四个字）。 */
+.index-actions { display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:nowrap; }
+.index-actions .action, .index-actions .quiet-button { white-space:nowrap; }
+/* 只有一句说明的空态行：让它横跨整行，别挤在第一列（28px）里一个字一行。 */
+.index-row > .subtle { grid-column:1 / -1; }
 @media (max-width:760px) { .index-row { grid-template-columns:1fr; } .index-row.head { display:none; } }
 .index-jobs { border:1px solid var(--line); border-radius:4px; padding:10px 12px; margin-bottom:10px; background:#fbfcfe; }
 .index-jobs-head { display:flex; align-items:baseline; justify-content:space-between; }
@@ -436,4 +446,6 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-job-kind { margin-left:6px; font-style:normal; font-size:10px; padding:1px 5px; border-radius:3px; border:1px solid #d3e0f7; background:#eef4ff; color:#1e3a8a; vertical-align:middle; }
 .index-table + .index-table { margin-top:10px; }
 .index-jobs-filter { margin-left:8px; }
+.index-job-inline { display:inline-flex; align-items:center; gap:6px; margin-left:6px; flex-wrap:wrap; }
+.index-job-inline .index-job-state { font-size:10.5px; padding:1px 6px; }
 .index-job-empty { grid-template-columns:1fr; }

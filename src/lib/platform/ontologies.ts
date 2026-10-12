@@ -1,4 +1,17 @@
-import { jsonValue, platformRepo, OntologyEntity, GraphTargetEntity } from "@/lib/platform/db";
+import { In } from "typeorm";
+import {
+  ConversationEntity,
+  ConversationMessageEntity,
+  EmbeddedGraphEntity,
+  GraphTargetEntity,
+  MaterializationJobEntity,
+  OntologyConceptEntity,
+  OntologyEntity,
+  OntologyVersionEntity,
+  jsonValue,
+  platformRepo,
+} from "@/lib/platform/db";
+import { getObjectIndex } from "@/lib/framework/object-index";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/framework/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/platform/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
@@ -171,19 +184,63 @@ export async function updateOntology(
 }
 
 /**
- * 删本体。受管存储记录是它专用的隔离空间（一个命名图），跟着一起删。
+ * 把一个本体存储的**派生数据与历史**清干净（删本体的级联，2026-10-12）。
+ *
+ * 为什么要有它：删本体原先只删 `ontologies` + `graph_targets` + 磁盘目录，于是版本、概念检索索引、
+ * 物化任务历史、问答历史全留在库里变成**孤儿**（库里真查出 3 个已删本体的 14 个版本 + 840 条 concepts）。
+ * 这份清单就是唯一的级联口径：**加新的按 target 存的东西时，都要加到这里**。
+ *
+ * **审计不删**："谁在什么时候删了哪个本体"要留痕。
+ * 走仓储不写 SQL；索引那三张表（对象 / 边 / 物化清单）交给对象索引契约统一清。
  */
-export async function deleteOntology(id: string): Promise<{ removedTargetId: string | null }> {
+export async function purgeTargetData(targetId: string): Promise<{ versions: number; concepts: number; conversations: number }> {
+  const versionRepo = await platformRepo(OntologyVersionEntity);
+  const versions = await versionRepo.delete({ targetId });
+  // 概念检索索引是按版本重建的派生数据，跟着版本一起走。
+  const concepts = await (await platformRepo(OntologyConceptEntity)).delete({ targetId });
+  await (await platformRepo(EmbeddedGraphEntity)).delete({ targetId });
+  await (await platformRepo(MaterializationJobEntity)).delete({ targetId });
+  const conversationRepo = await platformRepo(ConversationEntity);
+  const conversations = await conversationRepo.find({ where: { targetId }, select: { id: true } });
+  const conversationIds = conversations.map((item) => item.id);
+  if (conversationIds.length) {
+    await (await platformRepo(ConversationMessageEntity)).delete({ conversationId: In(conversationIds) });
+    await conversationRepo.delete({ id: In(conversationIds) });
+  }
+  await getObjectIndex().deleteTargetObjects(targetId);
+  return {
+    versions: versions.affected ?? 0,
+    concepts: concepts.affected ?? 0,
+    conversations: conversationIds.length,
+  };
+}
+
+/**
+ * 删本体。受管存储记录是它专用的隔离空间（一个命名图），跟着一起删；
+ * **它名下的版本 / 概念索引 / 物化历史 / 问答历史 / 对象索引一起清**（见 `purgeTargetData`，原先漏了这一步）。
+ */
+export async function deleteOntology(id: string): Promise<{ removedTargetId: string | null; purged: { versions: number; concepts: number; conversations: number } | null }> {
   const current = await getOntology(id);
   if (!current) throw new Error("本体不存在。");
   const managedId = await managedTargetId(current);
+  const targetId = managedId ?? current.target_id;
+  /*
+   * 先清派生数据再删本体行：反过来的话，中途失败就找不回 target id 了（本体行已经没了）。
+   * 索引是派生数据、也能重建；它挂了不该挡住建本体之外的操作，所以单独兜住失败。
+   */
+  let purged: { versions: number; concepts: number; conversations: number } | null = null;
+  try {
+    purged = await purgeTargetData(targetId);
+  } catch (error) {
+    console.error("[ontology-delete] 派生数据没清干净（下次「整库重建」会补）:", error);
+  }
   const repo = await platformRepo(OntologyEntity);
   await repo.delete({ id });
-  if (!managedId) return { removedTargetId: null };
+  if (!managedId) return { removedTargetId: null, purged };
   const targets = await platformRepo(GraphTargetEntity);
   await targets.delete({ id: managedId });
   await removeTargetSnapshotDirectory(managedId);
-  return { removedTargetId: managedId };
+  return { removedTargetId: managedId, purged };
 }
 
 /** 虚拟根资源没有 FK 行；仍通过每个本体专属的 namedGraph 标识识别受管目标。 */

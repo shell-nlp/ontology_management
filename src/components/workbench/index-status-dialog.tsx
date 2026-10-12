@@ -59,6 +59,29 @@ type Props = {
   fail: (reason: unknown) => void;
 };
 
+const JOB_LABELS: Record<JobStatus, string> = {
+  QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败", INTERRUPTED: "已中断",
+};
+
+/**
+ * 行内的任务状态。
+ *
+ * **已完成的不在这里重复**：「索引（物化）」那一列已经写了"已整份物化 N 条"，同一个事实说两遍只是噪音。
+ * （用户口径 2026-10-12：不要在类型表之外再单开一块任务列表，状态并进这张表，筛选也只作用于这张表。）
+ */
+function JobStateInline({ job, cancelling }: { job: MaterializeJob; cancelling: boolean }) {
+  if (job.status === "DONE") return null;
+  const runningLike = job.status === "QUEUED" || job.status === "RUNNING";
+  const cancellingThis = job.cancelRequested || cancelling;
+  return <span className="index-job-inline">
+    <span className={`index-job-state ${job.status.toLowerCase()}${runningLike && cancellingThis ? " cancelling" : ""}`}>
+      {runningLike && cancellingThis ? "取消中" : JOB_LABELS[job.status]}
+    </span>
+    {runningLike && <small className="index-job-progress">已读 {job.scanned} · {job.pages} 页 · 写入 {job.rows}</small>}
+    {job.message && <small className="index-job-msg" title={job.message}>{job.message}</small>}
+  </span>;
+}
+
 function formatTime(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -80,8 +103,12 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
   const [selected, setSelected] = useState<string[]>([]);
   const [jobs, setJobs] = useState<MaterializeJob[]>([]);
   const [queuing, setQueuing] = useState(false);
-  /** 任务列表默认只列"还需要你管的"（排队/进行中/失败/中断/已取消）；已完成的收起来 —— 它已经在下面那张类型表里。 */
-  const [onlyPending, setOnlyPending] = useState(true);
+  /**
+   * 类型表按**完成度**过滤。用户口径 2026-10-12：不要在类型表之外再单开一块任务列表 —— 已完成的行就留在这张表里，
+   * 只是给这张表一个筛选。三档直接用界面上的话：**全部 / 未完成 / 已完成**（各带数量，一眼看出各有多少），
+   * 默认「全部」——行不会莫名消失。
+   */
+  const [completionFilter, setCompletionFilter] = useState<"ALL" | "PENDING" | "DONE">("ALL");
   /** 已点取消、还在等服务端回执的任务 id（这一小段时间界面先显示「取消中…」）。 */
   const [cancelling, setCancelling] = useState<string[]>([]);
   /** 正在删记录的任务 id。 */
@@ -284,9 +311,34 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
 
   const snapshotCount = (name: string) => stats?.byLabel.find((item) => item.label === name)?.count ?? 0;
   const indexed = (name: string) => rows.find((item) => item.entityType === name);
+  /** 这个类型最近一条任务（服务端已按 `kind|类型` 去重，一个类型最多一条）。 */
+  const jobFor = (kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE", name: string) =>
+    jobs.find((job) => job.kind === kind && job.entityType === name) ?? null;
+  /**
+   * 这一行"已经落地、不需要你管"了吗：**整份物化过、而且没有未完成的任务**。
+   * 「只看未完成」就是把这些行藏起来 —— 它们的现状在「索引（物化）」那一列已经写得清清楚楚。
+   */
+  const isSettled = (kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE", name: string) => {
+    const job = jobFor(kind, name);
+    if (job && job.status !== "DONE") return false;
+    const item = indexed(name);
+    return Boolean(item) && !item?.truncated;
+  };
   // FEDERATED 按策略就不进索引：不列进"可物化"，避免做出与策略相反的索引数据。
   const readableTypes = types.filter((type) => Boolean(type.sourceLabel) && type.indexPolicy !== "FEDERATED");
-  const visibleTypes = onlyReadable ? readableTypes : types;
+  const shownTypes = onlyReadable ? readableTypes : types;
+  // 完成度先分好堆再按档位取，数量与行用的是同一份判断，不会出现"数字说有、表里没有"。
+  const pendingTypes = shownTypes.filter((type) => !isSettled("OBJECT_TYPE", type.name));
+  const doneTypes = shownTypes.filter((type) => isSettled("OBJECT_TYPE", type.name));
+  const pendingLinks = links.filter((link) => !isSettled("RELATIONSHIP_TYPE", link.name));
+  const doneLinks = links.filter((link) => isSettled("RELATIONSHIP_TYPE", link.name));
+  const rowCount = {
+    ALL: shownTypes.length + links.length,
+    PENDING: pendingTypes.length + pendingLinks.length,
+    DONE: doneTypes.length + doneLinks.length,
+  };
+  const visibleTypes = completionFilter === "PENDING" ? pendingTypes : completionFilter === "DONE" ? doneTypes : shownTypes;
+  const visibleLinks = completionFilter === "PENDING" ? pendingLinks : completionFilter === "DONE" ? doneLinks : links;
   const toggle = (name: string) =>
     setSelected((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
   const allVisibleSelected = visibleTypes.length > 0 && visibleTypes.every((type) => !type.sourceLabel || selected.includes(type.name));
@@ -317,11 +369,26 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
           <RotateCcw size={13} />整库重建
         </button>
       </div>
+      {/*
+       * 一排读法：**筛选在左、动作在右**（`排队物化选中` 用 margin-left:auto 顶到右边）。
+       * 完成度用界面上直说的话（全部 / 未完成 / 已完成）并带数量 —— 用户找的就是"哪些完成了"这几个字。
+       */}
       <div className="index-toolbar">
-        <div className="index-filter" role="group" aria-label="按可读性筛选">
-          <button type="button" className={onlyReadable ? "selected" : ""} onClick={() => { setOnlyReadable(true); setSelected([]); }}>仅可读取（{readableTypes.length}）</button>
-          <button type="button" className={onlyReadable ? "" : "selected"} onClick={() => { setOnlyReadable(false); setSelected([]); }}>全部（{types.length}）</button>
-        </div>
+        <span className="index-filter-group">
+          <span className="index-filter-caption">可读性</span>
+          <div className="index-filter" role="group" aria-label="按可读性筛选">
+            <button type="button" className={onlyReadable ? "selected" : ""} onClick={() => { setOnlyReadable(true); setSelected([]); }}>仅可读取（{readableTypes.length}）</button>
+            <button type="button" className={onlyReadable ? "" : "selected"} onClick={() => { setOnlyReadable(false); setSelected([]); }}>全部（{types.length}）</button>
+          </div>
+        </span>
+        <span className="index-filter-group">
+          <span className="index-filter-caption">完成度</span>
+          <div className="index-filter" role="group" aria-label="按完成度筛选">
+            <button type="button" className={completionFilter === "ALL" ? "selected" : ""} onClick={() => setCompletionFilter("ALL")} title="不按完成度过滤">全部（{rowCount.ALL}）</button>
+            <button type="button" className={completionFilter === "PENDING" ? "selected" : ""} onClick={() => setCompletionFilter("PENDING")} title="还没落地：没整份物化、或者还有没跑完 / 没跑成的任务">未完成（{rowCount.PENDING}）</button>
+            <button type="button" className={completionFilter === "DONE" ? "selected" : ""} onClick={() => setCompletionFilter("DONE")} title="已整份物化，而且没有未完成的任务">已完成（{rowCount.DONE}）</button>
+          </div>
+        </span>
         <span className="index-selected">已选 {selected.length} 个类型</span>
         <label className="index-pagesize" title="每次从业务库读多少行；页面越大，单次查询越重（单次上限 500）">
           每页
@@ -338,59 +405,7 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
           一键排队全部可读取（{readableTypes.length}）
         </button>
       </div>
-      {jobs.length > 0 && (() => {
-        // 服务端已经"一个类型只留最近一条"，这里只管"要不要把已完成的一起列出来"。
-        const activeJobs = jobs.filter((job) => job.status === "QUEUED" || job.status === "RUNNING");
-        const doneJobs = jobs.filter((job) => job.status === "DONE").length;
-        const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
-        const visibleJobs = onlyPending ? jobs.filter((job) => job.status !== "DONE") : jobs;
-        const labels: Record<JobStatus, string> = { QUEUED: "排队中", RUNNING: "进行中", DONE: "已完成", CANCELLED: "已取消", FAILED: "失败", INTERRUPTED: "已中断" };
-        return <div className="index-jobs">
-          <div className="index-jobs-head">
-            <span className="eyebrow">物化任务</span>
-            <span className="index-jobs-summary">
-              {activeJobs.length ? `进行中 ${activeJobs.length}` : "空闲"} · 已完成 {doneJobs}{failedJobs ? ` · 失败 ${failedJobs}` : ""}
-              <button
-                type="button"
-                className="quiet-button small index-jobs-filter"
-                title={onlyPending ? "现在只列未完成的；点一下连已完成的也列出来" : "现在连已完成的一起列；点一下只看未完成的"}
-                onClick={() => setOnlyPending((value) => !value)}
-              >
-                {onlyPending ? "只看未完成" : "全部（含已完成）"}
-              </button>
-            </span>
-          </div>
-          {activeJobs.length > 0 && <div className="index-job-bar" role="progressbar" aria-label="物化进行中"><i /></div>}
-          <div className="index-jobs-list">
-            {!visibleJobs.length && (
-              <div className="index-job index-job-empty">
-                <span className="subtle">{doneJobs ? `没有未完成的任务：${doneJobs} 个类型已完成，状态见下面那张表。` : "还没有物化任务。"}</span>
-              </div>
-            )}
-            {visibleJobs.map((job) => {
-              const runningLike = job.status === "QUEUED" || job.status === "RUNNING";
-              const cancellingThis = job.cancelRequested || cancelling.includes(job.id);
-              return <div className="index-job" key={job.id}>
-                <b>{job.entityType}{job.kind === "RELATIONSHIP_TYPE" ? <em className="index-job-kind">边</em> : null}</b>
-                <span className={`index-job-state ${job.status.toLowerCase()}${runningLike && cancellingThis ? " cancelling" : ""}`}>{runningLike && cancellingThis ? "取消中" : labels[job.status]}</span>
-                <span className="index-job-progress">已读 {job.scanned} 条 · {job.pages} 页 · 写入 {job.rows} 条</span>
-                <small className="index-job-msg" title={job.message ?? ""}>{job.message ?? ""}</small>
-                <span className="index-job-actions">
-                  {runningLike && (cancellingThis
-                    ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
-                    : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
-                  {(job.status === "INTERRUPTED" || job.status === "CANCELLED" || job.status === "FAILED") && (
-                    <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
-                  )}
-                  {!runningLike && (
-                    <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="从任务列表里删掉这条记录（不影响已物化的数据）" onClick={() => void deleteJob(job.id)}>删除</button>
-                  )}
-                </span>
-              </div>;
-            })}
-          </div>
-        </div>;
-      })()}
+
       {!mayWrite && <p className="subtle">当前角色只能查看索引状态；整份物化与重建需要「编辑对象与关系」权限。</p>}
       {capabilities && !capabilities.available && <div className="notice error"><AlertCircle size={15} /><span>索引后端不可用：{capabilities.reason ?? "连接失败"}。对象检索会退回按需回源。</span></div>}
 
@@ -413,10 +428,22 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
         </div>
         {loading && <div className="index-row"><span className="subtle">读取中…</span></div>}
         {!loading && !types.length && <div className="index-row"><span className="subtle">这份本体还没有对象类型，先到「本体建模」建一个。</span></div>}
-        {!loading && !visibleTypes.length && <div className="index-row"><span className="subtle">没有可读取的对象类型：这些类型还没绑定数据资源。</span></div>}
+        {!loading && !visibleTypes.length && (
+          <div className="index-row">
+            <span className="subtle">
+              {!shownTypes.length
+                ? "没有可读取的对象类型：这些类型还没绑定数据资源。"
+                : completionFilter === "DONE"
+                  ? "这个范围里还没有已完成的类型。"
+                  : "这个范围里没有未完成的类型 —— 都整份物化过了（要一起看就切到「已完成」）。"}
+            </span>
+          </div>
+        )}
         {!loading && visibleTypes.map((type) => {
           const item = indexed(type.name);
           const state = item ? (item.truncated ? "partial" : "full") : "none";
+          const job = jobFor("OBJECT_TYPE", type.name);
+          const jobBusy = job?.status === "QUEUED" || job?.status === "RUNNING";
           return <div className="index-row" key={type.name} role="row">
             <span className="index-check">
               <input
@@ -436,6 +463,7 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
               {state === "none" && <em className="index-state none">未物化</em>}
               {state === "full" && <em className="index-state full">已整份物化 {item?.rows ?? 0} 条</em>}
               {state === "partial" && <em className="index-state partial">只补过一批 · {item?.rows ?? 0} 条</em>}
+              {job && <JobStateInline job={job} cancelling={cancelling.includes(job.id)} />}
             </span>
             <span className="index-cell">{snapshotCount(type.name)} 条</span>
             <span className="index-actions">
@@ -443,16 +471,25 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
                 ? <span className="index-cell muted" title="这个类型按策略走业务库，不进索引；要物化请先到对象类型编辑里把读法改成 AUTO 或 INDEXED">按策略走业务库</span>
                 : <button
                     className="action compact"
-                    disabled={!mayWrite || busy || !type.sourceLabel}
-                    title={type.sourceLabel ? "把业务库里这个类型的对象整份写进索引" : "这个类型还没绑定数据资源"}
+                    disabled={!mayWrite || busy || !type.sourceLabel || jobBusy}
+                    title={jobBusy ? "这个类型已经有任务在跑" : type.sourceLabel ? "把业务库里这个类型的对象整份写进索引" : "这个类型还没绑定数据资源"}
                     onClick={() => void materialize(type.name)}
                   >
                     整份物化
                   </button>}
               {type.indexPolicy !== "FEDERATED" && state !== "none" && (
-                <button className={confirmClear === type.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy} title="只清这个类型的物化数据，快照对象保留" onClick={() => void clearMaterialized(type.name)}>
+                <button className={confirmClear === type.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy || jobBusy} title="只清这个类型的物化数据，快照对象保留" onClick={() => void clearMaterialized(type.name)}>
                   {confirmClear === type.name ? "确认清除？" : "清除物化"}
                 </button>
+              )}
+              {job && jobBusy && (job.cancelRequested || cancelling.includes(job.id)
+                ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
+                : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
+              {job && !jobBusy && job.status !== "DONE" && (
+                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
+              )}
+              {job && !jobBusy && (
+                <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="删掉这条任务记录（不动物化数据；要清数据用「清除物化」）" onClick={() => void deleteJob(job.id)}>删记录</button>
               )}
             </span>
           </div>;
@@ -472,10 +509,13 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
           <span role="columnheader" />
         </div>
         {loading && <div className="index-row"><span className="subtle">读取中…</span></div>}
-        {!loading && !links.length && <div className="index-row"><span className="subtle">还没有配数据来源的关系类型：到「关系类型」里给它选一张连接表，这里就能物化边了。</span></div>}
-        {!loading && links.map((link) => {
+        {!loading && !links.length && <div className="index-row"><span className="subtle">还没有能读实例的关系类型：外键式把两端键映射填上就行，连接表式再选一张连接表。</span></div>}
+        {!loading && links.length > 0 && !visibleLinks.length && <div className="index-row"><span className="subtle">{completionFilter === "DONE" ? "这个范围里还没有已完成的关系类型。" : "关系类型都没有未完成的 —— 都整份物化过了（要一起看就切到「已完成」）。"}</span></div>}
+        {!loading && visibleLinks.map((link) => {
           const item = indexed(link.name);
           const state = item ? (item.truncated ? "partial" : "full") : "none";
+          const job = jobFor("RELATIONSHIP_TYPE", link.name);
+          const jobBusy = job?.status === "QUEUED" || job?.status === "RUNNING";
           const edgeCount = stats?.byRelationship?.find((row) => row.label === link.name)?.count ?? 0;
           return <div className="index-row" key={`rel:${link.name}`} role="row">
             <span className="index-check" />
@@ -485,21 +525,31 @@ export function IndexStatusDialog({ targetId, types, links, mayWrite, onClose, n
               {state === "none" && <em className="index-state none">未物化</em>}
               {state === "full" && <em className="index-state full">已整份物化 {item?.rows ?? 0} 条</em>}
               {state === "partial" && <em className="index-state partial">只补过一批 · {item?.rows ?? 0} 条</em>}
+              {job && <JobStateInline job={job} cancelling={cancelling.includes(job.id)} />}
             </span>
             <span className="index-cell">{edgeCount} 条</span>
             <span className="index-actions">
               <button
                 className="action compact"
-                disabled={!mayWrite || busy || !link.sourceLabel}
-                title={link.sourceLabel ? "把这张连接表里的边整份写进索引（两端对象类型也要物化，图上才画得出边）" : "这个关系类型还没配数据来源"}
+                disabled={!mayWrite || busy || !link.sourceLabel || jobBusy}
+                title={jobBusy ? "这个关系类型已经有任务在跑" : link.sourceLabel ? "把这张连接表里的边整份写进索引（两端对象类型也要物化，图上才画得出边）" : "这个关系类型还没配数据来源"}
                 onClick={() => void materializeLink(link.name)}
               >
                 整份物化
               </button>
               {state !== "none" && (
-                <button className={linkConfirm === link.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy} title="只清这个关系类型的物化边；对象与快照都保留" onClick={() => void clearLink(link.name)}>
+                <button className={linkConfirm === link.name ? "action compact danger" : "action compact"} disabled={!mayWrite || busy || jobBusy} title="只清这个关系类型的物化边；对象与快照都保留" onClick={() => void clearLink(link.name)}>
                   {linkConfirm === link.name ? "确认清除？" : "清除物化"}
                 </button>
+              )}
+              {job && jobBusy && (job.cancelRequested || cancelling.includes(job.id)
+                ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
+                : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
+              {job && !jobBusy && job.status !== "DONE" && (
+                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
+              )}
+              {job && !jobBusy && (
+                <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="删掉这条任务记录（不动物化边；要清边用「清除物化」）" onClick={() => void deleteJob(job.id)}>删记录</button>
               )}
             </span>
           </div>;
