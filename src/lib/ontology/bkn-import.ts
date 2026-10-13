@@ -139,7 +139,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       interfaceMappings: [],
       groupId: "",
       properties,
-      sources: [{ id: "primary", kind: "PHYSICAL", sql: "", dataSourceId: "", schema, view, primaryKey: primaryKeys, titleField: displayKey }],
+      sources: [{ id: "primary", kind: "PHYSICAL", sql: "", rule: null, dataSourceId: "", schema, view, primaryKey: primaryKeys, titleField: displayKey }],
     } as OntologyDefinition["entityTypes"][number];
   });
 

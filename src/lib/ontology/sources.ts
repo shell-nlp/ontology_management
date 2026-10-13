@@ -126,6 +126,19 @@ export function validateEntitySources(scope: SourceScope, options: { knownSource
     if (!primary.primaryKey.length) {
       violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源是取数口径，但还没指定主键列 —— 口径必须输出这些列，对象的身份才定得下来。`, count: 1, severity: "WARN" });
     }
+    /*
+     * 规则（「按规则生成」留下的生成参数）只做**结构**校验：分组键和取值依据都得有。
+     * 「SQL 和规则对不对得上」要拿数据源类型做方言转义，判断放在编辑器里（那里知道 kind），这里不越界。
+     */
+    const rule = primary.rule ?? null;
+    if (rule) {
+      if (!rule.keyColumns.some((column) => column.trim())) {
+        violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的去重规则缺「分组键」：一个对象对应哪几列唯一，必须写明白。`, count: 1 });
+      }
+      if (!rule.orderColumn.trim()) {
+        violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的去重规则缺「取值依据」：按哪一列取最新 / 最早的那一行 —— 不写，留哪一行就是不确定的。`, count: 1 });
+      }
+    }
   } else {
     /*
      * 有表名、没资源是导入本体后的常见中间态（见 source-binding.ts 的「补齐数据资源绑定」）。

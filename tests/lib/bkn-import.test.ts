@@ -86,8 +86,8 @@ describe("bkn → 本体包", () => {
     // 不认识的类型退到 TEXT
     expect(byName.get("UNKNOWN_TYPE")).toMatchObject({ dataType: "TEXT" });
     // 有表的类：主键落在来源绑定上，属性映射到列
-    // bkn 导入进来的都是**物理表**来源（`kind` / `sql` 有默认值，写全是为了口径那档不混进来）。
-    expect(group.sources).toEqual([{ id: "primary", kind: "PHYSICAL", sql: "", dataSourceId: "", schema: "GISTOOLS", view: "TB_MK_GRP_SERV_LEVEL_DAY", primaryKey: ["CUST_ID"], titleField: "CUST_NAME" }]);
+    // bkn 导入进来的都是**物理表**来源：`kind` / `sql` / `rule` 写全（口径与规则那两档都不混进来）。
+    expect(group.sources).toEqual([{ id: "primary", kind: "PHYSICAL", sql: "", rule: null, dataSourceId: "", schema: "GISTOOLS", view: "TB_MK_GRP_SERV_LEVEL_DAY", primaryKey: ["CUST_ID"], titleField: "CUST_NAME" }]);
     expect(byName.get("CUST_ID")).toMatchObject({ sourceField: "CUST_ID", sourceId: "primary" });
   });
 

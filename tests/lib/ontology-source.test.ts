@@ -27,8 +27,8 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
-      { id: "credit", dataSourceId: otherSourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
+      { id: "credit", dataSourceId: otherSourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
     ]);
     expect(parsed.entityTypes[0].properties[0]).toMatchObject({ sourceField: "CUST_NAME", sourceId: "primary" });
     expect(parsed.entityTypes[0].properties[1]).toMatchObject({ sourceField: "SCORE", sourceId: "credit" });
@@ -48,7 +48,7 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
     ]);
   });
 
@@ -173,5 +173,30 @@ describe("取数口径（DERIVED 来源）的发布前检查", () => {
   it("补充来源用口径：明确说不支持，别静默当表用", () => {
     const issues = validateEntitySources({ name: "客户", sources: [derived, { ...derived, id: "second" }], properties: [] });
     expect(issues.some((issue) => issue.message.includes("补充来源暂时只支持"))).toBe(true);
+  });
+
+  it("规则缺分组键 / 缺取值依据：挡住发布（规则是给人和平台看的，缺项就是没写清）", () => {
+    const noKeys = validateEntitySources({
+      name: "客户",
+      sources: [{ ...derived, rule: { keyColumns: [], orderColumn: "STATIS_DATE", direction: "DESC" } }],
+      properties: [],
+    });
+    expect(noKeys.some((issue) => issue.message.includes("分组键"))).toBe(true);
+
+    const noOrder = validateEntitySources({
+      name: "客户",
+      sources: [{ ...derived, rule: { keyColumns: ["USER_ID"], orderColumn: "   ", direction: "DESC" } }],
+      properties: [],
+    });
+    expect(noOrder.some((issue) => issue.message.includes("取值依据"))).toBe(true);
+  });
+
+  it("有规则且写全：不报问题", () => {
+    const issues = validateEntitySources({
+      name: "客户",
+      sources: [{ ...derived, rule: { keyColumns: ["USER_ID"], orderColumn: "STATIS_DATE", direction: "DESC" } }],
+      properties: [],
+    });
+    expect(issues).toEqual([]);
   });
 });

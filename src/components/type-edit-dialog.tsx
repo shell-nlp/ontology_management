@@ -11,7 +11,7 @@ import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
 import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
-import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
+import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import {
   emptyEntitySource,
   entitySources,
@@ -1033,9 +1033,10 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
    * 默认分组键取对象类型已配的主键列（没有就用参考表自己的主键列），取值依据取第一个日期类候选列。
    */
   /** 分组键：`null` = 还没动过，用默认值（对象类型已配的主键列）。**复合主键就是多列**。 */
-  const [dedupeKeys, setDedupeKeys] = useState<string[] | null>(null);
-  const [dedupeOrder, setDedupeOrder] = useState("");
-  const [dedupeDirection, setDedupeDirection] = useState<"DESC" | "ASC">("DESC");
+  // 有规则就按规则回填（改一列重新生成，不用从零再选一遍）。
+  const [dedupeKeys, setDedupeKeys] = useState<string[] | null>(() => (source.rule?.keyColumns ?? []).filter(Boolean).length ? (source.rule?.keyColumns ?? []).filter(Boolean) : null);
+  const [dedupeOrder, setDedupeOrder] = useState(() => source.rule?.orderColumn ?? "");
+  const [dedupeDirection, setDedupeDirection] = useState<"DESC" | "ASC">(() => (source.rule?.direction === "ASC" ? "ASC" : "DESC"));
   /*
    * 候选排序列优先用**参考表的真实列**；参考表还没选（口径来源可能没留表名）时退回**属性名**推断 ——
    * 属性名就是列名（映射按同名），够生成一段能跑的口径，界面上会标出这是推断来的。
@@ -1051,11 +1052,21 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
   const canBuildSql = Boolean(referenceTable) && orderColumns.length > 0 && selectedKeys.length > 0;
   const orderColumn = dedupeOrder || orderColumns[0]?.name || "";
   const dataSourceKind = dataSources.find((item) => item.id === dataSourceId)?.kind ?? "POSTGRES";
+  /** 存下来的生成参数（手写 SQL 就是 null）与它的人话回显。 */
+  const savedRule = derived ? source.rule ?? null : null;
+  const ruleSentence = savedRule ? describeDedupeRule(savedRule) : "";
+  /**
+   * SQL 和规则**对不上**（存了规则但 SQL 被手改过）。要说出来 —— 否则界面写着"取最新一天"，跑的却是另一段 SQL。
+   * 没有参考表就没法按方言重新生成，这时不判（不冤枉手改）。
+   */
+  const ruleMismatch = Boolean(savedRule && referenceTable && ruleSentence) && !matchesDedupeRule({ kind: dataSourceKind, schema, view, rule: savedRule!, sql: source.sql });
   const applyDedupe = () => {
     try {
-      const sql = dedupeSql({ kind: dataSourceKind, schema, view, rule: { keyColumns: selectedKeys, orderColumn, direction: dedupeDirection } });
+      const rule = { keyColumns: selectedKeys, orderColumn, direction: dedupeDirection };
+      const sql = dedupeSql({ kind: dataSourceKind, schema, view, rule });
       // 口径输出的就是分组键那几列，对象主键顺手也对上 —— 省一次手工同步。
-      onChange({ sql, primaryKey: selectedKeys });
+      // `rule` 一起存：界面能回显人话、能按它重新生成，平台也能校验"SQL 与规则还是不是一回事"。
+      onChange({ sql, primaryKey: selectedKeys, rule });
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "生成口径失败。");
@@ -1109,6 +1120,13 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
         </div>
         {derived && (
           <>
+            {ruleSentence && (
+              <p className={ruleMismatch ? "ted-source-error" : "ted-source-note"}>
+                {ruleMismatch && <AlertTriangle size={13} />}
+                当前规则：{ruleSentence}。{ruleMismatch && "下面的 SQL 和这条规则对不上（手改过）：按规则重新生成一次，或者把规则清掉。"}
+                <button type="button" className="action compact" onClick={() => onChange({ rule: null })}>清掉规则</button>
+              </p>
+            )}
             <div className="ted-dedupe">
               <div className="ted-dedupe-head">
                 <b>按规则生成</b>

@@ -73,3 +73,25 @@ export function dedupeSql(input: { kind: DataSourceKind; schema?: string; view: 
     ") WHERE BKN_RN = 1",
   ].join("\n");
 }
+
+/** 规则的人话：「按 CUST_ID + AREA_CODE 取最新一行（依据 STATIS_DATE）」。缺项就返回空串。 */
+export function describeDedupeRule(rule: DedupeRule): string {
+  const keys = rule.keyColumns.map((column) => column.trim()).filter(Boolean);
+  const order = rule.orderColumn.trim();
+  if (!keys.length || !order) return "";
+  return `按 ${keys.join(" + ")} 取${rule.direction === "ASC" ? "最早" : "最新"}一行（依据 ${order}）`;
+}
+
+/**
+ * 存下来的 SQL 是不是**这条规则生成的**（还是手改过）。
+ *
+ * 口径允许手写 SQL，但一旦存了规则，界面就得说清"规则"和"SQL"是不是一回事 —— 否则改完规则忘了重新生成，
+ * 界面上写着"按最新一天"，跑的却是另一段 SQL。不一致时报 WARN，不拦发布（手写 SQL 是合法的）。
+ */
+export function matchesDedupeRule(input: { kind: DataSourceKind; schema?: string; view: string; rule: DedupeRule; sql: string }): boolean {
+  try {
+    return dedupeSql(input).trim() === input.sql.trim();
+  } catch {
+    return false;
+  }
+}

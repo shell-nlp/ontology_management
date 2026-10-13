@@ -55,6 +55,21 @@ const propertySchema = z.object({
  * 对象不单独绑表 —— 一个对象就是这张表里的一行，所以绑定写在类上。
  * 空 dataSourceId 表示这份来源还没接上（纯建模也能用）。
  */
+/**
+ * 取数口径的**生成参数**（可选）。
+ *
+ * 为什么留这一份：口径的正文是 SQL，规则一存，界面就能回显人话（「按 CUST_ID 取最新一行（依据 STATIS_DATE）」）、
+ * 平台也能校验「存下来的 SQL 和这条规则还是不是一回事」（手改过 SQL 就说清楚，别让界面写着最新、跑的却是别的）。
+ * **不是必填**：口径允许手写 SQL，那时 `rule` 为 `null` —— 逃生舱一直留着。
+ */
+export const entitySourceRuleSchema = z.object({
+  /** 分组键：一个对象对应哪几列唯一（一般就是对象主键的列，复合主键就是多列）。 */
+  keyColumns: z.array(z.string().trim().max(200)).default([]),
+  /** 取值依据列：按它取最新 / 最早的那一行。 */
+  orderColumn: z.string().trim().max(200).default(""),
+  direction: z.enum(["DESC", "ASC"]).default("DESC"),
+});
+
 export const entitySourceSchema = z.object({
   /** 这份来源在类里的标识：属性映射靠它指回来。只在本类内有意义，不是数据库对象。 */
   id: z.string().trim().min(1).max(64),
@@ -70,6 +85,8 @@ export const entitySourceSchema = z.object({
   kind: z.enum(["PHYSICAL", "DERIVED"]).default("PHYSICAL"),
   /** DERIVED 的取数口径：必须输出 `primaryKey` 里的列（可写 `*`，但隐式列会让口径跟源表结构漂移）。 */
   sql: z.string().trim().max(20000).default(""),
+  /** 这条口径如果是「按规则生成」出来的，把生成参数留一份（手写 SQL 就是 null）。 */
+  rule: entitySourceRuleSchema.nullable().default(null),
   /** 表/视图所在的容器：PG 的模式、Oracle 的模式；MySQL 留空。 */
   schema: z.string().trim().max(200).default(""),
   /**

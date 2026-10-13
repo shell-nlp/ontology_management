@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
+import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 
 /**
  * 「按规则生成取数口径」：生成出来的 SQL 必须是**确定的**（带 ORDER BY、列名走转义），
@@ -64,5 +64,24 @@ describe("生成去重口径", () => {
     expect(() => dedupeSql({ kind: "POSTGRES", schema: "", view: "T", rule: { keyColumns: [], orderColumn: "STATIS_DATE" } })).toThrow(/分组键/);
     expect(() => dedupeSql({ kind: "POSTGRES", schema: "", view: "T", rule: { keyColumns: ["USER_ID"], orderColumn: "  " } })).toThrow(/取值依据/);
     expect(() => dedupeSql({ kind: "POSTGRES", schema: "", view: " ", rule })).toThrow(/表/);
+  });
+});
+
+describe("规则的人话与一致性", () => {
+  const rule = { keyColumns: ["CUST_ID", "AREA_CODE"], orderColumn: "STATIS_DATE" };
+
+  it("人话：按 A + B 取最新一行（依据 X）", () => {
+    expect(describeDedupeRule(rule)).toBe("按 CUST_ID + AREA_CODE 取最新一行（依据 STATIS_DATE）");
+    expect(describeDedupeRule({ ...rule, direction: "ASC" })).toBe("按 CUST_ID + AREA_CODE 取最早一行（依据 STATIS_DATE）");
+    // 缺项就说不出人话（界面据此不显示"当前规则"那一行）。
+    expect(describeDedupeRule({ keyColumns: [], orderColumn: "" })).toBe("");
+  });
+
+  it("规则与 SQL 是否一致：手改过的判为不一致（界面据此警告，别让界面写着最新、跑的是别的）", () => {
+    const sql = dedupeSql({ kind: "ORACLE", schema: "GISTOOLS", view: "T", rule });
+    expect(matchesDedupeRule({ kind: "ORACLE", schema: "GISTOOLS", view: "T", rule, sql })).toBe(true);
+    expect(matchesDedupeRule({ kind: "ORACLE", schema: "GISTOOLS", view: "T", rule, sql: `${sql}\n  AND 1 = 1` })).toBe(false);
+    // 换方言（MySQL 反引号）自然对不上：方言变了本来就该重新生成一次。
+    expect(matchesDedupeRule({ kind: "MYSQL", schema: "GISTOOLS", view: "T", rule, sql })).toBe(false);
   });
 });
