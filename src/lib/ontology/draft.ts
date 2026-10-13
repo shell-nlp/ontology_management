@@ -36,7 +36,8 @@ export type EntityType = {
 
 /** 还没接来源时的空绑定；直接写全字段，省得每处都判空。 */
 export function emptyEntitySource(id = "primary"): EntitySource {
-  return { id, dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" };
+  // `kind` / `sql` 写全：物理表是默认形态，口径要用户显式切过去（老快照读出来也是这两个默认值）。
+  return { id, kind: "PHYSICAL", sql: "", dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" };
 }
 
 /** 来源清单的读写与自检都在 @/lib/ontology-sources，这里转出去，界面只认这一个入口。 */

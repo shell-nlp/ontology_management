@@ -72,6 +72,12 @@ export const entitySourceSchema = z.object({
   sql: z.string().trim().max(20000).default(""),
   /** 表/视图所在的容器：PG 的模式、Oracle 的模式；MySQL 留空。 */
   schema: z.string().trim().max(200).default(""),
+  /**
+   * 表 / 视图名。
+   *
+   * `PHYSICAL` 时它就是**取数对象**；`DERIVED` 时不参与取数（取数走 `sql`），而是这段口径的
+   * **参考表**：界面按它拿真实列清单来生成 / 校验口径（挑"取哪一行"的依据列）。所以口径来源**也要留着它**。
+   */
   view: z.string().trim().max(200).default(""),
   /**
    * 主来源：对象身份取这几列，支持复合主键；

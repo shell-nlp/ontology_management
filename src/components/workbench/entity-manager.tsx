@@ -387,6 +387,11 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         // 主来源的表名（「模式.表」）——面板上要能看出这个类型到底有没有可读的源。
         sourceLabel: item.sources?.[0] ? `${item.sources[0].schema ? `${item.sources[0].schema}.` : ""}${item.sources[0].view}` : "",
         indexPolicy: item.indexPolicy ?? "AUTO",
+        // 给「主键重复折叠」那条出路用：按主键列生成去重口径，按来源拿真实列清单挑排序键。
+        primaryKey: item.sources?.[0]?.primaryKey ?? [],
+        source: item.sources?.[0]
+          ? { kind: item.sources[0].kind, dataSourceId: item.sources[0].dataSourceId, schema: item.sources[0].schema, view: item.sources[0].view }
+          : null,
       }))}
       links={indexLinkRows}
       mayWrite={may(user, "instance.write")}

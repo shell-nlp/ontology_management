@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Database, Layers, RefreshCw, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
+import { copyText } from "@/lib/framework/clipboard";
+import type { DataSourceKind, DataViewField, PublicDataSource } from "@/lib/datasource/types";
+import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 
 /**
  * 「索引与物化」面板（2026-10-12）。
@@ -47,7 +50,15 @@ type MaterializeJob = {
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
 type Stats = { entries: number; byLabel: { label: string; count: number }[]; links: number; byRelationship: { label: string; count: number }[]; updatedAt: string | null };
 
-export type IndexTypeRow = { name: string; sourceLabel: string; indexPolicy: "AUTO" | "INDEXED" | "FEDERATED" };
+export type IndexTypeRow = {
+  name: string;
+  sourceLabel: string;
+  indexPolicy: "AUTO" | "INDEXED" | "FEDERATED";
+  /** 主来源的主键列：给「主键重复折叠」那条出路用（挑候选排序列 + 生成口径）。 */
+  primaryKey?: string[];
+  /** 主来源细节：口径要按它（数据资源 + 表）拿真实列清单。 */
+  source?: { kind: string; dataSourceId: string; schema: string; view: string } | null;
+};
 /**
  * 关系类型（边）那一行。`readable` = 能排出取数计划（外键式只要两端键映射填了就算，不用另选数据资源）。
  * 读不出的那些**不进这张表**，只在表尾用一条提示说清有几条、为什么 —— 类型层声明本身合法，
@@ -464,7 +475,8 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
           const state = item ? (item.truncated ? "partial" : "full") : "none";
           const job = jobFor("OBJECT_TYPE", type.name);
           const jobBusy = job?.status === "QUEUED" || job?.status === "RUNNING";
-          return <div className="index-row" key={type.name} role="row">
+          return <Fragment key={type.name}>
+          <div className="index-row" role="row">
             <span className="index-check">
               <input
                 type="checkbox"
@@ -517,7 +529,9 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
                 <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="删掉这条任务记录（不动物化数据；要清数据用「清除物化」）" onClick={() => void deleteJob(job.id)}>删记录</button>
               )}
             </span>
-          </div>;
+          </div>
+          {item && item.folded > 0 && <DedupeHint type={type} folded={item.folded} onCopied={notify} />}
+          </Fragment>;
         })}
       </div>
       {/*
@@ -612,5 +626,102 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
         </span>
       </div>}
     </div>
+  </div>;
+}
+
+/**
+ * 「主键重复折叠」之后的**出路**（2026-10-13）。只报警不给路等于没说 —— 用户看到「折叠 591 行」
+ * 之后该改哪一列、SQL 长什么样，不该让他自己猜。
+ *
+ * 就地在那一行下面给三样东西：
+ * 1. 能当「取哪一行」依据的**候选列**（按参考表的真实列清单挑，日期/时间类）；
+ * 2. 按这个类型已有的主键**生成好的口径 SQL**（一键复制，粘到对象类型编辑器就行）；
+ * 3. 另一条路：换成一个真正唯一的键，那就不需要去重了。
+ *
+ * 候选列与 SQL 都调对象类型编辑器**同一套纯函数**（`orderCandidateColumns` / `dedupeSql`），
+ * 两边不会各说各话。这里是**只读诊断**：不改任何定义，改动还是回编辑器里做。
+ */
+function DedupeHint({ type, folded, onCopied }: { type: IndexTypeRow; folded: number; onCopied: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState<{ key: string; fields: DataViewField[]; kind: DataSourceKind } | null>(null);
+  const [error, setError] = useState("");
+  const source = type.source ?? null;
+  const dataSourceId = source?.dataSourceId ?? "";
+  const schema = source?.schema ?? "";
+  const view = source?.view ?? "";
+  useEffect(() => {
+    if (!open || !dataSourceId || !view) return;
+    const key = `${dataSourceId}|${schema}|${view}`;
+    const query = schema ? `limit=1&schema=${encodeURIComponent(schema)}` : "limit=1";
+    let cancelled = false;
+    void Promise.all([
+      api<{ fields: DataViewField[] }>(`/api/data-sources/${dataSourceId}/views/${encodeURIComponent(view)}?${query}`),
+      api<PublicDataSource[]>("/api/data-sources"),
+    ])
+      .then(([fields, sources]) => {
+        if (cancelled) return;
+        setLoaded({ key, fields: fields.fields, kind: sources.find((item) => item.id === dataSourceId)?.kind ?? "POSTGRES" });
+      })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "读取表结构失败。"); });
+    return () => { cancelled = true; };
+  }, [open, dataSourceId, schema, view]);
+
+  if (!open) {
+    return <div className="index-dedupe">
+      <button type="button" className="action compact" onClick={() => setOpen(true)}><AlertTriangle size={12} />怎么去重？</button>
+      <span>源里有 {folded} 行被折进了同一个对象 —— 看下一步该改什么、口径怎么写。</span>
+    </div>;
+  }
+
+  const candidates = loaded && loaded.key === `${dataSourceId}|${schema}|${view}` ? orderCandidateColumns(loaded.fields) : [];
+  const primaryKey = type.primaryKey ?? [];
+  let sql = "";
+  let sqlProblem = "";
+  if (loaded && candidates.length) {
+    try {
+      sql = dedupeSql({ kind: loaded.kind, schema, view, rule: { keyColumns: primaryKey, orderColumn: candidates[0].name, direction: "DESC" } });
+    } catch (reason) {
+      sqlProblem = reason instanceof Error ? reason.message : "生成口径失败。";
+    }
+  }
+  return <div className="index-dedupe">
+    <div className="index-dedupe-head">
+      <b><AlertTriangle size={12} />折叠 {folded} 行 —— 两条出路</b>
+      <button type="button" className="action compact" onClick={() => setOpen(false)}>收起</button>
+    </div>
+    {!dataSourceId || !view ? (
+      <p className="index-dedupe-note">这个类型没有可读的主来源（没绑数据资源或表），先到「本体建模 → 对象类型 → 编辑 → 数据来源」把它绑上。</p>
+    ) : error ? (
+      <p className="index-dedupe-note error">读表结构失败：{error}</p>
+    ) : !loaded ? (
+      <p className="index-dedupe-note">正在读表结构…</p>
+    ) : (
+      <ol className="index-dedupe-steps">
+        <li>
+          <b>换主键</b>：如果这张表的一行本来就该是一个对象（有行 uuid / 业务单号），把主键换成那个唯一键 —— 那就不需要去重了。
+          现在的去重键是 <code>{primaryKey.length ? primaryKey.join(" + ") : "（还没配主键）"}</code>。
+        </li>
+        <li>
+          <b>配一段去重口径</b>：这张表能当「取哪一行」依据的列有
+          {candidates.length ? <> {candidates.map((field) => field.name).join("、")}</> : <b> —— 一个都没有</b>}。
+          {candidates.length ? (
+            sql ? <>
+              <pre className="index-dedupe-sql">{sql}</pre>
+              <button
+                type="button"
+                className="action compact"
+                onClick={() => void copyText(sql).then((ok) => onCopied(ok
+                  ? "口径 SQL 已复制 —— 到「本体建模 → 对象类型 → 编辑 → 数据来源」切到「取数口径」粘进去。"
+                  : "复制失败：请手动选中上面那段 SQL 复制。"))}
+              >
+                复制这段 SQL
+              </button>
+            </> : <span className="index-dedupe-note error">{sqlProblem || "这个类型还没配主键列，先在对象类型里指定主键。"}</span>
+          ) : (
+            <span>没有日期/时间列就没法用「取最新一行」：要么按业务条件筛一行（条件得你自己写），要么按上面那条换主键。</span>
+          )}
+        </li>
+      </ol>
+    )}
   </div>;
 }

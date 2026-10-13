@@ -51,6 +51,16 @@
 /* 「表 / 视图 ↔ 取数口径」的形态切换：贴着来源卡片顶部，别占满一行。 */
 .ted-source-mode { margin: 2px 0 10px; }
 .ted-source-sql-ok { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: #15803d; font-size: 11.5px; }
+/* 「按规则生成口径」：虚线框把它和手工 SQL 分开；一行三选一 + 一个生成按钮。 */
+.ted-dedupe { margin: 4px 0 10px; padding: 10px 12px; border: 1px dashed var(--ted-line-strong); border-radius: 4px; background: #fbfdff; }
+.ted-dedupe-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.ted-dedupe-head b { font-size: 12px; color: #1d3b66; }
+.ted-dedupe-head span { color: #7c8b9c; font-size: 11px; }
+.ted-dedupe-row { display: grid; grid-template-columns: 1fr .9fr auto; gap: 8px; align-items: end; }
+.ted-dedupe-row .ted-field { margin: 0; }
+/* 分组键那一块占整行：复合主键要多选，chip 会换行铺开。 */
+.ted-dedupe-keys { margin: 0 0 8px; }
+.ted-dedupe-keys .ted-source-picker { margin-top: 4px; }
 .ted-input:focus, .ted-select:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px var(--ted-focus); }
 .ted-select { appearance: none; padding-right: 30px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9ab0' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 

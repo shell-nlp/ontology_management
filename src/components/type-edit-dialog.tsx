@@ -11,6 +11,7 @@ import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
 import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
+import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import {
   emptyEntitySource,
   entitySources,
@@ -211,7 +212,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     // 取数口径与表 / 视图互斥：口径来源不留表名，表来源不留口径。
     kind: item.kind === "DERIVED" ? ("DERIVED" as const) : ("PHYSICAL" as const),
     sql: item.kind === "DERIVED" ? item.sql.trim() : "",
-    view: item.kind === "DERIVED" ? "" : item.view.trim(),
+    /*
+     * 口径来源**保留**表名：它不参与取数（取数走 `sql`），但它是这段口径的「参考表」——
+     * 「按规则生成」要靠它拿真实列清单（日期候选、真实列名），清掉就只能靠猜属性名。
+     */
+    view: item.view.trim(),
     primaryKey: index === 0
       ? item.primaryKey.map((column) => column.trim()).filter(Boolean)
       : primaryKeyColumns.map((_, position) => (item.primaryKey[position] ?? "").trim()),
@@ -803,6 +808,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                           dataSources={dataSources}
                           primaryKeyColumns={index === 0 ? [] : primaryKeyColumns}
                           propertyCount={properties.filter((property) => (property.sourceId || primarySourceId) === item.id).length}
+                          properties={properties.map((property) => ({ name: property.name, dataType: property.dataType }))}
                           onChange={(patch) => updateSource(item.id, patch)}
                           onPickDataSource={(dataSourceId) => pickSourceDataSource(item.id, dataSourceId)}
                           onPickView={(view, schema) => pickSourceView(item.id, view, schema)}
@@ -937,6 +943,11 @@ type SourceCardProps = {
   /** 主来源的主键列；补充来源按它对位连接。 */
   primaryKeyColumns: string[];
   propertyCount: number;
+  /**
+   * 这个对象类型已有的属性。**只在没有参考表字段清单时**用来推断候选排序列
+   * （口径来源可能没留参考表，这时靠属性名里像日期的那几个）。
+   */
+  properties: { name: string; dataType: string }[];
   onChange: (patch: Partial<EntitySource>) => void;
   onPickDataSource: (dataSourceId: string) => void;
   onPickView: (view: string, schema: string) => void;
@@ -965,7 +976,7 @@ function checkDerivedSql(sql: string): { ok: boolean; text: string } {
   }
 }
 
-function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCount, onChange, onPickDataSource, onPickView, onToggleKeyColumn, onPickJoinKey, onRemove, onFields }: SourceCardProps) {
+function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCount, properties, onChange, onPickDataSource, onPickView, onToggleKeyColumn, onPickJoinKey, onRemove, onFields }: SourceCardProps) {
   const primary = index === 0;
   /** 取数口径：只有主来源支持（补充来源仍是表 / 视图，后端校验里也是这么要求的）。 */
   const derived = primary && source.kind === "DERIVED";
@@ -989,7 +1000,7 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
 
   // 选定资源后拉它的结构清单，给「表 / 视图」那个输入框做候选。
   useEffect(() => {
-    if (!dataSourceId || derived) return;
+    if (!dataSourceId) return;
     let cancelled = false;
     void api<{ views: DataViewSummary[] }>(`/api/data-sources/${dataSourceId}/views?limit=5000`)
       .then((data) => {
@@ -1001,11 +1012,12 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
       })
       .catch(() => { if (!cancelled) setViewsState({ dataSourceId, rows: [] }); });
     return () => { cancelled = true; };
-  }, [dataSourceId, view, schema, derived]);
+  }, [dataSourceId, view, schema]);
 
   // 选定表之后取字段：主键、连接键和属性映射都从这份字段清单里选。
   useEffect(() => {
-    if (!dataSourceId || !view || derived) return;
+    // 口径档也要拉字段：它不是用来取数的，是用来**挑"取哪一行"的依据列**（生成口径）。
+    if (!dataSourceId || !view) return;
     const key = fieldsKey;
     const query = schema ? `limit=1&schema=${encodeURIComponent(schema)}` : "limit=1";
     let cancelled = false;
@@ -1013,8 +1025,42 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
       .then((data) => { if (!cancelled) { setFieldsState({ key, rows: data.fields }); setError(""); onFields(sourceId, key, data.fields); } })
       .catch((reason) => { if (!cancelled) { setFieldsState({ key, rows: [] }); onFields(sourceId, key, []); setError(reason instanceof Error ? reason.message : "读取字段失败。"); } });
     return () => { cancelled = true; };
-  }, [dataSourceId, view, schema, sourceId, fieldsKey, onFields, derived]);
+  }, [dataSourceId, view, schema, sourceId, fieldsKey, onFields]);
   const joinKeys = primaryKeyColumns.map((_, position) => source.primaryKey[position] ?? "");
+
+  /*
+   * 「按规则生成口径」：分组键 + 取值依据 + 取最新/最早，三样一选就生成一段**确定的** SQL。
+   * 默认分组键取对象类型已配的主键列（没有就用参考表自己的主键列），取值依据取第一个日期类候选列。
+   */
+  /** 分组键：`null` = 还没动过，用默认值（对象类型已配的主键列）。**复合主键就是多列**。 */
+  const [dedupeKeys, setDedupeKeys] = useState<string[] | null>(null);
+  const [dedupeOrder, setDedupeOrder] = useState("");
+  const [dedupeDirection, setDedupeDirection] = useState<"DESC" | "ASC">("DESC");
+  /*
+   * 候选排序列优先用**参考表的真实列**；参考表还没选（口径来源可能没留表名）时退回**属性名**推断 ——
+   * 属性名就是列名（映射按同名），够生成一段能跑的口径，界面上会标出这是推断来的。
+   */
+  /** 生成口径必须有**参考表**（真实列清单）：没留参考表时只能给指引，不能凭属性名猜 FROM 子句。 */
+  const referenceTable = view.trim();
+  const orderColumns = derived && referenceTable ? orderCandidateColumns(fields) : [];
+  const propertyDateHints = derived && !referenceTable ? orderCandidateColumns(properties).map((field) => field.name) : [];
+  const selectedKeys = dedupeKeys ?? (source.primaryKey.filter(Boolean).length
+    ? source.primaryKey.filter(Boolean)
+    : fields.filter((field) => field.primaryKey).map((field) => field.name));
+  const toggleKey = (name: string) => setDedupeKeys(selectedKeys.includes(name) ? selectedKeys.filter((item) => item !== name) : [...selectedKeys, name]);
+  const canBuildSql = Boolean(referenceTable) && orderColumns.length > 0 && selectedKeys.length > 0;
+  const orderColumn = dedupeOrder || orderColumns[0]?.name || "";
+  const dataSourceKind = dataSources.find((item) => item.id === dataSourceId)?.kind ?? "POSTGRES";
+  const applyDedupe = () => {
+    try {
+      const sql = dedupeSql({ kind: dataSourceKind, schema, view, rule: { keyColumns: selectedKeys, orderColumn, direction: dedupeDirection } });
+      // 口径输出的就是分组键那几列，对象主键顺手也对上 —— 省一次手工同步。
+      onChange({ sql, primaryKey: selectedKeys });
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "生成口径失败。");
+    }
+  };
 
   return (
     <div className="ted-source-card" data-primary={primary}>
@@ -1033,7 +1079,8 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
             <button type="button" className={derived ? "" : "active"} aria-pressed={!derived} onClick={() => onChange({ kind: "PHYSICAL" })}>
               <Table2 size={12} />表 / 视图
             </button>
-            <button type="button" className={derived ? "active" : ""} aria-pressed={derived} onClick={() => onChange({ kind: "DERIVED", view: "" })}>
+            {/* 切到口径**保留**已选的表：它是这段口径的「参考表」—— 生成规则要按它挑列，也能一眼看出口径从哪来。 */}
+            <button type="button" className={derived ? "active" : ""} aria-pressed={derived} onClick={() => onChange({ kind: "DERIVED" })}>
               <Database size={12} />取数口径
             </button>
           </div>
@@ -1062,6 +1109,66 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
         </div>
         {derived && (
           <>
+            <div className="ted-dedupe">
+              <div className="ted-dedupe-head">
+                <b>按规则生成</b>
+                <span>不会写 SQL 就用这里：选分组键 + 取值依据，生成一段「确定的」去重口径</span>
+              </div>
+              {!referenceTable ? (
+                <p className="ted-source-note">
+                  这段口径还没留「参考表」：先切到「表 / 视图」选一次表再切回来，这里就能按真实列清单生成口径 ——
+                  否则 FROM 子句写不出来，只能在下面手写 SQL。
+                  {propertyDateHints.length > 0 && <>（你的属性里这几列名字像日期，可以当「取哪一行」的依据：{propertyDateHints.join("、")}）</>}
+                </p>
+              ) : orderColumns.length === 0 ? (
+                <p className="ted-source-error">
+                  <AlertTriangle size={13} />
+                  参考表里没有日期 / 时间列，用不了「取最新一行」的规则。两条路：① 把主键换成真正唯一的键（行 uuid / 业务单号）——
+                  那根本不需要去重，这个对象类型的一行就是一行；② 按业务条件筛一行（例如「状态 = 有效」），条件得你自己写在下面的 SQL 里。
+                </p>
+              ) : (
+                <>
+                  <div className="ted-field ted-dedupe-keys">
+                    <span>分组键（一个对象一行，可多选 = 复合主键）</span>
+                    {fields.length ? (
+                      <div className="ted-source-picker">
+                        {fields.map((field) => (
+                          <label key={field.name} className={selectedKeys.includes(field.name) ? "ted-chip active" : "ted-chip"}>
+                            <input type="checkbox" checked={selectedKeys.includes(field.name)} onChange={() => toggleKey(field.name)} />
+                            {field.primaryKey && <KeyRound size={11} />}
+                            {field.name}
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <input
+                        className="ted-input"
+                        value={selectedKeys.join(", ")}
+                        onChange={(event) => setDedupeKeys(event.target.value.split(/[,，\s]+/).map((part) => part.trim()).filter(Boolean))}
+                        placeholder="USER_ID"
+                      />
+                    )}
+                    <small>复合主键就勾多列：口径按「这一组列的值都一样」判断是不是同一个对象。</small>
+                  </div>
+                  <div className="ted-dedupe-row">
+                  <label className="ted-field">
+                    <span>取值依据</span>
+                    <select className="ted-select" value={orderColumn} onChange={(event) => setDedupeOrder(event.target.value)}>
+                      {orderColumns.map((field) => <option key={field.name} value={field.name}>{field.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="ted-field">
+                    <span>取哪一行</span>
+                    <select className="ted-select" value={dedupeDirection} onChange={(event) => setDedupeDirection(event.target.value as "DESC" | "ASC")}>
+                      <option value="DESC">最新一行</option>
+                      <option value="ASC">最早一行</option>
+                    </select>
+                  </label>
+                  <button type="button" className="ted-add-button" disabled={!canBuildSql} onClick={applyDedupe}><Check size={13} />生成并填入</button>
+                  </div>
+                </>
+              )}
+            </div>
             <label className="ted-field">
               <span><Database size={12} />取数口径（只读 SELECT）</span>
               <textarea

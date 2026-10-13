@@ -17,6 +17,28 @@
   否则一次物化刷一排假告警（实测 4 页刷 3 条）。
 - **后台任务的 warnings 必须并进 `job.message`**：`materialize-jobs` 只存一个 message，物化返回的 warnings
   以前整条丢掉 —— 用户在面板上看不到任何告警。改告警文案时两边一起看。
+- **口径生成只有一处实现**：`@/lib/ontology/dedupe-sql` 的 `dedupeSql`（纯函数、有单测）。**不要在组件里手拼
+  `ROW_NUMBER`** —— 手拼最容易漏掉 `ORDER BY`，那等于把"任选一行"藏进 SQL。
+- **能当「取哪一行」依据的列**由 `orderCandidateColumns` 判定：类型含 DATE / TIME，或名字以
+  `DATE` / `TIME` / `DAY` / `TIMESTAMP` / `_TS` / `_DT` 结尾。**光 `TS` 结尾不算**（`STATS` 是状态列，实测被误判过）。
+  一个候选都没有时**不生成 SQL**，直接说两条出路（换唯一主键 / 按业务条件筛）。
+- **`DERIVED` 来源的 `view` 是「参考表」，要留着**（2026-10-13 改）：取数走 `sql`（口径优先，`viewRefOf` 保证），
+  但界面按参考表拿真实列清单来生成口径。**别再把它清空** —— 清掉之后"按规则生成"连 FROM 子句都写不出来。
+- **报警必须带路**（2026-10-13）：「索引与物化」面板里 `folded > 0` 的那一行要给出下一步 ——
+  换主键（显示当前去重键）/ 候选排序列 / **生成好的口径 SQL + 复制**。用的是 `orderCandidateColumns` 与 `dedupeSql`
+  **同一套纯函数**，不许在面板里另写一套判断；面板只做只读诊断，**不写定义**（改动仍回编辑器）。
+
+### 多主键（复合主键）是一等公民（2026-10-13 用户要求）
+
+用户口径：「接下来做的内容也兼容多主键吧」。凡是出现"主键"的地方，一律按**列数组**处理，**不允许只支持单列**：
+
+- **口径生成**：分组键是**多选**（勾几列就 `PARTITION BY "A", "B"`），生成后**写回的主键列也是多列**
+  （`onChange({ primaryKey: selectedKeys })`，已实测：勾 `CUST_ID` + `AREA_CODE` → SQL 与主键列都对）。
+- 已有的多主键链路（改这块时别按单列写死）：`primaryKeyColumns` 返回列数组；`readByKey` **每列一个 EQ 过滤**；
+  对象身份 `objectKeyOf` / `objectIdOf` 用整张键值表；物化的**主键游标翻页**按主键列顺序做多列 keyset；
+  口径的 `derivedRowsStatement` 游标同理。
+- **新增任何"按主键"的逻辑前先问一句：多列时它还成立吗**；写测试至少摆一个复合主键用例 ——
+  `tests/lib/ontology/dedupe-sql.test.ts` 里有现成的 `PARTITION BY "USER_ID", "SALE_ID"`。
 
 ### 待办：取数口径（DERIVED 来源，2026-10-13 用户已确认要做）
 
