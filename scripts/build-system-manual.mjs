@@ -167,7 +167,13 @@ function rewriteLinks(html, docIds) {
     }
 
     const [pathname] = href.split("#");
-    const file = path.posix.basename(pathname.replaceAll("\\", "/"));
+    let decodedPathname = pathname;
+    try {
+      decodedPathname = decodeURIComponent(pathname);
+    } catch {
+      decodedPathname = pathname;
+    }
+    const file = path.posix.basename(decodedPathname.replaceAll("\\", "/"));
     const docId = docIds.get(file);
     if (docId) {
       return `href="#${escapeAttribute(docId)}" class="doc-link"`;
@@ -181,13 +187,21 @@ function rewriteLinks(html, docIds) {
   });
 }
 
-function chapterNumber(title) {
+function chapterNumber(title, file) {
+  if (file === README_FILE) return "首";
+  if (file.startsWith("00A-")) return "练";
+  if (file.startsWith("00B-")) return "做";
+  if (file.startsWith("00-")) return "新";
   const match = title.match(/^第\s*(\d+)\s*章/);
   if (match) return match[1].padStart(2, "0");
   if (title.includes("查询 DSL")) return "附";
   return "导";
 }
-
+function chapterLabel(doc) {
+  if (["新", "练", "做"].includes(doc.chapter)) return "入门教程";
+  if (doc.chapter === "首") return "文档首页";
+  return `章节 ${doc.chapter}`;
+}
 function navLabel(title) {
   return title.replace(/^第\s*\d+\s*章\s*·\s*/, "").replace(/^附录\s*·\s*/, "");
 }
@@ -203,8 +217,9 @@ const files = (await readdir(SOURCE_DIR, { withFileTypes: true }))
 
 const readme = await readFile(path.join(SOURCE_DIR, README_FILE), "utf8");
 const navGroups = [
+  ...parseNavigation(readme),
   {
-    label: "开始阅读",
+    label: "文档说明",
     items: [
       {
         file: README_FILE,
@@ -213,11 +228,9 @@ const navGroups = [
       },
     ],
   },
-  ...parseNavigation(readme),
 ];
-
 const orderedFiles = [];
-for (const file of [README_FILE, ...navGroups.flatMap((group) => group.items.map((item) => item.file)), ...files]) {
+for (const file of [...navGroups.flatMap((group) => group.items.map((item) => item.file)), ...files]) {
   if (files.includes(file) && !orderedFiles.includes(file)) orderedFiles.push(file);
 }
 
@@ -251,7 +264,7 @@ for (const file of orderedFiles) {
     file,
     title,
     navTitle: navLabel(title),
-    chapter: chapterNumber(title),
+    chapter: chapterNumber(title, file),
     description: meta.description || "",
     group: meta.group,
     html: rewriteLinks(rendered.html, docIds),
@@ -282,7 +295,7 @@ const articleMarkup = docs
   .map(
     (doc) => `<article class="doc" id="${escapeAttribute(doc.id)}" data-doc-id="${escapeAttribute(doc.id)}" hidden>
   <header class="chapter-hero">
-    <div class="chapter-kicker"><span>${escapeHtml(doc.group)}</span><i></i><span>章节 ${escapeHtml(doc.chapter)}</span></div>
+    <div class="chapter-kicker"><span>${escapeHtml(doc.group)}</span><i></i><span>${escapeHtml(chapterLabel(doc))}</span></div>
     <h1>${escapeHtml(doc.title)}</h1>
     ${doc.description ? `<p class="chapter-lede">${escapeHtml(doc.description)}</p>` : ""}
     <div class="chapter-meta">
