@@ -26,8 +26,42 @@ export type ActionRunOutcome = {
   subject: { id: string; label: string; display: string } | null;
   dryRun: boolean;
   applied: boolean;
+  /** 写回业务库的情况：没勾写回时是 OFF，勾了干跑是 PREVIEW。 */
+  writeback?: WritebackReport;
 };
 
+/** 工作台里选中一个动作之后，右侧停在哪一阶段。 */
+/** 写回计划（界面看的形态）：干跑时就能看到"点执行会写哪张表的哪几列"。 */
+export type WritebackPlanView = {
+  entityType: string;
+  table: string;
+  dataSourceName: string;
+  description: string;
+  keys: { column: string; value: unknown }[];
+  assignments: { column: string; property: string; value: unknown }[];
+};
+
+/** 写不回去的那一处：`reason` 说清为什么，`hint` 给一条能马上走的路。 */
+export type WritebackRefusal = { nodeId: string; entityType: string; reason: string; hint?: string };
+
+/** 真写下去的每一处：表、旧值 → 新值、实际语句。 */
+export type WritebackExecution = {
+  entityType: string;
+  table: string;
+  dataSourceName: string;
+  statement: string;
+  written: { property: string; column: string; from: unknown; to: unknown }[];
+};
+
+export type WritebackReport = {
+  requested: boolean;
+  /** OFF = 没勾写回；PREVIEW = 干跑出的计划；APPLIED = 已经写进业务库；REFUSED = 有写不回的，整批没执行。 */
+  mode: "OFF" | "PREVIEW" | "APPLIED" | "REFUSED";
+  plans: WritebackPlanView[];
+  refusals: WritebackRefusal[];
+  skipped: { nodeId: string; entityType: string; reason: string }[];
+  executions: WritebackExecution[];
+};
 /** 工作台里选中一个动作之后，右侧停在哪一阶段。 */
 type Stage = "define" | "rules" | "run" | "ledger";
 
@@ -45,6 +79,8 @@ type DecisionEntry = {
     verdict?: string;
     subject?: { label?: string; display?: string } | null;
     blockers?: { ruleName: string; message: string; evidence?: string[] }[];
+    /** 写回业务库的结果：留痕里要能看出"这次到底动没动源表"。 */
+    writeback?: { executions?: { table?: string }[]; refusals?: { reason?: string }[] };
   };
 };
 
@@ -211,6 +247,10 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
   const [ruleDialog, setRuleDialog] = useState<{ mode: "create" | "edit"; rule: OntologyRule } | null>(null);
   const [values, setValues] = useState<Record<string, { entity: EntitySearchResult | null; text: string }>>({});
   const [outcome, setOutcome] = useState<ActionRunOutcome | null>(null);
+  /** 勾上「写回业务库」：执行时把改动真的写进源表；干跑只出计划。 */
+  const [writeback, setWriteback] = useState(false);
+  /** 整批被拒（有一处写不回）时，服务端把逐条原因一起回来 —— 页面要把它摊开，不能只剩一句 toast。 */
+  const [runFailure, setRunFailure] = useState<{ message: string; writeback?: WritebackReport } | null>(null);
   const [busy, setBusy] = useState(false);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
   // 从对象详情跳进来时直接落在「运行」：用户是带着一个对象来执行动作的。
@@ -270,12 +310,24 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
         // entityRef 让服务端在"这个对象只存在于数据源"时先按主键把它取进草稿，再执行。
         ? { code: parameter.code, entityId: values[parameter.code]?.entity?.id ?? "", entityRef: values[parameter.code]?.entity?.objectRef }
         : { code: parameter.code, value: values[parameter.code]?.text ?? "" });
-      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, subjectRef: subject?.objectRef, dryRun, inputs }) });
+      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, subjectRef: subject?.objectRef, dryRun, writeback, inputs }) });
       setOutcome(result);
-      if (result.applied) { notify(`动作「${result.actionName}」已写入草稿快照。`); onRan(); }
-      else if (result.verdict === "BLOCKED") notify(`动作「${result.actionName}」被规则拦截，没有写入任何数据。`);
+      setRunFailure(null);
+      if (result.applied) {
+        const written = result.writeback?.executions.length ?? 0;
+        notify(written ? `动作「${result.actionName}」已写入草稿快照，并写回了业务库 ${written} 处。` : `动作「${result.actionName}」已写入草稿快照。`);
+        onRan();
+      } else if (result.verdict === "BLOCKED") notify(`动作「${result.actionName}」被规则拦截，没有写入任何数据。`);
       await refreshDecisions();
-    } catch (reason) { fail(reason); } finally { setBusy(false); }
+    } catch (reason) {
+      /*
+       * 写回被拒（409）时服务端回的不只是"失败了"：每一处「哪张表 / 为什么 / 去哪儿改」都在 payload 里。
+       * 整批没执行是个好结果（不是异常状态），所以不弹错误，直接在结论区摊开。
+       */
+      const payload = (reason as { payload?: { error?: string; writeback?: WritebackReport } } | null)?.payload;
+      if (payload?.writeback) { setOutcome(null); setRunFailure({ message: payload.error ?? "写回被拒。", writeback: payload.writeback }); await refreshDecisions(); }
+      else fail(reason);
+    } finally { setBusy(false); }
   };
 
   return (
@@ -529,10 +581,25 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
                   </div>
                   <div className="as-run-actions">
                     <button className="action" disabled={!canRun || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
-                    <button className="action primary" disabled={!canRun || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
+                    <button className="action primary" disabled={!canRun || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />{writeback ? "执行并写回业务库" : "执行"}</button>
+                    {/*
+                     * 写回是**显式**的：默认只写草稿快照（本体里的副本），勾上才会改业务库那一行。
+                     * 不勾也能干跑，但干跑就不出写回计划 —— 想知道"会写哪张表"就先勾上再干跑。
+                     */}
+                    <label className="as-writeback">
+                      <input type="checkbox" checked={writeback} disabled={!canRun || busy} onChange={(event) => setWriteback(event.target.checked)} />
+                      <span>
+                        写回业务库
+                        <small>{writeback ? "执行会改源表的那一行；干跑只出计划" : "只写草稿快照，源表不动"}</small>
+                      </span>
+                    </label>
                   </div>
                   {!canRun && <p className="as-quiet">当前角色没有「编辑对象与关系」权限，不能干跑或执行动作。</p>}
-                  {outcome ? <OutcomePanel outcome={outcome} /> : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
+                  {runFailure
+                    ? <WritebackRefusedPanel failure={runFailure} />
+                    : outcome
+                      ? <OutcomePanel outcome={outcome} />
+                      : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
                 </div>
               )}
 
@@ -551,12 +618,14 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
                         const blocked = entry.action === "ACTION_BLOCKED";
                         const dryRun = entry.action === "ACTION_DRY_RUN";
                         const hits = blocked ? entry.details?.blockers ?? [] : [];
+                        const writtenCount = entry.details?.writeback?.executions?.length ?? 0;
                         return (
                           <article key={entry.id} className={blocked ? "as-ledger-row blocked" : "as-ledger-row"}>
                             <div className="as-ledger-top">
                               <span className={blocked ? "as-chip blocker" : dryRun ? "as-chip muted" : "as-chip passed"}>{blocked ? "拦截" : dryRun ? "干跑" : "已执行"}</span>
                               <b>{entry.details?.actionName ?? "（动作）"}</b>
                               {entry.details?.actionCode ? <code>{entry.details.actionCode}</code> : null}
+                              {writtenCount > 0 && <span className="as-chip passed">已写库 {writtenCount} 处</span>}
                               <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
                             </div>
                             <p className="as-ledger-line">
@@ -650,6 +719,90 @@ function OutcomePanel({ outcome }: { outcome: ActionRunOutcome }) {
           {outcome.createdEntities.map((entity) => <span key={entity.id}>{entity.label} <code>{entity.display}</code></span>)}
         </div>
       )}
+      <WritebackPanel report={outcome.writeback} />
+    </div>
+  );
+}
+
+const writebackModeLabel: Record<WritebackReport["mode"], string> = {
+  OFF: "写回业务库：没开启（勾上才会真的写源表）",
+  PREVIEW: "写回业务库：这是计划（干跑，没写库）",
+  APPLIED: "写回业务库：已经写进去了",
+  REFUSED: "写回业务库：被拒，整批都没有执行",
+};
+
+function formatWritebackValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "（空）";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * 写回报告：**计划**（会写哪张表、哪几列）、**结果**（旧值 → 新值、实际语句）、**拒绝**（哪一处、为什么、去哪儿改）。
+ * 三样都摆出来，是因为"写业务库"是平台里唯一不可逆的动作，用户必须能在点之前和点之后都看清。
+ */
+function WritebackPanel({ report }: { report?: WritebackReport }) {
+  if (!report) return null;
+  // 没勾写回、这次又什么都没改到，就整块不显示 —— 不是"空面板占位"。
+  const empty = !report.plans.length && !report.refusals.length && !report.executions.length && !report.skipped.length;
+  if (empty) return null;
+  const refused = report.mode === "REFUSED";
+  return (
+    <div className={refused ? "as-writeback-panel refused" : "as-writeback-panel"}>
+      <div className="as-writeback-head">
+        <b>{writebackModeLabel[report.mode]}</b>
+        {report.executions.length > 0 && <span className="as-chip passed">{report.executions.length} 处已写库</span>}
+        {report.mode === "PREVIEW" && report.plans.length > 0 && <span className="as-chip muted">{report.plans.length} 处待写</span>}
+      </div>
+      {report.plans.map((plan) => (
+        <div className="as-writeback-row" key={`plan-${plan.entityType}-${plan.description}`}>
+          <b>{plan.entityType}</b>
+          <span className="as-writeback-table">{plan.table}{plan.dataSourceName ? ` · ${plan.dataSourceName}` : ""}</span>
+          <ul>
+            {plan.keys.map((key) => <li key={`k-${key.column}`}>按 <code>{key.column}</code> = {formatWritebackValue(key.value)} 定位这一行</li>)}
+            {plan.assignments.map((item) => <li key={`a-${item.column}`}>改 <code>{item.column}</code> ← 属性「{item.property}」</li>)}
+          </ul>
+        </div>
+      ))}
+      {report.executions.map((execution) => (
+        <div className="as-writeback-row" key={`exec-${execution.table}-${execution.statement}`}>
+          <b>{execution.entityType}</b>
+          <span className="as-writeback-table">{execution.table}{execution.dataSourceName ? ` · ${execution.dataSourceName}` : ""}</span>
+          <ul>
+            {execution.written.map((item) => (
+              <li key={`w-${item.column}`}><code>{item.column}</code>：{formatWritebackValue(item.from)} → {formatWritebackValue(item.to)}</li>
+            ))}
+          </ul>
+          <pre className="as-writeback-sql">{execution.statement}</pre>
+        </div>
+      ))}
+      {report.refusals.map((refusal) => (
+        <div className="as-writeback-row refused" key={`refusal-${refusal.nodeId}`}>
+          <b><AlertTriangle size={12} />{refusal.entityType} 写不回去</b>
+          <p>{refusal.reason}</p>
+          {refusal.hint && <p className="as-writeback-hint">→ {refusal.hint}</p>}
+        </div>
+      ))}
+      {report.skipped.map((item) => (
+        <div className="as-writeback-row muted" key={`skip-${item.nodeId}`}>
+          <b>{item.entityType}</b>
+          <p>{item.reason}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 有一处写不回就是一个都没写：这里不是"报错"，是"整批没动，改完再来" —— 语气和内容都要说清。 */
+function WritebackRefusedPanel({ failure }: { failure: { message: string; writeback?: WritebackReport } }) {
+  return (
+    <div className="as-outcome blocked">
+      <div className="as-verdict">
+        <AlertTriangle size={16} />
+        <b>{failure.message}</b>
+        <span>业务库和草稿快照都保持原样，按下面的提示改完再执行一次就行。</span>
+      </div>
+      <WritebackPanel report={failure.writeback} />
     </div>
   );
 }

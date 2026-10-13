@@ -225,6 +225,28 @@
 .as-rail-block b { color: #1f3557; font-size: 11px; letter-spacing: .4px; }
 .as-rail-block p { margin: 0; padding: 9px 10px; border-left: 2px solid #cbd9ed; background: #fff; color: #4b5b6b; font-size: 10.5px; line-height: 1.7; }
 .as-rail-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+/* 写回业务库：平台上唯一会改"外部"的那一下，开关与报告都要看得见、说得清 */
+.as-writeback { display: flex; align-items: center; gap: 7px; margin-left: 4px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 4px; background: #fff; cursor: pointer; }
+.as-writeback:hover { border-color: #a9c5ef; background: #f7faff; }
+.as-writeback input { margin: 0; accent-color: #1d4ed8; }
+.as-writeback span { display: grid; gap: 1px; color: #2c3f55; font-size: 11px; font-weight: 600; line-height: 1.3; }
+.as-writeback small { color: #7b8ca6; font-size: 9.5px; font-weight: 500; }
+.as-writeback-panel { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid #d6e3f5; border-radius: 4px; background: #f6faff; }
+.as-writeback-panel.refused { border-color: #f0ccc4; background: #fffaf8; }
+.as-writeback-head { display: flex; align-items: center; gap: 8px; }
+.as-writeback-head b { color: #1f3557; font-size: 11.5px; }
+.as-writeback-row { display: grid; gap: 4px; padding: 8px 9px; border-left: 2px solid #b9d2f2; background: #fff; }
+.as-writeback-row.refused { border-color: #d1604a; background: #fdf2ef; }
+.as-writeback-row.muted { border-color: #d7dde6; background: #fafbfd; }
+.as-writeback-row > b { display: flex; align-items: center; gap: 5px; color: #2c3f55; font-size: 11px; }
+.as-writeback-table { color: #315b9f; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10.5px; }
+.as-writeback-row ul { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.as-writeback-row li { color: #4b5b6b; font-size: 10.5px; line-height: 1.6; }
+.as-writeback-row code { color: #1f3557; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; }
+.as-writeback-row p { margin: 0; color: #55677d; font-size: 10.5px; line-height: 1.6; }
+.as-writeback-hint { color: #315b9f !important; }
+.as-writeback-sql { margin: 0; padding: 7px 8px; overflow-x: auto; border-radius: 3px; background: #f2f5fa; color: #3d5168; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
 .as-rail-list li { padding: 6px 8px; border: 1px solid #f0d3b4; border-radius: 3px; background: #fff8ec; color: #8a5a1f; font-size: 10px; line-height: 1.5; }
 
 @keyframes as-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }

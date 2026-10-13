@@ -25,6 +25,15 @@ export function describeApiError(status: number, raw?: unknown) {
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers } });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(describeApiError(response.status, (data as { error?: unknown }).error));
+  if (!response.ok) {
+    const error = new Error(describeApiError(response.status, (data as { error?: unknown }).error)) as Error & { status?: number; payload?: unknown };
+    /*
+     * 失败也常常带着上下文（典型：写回被拒时逐条说明"哪一处、为什么写不回去"）。
+     * 只把那一句话抛出去，界面就没法把明细摊开 —— 所以原样挂在错误上。
+     */
+    error.status = response.status;
+    error.payload = data;
+    throw error;
+  }
   return data as T;
 }
