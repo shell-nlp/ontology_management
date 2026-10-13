@@ -34,6 +34,12 @@ function quoteIdentifier(kind: DataSourceKind, value: string): string {
 function entityTableRef(entity: LogicalPlan["root"], kind: DataSourceKind): string {
   const source = entity.sources.find((item) => item.primary) ?? entity.sources[0];
   if (!source) throw new QueryDslError("ENTITY_NOT_BOUND", `对象类型「${entity.entityTypeName}」没有物理来源。`);
+  /*
+   * 取数口径当来源时，"这一格"不是表名而是一段只读 SQL：包成子查询再挂别名。
+   * 与数据源连接器里的口径读法（`derivedRowsStatement`）是同一个口径，只是这里不需要过滤/分页下推。
+   */
+  const sql = (source.sql ?? "").trim().replace(/;\\s*$/, "");
+  if (sql) return `(${sql})`;
   return [source.schema, source.table].filter(Boolean).map((part) => quoteIdentifier(kind, part)).join(".");
 }
 

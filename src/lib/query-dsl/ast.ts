@@ -10,6 +10,11 @@ export type ResolvedSource = {
   primaryKey: string[];
   titleField: string;
   primary: boolean;
+  /**
+   * 取数口径（`kind: DERIVED` 的主来源才有）。非空时**物理表这一格是空的**，
+   * 编出来是 `(口径) 别名` 这个子查询 —— 与对象服务那边的读法保持同一个口径。
+   */
+  sql: string;
 };
 
 export type ResolvedProperty = {

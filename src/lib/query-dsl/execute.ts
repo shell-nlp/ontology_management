@@ -3,8 +3,10 @@ import type { OntologyDefinition } from "@/lib/ontology";
 import { inferredBindingWarnings, withInferredDataSources } from "./bindings";
 import { resolveQueryDsl } from "./resolve";
 import { parseQueryDsl } from "./schema";
+import type { QueryDsl } from "./schema";
 import { compileQuerySql } from "./compile/sql";
 import { QueryDslError } from "./errors";
+import { toQueryDsl } from "./sql-surface";
 
 export type QueryDslExecutionDeps = {
   getDataSource?: (sourceId: string) => Promise<DataSourceRecord | null>;
@@ -23,6 +25,8 @@ export type QueryDslExecutionResult = {
   truncated: boolean;
   elapsed_ms: number;
   warnings: string[];
+  /** 真正发到源库的语句：本体 SQL 的"我写的那句"和"实际执行的这句"是两回事，排障要能对上。 */
+  statement: string;
 };
 
 async function defaultDataSource(sourceId: string): Promise<DataSourceRecord | null> {
@@ -40,12 +44,35 @@ async function defaultListDataSources(): Promise<readonly DataSourceRecord[]> {
   return listDataSources();
 }
 
+/** JSON DSL 入口：结构校验之后与本体 SQL 走**同一条**执行链。 */
 export async function executeQueryDsl(
   definition: OntologyDefinition,
   input: unknown,
   deps: QueryDslExecutionDeps = {},
 ): Promise<QueryDslExecutionResult> {
-  const query = parseQueryDsl(input);
+  return runQuery(definition, parseQueryDsl(input), deps);
+}
+
+/**
+ * 本体 SQL 入口（SQL 形状的表层，2026-10-14）。
+ *
+ * 解析 + 绑定成**同一份** `QueryDsl` 之后，与 JSON DSL 共用 resolve → 编译 → 只读执行 ——
+ * 换表层不换保证（基数 fail-closed、跨数据资源拒绝、指标口径、只读闸门都在）。
+ */
+export async function executeOntologySql(
+  definition: OntologyDefinition,
+  sql: string,
+  options: QueryDslExecutionDeps & { parameters?: Record<string, unknown> } = {},
+): Promise<QueryDslExecutionResult> {
+  const { parameters = {}, ...deps } = options;
+  return runQuery(definition, toQueryDsl(sql, definition, parameters), deps);
+}
+
+async function runQuery(
+  definition: OntologyDefinition,
+  query: QueryDsl,
+  deps: QueryDslExecutionDeps,
+): Promise<QueryDslExecutionResult> {
   /*
    * 导入态的本体常常只填了「模式.表」、没填 dataSourceId。按模式名唯一匹配兜底补上，
    * 与 get_object_type / get_table_ddl 的读法保持一致，别让同一个本体能看不能查。
@@ -78,6 +105,7 @@ export async function executeQueryDsl(
   return {
     data_source: record.name,
     data_source_kind: record.kind,
+    statement: compiled.statement,
     columns: result.columns,
     rows: result.rows.map((row) => result.columns.map((column) => row[column])),
     returned: result.rows.length,

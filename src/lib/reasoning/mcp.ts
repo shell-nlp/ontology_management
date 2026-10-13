@@ -65,7 +65,7 @@ const TOOL_TITLES: Record<string, string> = {
   // 不叫「建表语句」：视图走的是视图定义，还原那条也不是库里的原始 CREATE，叫表结构才名实相符。
   get_table_ddl: "表结构",
   run_sql: "只读查询",
-  run_query: "本体查询 DSL",
+  run_query: "本体 SQL 查询",
   query_object_instance: "对象实例查询",
   query_instance_subgraph: "关系子图查询",
 };

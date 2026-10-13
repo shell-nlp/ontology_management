@@ -180,13 +180,20 @@ export const REASONING_TOOLS: ToolSpec[] = [
   {
     name: "run_query",
     description:
-      '按本体查询 DSL 执行只读查询，是结构化问数的优先入口。query 只使用对象类型、属性、关系类型、指标和参数，不接受 SQL、表名、列名。结构示例：{"version":"1.0","kind":"aggregate","from":{"object_type":"对象类型名"},"relationships":[{"alias":"area","type":"关系类型名","direction":"forward","optional":true}],"where":{"and":[{"field":{"alias":"root","property":"属性名"},"op":"eq","value":{"param":"p"}}]},"select":[{"field":{"alias":"root","property":"维度名"},"as":"维度"},{"metric":"指标名","as":"结果"}],"group_by":[{"alias":"root","property":"维度名"}],"order_by":[{"ref":"结果","direction":"desc"}],"limit":100}。select 每项三选一：{"field":{"alias":"root","property":"属性名"},"as":"列名"} 取字段（聚合查询里必须同时写进 group_by）/ {"metric":"指标名","as":"列名"} 用指标 / {"aggregate":"COUNT|COUNT_DISTINCT|SUM|AVG|MIN|MAX","property":"属性名（COUNT 可省）","as":"列名"} 直接聚合。没有 {"count":true} 这种简写。version 可省略（默认 "1.0"，当前只接受这一版；它指 DSL 语法版本，不是本体版本）。DSL 暂不支持或需要排障时，仍可使用 run_sql。',
+      `按本体 SQL（SQL 形状的查询表层）执行只读问数：只写对象类型、属性、关系类型、指标与参数，不写物理表名 / 列名。这是结构化问数的优先入口。
+语法子集：SELECT … FROM 对象类型 [AS 别名] [[LEFT] JOIN 关系类型 [AS 别名] [FORWARD|BACKWARD|BOTH]] … [WHERE …] [GROUP BY …] [ORDER BY …] [LIMIT n]。
+例：① SELECT 统计日期, 地市编码 FROM 专线产品用户 WHERE 业务状态 = '在用' ORDER BY 统计日期 DESC LIMIT 20；② SELECT 地市名称, COUNT(*) AS 条数 FROM 专线产品用户 LEFT JOIN 归属地市 AS 地市 GROUP BY 地市名称 ORDER BY 条数 DESC；③ SELECT 专线条数 AS 条数 FROM 专线产品用户 WHERE 统计日期 = :day（:名字 的取值放 parameters）。
+写法要点：聚合写 COUNT(*) / COUNT(DISTINCT 属性) / SUM|AVG|MIN|MAX(属性)，每项都要 AS 列名；聚合查询里出现的普通属性必须同时写进 GROUP BY；ORDER BY 用输出列名或属性名；筛选支持 = <> > >= < <= / IN / NOT IN / BETWEEN … AND … / IS [NOT] NULL / LIKE '%值%'（也支持 '值%' / '%值'）/ LABEL(属性) = '枚举标签'（按码值的中文标签过滤）/ AND OR NOT 与括号。
+JOIN 只能写关系类型、不给写 ON 条件（连接的读法由关系类型和它的键映射决定）；方向用 FORWARD（默认）/ BACKWARD / BOTH。
+不接受：SELECT *、子查询、CTE（WITH）、UNION、窗口函数、任意函数、跨数据资源 join —— 这些情况用 run_sql 兜底（它只读、且始终可用）。返回里带 statement：那是本次真正发到源库的物理 SQL，排障用。`,
     parameters: {
       type: "object",
       properties: {
-        query: { type: "object", description: "本体查询 DSL JSON（version 可省略，默认 1.0；kind / from / where / select / group_by / order_by / limit）" },
+        sql: { type: "string", description: "本体 SQL 语句（主入口）：用对象类型 / 属性 / 关系类型 / 指标写 SELECT，不写表名、列名" },
+        parameters: { type: "object", description: ":名字 的取值表（可省略），例如 {\"day\":\"2026-09-12\"} 对应 SQL 里的 :day" },
+        query: { type: "object", description: "可选的 JSON DSL 等价写法（程序化构造时用）；与 sql 二选一，给了 sql 就以 sql 为准" },
       },
-      required: ["query"],
+      required: [],
     },
   },
   /*

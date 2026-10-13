@@ -38,7 +38,9 @@ function entityError(name: string) {
 function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias: string): ResolvedEntity {
   const sources = entitySources(entity);
   const primary = sources[0];
-  if (!primary?.view) {
+  const primarySql = (primary?.sql ?? "").trim();
+  // 取数口径（DERIVED）没有物理表名：口径本身就是来源，`view` 只是"参考表"（给界面拿列清单用）。
+  if (!primary?.view && !primarySql) {
     throw new QueryDslError(
       "ENTITY_NOT_BOUND",
       `对象类型「${entity.name}」还没有绑定表，DSL 没法查。先到「对象 / 本体」页补齐数据资源与表绑定。`,
@@ -60,8 +62,13 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
   }
 
   const resolvedSources: ResolvedSource[] = sources.map((source, index) => {
-    if (!source.dataSourceId || !source.view) {
+    const sourceSql = (source.sql ?? "").trim();
+    if (!source.dataSourceId || (!source.view && !sourceSql)) {
       throw new QueryDslError("ENTITY_NOT_BOUND", `对象类型「${entity.name}」的补充来源「${source.view || source.id}」没有绑定完整。`);
+    }
+    // 口径只能当主来源：补充来源要做 MDO 合并，而"合并进的是一段算出来的结果"没有定义（与编辑器的校验同一口径）。
+    if (index > 0 && sourceSql) {
+      throw new QueryDslError("SECONDARY_SOURCE_UNSUPPORTED", `对象类型「${entity.name}」的补充来源是取数口径，v1 不支持：请把口径放在主来源上。`);
     }
     if (source.dataSourceId !== primary.dataSourceId) {
       throw new QueryDslError(
@@ -84,6 +91,7 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
       primaryKey: [...source.primaryKey],
       titleField: source.titleField,
       primary: index === 0,
+      sql: sourceSql,
     };
   });
 

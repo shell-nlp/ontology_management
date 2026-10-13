@@ -11,6 +11,8 @@ import { cachedColumnValueIndex, ensureColumnProfile, enumProfileWarnings, sourc
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";
 import { executeQueryDsl } from "@/lib/query-dsl";
+import { executeOntologySql } from "@/lib/query-dsl";
+import { QueryDslError } from "@/lib/query-dsl";
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
@@ -791,7 +793,18 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
     }
 
     case "run_query": {
-      const result = await executeQueryDsl(definition, args.query);
+      /*
+       * 两种表层、一个语义：`sql` 是本体 SQL（SQL 形状，主入口），`query` 是等价的 JSON DSL。
+       * 两条路都绑成同一份 QueryDsl，再走同一条 resolve → 编译 → 只读执行 —— 保证不会各说各话。
+       */
+      const sql = typeof args.sql === "string" ? args.sql.trim() : "";
+      const parameters = args.parameters && typeof args.parameters === "object" && !Array.isArray(args.parameters)
+        ? args.parameters as Record<string, unknown>
+        : {};
+      if (!sql && (args.query === undefined || args.query === null)) {
+        throw new QueryDslError("INVALID_QUERY", "要么给 sql（本体 SQL），要么给 query（JSON DSL）—— 两个都没给。", "本体 SQL 例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码");
+      }
+      const result = sql ? await executeOntologySql(definition, sql, { parameters }) : await executeQueryDsl(definition, args.query);
       return {
         payload: result,
         // 查询结果不是本体里的对象，不能当"证据"引用。

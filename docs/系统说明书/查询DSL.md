@@ -85,7 +85,49 @@ SQL 编译器
 - 待补：接真实业务问题集运行影子对拍、跨来源对象类型、更复杂的多跳关系规划
 - 与 `run_sql` 的真实问题集影子对拍
 
-### 2.3 暂不支持
+### 2.3 本体 SQL（SQL 形状的表层，2026-10-14 落地）
+
+用户口径（2026-10-14 拍板）：**表层用 SQL 形状、内核仍是本体语义**。理由很简单 —— 模型和人都会 SQL，
+不必为平台再学一门自创语法；而"保证"（基数 fail-closed、跨数据资源拒绝、指标口径、只读闸门）
+全部来自内核，与表层无关，所以换表层一条都不会丢。
+
+两种表层产出**同一份 `QueryDsl`**：本体 SQL 解析 + 绑定之后，与 JSON DSL 共用
+`resolveQueryDsl` → `compileQuerySql` → 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 词法 / 语法 | `src/lib/query-dsl/sql-surface/parse.ts` | 文本 → 语法树（`SqlQueryAst`）；不认识本体 |
+| 语义绑定 | `src/lib/query-dsl/sql-surface/bind.ts` | 语法树 + 本体定义 → `QueryDsl`；判属性 / 指标、判别名、判 `kind` |
+| 执行入口 | `src/lib/query-dsl/execute.ts` | `executeOntologySql`（本体 SQL）与 `executeQueryDsl`（JSON DSL） |
+
+**语法子集（v0）**
+
+```sql
+SELECT 输出项 [AS 列名] [, …]
+FROM 对象类型 [AS 别名]
+[[LEFT] JOIN 关系类型 [AS 别名] [FORWARD | BACKWARD | BOTH]] …
+[WHERE 条件]
+[GROUP BY 属性, …]
+[ORDER BY 输出列名 | 属性 [ASC | DESC], …]
+[LIMIT n]
+```
+
+- 输出项：`属性` / `别名.属性` / `指标名` / `COUNT(*)` / `COUNT(DISTINCT 属性)` / `SUM|AVG|MIN|MAX(属性)`。
+  裸名字**先按当前实体的属性找，再按指标找** —— 两个都不是就把"两条路 + 候选名字"写进错误里。
+- 条件：`= <> > >= < <=`、`IN` / `NOT IN`、`BETWEEN … AND …`、`IS [NOT] NULL`、
+  `LIKE '%值%'`（也支持 `'值%'` / `'%值'`，其余模式拒绝并提示改用 `=`）、
+  `LABEL(属性) = '枚举标签'`（按码值的中文标签过滤）、`AND` / `OR` / `NOT` 与括号。
+- 参数：`:名字`，取值走 `parameters` —— 与 JSON DSL 的 `{"param":"名字"}` 是同一套机制。
+- 关系遍历：`JOIN` 只能写**关系类型**，**不给写 ON 条件**（连接的读法由关系类型与它的键映射决定）；
+  `LEFT JOIN` = 可选（对不上也保留左边这一行）。`FORWARD`（默认）/ `BACKWARD` / `BOTH` 是本方言
+  **唯一的语法扩展**：SQL 没有"边方向"这个概念，而本体关系是双向的一条定义。
+- `kind` 不用手写：有指标或聚合就是 `aggregate`，否则 `records`。
+- **不接受**：`SELECT *`、子查询、CTE（`WITH`）、`UNION`、窗口函数、任意函数、跨数据资源 join ——
+  一律如实报错，不做静默近似；这些情况用 `run_sql` 兜底。
+- **主来源是取数口径（`DERIVED`）时也能查**：口径本身就是来源（`view` 只是给界面拿列清单的参考表），
+  编译出来是 `(口径) 别名` 子查询。口径只能当主来源；放到补充来源上（MDO 合并）会被拒绝。
+
+### 2.4 暂不支持
 
 - 任意 JOIN
 - 用户自定义 SQL 表达式
