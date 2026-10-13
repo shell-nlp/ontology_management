@@ -100,7 +100,9 @@ function exampleArguments(tool: McpTool, ontologyId: string, defaultDataSource =
   for (const [name, property] of Object.entries(properties)) {
     if (name === "ontology_id") { if (includeOntologyId) result[name] = ontologyId; continue; }
     if (name === "data_source") { if (defaultDataSource) result[name] = defaultDataSource; continue; }
-    if (name === "query") { result[name] = "用户 订单"; continue; }
+    // 本体 SQL 给一段**形状对**的模板：属性名 / 对象类型名一看就是要替换的，
+    // 直接点运行也只会得到"本体里没有对象类型「对象类型名」"这种带候选的提示，不会误伤。
+    if (name === "sql" && tool.name === "run_query") { result[name] = "SELECT 属性名 FROM 对象类型名 LIMIT 10"; continue; }
     if (name === "type_name") { result[name] = "用户"; continue; }
     if (name === "type_names") { result[name] = ["用户", "订单"]; continue; }
     if (property.type === "integer") { result[name] = 5; continue; }

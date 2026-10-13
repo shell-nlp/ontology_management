@@ -94,6 +94,9 @@ SQL 编译器
 两种表层产出**同一份 `QueryDsl`**：本体 SQL 解析 + 绑定之后，与 JSON DSL 共用
 `resolveQueryDsl` → `compileQuerySql` → 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
 
+`run_query` 工具**只收本体 SQL**（`sql` + `parameters`）：一个工具只留一种表层，模型才不用在两套语法之间挑。
+JSON DSL 仍在代码里（`executeQueryDsl`，程序化构造与影子对拍用），只是不出现在工具入参上。
+
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
 | 词法 / 语法 | `src/lib/query-dsl/sql-surface/parse.ts` | 文本 → 语法树（`SqlQueryAst`）；不认识本体 |

@@ -191,9 +191,8 @@ JOIN 只能写关系类型、不给写 ON 条件（连接的读法由关系类�
       properties: {
         sql: { type: "string", description: "本体 SQL 语句（主入口）：用对象类型 / 属性 / 关系类型 / 指标写 SELECT，不写表名、列名" },
         parameters: { type: "object", description: ":名字 的取值表（可省略），例如 {\"day\":\"2026-09-12\"} 对应 SQL 里的 :day" },
-        query: { type: "object", description: "可选的 JSON DSL 等价写法（程序化构造时用）；与 sql 二选一，给了 sql 就以 sql 为准" },
       },
-      required: [],
+      required: ["sql"],
     },
   },
   /*

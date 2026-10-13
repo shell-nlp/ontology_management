@@ -10,7 +10,6 @@ import { readOnlyPolicyNote } from "@/lib/datasource/sql-guard";
 import { cachedColumnValueIndex, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";
-import { executeQueryDsl } from "@/lib/query-dsl";
 import { executeOntologySql } from "@/lib/query-dsl";
 import { QueryDslError } from "@/lib/query-dsl";
 import { queryLinks } from "@/lib/instance/object-service/links";
@@ -794,17 +793,19 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
 
     case "run_query": {
       /*
-       * 两种表层、一个语义：`sql` 是本体 SQL（SQL 形状，主入口），`query` 是等价的 JSON DSL。
-       * 两条路都绑成同一份 QueryDsl，再走同一条 resolve → 编译 → 只读执行 —— 保证不会各说各话。
+       * **只收本体 SQL**（SQL 形状的表层，2026-10-14 用户拍板）：模型和人写熟悉的 SELECT，
+       * 解析 + 绑定成 QueryDsl 之后走既有那条 resolve → 编译 → 只读执行。
+       * JSON DSL 仍在代码里（`executeQueryDsl`，程序化构造与影子对拍用），但**不再作为工具入参** ——
+       * 一个工具只留一种表层，才谈得上"换表层不换保证"。
        */
       const sql = typeof args.sql === "string" ? args.sql.trim() : "";
       const parameters = args.parameters && typeof args.parameters === "object" && !Array.isArray(args.parameters)
         ? args.parameters as Record<string, unknown>
         : {};
-      if (!sql && (args.query === undefined || args.query === null)) {
-        throw new QueryDslError("INVALID_QUERY", "要么给 sql（本体 SQL），要么给 query（JSON DSL）—— 两个都没给。", "本体 SQL 例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码");
+      if (!sql) {
+        throw new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码");
       }
-      const result = sql ? await executeOntologySql(definition, sql, { parameters }) : await executeQueryDsl(definition, args.query);
+      const result = await executeOntologySql(definition, sql, { parameters });
       return {
         payload: result,
         // 查询结果不是本体里的对象，不能当"证据"引用。

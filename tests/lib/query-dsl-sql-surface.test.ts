@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { compileQuerySql, executeOntologySql, parseOntologySql, resolveQueryDsl, toQueryDsl } from "@/lib/query-dsl";
+import { REASONING_TOOLS } from "@/lib/reasoning/tools/registry";
 
 /**
  * 本体 SQL（SQL 形状的查询表层）。
@@ -309,5 +310,18 @@ describe("本体 SQL：主来源是取数口径（DERIVED）时编成子查询",
     });
     expect(() => compileQuerySql(resolveQueryDsl(definition, toQueryDsl("SELECT 地市编码 FROM 专线产品用户", definition)), "ORACLE"))
       .toThrowError(/补充来源是取数口径/);
+  });
+});
+
+describe("run_query 工具：只暴露一种表层", () => {
+  it("入参只有 sql（必填）与 parameters —— 不再有 query（JSON DSL）", () => {
+    const tool = REASONING_TOOLS.find((item) => item.name === "run_query")!;
+    expect(tool.name).toBe("run_query");
+    expect(Object.keys(tool.parameters.properties ?? {}).sort()).toEqual(["parameters", "sql"]);
+    expect(tool.parameters.required).toEqual(["sql"]);
+    // 描述里要把本体 SQL 的写法与边界讲清楚，且不许再提"本体查询 DSL"这个旧说法。
+    expect(tool.description).toContain("本体 SQL");
+    expect(tool.description).toContain("不接受");
+    expect(tool.description).not.toContain("本体查询 DSL");
   });
 });
