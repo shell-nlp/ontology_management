@@ -250,6 +250,8 @@ export async function syncObjectsToIndex(
         entityType: entityTypeName,
         rows: synced.upserted,
         scanned: entries.length,
+        // 这条路径只是「补一批」，不整份读源，算不出折叠数（folded 只在整份物化那一次有意义）。
+        folded: 0,
         truncated: !batchComplete,
         pages: 1,
         completedAt: new Date().toISOString(),
@@ -266,6 +268,8 @@ export type MaterializeTypeResult = {
   rows: number;
   /** 从源里读过的行数（撞上限时 = 上限）。 */
   scanned: number;
+  /** 源里被主键折叠掉的行数（读过的行 - 去重后的对象数）。只在整份读完之后算得出来。 */
+  folded: number;
   truncated: boolean;
   pages: number;
   /** 源报告的总数（有的源不给）。 */
@@ -349,6 +353,8 @@ export async function materializeObjectType(
       limit,
       offset: useCursor ? 0 : offset,
       count: pages === 0,
+      // 自己在翻页：这一页读满 500 不是"被截断"，别刷假告警。
+      paging: true,
       ...(useCursor ? { cursor: useCursor } : {}),
     });
     options.onProgress?.({ scanned: scanned + result.rows.length, rows: entries.length + result.rows.length, pages: pages + 1 });
@@ -407,11 +413,45 @@ export async function materializeObjectType(
     // prune 只在这个对象类型里生效：否则物化 A 会把 B 的物化数据一起删掉（见 pruneLabel 的说明）。
     pruneLabel: entityTypeName,
   });
+  /*
+   * **主键重复必须报数**（2026-10-13）：源里读了多少行、实际落下几个对象，差出来的就是被折叠掉的行数。
+   * 只有「从头读完、没截断、没取消、没卡住」那一次才算得准 —— prune 之后索引里就是这个类型这一趟的全部对象。
+   * 计数走索引（一条 COUNT），**不在内存里攒对象键的 Set**：大表会把内存撑爆。
+   * 有了这个数，用户才不会以为「源里就这么多」，也就不会把主键选错当成数据不全。
+   */
+  let folded = 0;
+  if (!truncated && !cancelled && !stalled && startOffset === 0) {
+    /*
+     * **少读了几行也要说**（2026-10-13）：主键在源数据里不唯一时，主键游标翻页在页边界会跳过同一主键剩下的行
+     * —— `k > 上一页最后一个 k` 永远够不到重复值。源侧报过总数、这一趟又是从头读完的，就对一下账。
+     * 这条不拦任务，但必须写出来：静默少读就是 bug。
+     */
+    if (typeof total === "number" && total > scanned) {
+      warnings.push(
+        `源里共 ${total} 行，这一趟只读到 ${scanned} 行：主键在源数据里不唯一时，主键游标翻页会在页边界跳过同一主键的其它行。` +
+          "请改用取数口径（先去重），或者把主键换成真正唯一的键。",
+      );
+    }
+    try {
+      const objects = await getObjectIndex().countTypeObjects(context.targetId, entityTypeName, { origin: "MATERIALIZED" });
+      folded = Math.max(0, scanned - objects);
+    } catch (error) {
+      warnings.push(`没能核对主键是否唯一：${error instanceof Error ? error.message : "未知错误"}`);
+    }
+    if (folded > 0) {
+      warnings.push(
+        `源里读了 ${scanned} 行，按主键去重后只有 ${scanned - folded} 个对象（折叠掉 ${folded} 行）：` +
+          "这个对象类型的主键列在源数据里不唯一，重复的行被并进了同一个对象。" +
+          "请改主键（或换成组合键），或者在取数口径里先去重（例如按业务键取最新一行）。",
+      );
+    }
+  }
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
     entityType: entityTypeName,
     rows: synced.upserted,
     scanned,
+    folded,
     truncated: truncated || cancelled || stalled,
     pages,
     completedAt: new Date().toISOString(),
@@ -421,6 +461,7 @@ export async function materializeObjectType(
     // rows 是"这一次写进去的条数"；断点续跑时它只是后半段。
     rows: synced.upserted,
     scanned,
+    folded,
     truncated: truncated || cancelled || stalled,
     pages,
     total,
@@ -562,6 +603,8 @@ export async function materializeRelationshipType(
     entityType: relation.name,
     rows: synced.upserted,
     scanned,
+    // 边没有「主键重复折叠」这回事：同一条边的重复行本来就该合成一条。
+    folded: 0,
     truncated: truncated || cancelled || stalled,
     pages,
     completedAt: new Date().toISOString(),
@@ -570,6 +613,7 @@ export async function materializeRelationshipType(
     entityType: relation.name,
     rows: synced.upserted,
     scanned,
+    folded: 0,
     truncated: truncated || cancelled || stalled,
     pages,
     total,

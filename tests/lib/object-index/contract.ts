@@ -253,14 +253,50 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
           entityType: "客户",
           rows: 100,
           scanned: 50000,
+          folded: 0,
           truncated: true,
           pages: 100,
           completedAt: new Date().toISOString(),
         });
         const list = await index.listMaterializations(target);
         expect(list).toHaveLength(1);
-        expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, scanned: 50000, truncated: true, pages: 100 });
+        expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, scanned: 50000, folded: 0, truncated: true, pages: 100 });
         expect(list[0].completedAt).toBeTruthy();
+      });
+    });
+
+    /*
+     * **主键重复折叠必须报数**（2026-10-13）：源里 1000 行、按主键去重后只有 800 个对象，
+     * 折叠掉的 200 行要能记下、读回 —— 静默折叠会让用户以为「源里就这么多」。
+     */
+    it("物化清单：折叠掉的行数记下并读回", async () => {
+      await withIndex(async (index, target) => {
+        await index.saveMaterialization({
+          targetId: target,
+          entityType: "客户",
+          rows: 800,
+          scanned: 1000,
+          folded: 200,
+          truncated: false,
+          pages: 2,
+          completedAt: new Date().toISOString(),
+        });
+        const list = await index.listMaterializations(target);
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({ entityType: "客户", rows: 800, scanned: 1000, folded: 200, truncated: false });
+      });
+    });
+
+    it("countTypeObjects：只数这个对象类型，并能按来源收窄", async () => {
+      await withIndex(async (index, target) => {
+        await index.syncTargetObjects(target, [entry("1"), entry("2")], { origin: "MATERIALIZED" });
+        await index.syncTargetObjects(target, [entry("9", { entityType: "账户", labels: ["账户"] })], { origin: "MATERIALIZED" });
+        await index.syncTargetObjects(target, [entry("7")], { origin: "SNAPSHOT" });
+        expect(await index.countTypeObjects(target, "客户", { origin: "MATERIALIZED" })).toBe(2);
+        expect(await index.countTypeObjects(target, "账户", { origin: "MATERIALIZED" })).toBe(1);
+        expect(await index.countTypeObjects(target, "客户", { origin: "SNAPSHOT" })).toBe(1);
+        // 不传 origin 时按整份物化算（物化对账用的就是这一档）。
+        expect(await index.countTypeObjects(target, "客户")).toBe(2);
       });
     });
 

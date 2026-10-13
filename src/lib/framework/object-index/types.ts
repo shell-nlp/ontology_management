@@ -163,6 +163,14 @@ export type ObjectIndexMaterialization = {
   rows: number;
   /** 从源里读过的行数（撞上限时 = 上限）。 */
   scanned: number;
+  /**
+   * **源里被折叠掉的行数** = 读过的行 - 去重后的对象数。
+   *
+   * 只在「从头读完、没截断、没取消」的那一次才有意义：大于 0 说明这个对象类型的主键在源数据里
+   * 不唯一，同一批数据被折进了同一个对象（1000 行 → 800 个对象）。必须显形 ——
+   * 静默折叠会让用户以为「源里就这么多」。
+   */
+  folded: number;
   /** 撞到上限、源里可能还有更多。 */
   truncated: boolean;
   /** 读了多少页。 */
@@ -239,6 +247,11 @@ export interface ObjectIndex {
   stats(targetId: string): Promise<ObjectIndexStats>;
   /** 这个本体存储下各对象类型的物化清单（没有整份物化过的类型不在里面）。 */
   listMaterializations(targetId: string): Promise<ObjectIndexMaterialization[]>;
+  /**
+   * 数**某个对象类型**的对象条数（可按来源收窄）。
+   * 用途：整份物化之后比对「从源读了多少行 / 实际落下几个对象」，把主键重复折叠的行数报出来。
+   */
+  countTypeObjects(targetId: string, entityType: string, options?: { origin?: ObjectIndexOrigin }): Promise<number>;
   /** 记下（覆盖）一个对象类型的物化清单。 */
   saveMaterialization(record: ObjectIndexMaterialization): Promise<void>;
   /** 删掉某个对象类型的物化清单（连同它的物化数据一起清时用）。 */

@@ -33,7 +33,19 @@ function findEntityType(definition: OntologyDefinition, name: string): EntityTyp
 
 /** 对象类型上绑定的数据来源（主来源在前）。 */
 function sourcesOf(entityType: EntityType) {
-  return (entityType.sources ?? []).filter((source) => source.dataSourceId || source.view);
+  // 口径来源（DERIVED）没有 view，只有 sql —— 也要算「接了数据」，否则它会被当成纯类型层建模。
+  return (entityType.sources ?? []).filter((source) => source.dataSourceId || source.view || source.sql);
+}
+
+/**
+ * 来源 → 连接器要的「数据来源引用」。
+ *
+ * 有**取数口径**（DERIVED）时优先用口径：不查数据字典，直接把这段时间当子查询；
+ * 否则就是老样子 —— 按 `schema.view` 定位表 / 视图。
+ */
+function viewRefOf(source: { schema: string; view: string; sql?: string }) {
+  const sql = (source.sql ?? "").trim();
+  return { schema: source.schema || undefined, name: source.view, ...(sql ? { sql } : {}) };
 }
 
 /** 某一份来源要取的列：映射到它的属性列 + 它的主键列 + 标题列。 */
@@ -104,10 +116,10 @@ export async function connectorFor(dataSourceId: string) {
 
 export async function selectRowsBy(
   dataSourceId: string,
-  source: { schema: string; view: string },
+  source: { schema: string; view: string; sql?: string },
   columns: string[],
   filters: DataSourceRowFilter[],
-  options: { limit: number; offset?: number; search?: { text: string; columns: string[] }; orderBy?: string[]; after?: unknown[] },
+  options: { limit: number; offset?: number; search?: { text: string; columns: string[] }; orderBy?: string[]; after?: unknown[]; paging?: boolean },
   warnings: string[],
 ): Promise<DataSourceRows> {
   const { connector, label } = await connectorFor(dataSourceId);
@@ -115,7 +127,7 @@ export async function selectRowsBy(
     throw new Error(`数据资源「${label}」不支持结构化取行，无法按主键读对象。`);
   }
   const result = await connector.selectRows({
-    view: { schema: source.schema || undefined, name: source.view },
+    view: viewRefOf(source),
     columns,
     filters,
     ...(options.search ? { search: options.search } : {}),
@@ -124,7 +136,8 @@ export async function selectRowsBy(
     ...(options.orderBy?.length ? { orderBy: options.orderBy } : {}),
     ...(options.after?.length ? { after: options.after } : {}),
   });
-  if (result.truncated) warnings.push(`命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
+  // 整份物化自己在翻页（paging）时这不叫截断：下一页会接着读，报出来只会刷一排假告警。
+  if (result.truncated && !options.paging) warnings.push(`命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
   return result;
 }
 
@@ -219,8 +232,8 @@ export function createDataSourceObjectSource(): ObjectSource {
         columns,
         filters,
         cursor
-          ? { limit, offset: 0, search, orderBy: cursor.columns, after: cursor.values }
-          : { limit, offset, search },
+          ? { limit, offset: 0, search, orderBy: cursor.columns, after: cursor.values, paging: query.paging }
+          : { limit, offset, search, paging: query.paging },
         warnings,
       );
       const records = rows.rows.map((row) => recordOf(entityTypeName, entityType, rowProperties(entityType, row), warnings));
@@ -235,7 +248,7 @@ export function createDataSourceObjectSource(): ObjectSource {
           const { connector } = await connectorFor(main.dataSourceId);
           if (connector.countRows) {
             total = await connector.countRows({
-              view: { schema: main.schema || undefined, name: main.view },
+              view: viewRefOf(main),
               filters,
               ...(search ? { search } : {}),
             });

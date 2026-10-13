@@ -10,6 +10,7 @@ import { planLinkSource } from "@/lib/ontology/link-source";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
+import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
 import {
   emptyEntitySource,
   entitySources,
@@ -207,7 +208,10 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   /** 提交时的形状：主来源只留真的选中的列，补充来源按主键列数逐位对齐。 */
   const normalizedSources = sourceDrafts.map((item, index) => ({
     ...item,
-    view: item.view.trim(),
+    // 取数口径与表 / 视图互斥：口径来源不留表名，表来源不留口径。
+    kind: item.kind === "DERIVED" ? ("DERIVED" as const) : ("PHYSICAL" as const),
+    sql: item.kind === "DERIVED" ? item.sql.trim() : "",
+    view: item.kind === "DERIVED" ? "" : item.view.trim(),
     primaryKey: index === 0
       ? item.primaryKey.map((column) => column.trim()).filter(Boolean)
       : primaryKeyColumns.map((_, position) => (item.primaryKey[position] ?? "").trim()),
@@ -946,8 +950,26 @@ type SourceCardProps = {
  * 一份来源的编辑卡：选资源、选表；主来源再定主键与标题，补充来源按主键列逐个对位。
  * 每份来源自己读自己的结构，读到字段就报给上层——属性映射要用这份清单。
  */
+/**
+ * 口径的只读校验：**和后端同一个纯函数**（`assertReadOnlySql`），界面先给结论，别等保存才报错。
+ * 空口径不算通过 —— 保存会被发布前校验挡下来，这里先说出来。
+ */
+function checkDerivedSql(sql: string): { ok: boolean; text: string } {
+  const trimmed = sql.trim();
+  if (!trimmed) return { ok: false, text: "口径还是空的：写一段只读 SELECT（去重、聚合都写在这里）。" };
+  try {
+    assertReadOnlySql(trimmed, "取数口径");
+    return { ok: true, text: "只读校验通过。" };
+  } catch (error) {
+    return { ok: false, text: error instanceof Error ? error.message : "SQL 校验失败。" };
+  }
+}
+
 function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCount, onChange, onPickDataSource, onPickView, onToggleKeyColumn, onPickJoinKey, onRemove, onFields }: SourceCardProps) {
   const primary = index === 0;
+  /** 取数口径：只有主来源支持（补充来源仍是表 / 视图，后端校验里也是这么要求的）。 */
+  const derived = primary && source.kind === "DERIVED";
+  const sqlCheck = derived ? checkDerivedSql(source.sql) : null;
   // 拆成基本值：下面的请求只跟这些值走，父组件重渲染不会顺手把请求重发一遍。
   const dataSourceId = source.dataSourceId;
   const view = source.view;
@@ -967,7 +989,7 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
 
   // 选定资源后拉它的结构清单，给「表 / 视图」那个输入框做候选。
   useEffect(() => {
-    if (!dataSourceId) return;
+    if (!dataSourceId || derived) return;
     let cancelled = false;
     void api<{ views: DataViewSummary[] }>(`/api/data-sources/${dataSourceId}/views?limit=5000`)
       .then((data) => {
@@ -979,11 +1001,11 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
       })
       .catch(() => { if (!cancelled) setViewsState({ dataSourceId, rows: [] }); });
     return () => { cancelled = true; };
-  }, [dataSourceId, view, schema]);
+  }, [dataSourceId, view, schema, derived]);
 
   // 选定表之后取字段：主键、连接键和属性映射都从这份字段清单里选。
   useEffect(() => {
-    if (!dataSourceId || !view) return;
+    if (!dataSourceId || !view || derived) return;
     const key = fieldsKey;
     const query = schema ? `limit=1&schema=${encodeURIComponent(schema)}` : "limit=1";
     let cancelled = false;
@@ -991,7 +1013,7 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
       .then((data) => { if (!cancelled) { setFieldsState({ key, rows: data.fields }); setError(""); onFields(sourceId, key, data.fields); } })
       .catch((reason) => { if (!cancelled) { setFieldsState({ key, rows: [] }); onFields(sourceId, key, []); setError(reason instanceof Error ? reason.message : "读取字段失败。"); } });
     return () => { cancelled = true; };
-  }, [dataSourceId, view, schema, sourceId, fieldsKey, onFields]);
+  }, [dataSourceId, view, schema, sourceId, fieldsKey, onFields, derived]);
   const joinKeys = primaryKeyColumns.map((_, position) => source.primaryKey[position] ?? "");
 
   return (
@@ -1006,6 +1028,16 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
           <span>{sourceName(source)}{propertyCount ? ` · ${propertyCount} 条属性` : " · 暂无属性"}</span>
           {onRemove && <button type="button" className="ted-icon-button danger" onClick={onRemove} title="移除这份来源"><Trash2 size={13} /></button>}
         </div>
+        {primary && (
+          <div className="view-switcher ted-source-mode">
+            <button type="button" className={derived ? "" : "active"} aria-pressed={!derived} onClick={() => onChange({ kind: "PHYSICAL" })}>
+              <Table2 size={12} />表 / 视图
+            </button>
+            <button type="button" className={derived ? "active" : ""} aria-pressed={derived} onClick={() => onChange({ kind: "DERIVED", view: "" })}>
+              <Database size={12} />取数口径
+            </button>
+          </div>
+        )}
         <div className="ted-grid-2">
           <label className="ted-field">
             <span>数据资源</span>
@@ -1015,7 +1047,7 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
               {dataSources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.kindLabel}</option>)}
             </select>
           </label>
-          <label className="ted-field">
+          {!derived && <label className="ted-field">
             <span><Table2 size={12} />表 / 视图</span>
             <input
               className="ted-input"
@@ -1026,11 +1058,46 @@ function SourceCard({ source, index, dataSources, primaryKeyColumns, propertyCou
               placeholder={source.dataSourceId ? "输入或从下拉里选一个表名" : "先选数据资源"}
             />
             <datalist id={viewListId}>{views.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
-          </label>
+          </label>}
         </div>
+        {derived && (
+          <>
+            <label className="ted-field">
+              <span><Database size={12} />取数口径（只读 SELECT）</span>
+              <textarea
+                className="ted-input ted-sql"
+                rows={5}
+                value={source.sql}
+                onChange={(event) => onChange({ sql: event.target.value })}
+                placeholder={"SELECT user_id, MAX(user_name) AS user_name\n  FROM GISTOOLS.TB_XXX\n GROUP BY user_id"}
+              />
+              <small>对象读的是这段 SQL 的结果，不是原始行 —— 去重、聚合、拼装都写在这里。执行时会被包成子查询，所以别用分号结尾。</small>
+            </label>
+            {sqlCheck && (sqlCheck.ok
+              ? <p className="ted-source-sql-ok"><Check size={13} />{sqlCheck.text}</p>
+              : <p className="ted-source-error"><AlertTriangle size={13} />{sqlCheck.text}</p>)}
+            <div className="ted-grid-2">
+              <label className="ted-field">
+                <span><KeyRound size={12} />主键列（对象身份）</span>
+                <input
+                  className="ted-input"
+                  value={source.primaryKey.join(", ")}
+                  onChange={(event) => onChange({ primaryKey: event.target.value.split(/[,，\s]+/).map((part) => part.trim()).filter(Boolean) })}
+                  placeholder="user_id"
+                />
+                <small>口径必须输出这几列；多个用逗号隔开，顺序就是对象身份的顺序。</small>
+              </label>
+              <label className="ted-field">
+                <span>显示名（可选）</span>
+                <input className="ted-input" value={source.titleField} onChange={(event) => onChange({ titleField: event.target.value })} placeholder="user_name" />
+                <small>对象在列表和图谱上的标题取这一列；留空就按上面的「显示属性」。</small>
+              </label>
+            </div>
+          </>
+        )}
         {error && <p className="ted-source-error"><AlertTriangle size={13} />{error}</p>}
         {primary ? (
-          fields.length > 0 && <>
+          !derived && fields.length > 0 && <>
             <label className="ted-field">
               <span>对象的显示名</span>
               <select className="ted-select" value={source.titleField} onChange={(event) => onChange({ titleField: event.target.value })}>

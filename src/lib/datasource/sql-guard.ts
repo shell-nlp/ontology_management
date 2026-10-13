@@ -1,4 +1,5 @@
-import { dataSourceKindInfo, type DataSourceKind } from "@/lib/datasource/types";
+import { dataSourceKindInfo, type DataSourceKind, type DataSourceRowFilter } from "@/lib/datasource/types";
+import { quoteIdentifier } from "@/lib/datasource/object-name";
 
 /**
  * 只读 SQL 的闸门。**纯函数，服务端与测试都用这一份**。
@@ -74,7 +75,7 @@ export function leadingKeyword(statement: string): string {
  * 校验一条 SQL 只能是只读查询，通过后返回去掉尾分号的语句。
  * 不通过就抛错 —— 错误信息是给模型看的，要说清"哪一条规则没过"。
  */
-export function assertReadOnlySql(sql: string): string {
+export function assertReadOnlySql(sql: string, subject = "这个工具"): string {
   const trimmed = sql.trim();
   if (!trimmed) throw new Error("SQL 不能为空。");
 
@@ -86,13 +87,13 @@ export function assertReadOnlySql(sql: string): string {
   const statement = statements[0];
   const leading = leadingKeyword(statement);
   if (!READ_ONLY_PREFIXES.includes(leading)) {
-    throw new Error(`这个工具只能执行只读查询：语句必须以 ${READ_ONLY_PREFIXES.join(" / ")} 开头，收到的是「${leading || "空"}」。`);
+    throw new Error(`${subject}只能执行只读查询：语句必须以 ${READ_ONLY_PREFIXES.join(" / ")} 开头，收到的是「${leading || "空"}」。`);
   }
 
   const upper = statement.toUpperCase();
   const hit = FORBIDDEN_KEYWORDS.find((keyword) => new RegExp(`\\b${keyword}\\b`).test(upper));
   if (hit) {
-    throw new Error(`这个工具只能执行只读查询：语句里出现了「${hit}」，被拦下了。查询请去掉它再试。`);
+    throw new Error(`${subject}只能执行只读查询：语句里出现了「${hit}」，被拦下了。查询请去掉它再试。`);
   }
   return trimmed.replace(/;\s*$/, "");
 }
@@ -110,6 +111,135 @@ export function boundedStatement(kind: DataSourceKind, statement: string, limit:
   return kind === "ORACLE"
     ? `SELECT * FROM (${statement}) WHERE ROWNUM <= ${rows}`
     : `SELECT * FROM (${statement}) AS bkn_query LIMIT ${rows}`;
+}
+
+/** LIKE 里的 % 与 _ 是通配符：用户输入的它们应当按字面匹配。 */
+export function escapeLikePattern(value: string) {
+  return value.replace(/([\\%_])/g, "\\$1");
+}
+
+/**
+ * 把**取数口径**（一段只读 SQL）当子查询时，外面这层要的取行条件。
+ * 只覆盖对象服务真正会下推的算子（EQ / NE / CONTAINS / IN）+ 主键游标翻页。
+ */
+export type DerivedQuery = {
+  columns?: readonly string[];
+  filters?: readonly DataSourceRowFilter[];
+  orderBy?: readonly string[];
+  after?: readonly unknown[];
+  offset?: number;
+};
+
+/** 三种库的占位符：PG `$n`、MySQL `?`、Oracle `:n`。参数**按出现顺序** push，顺序即编号。 */
+function placeholders(kind: DataSourceKind, params: unknown[]) {
+  return (value: unknown) => {
+    params.push(value);
+    const position = params.length;
+    if (kind === "POSTGRES") return `$${position}`;
+    if (kind === "MYSQL") return "?";
+    return `:${position}`;
+  };
+}
+
+/** Oracle 的绑定是「按位置、名字是数字」的对象（与对象服务里既有的写法一致）。 */
+function oracleBinds(kind: DataSourceKind, params: unknown[]) {
+  return kind === "ORACLE" ? Object.fromEntries(params.map((value, index) => [String(index + 1), value])) : params;
+}
+
+function derivedConditions(
+  kind: DataSourceKind,
+  query: Pick<DerivedQuery, "filters" | "orderBy" | "after">,
+  alias: string,
+  params: unknown[],
+): string[] {
+  const place = placeholders(kind, params);
+  const column = (name: string) => `${alias}.${quoteIdentifier(kind, name)}`;
+  const conditions: string[] = [];
+  for (const filter of query.filters ?? []) {
+    const name = String(filter.column ?? "").trim();
+    if (!name) continue;
+    const reference = column(name);
+    if (filter.operator === "IN") {
+      const values = (Array.isArray(filter.value) ? filter.value : [filter.value])
+        .filter((item) => item !== null && item !== undefined)
+        .slice(0, 200);
+      if (!values.length) { conditions.push("1 = 0"); continue; }
+      conditions.push(`${reference} IN (${values.map((value) => place(value)).join(", ")})`);
+      continue;
+    }
+    if (filter.operator === "CONTAINS") {
+      conditions.push(`${reference} LIKE ${place(`%${escapeLikePattern(String(filter.value ?? ""))}%`)} ESCAPE '\\'`);
+      continue;
+    }
+    conditions.push(`${reference} ${filter.operator === "NE" ? "<>" : "="} ${place(filter.value)}`);
+  }
+  /*
+   * 键集（游标）翻页：`(k0 > :1) OR (k0 = :2 AND k1 > :3) …`；与结构化取行**同一语义**。
+   * 差别只有一处：那边用具名参数，同一个值可以复用；这里的位置占位符不能复用，
+   * 所以 after 的值会按出现的次数各绑一次 —— 语义相同，别当成 bug。
+   */
+  const orderColumns = (query.orderBy ?? []).map((name) => name.trim()).filter(Boolean);
+  const after = query.after ?? [];
+  if (orderColumns.length && after.length === orderColumns.length) {
+    const parts = orderColumns.map((name, position) => {
+      const equalities = orderColumns.slice(0, position).map((earlier, index) => `${column(earlier)} = ${place(after[index])}`);
+      return [...equalities, `${column(name)} > ${place(after[position])}`].join(" AND ");
+    });
+    conditions.push(`(${parts.join(" OR ")})`);
+  }
+  return conditions;
+}
+
+/**
+ * **取数口径当来源**时构造取行语句（纯函数，可单测）。
+ *
+ * 为什么不用 QueryBuilder：TypeORM 的 `.from()` 会把传进去的字符串当成**标识符**加引号
+ * （实测渲染成 `FROM "(SELECT …)"`），子查询过不去 —— 所以这一段自己拼。守两条：
+ * 列名一律走 `quoteIdentifier`（驱动转义），值一律走**绑定参数**。
+ *
+ * `skip` 是给调用方的：Oracle 没有 OFFSET，只能用 `ROWNUM <= n + skip` 把前面的行也读出来，
+ * 由调用方在内存里丢掉（与对象服务里既有的 Oracle 翻页口径一致）。
+ */
+export function derivedRowsStatement(
+  kind: DataSourceKind,
+  derivedSql: string,
+  query: DerivedQuery,
+  limit: number,
+): { statement: string; params: unknown[] | Record<string, unknown>; skip: number } {
+  const sql = assertReadOnlySql(derivedSql, "取数口径");
+  const alias = quoteIdentifier(kind, "t");
+  const params: unknown[] = [];
+  const conditions = derivedConditions(kind, query, alias, params);
+  const columns = (query.columns ?? []).map((name) => name.trim()).filter(Boolean);
+  const projection = columns.length
+    ? columns.map((name) => `${alias}.${quoteIdentifier(kind, name)}`).join(", ")
+    : `${alias}.*`;
+  const orderColumns = (query.orderBy ?? []).map((name) => name.trim()).filter(Boolean);
+  const order = orderColumns.length
+    ? ` ORDER BY ${orderColumns.map((name) => `${alias}.${quoteIdentifier(kind, name)} ASC`).join(", ")}`
+    : "";
+  const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+  const rows = Math.max(1, Math.floor(limit));
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const inner = `SELECT ${projection} FROM (${sql}) ${alias}${where}${order}`;
+  if (kind === "ORACLE") {
+    return { statement: `SELECT * FROM (${inner}) WHERE ROWNUM <= ${rows + offset}`, params: oracleBinds(kind, params), skip: offset };
+  }
+  return { statement: `${inner} LIMIT ${rows} OFFSET ${offset}`, params: oracleBinds(kind, params), skip: 0 };
+}
+
+/** 取数口径当来源时的总数统计：`COUNT(*)`，条件与取行同一套。 */
+export function derivedCountStatement(
+  kind: DataSourceKind,
+  derivedSql: string,
+  query: Pick<DerivedQuery, "filters">,
+): { statement: string; params: unknown[] | Record<string, unknown> } {
+  const sql = assertReadOnlySql(derivedSql, "取数口径");
+  const alias = quoteIdentifier(kind, "t");
+  const params: unknown[] = [];
+  const conditions = derivedConditions(kind, query, alias, params);
+  const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+  return { statement: `SELECT COUNT(*) FROM (${sql}) ${alias}${where}`, params: oracleBinds(kind, params) };
 }
 
 /**

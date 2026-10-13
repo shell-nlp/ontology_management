@@ -59,6 +59,17 @@ export const entitySourceSchema = z.object({
   /** 这份来源在类里的标识：属性映射靠它指回来。只在本类内有意义，不是数据库对象。 */
   id: z.string().trim().min(1).max(64),
   dataSourceId: z.union([z.string().uuid(), z.literal("")]).default(""),
+  /**
+   * 来源形态：
+   * - `PHYSICAL`：直接读库里的表 / 视图（`view`，现状）；
+   * - `DERIVED`：读一段**只读取数口径**（`sql`）—— 去重、聚合、拼装写在口径里，
+   *   对象读的是口径的结果而不是原始行。源数据里主键不唯一时，正确做法就是这一档。
+   *
+   * 口径只允许 SELECT / WITH 开头（服务端 `assertReadOnlySql` 把关），执行时包成子查询。
+   */
+  kind: z.enum(["PHYSICAL", "DERIVED"]).default("PHYSICAL"),
+  /** DERIVED 的取数口径：必须输出 `primaryKey` 里的列（可写 `*`，但隐式列会让口径跟源表结构漂移）。 */
+  sql: z.string().trim().max(20000).default(""),
   /** 表/视图所在的容器：PG 的模式、Oracle 的模式；MySQL 留空。 */
   schema: z.string().trim().max(200).default(""),
   view: z.string().trim().max(200).default(""),

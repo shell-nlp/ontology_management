@@ -130,6 +130,7 @@ async function ensureSchemaOnce(): Promise<void> {
       entity_type  String,
       rows         UInt64,
       scanned      UInt64,
+      folded       UInt64 DEFAULT 0,
       truncated    UInt8,
       pages        UInt32,
       completed_at DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -138,6 +139,8 @@ async function ensureSchemaOnce(): Promise<void> {
     ENGINE = ReplacingMergeTree(version)
     ORDER BY (target_id, entity_type)
   `);
+  // 老表补列（folded 是加"主键折叠必须报数"时加的：1000 行折成 800 个对象要看得见）。
+  await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS folded UInt64 DEFAULT 0`);
 }
 
 export function ensureClickHouseObjectIndexSchema(): Promise<void> {
@@ -657,6 +660,14 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       });
     },
     stats,
+    /**
+     * 数某个对象类型的条数。整份物化之后用它比对「读了多少行 / 落下几个对象」，
+     * 差出来的就是被主键折叠掉的行数 —— 不复用内存里的 Set（大表会把内存撑爆）。
+     */
+    async countTypeObjects(targetId, entityType, options) {
+      await ensureClickHouseObjectIndexSchema();
+      return countTypeOrigin(targetId, entityType, options?.origin ?? "MATERIALIZED");
+    },
     async listMaterializations(targetId) {
       await ensureClickHouseObjectIndexSchema();
       const { database } = clickHouseConfig();
@@ -664,11 +675,12 @@ export function createClickHouseObjectIndex(): ObjectIndex {
         entity_type: string;
         rows: number;
         scanned: number;
+        folded: number;
         truncated: number;
         pages: number;
         completed_at: string;
       }>(
-        `SELECT entity_type, rows, scanned, truncated, pages,
+        `SELECT entity_type, rows, scanned, folded, truncated, pages,
                 formatDateTime(completed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS completed_at
            FROM ${database}.materialization_manifests FINAL
           WHERE target_id = {target:String}
@@ -680,6 +692,7 @@ export function createClickHouseObjectIndex(): ObjectIndex {
         entityType: row.entity_type,
         rows: Number(row.rows ?? 0),
         scanned: Number(row.scanned ?? 0),
+        folded: Number(row.folded ?? 0),
         truncated: Boolean(Number(row.truncated ?? 0)),
         pages: Number(row.pages ?? 0),
         completedAt: row.completed_at,
@@ -689,12 +702,13 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       await ensureClickHouseObjectIndexSchema();
       const { database } = clickHouseConfig();
       await clickHouseExecute(
-        `INSERT INTO ${database}.materialization_manifests (target_id, entity_type, rows, scanned, truncated, pages) FORMAT JSONEachRow
+        `INSERT INTO ${database}.materialization_manifests (target_id, entity_type, rows, scanned, folded, truncated, pages) FORMAT JSONEachRow
          ${JSON.stringify({
            target_id: record.targetId,
            entity_type: record.entityType,
            rows: record.rows,
            scanned: record.scanned,
+           folded: Number(record.folded ?? 0),
            truncated: record.truncated ? 1 : 0,
            pages: record.pages,
          })}`,

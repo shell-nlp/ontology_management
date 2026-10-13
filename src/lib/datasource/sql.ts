@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 
-import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/datasource/sql-guard";
+import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, derivedCountStatement, derivedRowsStatement, escapeLikePattern, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/datasource/sql-guard";
 import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, quoteLiteral, splitObjectName } from "@/lib/datasource/object-name";
 import { ddlFromColumns, typeWithSize } from "@/lib/datasource/ddl";
 import { wallClockText } from "@/lib/framework/datetime";
@@ -638,11 +638,6 @@ async function nativeDdl(connection: DataSource, kind: DataSourceKind, hit: Cata
   return { ddl: null };
 }
 
-/** LIKE 里的 % 与 _ 是通配符：用户输入的它们应当按字面匹配。 */
-function escapeLikePattern(value: string) {
-  return value.replace(/([\\%_])/g, "\\$1");
-}
-
 /** Oracle 深翻页上限：ROWNUM 方案要把前面几页读出来再丢掉，翻太深代价不划算。 */
 export const ORACLE_MAX_OFFSET = 5000;
 
@@ -657,6 +652,43 @@ export const ORACLE_MAX_OFFSET = 5000;
  */
 const paddedColumnCache = new Map<string, { at: number; columns: Set<string> }>();
 const PADDED_CACHE_TTL_MS = 5 * 60_000;
+
+/**
+ * **取数口径当来源**时的取行：把口径 SQL 当子查询，外面套过滤 / 排序 / 限量。
+ *
+ * 与 `rowQueryBuilder` 的区别只在"表从哪来" —— 那一份走 TypeORM（表名交给驱动转义），
+ * 这一份必须自己拼（TypeORM 会把子查询当成标识符加引号，实测渲染成 `FROM "(SELECT …)"`）。
+ * 两边共用同一套**语义**：算子只有 EQ / NE / CONTAINS / IN，翻页优先键集游标、否则 OFFSET
+ * （Oracle 没有 OFFSET，由 `skip` 兜住：多读几行、在内存里丢掉）。
+ */
+async function selectRowsFromDerived(
+  runner: QueryRunner,
+  kind: DataSourceKind,
+  derivedSql: string,
+  query: DataSourceRowQuery,
+  rows: number,
+): Promise<DataSourceRows> {
+  const ordered = (query.orderBy ?? []).some((column) => column.trim());
+  const offset = ordered ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
+  const built = derivedRowsStatement(
+    kind,
+    derivedSql,
+    { columns: query.columns, filters: query.filters, orderBy: query.orderBy, after: query.after, offset },
+    rows + 1,
+  );
+  const raw = (await runner.query(built.statement, built.params)) as Record<string, unknown>[];
+  const list = Array.isArray(raw) ? raw : [];
+  const sliced = built.skip ? list.slice(built.skip) : list;
+  const page = takeRows(sliced, rows);
+  const normalized = page.rows.map(normalizeRow);
+  return {
+    columns: normalized.length ? Object.keys(normalized[0]) : (query.columns ?? []),
+    rows: normalized,
+    rowLimit: rows,
+    truncated: page.truncated,
+    statement: built.statement,
+  };
+}
 
 /**
  * 结构化取行的 QueryBuilder。
@@ -952,13 +984,16 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
       const rows = clampLimit(query.limit, QUERY_LIMIT_MAX, DEFAULT_QUERY_ROWS);
       const timeout = statementTimeoutStatements(kind, QUERY_TIMEOUT_MS);
       return withConnection(kind, record, credentials, async (_info, connection) => {
-        const hit = await locate(connection, query.view);
+        // 取数口径（DERIVED 来源）：不查数据字典，直接把口径当子查询用。
+        const derivedSql = String(query.view.sql ?? "").trim();
+        const hit = derivedSql ? null : await locate(connection, query.view);
         const runner = connection.createQueryRunner();
         try {
           for (const setup of timeout.before) await runner.query(setup).catch(() => undefined);
           await beginReadOnlyTransaction(runner, kind);
           for (const setup of timeout.inside) await runner.query(setup).catch(() => undefined);
           // rows + 1：套了行数上限之后再也查不出更多行，靠多出来的那一行判断"还有没有剩下的"。
+          if (!hit) return await selectRowsFromDerived(runner, kind, derivedSql, query, rows);
           const schema = hit.schema || container || "";
           const builder = rowQueryBuilder(connection, kind, hit, container, query, await paddedColumnsFor(connection, hit, schema));
           const ordered = (query.orderBy ?? []).some((column) => column.trim());
@@ -1022,10 +1057,17 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
     /** 满足条件的总行数；分页要用的总数。 */
     async countRows(query: Omit<DataSourceRowQuery, "columns" | "limit" | "offset">): Promise<number> {
       return withConnection(kind, record, credentials, async (_info, connection) => {
-        const hit = await locate(connection, query.view);
         const runner = connection.createQueryRunner();
         try {
           await beginReadOnlyTransaction(runner, kind);
+          const derivedSql = String(query.view.sql ?? "").trim();
+          if (derivedSql) {
+            const built = derivedCountStatement(kind, derivedSql, { filters: query.filters });
+            const counted = (await runner.query(built.statement, built.params)) as Record<string, unknown>[];
+            const total = Number(Object.values((Array.isArray(counted) ? counted[0] : {}) ?? {})[0]);
+            return Number.isFinite(total) ? total : 0;
+          }
+          const hit = await locate(connection, query.view);
           const schema = hit.schema || container || "";
           const counted = rowQueryBuilder(connection, kind, hit, container, { ...query, columns: [] }, await paddedColumnsFor(connection, hit, schema)).select("COUNT(*)", "total");
           const raw = (await counted.getRawOne()) as Record<string, unknown> | undefined;

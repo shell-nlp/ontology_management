@@ -330,11 +330,18 @@ async function drain(): Promise<void> {
         job.total = result.total;
         job.truncated = result.truncated;
         job.status = job.cancelRequested ? "CANCELLED" : "DONE";
+        /*
+         * **告警要能看见**：物化出来的 warnings（主键折叠了多少行、少读了几行…）以前只活在返回值里，
+         * 而后台任务只存 message —— 于是这些话说给谁都不算说。现在并进 message，面板那一行就能看到。
+         */
+        const notes = result.warnings.map((line) => line.trim()).filter(Boolean);
         job.message = job.cancelRequested
           ? `已取消：取消前读入 ${job.scanned} 条，索引里是这一份不完整的数据（会如实标成"只补过一批"）。`
           : result.truncated
             ? `读到上限 ${job.maxRows ?? "—"} 行就停了：源里可能还有更多。`
-            : null;
+            : notes.length
+              ? notes.join(" ").slice(0, 400)
+              : null;
       } catch (error) {
         job.status = "FAILED";
         job.message = error instanceof Error ? error.message : "物化失败。";

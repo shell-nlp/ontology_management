@@ -27,8 +27,8 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
-      { id: "credit", dataSourceId: otherSourceId, schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
+      { id: "credit", dataSourceId: otherSourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
     ]);
     expect(parsed.entityTypes[0].properties[0]).toMatchObject({ sourceField: "CUST_NAME", sourceId: "primary" });
     expect(parsed.entityTypes[0].properties[1]).toMatchObject({ sourceField: "SCORE", sourceId: "credit" });
@@ -48,7 +48,7 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
     ]);
   });
 
@@ -81,7 +81,7 @@ describe("属性的取值枚举（码值）", () => {
 });
 
 describe("来源绑定的自检", () => {
-  const primary = { id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "" };
+  const primary = { id: "primary", kind: "PHYSICAL" as const, sql: "", dataSourceId: sourceId, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "" };
 
   it("还没配完只提示，不拦发布", () => {
     const issues = validateEntitySources({ name: "客户", sources: [{ ...primary, view: "", primaryKey: [] }], properties: [] });
@@ -130,5 +130,48 @@ describe("来源绑定的自检", () => {
     });
     expect(issues).toHaveLength(1);
     expect(issues[0].message).toContain("信用分");
+  });
+});
+
+describe("取数口径（DERIVED 来源）的发布前检查", () => {
+  const derived = {
+    id: "primary",
+    kind: "DERIVED" as const,
+    sql: "SELECT id, name FROM t_customer",
+    dataSourceId: sourceId,
+    schema: "",
+    view: "",
+    primaryKey: ["id"],
+    titleField: "",
+  };
+
+  it("合法的口径不报问题（口径是来源，不再要求有表名）", () => {
+    expect(validateEntitySources({ name: "客户", sources: [derived], properties: [] })).toEqual([]);
+  });
+
+  it("口径空着 / 写操作 / 没选数据资源：都挡住发布", () => {
+    const empty = validateEntitySources({ name: "客户", sources: [{ ...derived, sql: "   " }], properties: [] });
+    expect(empty.some((issue) => issue.message.includes("口径是空的"))).toBe(true);
+
+    const write = validateEntitySources({ name: "客户", sources: [{ ...derived, sql: "DELETE FROM t_customer" }], properties: [] });
+    const hit = write.find((issue) => issue.message.includes("只读"));
+    expect(hit).toBeDefined();
+    // 写语句是**挡住发布**，不是提示：放过去就是一个执行不了的来源。
+    expect(hit!.severity).toBeUndefined();
+    expect(hit!.message).toContain("只读");
+
+    const noSource = validateEntitySources({ name: "客户", sources: [{ ...derived, dataSourceId: "" }], properties: [] });
+    expect(noSource.some((issue) => issue.message.includes("在哪个数据资源上执行"))).toBe(true);
+  });
+
+  it("口径没配主键：只提示不拦（建模中途允许先搭结构）", () => {
+    const issues = validateEntitySources({ name: "客户", sources: [{ ...derived, primaryKey: [] }], properties: [] });
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("WARN");
+  });
+
+  it("补充来源用口径：明确说不支持，别静默当表用", () => {
+    const issues = validateEntitySources({ name: "客户", sources: [derived, { ...derived, id: "second" }], properties: [] });
+    expect(issues.some((issue) => issue.message.includes("补充来源暂时只支持"))).toBe(true);
   });
 });

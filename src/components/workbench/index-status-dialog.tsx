@@ -19,6 +19,8 @@ type Materialization = {
   entityType: string;
   rows: number;
   scanned: number;
+  /** 源里被主键折叠掉的行数：读过的行 - 去重后的对象数。> 0 说明主键在源数据里不唯一。 */
+  folded: number;
   truncated: boolean;
   pages: number;
   completedAt: string;
@@ -480,6 +482,11 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
             <span className="index-cell">
               {state === "none" && <em className="index-state none">未物化</em>}
               {state === "full" && <em className="index-state full">已整份物化 {item?.rows ?? 0} 条</em>}
+              {state === "full" && (item?.folded ?? 0) > 0 && (
+                <em className="index-state partial" title="源里读到的行比对象多：主键在源数据里不唯一，重复的行被并进了同一个对象">
+                  主键重复折叠 {item?.folded ?? 0} 行
+                </em>
+              )}
               {state === "partial" && <em className="index-state partial">只补过一批 · {item?.rows ?? 0} 条</em>}
               {job && <JobStateInline job={job} cancelling={cancelling.includes(job.id)} />}
             </span>
@@ -595,6 +602,13 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
         <span>
           有类型只物化了一部分（撞到单次上限）：{rows.filter((item) => item.truncated).map((item) => `${item.entityType}（${item.rows} 条）`).join("、")}。
           这些类型在对象页会按索引结果展示，看不到的部分要么重新整份物化，要么把来源切到「业务库」。
+        </span>
+      </div>}
+      {rows.some((item) => (item.folded ?? 0) > 0) && <div className="notice error">
+        <AlertCircle size={15} />
+        <span>
+          有类型的主键在源数据里不唯一，重复的行被并进了同一个对象：{rows.filter((item) => (item.folded ?? 0) > 0).map((item) => `${item.entityType}（源里 ${item.scanned} 行 → ${item.rows} 个对象，折叠 ${item.folded} 行）`).join("、")}。
+          正确做法是改主键（或换成组合键），或者在取数口径里先去重（例如按业务键取最新一行）—— 否则这些行会互相覆盖，看到的属性取自哪一行是不确定的。
         </span>
       </div>}
     </div>

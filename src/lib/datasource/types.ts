@@ -259,7 +259,14 @@ export type TableDdl = {
   notes: string[];
 };
 
-export type DataViewRef = { schema?: string; name: string };
+/**
+ * 一个可读的数据来源。
+ *
+ * `name` 是库里的表 / 视图名；`sql` 是**取数口径**（对象的来源可以不是一张现成的表，
+ * 而是一段只读 SQL，例如"按业务键去重取最新一行"）。两者互斥：给了 `sql` 就不查数据字典、
+ * 直接把口径当子查询用。**只读由 `assertReadOnlySql` 在服务端把关**，这里只负责表达。
+ */
+export type DataViewRef = { schema?: string; name: string; sql?: string };
 
 /**
  * 结构化取行 —— **对象服务的唯一数据接缝**。

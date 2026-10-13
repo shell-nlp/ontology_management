@@ -1,3 +1,4 @@
+import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
 import type { EntitySource } from "@/lib/ontology";
 
 /**
@@ -31,8 +32,9 @@ export function newEntitySourceId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `source-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** 界面上怎么称呼一份来源：有表名就用表名，没有就老实说没选。 */
-export function sourceName(source: Pick<EntitySource, "view"> | null | undefined) {
+/** 界面上怎么称呼一份来源：取数口径就说口径，有表名就用表名，没有就老实说没选。 */
+export function sourceName(source: Partial<Pick<EntitySource, "view" | "kind">> | null | undefined) {
+  if (source?.kind === "DERIVED") return "取数口径";
   return source?.view?.trim() || "未选表";
 }
 
@@ -62,8 +64,13 @@ export type SourceScope = {
   properties?: { name: string; sourceId?: string; sourceField?: string }[];
 };
 
+/** 取数口径（DERIVED 来源）的 SQL；空串 = 没写。老数据没有这两个字段，读的时候兜住。 */
+function derivedSqlOf(source: EntitySource) {
+  return source.kind === "DERIVED" ? String(source.sql ?? "").trim() : "";
+}
+
 function isBlank(source: EntitySource) {
-  return !source.dataSourceId && !source.view;
+  return !source.dataSourceId && !source.view && !derivedSqlOf(source);
 }
 
 /** 连接键只看填了值的列，空占位不算。 */
@@ -78,6 +85,9 @@ function mappedKeys(source: EntitySource) {
  * 连接键列数和主键列数对不上、属性指向一份已经不存在的来源。
  * 「还没填完」（没选表、没指定主键）只提示不拦——平台现在不从绑定取数，
  * 建模阶段允许先把结构搭起来。
+ *
+ * **取数口径（`kind: DERIVED`）例外**：它是一段会被服务端执行的 SQL，
+ * 「没写 SQL」「不是只读语句」都要**挡住发布**（不是提示）—— 放过去就是一个执行不了的来源。
  */
 export function validateEntitySources(scope: SourceScope, options: { knownSourceIds?: readonly string[] } = {}): SourceViolation[] {
   const sources = scope.sources ?? [];
@@ -95,6 +105,27 @@ export function validateEntitySources(scope: SourceScope, options: { knownSource
   const primary = sources[0];
   if (isBlank(primary)) {
     violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源还没选表 / 视图。`, count: 1, severity: "WARN" });
+  } else if (primary.kind === "DERIVED") {
+    if (!primary.dataSourceId) {
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源是取数口径，但还没选「在哪个数据资源上执行」。`, count: 1 });
+    }
+    const sql = derivedSqlOf(primary);
+    if (!sql) {
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源选了「取数口径」，但口径是空的。`, count: 1 });
+    } else {
+      try {
+        assertReadOnlySql(sql, "取数口径");
+      } catch (error) {
+        violations.push({
+          rule: `${scope.name}.sources`,
+          message: `对象类型「${scope.name}」：${error instanceof Error ? error.message : "取数口径不合法。"}`,
+          count: 1,
+        });
+      }
+    }
+    if (!primary.primaryKey.length) {
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的主来源是取数口径，但还没指定主键列 —— 口径必须输出这些列，对象的身份才定得下来。`, count: 1, severity: "WARN" });
+    }
   } else {
     /*
      * 有表名、没资源是导入本体后的常见中间态（见 source-binding.ts 的「补齐数据资源绑定」）。
@@ -118,6 +149,10 @@ export function validateEntitySources(scope: SourceScope, options: { knownSource
 
   sources.slice(1).forEach((source, offset) => {
     const label = sourceRoleLabel(offset + 1);
+    if (source.kind === "DERIVED") {
+      violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 是取数口径 —— 补充来源暂时只支持表 / 视图，请把口径放在主来源上。`, count: 1 });
+      return;
+    }
     if (isBlank(source)) {
       violations.push({ rule: `${scope.name}.sources`, message: `对象类型「${scope.name}」的${label} 还没选表 / 视图。`, count: 1, severity: "WARN" });
       return;
