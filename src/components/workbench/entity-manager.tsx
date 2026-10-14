@@ -4,7 +4,8 @@ import { type User, may, type BusinessLink, type Target, type Version, type Enti
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, CircleDot, Layers, Link2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { BindSourcesDialog } from "@/components/bind-sources-dialog";
-import { IndexStatusDialog } from "@/components/workbench/index-status-dialog";
+import { IndexStatusDialog, type IndexTypeRow } from "@/components/workbench/index-status-dialog";
+import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { PropertyEditor } from "@/components/property-editor";
 import { api } from "@/lib/framework/api-client";
 import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
@@ -12,6 +13,7 @@ import { type Definition } from "@/lib/ontology/draft";
 import { brokenSourcesOf } from "@/lib/datasource/source-binding";
 import { primaryKeyFromProperties } from "@/lib/ontology/fields";
 import { planLinkSource } from "@/lib/ontology/link-source";
+import { resolveGroup } from "@/lib/ontology/concept-groups";
 
 
 
@@ -88,7 +90,7 @@ export function ObjectLinkList({ links, loading, hint, onOpen }: { links: Object
   </div>;
 }
 
-export function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { ontologyId: string; target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
+export function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, saveDefinition, fail, entityLimit, focusEntityId, onFocusHandled }: { ontologyId: string; target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; saveDefinition: (definition: Definition) => Promise<void>; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
@@ -112,6 +114,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
   const [draftProps, setDraftProps] = useState<Record<string, unknown>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [indexOpen, setIndexOpen] = useState(false);
+  const [configType, setConfigType] = useState<IndexTypeRow | null>(null);
   const [busy, setBusy] = useState(false);
   /**
    * 还差数据资源绑定的来源（没绑的 + 指向已删资源的）。
@@ -352,6 +355,41 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
     } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
+  /** 在当前「索引与物化」弹窗里原地保存对象类型配置，不跳回建模页。 */
+  const saveObjectType = async (payload: {
+    name: string;
+    description?: string;
+    displayProperty?: string;
+    groupName?: string;
+    implements?: string[];
+    properties: Definition["entityTypes"][number]["properties"];
+    sources?: Definition["entityTypes"][number]["sources"];
+  }) => {
+    if (!version || !configType) return;
+    const entity = version.definition.entityTypes.find((item) => item.name === configType.name);
+    if (!entity) throw new Error(`当前版本里找不到对象类型「${configType.name}」。`);
+    const named = resolveGroup(version.definition.groups ?? [], payload.groupName ?? "");
+    const nextEntity: Definition["entityTypes"][number] = {
+      ...entity,
+      name: payload.name.trim(),
+      description: payload.description ?? "",
+      displayProperty: payload.displayProperty ?? "",
+      groupId: named.groupId,
+      implements: payload.implements ?? [],
+      properties: payload.properties,
+      sources: payload.sources ?? entity.sources ?? [],
+    };
+    await saveDefinition({
+      ...version.definition,
+      groups: named.groups,
+      entityTypes: version.definition.entityTypes.map((item) => item.id === entity.id ? nextEntity : item),
+    });
+    setConfigType(null);
+    notify(`对象类型「${nextEntity.name}」已保存到草稿。`);
+    await onSnapshotChange();
+    await load(label, search);
+  };
+
   return <ResizableManagerGrid storageKey="ontology.manager-split.entities">
     <div className="panel functional-panel result-list">
       <span className="eyebrow">对象</span>
@@ -395,10 +433,23 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
       }))}
       links={indexLinkRows}
       mayWrite={may(user, "instance.write")}
+      onConfigureType={setConfigType}
       onClose={() => setIndexOpen(false)}
       notify={notify}
       fail={fail}
     />}
+    {configType && version && (() => {
+      const entity = version.definition.entityTypes.find((item) => item.name === configType.name);
+      return entity ? <TypeEditDialog
+        kind="entity"
+        entity={entity}
+        entityTypes={version.definition.entityTypes}
+        groups={version.definition.groups}
+        interfaces={version.definition.interfaces}
+        onClose={() => setConfigType(null)}
+        onSave={saveObjectType}
+      /> : null;
+    })()}
   </ResizableManagerGrid>;
 }
 

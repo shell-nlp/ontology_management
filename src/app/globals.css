@@ -428,6 +428,11 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-row.head { background:#f7f9fc; font-size:10px; text-transform:uppercase; letter-spacing:.6px; color:#8695a8; font-weight:700; }
 .index-type b { display:block; color:#243b53; font-size:12.5px; }
 .index-type small { display:block; margin-top:3px; color:#8695a8; font-family:ui-monospace,"Cascadia Code",monospace; font-size:10px; }
+.index-type-button { display:block; width:100%; padding:0; border:0; background:transparent; text-align:left; }
+.index-type-button:not(:disabled):hover b { color:#1e3a8a; }
+.index-type-button:disabled { cursor:default; opacity:1; }
+.index-primary-key { display:inline-flex; margin-top:4px; padding:2px 6px; border:1px solid #d8e5f5; border-radius:2px; background:#f4f8ff; color:#315b9d; font-family:ui-monospace,"Cascadia Code",monospace; font-size:10px; }
+.index-primary-key.is-empty { border-color:#fde68a; background:#fffbeb; color:#b45309; }
 .index-cell { color:#41556b; font-variant-numeric:tabular-nums; }
 .index-cell.muted { color:#9aa8b8; }
 .index-materialization-cell { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }

@@ -87,6 +87,8 @@ type Props = {
   types: IndexTypeRow[];
   links: IndexLinkRow[];
   mayWrite: boolean;
+  /** 点对象类型名时的配置入口；没有它时名称只作为文字显示。 */
+  onConfigureType?: (type: IndexTypeRow) => void;
   onClose: () => void;
   notify: (message: string) => void;
   fail: (reason: unknown) => void;
@@ -123,7 +125,7 @@ function formatTime(value: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function IndexStatusDialog({ targetId, versionId, versionLabel, types, links, mayWrite, onClose, notify, fail }: Props) {
+export function IndexStatusDialog({ targetId, versionId, versionLabel, types, links, mayWrite, onConfigureType, onClose, notify, fail }: Props) {
   const [rows, setRows] = useState<Materialization[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -481,8 +483,11 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
               />
             </span>
             <span className="index-type">
-              <b>{type.name}<em className={`index-policy ${type.indexPolicy.toLowerCase()}`}>{type.indexPolicy === "AUTO" ? "AUTO" : type.indexPolicy === "INDEXED" ? "只读索引" : "走业务库"}</em></b>
+              <button type="button" className="index-type-button" disabled={!onConfigureType} title={onConfigureType ? "配置对象类型" : "当前视图没有对象类型配置入口"} onClick={() => onConfigureType?.(type)}>
+                <b>{type.name}<em className={`index-policy ${type.indexPolicy.toLowerCase()}`}>{type.indexPolicy === "AUTO" ? "AUTO" : type.indexPolicy === "INDEXED" ? "只读索引" : "走业务库"}</em></b>
+              </button>
               <small>{type.sourceLabel || "未绑定数据资源"}</small>
+              <span className={type.primaryKey?.length ? "index-primary-key" : "index-primary-key is-empty"}>主键 {type.primaryKey?.length ? type.primaryKey.join(", ") : "未设置"}</span>
             </span>
             <span className={type.sourceLabel ? "index-cell" : "index-cell muted"}>{type.sourceLabel ? "可读取" : "不可读"}</span>
             <span className="index-cell index-materialization-cell">
