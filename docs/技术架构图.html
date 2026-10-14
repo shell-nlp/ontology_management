@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="本体管理平台技术架构图：分层结构、模块落点、运行时链路与扩展点">
+<title>本体管理平台 · 技术架构图</title>
+<style>
+  :root{
+    --ink:#17212b; --muted:#5c6873; --paper:#f4f6f7; --panel:#fff; --line:#d9e0e5; --line-soft:#e8edf1;
+    --blue:#1769aa; --blue-soft:#e7f2fb; --orange:#c85b16; --orange-soft:#fff0e5;
+    --green:#1f7a57; --green-soft:#e6f3ed; --red:#b6433d; --red-soft:#fbeae8;
+    --purple:#6b4c9a; --purple-soft:#f0e6f6;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+    --shadow:0 8px 24px rgba(23,33,43,.07);
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper)}
+  body{margin:0;padding:24px 20px 40px;color:var(--ink);background:var(--paper);font-family:var(--sans);line-height:1.5}
+  .board{width:min(1560px,100%);margin:0 auto}
+  h1,h2,h3,h4,p{margin:0}
+  h1{font-size:clamp(24px,2.5vw,34px);line-height:1.15;letter-spacing:-.02em}
+  h2{font-size:15px;letter-spacing:.02em}
+  h3{font-size:13px}
+  .eyebrow{color:var(--blue);font:700 11px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+  .muted{color:var(--muted)}
+  .small{font-size:12px;color:var(--muted)}
+  code{font-family:var(--mono);font-size:11.5px;background:#eef2f4;padding:1px 5px;border-radius:3px;color:#2b3a47}
+
+  /* ---------- 页头 ---------- */
+  .head{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;padding-bottom:14px;border-bottom:2px solid var(--ink)}
+  .head .titles{display:grid;gap:6px}
+  .head-meta{display:flex;flex-wrap:wrap;gap:8px}
+  .meta-chip{padding:6px 9px;border:1px solid var(--line);background:var(--panel);font:700 10.5px/1.2 var(--mono);color:var(--muted)}
+  .meta-chip b{color:var(--ink)}
+
+  /* ---------- 图例 ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 16px}
+  .lg{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border:1px solid var(--line);background:var(--panel);font:600 11px/1 var(--sans);color:var(--muted)}
+  .swatch{width:9px;height:9px;border:1px solid rgba(0,0,0,.12)}
+  .sw-blue{background:var(--blue)} .sw-green{background:var(--green)} .sw-purple{background:var(--purple)}
+  .sw-orange{background:var(--orange)} .sw-ink{background:var(--ink)} .sw-dash{background:repeating-linear-gradient(45deg,#b9c4cc 0 2px,#fff 2px 4px)}
+
+  /* ---------- 主体布局 ---------- */
+  .figure{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:14px;align-items:start}
+  .stack{display:grid;gap:6px}
+  .band{border:1px solid var(--line);background:rgba(255,255,255,.62);box-shadow:var(--shadow);padding:8px;display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px}
+  .band-tag{display:flex;flex-direction:column;justify-content:center;gap:3px;padding:8px 6px;border:1px solid var(--line);background:var(--panel);text-align:center}
+  .band-tag strong{font-size:12px;line-height:1.25}
+  .band-tag span{font:700 9.5px/1.2 var(--mono);letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+  .band-tag b{font:700 9.5px/1.2 var(--mono);color:var(--muted)}
+  .band.b-blue .band-tag{border-top:3px solid var(--blue)}
+  .band.b-green .band-tag{border-top:3px solid var(--green)}
+  .band.b-purple .band-tag{border-top:3px solid var(--purple)}
+  .band.b-orange .band-tag{border-top:3px solid var(--orange)}
+  .band.b-ink .band-tag{border-top:3px solid var(--ink)}
+  .nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(202px,1fr));gap:7px}
+  .node{padding:9px 11px;border:1px solid var(--line);border-left:3px solid var(--blue);background:var(--panel);min-width:0}
+  .node strong{display:block;font-size:12.5px;line-height:1.3}
+  .node span{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.4}
+  .node em{display:block;margin-top:5px;font:600 10px/1.35 var(--mono);color:#4d5a65;font-style:normal;word-break:normal;overflow-wrap:anywhere;hyphens:none}
+  .node.blue{border-left-color:var(--blue)} .node.green{border-left-color:var(--green)}
+  .node.purple{border-left-color:var(--purple)} .node.orange{border-left-color:var(--orange)} .node.ink{border-left-color:var(--ink)}
+  .node.hollow{border-left-color:#b9c4cc;background:#fbfcfd}
+  .flow{display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px;align-items:center;padding:0 8px}
+  .flow span{grid-column:2;position:relative;padding:3px 0 3px 26px;color:var(--muted);font:600 10.5px/1.35 var(--mono)}
+  .flow span::before{content:"↓";position:absolute;left:6px;top:1px;color:var(--orange);font-size:15px;font-weight:800}
+
+  /* ---------- 右侧横切 ---------- */
+  .aside{display:grid;gap:10px}
+  .card{border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow);padding:12px 13px}
+  .card .label{font:700 10px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .card ul{margin:0;padding-left:15px;color:var(--muted);font-size:11.5px;line-height:1.5}
+  .card li+li{margin-top:5px}
+  .card li b{color:var(--ink)}
+  .cross{border-left:4px solid var(--red)}
+  .cross .label{color:var(--red);font-size:10px;letter-spacing:.04em;text-transform:none;line-height:1.4}
+
+  /* ---------- 链路 ---------- */
+  .section{margin-top:20px;padding-top:14px;border-top:2px solid var(--ink)}
+  .chains{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+  .chain{border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow);padding:13px 14px}
+  .chain h3{margin-bottom:4px}
+  .chain .who{font:700 10px/1.3 var(--mono);color:var(--blue);letter-spacing:.04em}
+  .chain ol{margin:9px 0 0;padding:0;list-style:none;display:grid;gap:6px}
+  .chain li{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;font-size:11.5px;color:var(--muted);line-height:1.45}
+  .chain li i{display:grid;place-items:center;width:17px;height:17px;background:var(--ink);color:#fff;font:700 9.5px/1 var(--mono);font-style:normal}
+  .chain li b{color:var(--ink);font-weight:600}
+
+  /* ---------- 底部 ---------- */
+  .bottom{display:grid;grid-template-columns:1.15fr 1fr;gap:12px;margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th,td{padding:7px 9px;border:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:var(--blue-soft);font-weight:600;white-space:nowrap}
+  td b{color:var(--ink)}
+  .authority{color:var(--red);font-weight:700}
+  .derived{color:var(--green);font-weight:700}
+  footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
+
+  @media (max-width:1180px){
+    .figure{grid-template-columns:1fr}
+    .chains,.bottom{grid-template-columns:1fr}
+  }
+  @media (max-width:760px){
+    .band{grid-template-columns:1fr}
+    .flow{grid-template-columns:1fr}
+    .flow span{grid-column:1}
+  }
+  @page{size:A3 landscape;margin:10mm}
+  @media print{
+    body{padding:0;background:#fff}
+    .band,.card,.chain,.node{box-shadow:none}
+    .chain,.bottom,.section{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <div class="head">
+    <div class="titles">
+      <div class="eyebrow">Ontology Management Platform · Technical Architecture</div>
+      <h1>本体管理平台 · 技术架构图</h1>
+      <p class="small">一张图看清：谁在调用它、它由哪几层组成、每层的代码落在哪、它去调用谁、以及换中间件时要动哪里。</p>
+    </div>
+    <div class="head-meta">
+      <div class="meta-chip">栈 <b>Next.js 16 · React 19 · TypeScript</b></div>
+      <div class="meta-chip">平台库 <b>PostgreSQL</b></div>
+      <div class="meta-chip">对象索引 <b>ClickHouse</b></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="lg"><i class="swatch sw-orange"></i>调用方 / 入口</span>
+    <span class="lg"><i class="swatch sw-blue"></i>接口层与界面</span>
+    <span class="lg"><i class="swatch sw-green"></i>领域服务（业务口径）</span>
+    <span class="lg"><i class="swatch sw-purple"></i>契约与适配器（可替换）</span>
+    <span class="lg"><i class="swatch sw-ink"></i>存储与外部系统</span>
+    <span class="lg"><i class="swatch sw-dash"></i>横切关注点（每层都要过）</span>
+    <span class="lg">箭头 = 这一层往下调用时传的东西</span>
+  </div>
+
+  <div class="figure">
+    <div class="stack">
+
+      <div class="band b-orange">
+        <div class="band-tag"><strong>调用方</strong><span>Clients</span><b>谁用它</b></div>
+        <div class="nodes">
+          <div class="node orange"><strong>浏览器控制台</strong><span>建模、看图、物化、问答、数据资源与治理页</span><em>React 19 + Next.js App Router</em></div>
+          <div class="node orange"><strong>外部 MCP 客户端 / Agent</strong><span>按标准 OAuth 接上，只读消费本体与数据工具</span><em>MCP + OAuth 2.1（PKCE S256）</em></div>
+          <div class="node orange"><strong>脚本 / 系统集成方</strong><span>直接调 REST：本体、版本、实例、问答</span><em>HTTPS + Bearer</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>统一入口：会话 JWT（<code>AUTH_SECRET</code>，浏览器）或 OAuth 访问令牌（<code>aud=ontology-mcp</code>）</span></div>
+
+      <div class="band b-blue">
+        <div class="band-tag"><strong>接口层</strong><span>API Layer</span><b>src/app/api</b></div>
+        <div class="nodes">
+          <div class="node blue"><strong>本体与版本</strong><span>草稿、校验、发布、激活、导入导出</span><em>/api/ontologies · /api/ontology/[versionId]</em></div>
+          <div class="node blue"><strong>实例与对象</strong><span>实例图谱、对象检索与编辑、整份物化</span><em>/api/instances · /api/objects · /api/object-search</em></div>
+          <div class="node blue"><strong>数据资源</strong><span>登记连接、试连、表结构与字段、只读取数</span><em>/api/data-sources · /api/targets</em></div>
+          <div class="node blue"><strong>智能问答</strong><span>后台运行、事件流、取消、工具开关、会话历史</span><em>/api/reasoning/runs · /stream · /tools</em></div>
+          <div class="node blue"><strong>MCP 服务</strong><span>本体数据工具 + 建模技能包</span><em>/api/mcp · /api/mcp/[ontologyId]</em></div>
+          <div class="node blue"><strong>OAuth 2.1 授权服务器</strong><span>标准接入：授权码 + PKCE、动态注册、刷新令牌</span><em>/api/oauth/authorize · /token · /register</em></div>
+          <div class="node blue"><strong>平台治理</strong><span>登录会话、用户角色、权限点、审计</span><em>/api/auth · /api/users · /api/roles · /api/audit</em></div>
+          <div class="node blue"><strong>只读查询</strong><span>后端无关的只读查询（读图存储投影）</span><em>/api/query</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>路由只做三件事：鉴权（<code>requirePermission</code>）、入参校验（zod）、把请求交给领域服务 —— 业务口径不在路由里</span></div>
+
+      <div class="band b-green">
+        <div class="band-tag"><strong>领域服务层</strong><span>Domain</span><b>src/lib</b></div>
+        <div class="nodes">
+          <div class="node green"><strong>本体定义</strong><span>对象类型 · 属性（含主键标记）· 关系类型 · 接口 · 指标 · 概念分组</span><em>lib/ontology/</em></div>
+          <div class="node green"><strong>版本与发布</strong><span>草稿 → 校验 → 快照 → 发布 → 历史激活；发布前查主键重复、必填、端点契约</span><em>lib/versioning/（snapshot · publication）</em></div>
+          <div class="node green"><strong>实例与对象服务</strong><span>对象身份 =（对象类型，主键）；索引优先、没物化回源；整份物化与对账</span><em>lib/instance/object-service/</em></div>
+          <div class="node green"><strong>动作引擎</strong><span>平台唯一的业务写入口：先干跑计划、再写回，写前按键回读</span><em>lib/instance/action-engine · lib/ontology/action-writeback</em></div>
+          <div class="node green"><strong>数据资源与列画像</strong><span>连接器、结构缓存、列画像采样、只读 SQL 闸门</span><em>lib/datasource/</em></div>
+          <div class="node green"><strong>智能问答编排</strong><span>工具循环、系统提示词、工具开关、历史与附件、证据抽取</span><em>lib/reasoning/</em></div>
+          <div class="node green"><strong>查询语义层</strong><span>本体 SQL 表层 → 绑定 → IR → 编译；只认一个明确子集</span><em>lib/query-dsl/（sql-surface · compile）</em></div>
+          <div class="node green"><strong>建模技能</strong><span>技能下发与整包打包</span><em>lib/skills/</em></div>
+          <div class="node green"><strong>平台内核</strong><span>本体台账、RBAC、审计、凭据加解密、迁移</span><em>lib/platform/</em></div>
+          <div class="node green"><strong>OAuth 授权</strong><span>授权请求判定、授权码一次性、刷新令牌轮换</span><em>lib/oauth/</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>领域层只认契约与注册表：SQL / SPARQL / 表名 / 参数格式<b>只允许出现在适配器目录里</b></span></div>
+
+      <div class="band b-purple">
+        <div class="band-tag"><strong>契约与适配器</strong><span>Adapters</span><b>可替换</b></div>
+        <div class="nodes">
+          <div class="node purple"><strong>GraphStore</strong><span>类型图契约；实现按 <code>target.kind</code> 分派</span><em>lib/framework/graph/ → jena/ · embedded</em></div>
+          <div class="node purple"><strong>ObjectIndex</strong><span>对象与边的索引契约，实现按后端分目录</span><em>lib/framework/object-index/clickhouse/</em></div>
+          <div class="node purple"><strong>数据资源连接器</strong><span>结构读取与只读取数</span><em>lib/datasource/sql.ts（pg · mysql2 · oracledb）</em></div>
+          <div class="node purple"><strong>模型客户端</strong><span>OpenAI 兼容端点，工具循环由 AI SDK 驱动</span><em>lib/reasoning/provider.ts（AI SDK）</em></div>
+          <div class="node purple"><strong>OAuthProvider</strong><span>「去哪儿授权 + 怎么验令牌」的唯一替换点</span><em>lib/oauth/provider.ts</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>实际协议：SQL · SPARQL · ClickHouse HTTP · OpenAI 兼容 HTTPS</span></div>
+
+      <div class="band b-ink">
+        <div class="band-tag"><strong>存储与外部</strong><span>Storage</span><b>权威 / 派生</b></div>
+        <div class="nodes">
+          <div class="node ink"><strong>PostgreSQL 平台库</strong><span><b>权威</b>：本体台账 · 版本定义与实例快照 · RBAC · 审计 · 列画像 · 物化任务 · OAuth 客户端与令牌哈希</span><em>DATABASE_URL · TypeORM + 迁移 0001–0011</em></div>
+          <div class="node hollow"><strong>ClickHouse 对象索引</strong><span><b>派生</b>，可整库重建：<code>object_entries</code> 对象 · <code>object_links</code> 边 · <code>materialization_manifests</code> 物化清单（含 folded / source_rows）</span><em>CLICKHOUSE_URL · 库 ontology_index</em></div>
+          <div class="node hollow"><strong>图存储</strong><span><b>派生</b>，只存发布后的投影：内置类型图 或 Apache Jena / Fuseki</span><em>GraphStore.replaceGraph 原子替换</em></div>
+          <div class="node ink"><strong>业务库（只读）</strong><span><b>业务权威</b>：对象与关系的真实数据，平台只读访问</span><em>PostgreSQL / MySQL / Oracle</em></div>
+          <div class="node ink"><strong>大模型端点</strong><span>问答推理与工具选择</span><em>LLM_BASE_URL / LLM_API_KEY / LLM_MODEL</em></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="aside">
+      <div class="card cross">
+        <div class="label">横切关注点 · 每一层都要过</div>
+        <ul>
+          <li><b>鉴权</b>：会话 JWT 或 OAuth 访问令牌；每个接口单独 <code>requirePermission</code></li>
+          <li><b>权限点</b>：RBAC 角色 → 权限点；界面按钮可见性与服务端校验同源</li>
+          <li><b>审计</b>：发布、删除、数据资源变更、工具开关、动作决策、问答运行全部留痕</li>
+          <li><b>只读闸门</b>：<code>assertReadOnlySql</code> 拦写语句；业务写只走模板化动作</li>
+          <li><b>工具开关</b>：按全局 / 按本体关掉的工具，同时不进工具清单、提示词与工具返回正文</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="label">读图顺序（30 秒）</div>
+        <ul>
+          <li>先看<b>四段颜色的层</b>：调用方 → 接口 → 领域 → 适配器 → 存储</li>
+          <li>再看层间的<b>箭头文字</b>：那才是这一层的契约</li>
+          <li>最后看<b>紫色那层</b>：它是「换中间件不动上层」的全部答案</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="label">权威与派生（一条硬规矩）</div>
+        <ul>
+          <li>定义与版本在<b>平台库</b> —— 图库只是投影</li>
+          <li>业务数据在<b>业务库</b> —— 平台只读</li>
+          <li>索引与图库都能<b>重建</b>；平台库丢了只能靠备份</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>三条运行时链路：一次操作到底经过谁</h2>
+    <div class="chains">
+
+      <div class="chain">
+        <div class="who">CHAIN 01 · 发布</div>
+        <h3>改完模型，点「发布」之后</h3>
+        <ol>
+          <li><i>1</i><span><b>草稿写入</b>平台库：定义 + 实例快照（Schema 校验：zod）</span></li>
+          <li><i>2</i><span><b>发布前校验</b>：主键重复、必填属性、关系端点契约、接口实现、口径结构</span></li>
+          <li><i>3</i><span><b>投影到图存储</b>：<code>replaceGraph()</code> 原子替换，失败保持原状</span></li>
+          <li><i>4</i><span><b>并发控制</b>：进程内队列 + PostgreSQL advisory lock，多实例也不会撞</span></li>
+          <li><i>5</i><span>只有 <code>status=PUBLISHED</code> 才被问答工具与对象服务读到</span></li>
+        </ol>
+      </div>
+
+      <div class="chain">
+        <div class="who">CHAIN 02 · 物化与读对象</div>
+        <h3>「整份物化」与「查一个对象」</h3>
+        <ol>
+          <li><i>1</i><span>入队<b>后台任务</b>（一个任务 = 一个对象类型，全局串行），进度落库、可取消、可从断点续跑</span></li>
+          <li><i>2</i><span>回源分页：有完整主键走<b>主键游标</b>翻页，否则 offset</span></li>
+          <li><i>3</i><span><b>读完整份必须对账</b>：源侧总数、折叠行数写进物化清单（源 N 行 → 对象 M 个 → 折叠 Z 行）</span></li>
+          <li><i>4</i><span>写入 ClickHouse：对象进 <code>object_entries</code>，边进 <code>object_links</code></span></li>
+          <li><i>5</i><span>读的时候：<b>整份物化过就走索引</b>，没物化回源业务库；半份不算数</span></li>
+        </ol>
+      </div>
+
+      <div class="chain">
+        <div class="who">CHAIN 03 · 问数</div>
+        <h3>「专线用户有多少」这句问出去</h3>
+        <ol>
+          <li><i>1</i><span>先按本体的<b>工具开关</b>算出这一轮能用哪些工具</span></li>
+          <li><i>2</i><span>系统提示词按开关生成「本轮可用工具」，工具循环开始（步数上限可配）</span></li>
+          <li><i>3</i><span>先<b>定位概念</b>再取数：<code>run_query</code>（本体 SQL）优先</span></li>
+          <li><i>4</i><span>执行路由：涉及的<b>类型全部物化</b> → 查 ClickHouse；否则回源业务库</span></li>
+          <li><i>5</i><span>结果回灌 → 出结论 + 证据；整轮写审计与对话历史</span></li>
+        </ol>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div class="card">
+      <div class="label">扩展点：换实现要动哪里</div>
+      <table>
+        <tr><th>要换的东西</th><th>动这里</th><th>上层要不要改</th></tr>
+        <tr><td>图数据库</td><td><code>lib/framework/graph/</code> 加一个实现 + 注册表登记</td><td>不改（接口 / 发布流程 / 界面都不动）</td></tr>
+        <tr><td>对象索引后端</td><td><code>lib/framework/object-index/</code> 下加目录</td><td>不改（对象服务认契约）</td></tr>
+        <tr><td>业务库类型</td><td><code>lib/datasource/sql.ts</code> 的方言分支</td><td>不改（SQL 只在适配器里）</td></tr>
+        <tr><td>模型提供方</td><td><code>lib/reasoning/provider.ts</code>（OpenAI 兼容即可）</td><td>不改（工具循环与提示词不动）</td></tr>
+        <tr><td>授权服务器</td><td><code>lib/oauth/provider.ts</code> 再写一个实现（如 Keycloak）</td><td>不改（元数据路由与 MCP 端点一行不动）</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <div class="label">数据到底存在哪</div>
+      <table>
+        <tr><th>数据</th><th>存在哪</th><th>性质</th></tr>
+        <tr><td>本体定义、版本与实例快照</td><td>PostgreSQL 平台库</td><td class="authority">权威</td></tr>
+        <tr><td>用户、角色、权限、审计、问答历史</td><td>PostgreSQL 平台库</td><td class="authority">权威</td></tr>
+        <tr><td>对象索引（对象 / 边 / 物化清单）</td><td>ClickHouse</td><td class="derived">派生 · 可重建</td></tr>
+        <tr><td>发布后的本体投影</td><td>内置类型图 / Jena</td><td class="derived">派生 · 可重建</td></tr>
+        <tr><td>列画像（码值采样）</td><td>PostgreSQL 平台库</td><td class="derived">缓存 · 可重采</td></tr>
+        <tr><td>真实业务数据</td><td>业务库（只读）</td><td class="authority">业务权威</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    <p class="small">依据仓库当前代码整理：<code>src/app/api/</code>（接口）、<code>src/lib/</code>（领域与适配器）、<code>src/lib/platform/db/migrations/</code>（0001–0011）。接口与字段的最终事实来源仍是代码与 OpenAPI。</p>
+    <p class="small">延伸阅读：<code>docs/architecture.html</code>（架构与上下游调用关系长页）· <code>docs/系统说明书/12-图存储与架构.md</code>（图存储与限制）</p>
+  </footer>
+
+</div>
+</body>
+</html>
