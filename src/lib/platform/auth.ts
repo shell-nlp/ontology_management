@@ -75,6 +75,52 @@ export function bearerToken(headerValue: string | null | undefined) {
 /**
  * 验一个令牌并回查到用户 + 角色 + 权限；任何一步不过都返回 null（调用方只关心"这个人还能不能用"）。
  *
+/**
+ * OAuth 访问令牌的受众标记。平台会话令牌是 `ontology-platform`，
+ * MCP 访问令牌是 `ontology-mcp` —— 两者都用同一把密钥签，靠 `aud` 分开，
+ * 这样"拿会话令牌去当 OAuth 令牌用"（或反过来）在验签这一步就不成立。
+ */
+export const MCP_ACCESS_AUDIENCE = "ontology-mcp";
+
+/** MCP 访问令牌的有效期（秒）。比会话短：它是发给外部客户端的，过期靠刷新令牌续。 */
+export const MCP_ACCESS_TTL_SECONDS = 60 * 60;
+
+/**
+ * 签一枚 **MCP 访问令牌**（OAuth 授权码流程换出来的那个 `access_token`）。
+ *
+ * 它和会话令牌共用 `AUTH_SECRET` 与 HS256，只是 `aud` 不同、带上 `client_id` ——
+ * 少一层密钥管理，同时"谁来验"仍然说得清：MCP 端点只认这个 `aud`。
+ */
+export async function createAccessToken(input: { userId: string; email: string; clientId: string }) {
+  return new SignJWT({ email: input.email, client_id: input.clientId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(input.userId)
+    .setAudience(MCP_ACCESS_AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime(MCP_ACCESS_TTL_SECONDS + "s")
+    .sign(secret());
+}
+
+/**
+ * 验一枚 MCP 访问令牌并回查账号。和 `userFromToken` 的分别只有 `aud`。
+ *
+ * 回库这一步不能省：令牌有效期内账号被停用 / 删掉，也要立刻失效（与会话同一个口径）。
+ */
+export async function userFromAccessToken(token: string): Promise<PlatformUserView | null> {
+  if (!token) return null;
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(token, secret(), { audience: MCP_ACCESS_AUDIENCE }));
+  } catch {
+    return null;
+  }
+  if (!payload.sub) return null;
+  return findSessionUser(payload.sub);
+}
+
+/**
+ * 验一个令牌并回查到用户 + 角色 + 权限；任何一步不过都返回 null（调用方只关心"这个人还能不能用"）。
+ *
  * 单独抽出来是因为有两个调用方：`currentUser()`（读当前请求的头）与 MCP 端点
  * （站内调试页把平台 JWT 当 Bearer 发过来）。
  */

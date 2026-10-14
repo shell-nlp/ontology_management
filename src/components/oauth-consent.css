@@ -1,0 +1,23 @@
+/* 授权同意页：沿用登录页那张卡片的观感，只加这一屏自己要用的几行。 */
+
+.consent-card { display: grid; }
+
+.consent-lede { color: #4a5f61; font-size: 12.5px; line-height: 1.75; margin: 0; }
+
+.consent-facts { display: grid; gap: 0; margin: 18px 0 14px; padding: 0; border: 1px solid #dce4df; border-radius: 4px; }
+
+.consent-facts > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; padding: 9px 11px; border-bottom: 1px solid #edf1ee; }
+
+.consent-facts > div:last-child { border-bottom: 0; }
+
+.consent-facts dt { color: #6b7c7d; font-size: 11px; font-weight: 650; }
+
+.consent-facts dd { margin: 0; color: #26373a; font-size: 11.5px; line-height: 1.6; word-break: break-all; }
+
+.consent-note { margin: 0 0 18px; color: #61797a; font-size: 11px; line-height: 1.75; }
+
+.consent-note b { color: #2f4b4d; }
+
+.consent-actions { display: flex; gap: 9px; }
+
+.consent-actions .action { flex: 1; margin-top: 0; }

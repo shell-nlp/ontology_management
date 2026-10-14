@@ -155,6 +155,30 @@
   管理员在「MCP 调试」里打开后，它是结构化问数的优先入口，DSL 能用时优先走 DSL。
 - 后续无论怎么调整 Agent 工具集、提示词或 MCP 暴露，都不能把 `run_sql` 从可用工具里移除。
 
+## OAuth 授权服务器（2026-10-14 落地，口径长期有效）
+
+用户口径：外部 MCP 客户端要能**按标准接上**（不是手工贴一条静态令牌），而且授权服务器要**藏在接口后面** ——
+以后换 Keycloak / 企业统一认证只加一个实现，上层不用大改。
+
+- **唯一的替换点**是 `@/lib/oauth/provider` 的 `OAuthProvider`：`authorizationServer(origin)` 决定
+  "告诉客户端去哪儿授权"，`verifyAccessToken(token)` 决定"怎么认令牌 + 映射到平台账号"。
+  换外部 AS = 再写一个实现（拉 JWKS 验签 + 按邮箱/sub 映射 `findSessionUser`），元数据路由与 MCP 端点一行都不用动。
+- **只做授权码 + PKCE(S256)**：公开客户端（无 client_secret），不接受 implicit / password / plain PKCE。
+  回调地址**一字不差**匹配注册值 —— 前缀匹配与通配就是开放重定向（`@/lib/oauth/rules` 有单测）。
+- **授权码一次性**：`consumeAuthorizationCode` 走"先原子占位（`consumed_at IS NULL` 的 UPDATE）再读"，
+  60 秒过期；换令牌时**先作废再校验**（校验失败那枚码也废了）。别改成"先读后写"，那等于允许重放。
+- **错误回跳与否取决于回调地址可不可信**：只有"客户端认识 + redirect_uri 精确命中"才把 error 带回 redirect_uri，
+  否则把错误摆在页面上。这条判断只在 `checkAuthorizationRequest` 里写一次，**同意页不做安全判断**。
+- **令牌三条口径**：访问令牌是 `aud = ontology-mcp` 的 JWT（1 小时；与会话令牌共用 `AUTH_SECRET`，靠 aud 分开）；
+  刷新令牌**只存哈希**、30 天、**轮换**（用一次换一条，旧的当场废）；每次校验都回库取账号**当前**权限。
+- **两条匿名端点是刻意豁免**：`POST /api/oauth/register`（注册不发权限）与 `POST /api/oauth/token`
+  （公开客户端没有密钥，身份来自授权码里记的那个用户），在 `tests/lib/authz-coverage.test.ts` 的
+  `PUBLIC_ROUTES` 里显式列出 —— **别把豁免扩大**。
+- **401 必须带 `WWW-Authenticate: Bearer resource_metadata="…"`**：MCP 客户端靠它触发 OAuth 流程，少了它只会报"未授权"。
+- 客户端清单在「MCP 调试 → MCP 接入 → OAuth 客户端」里看 / 删；`deleteClient` 会把它的授权码与刷新令牌一起作废。
+- 新表 `oauth_clients` / `oauth_authorization_codes` / `oauth_refresh_tokens`（迁移 0011）。
+  表与字段注释的唯一出处仍是 `@/lib/platform/db/comments`，**迁移 0011 建完表顺手补注释**（不指望 0006 下一轮再跑）。
+
 ## 物化 / 联邦的粒度 = 对象类型（2026-10-12 用户要求）
 
 用户口径：「不需要只物化一部分 —— 那一部分只是查看用的，而真正存对象实例只有全部去实例化才对」；「支持筛选可读取、一键物化所有和多选物化」。
@@ -647,15 +671,28 @@
 
 - **多条是硬要求，别退回单条**：换个客户端、换台机器各配一条，撤销哪条只断哪条；
   只有一条的话"重新生成"就等于把所有人踢下线。
-- 存储：`platform_settings` 一行 `mcp.apiTokens`，值是 `{ tokens: [{ id, name, ciphertext, createdAt, createdBy }] }`。
+- **每条令牌代表一个平台账号**（2026-10-14 用户口径：「令牌不是万能钥匙」）：令牌上必须有 `ownerUserId`，
+  生成时**必填**（界面默认选当前登录的人）。**没绑账号的令牌一律拒绝**，401 上写清怎么重新生成 ——
+  不许退回"无身份的万能令牌"。判权限用**每次回库取到的当前角色权限**（`findSessionUser`）：
+  账号停用 / 删除 / 改角色立刻生效，和会话令牌同一条口径，不用重启也不用等过期。
+- **MCP 工具一律要 `reasoning.use`**：`tools/call` 先过身份闸门（`-32003`，文案带上账号邮箱与去哪儿加权限），
+  再找工具；`tools/list` 与 `initialize` **不拦** —— 客户端得先连得上，才知道自己没权限。
+- **界面清单与端点共用同一套可用性判断**：`@/lib/mcp/token` 的 `tokenStatus` 是纯函数（有单测）；
+  两边各写一份迟早出现"界面说能用、端点说不能用"。**不可用必须显形**：每行写「代表谁 + 为什么用不了 + 下一步」，
+  面板顶部给一条汇总；`configured` 的含义是"现在**真的有一条能用**"，不是"曾经有过"。
+- 存储：`platform_settings` 一行 `mcp.apiTokens`，值是
+  `{ tokens: [{ id, name, ciphertext, createdAt, createdBy, ownerUserId }] }`（老的没 `ownerUserId` 的条目读得出来，但判定为不可用）。
   密文用 `@/lib/framework/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
-  实现在 `src/lib/mcp/token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `verifyMcpToken`。
-- **`.env.local` 的 `MCP_API_TOKEN` 还认**，作为清单里一条**只读**的兜底（`id: "env"`，撤销按钮禁掉）。
+  实现在 `src/lib/mcp/token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `resolveMcpToken`。
+- **`.env.local` 的 `MCP_API_TOKEN` 还认**，作为清单里一条**只读**的兜底（`id: "env"`，撤销按钮禁掉），
+  但**必须**再配 `MCP_API_TOKEN_USER=<账号邮箱>` 指明它代表谁，否则它不可用。
   取值来源对客户端透明，`/api/mcp/token` 的 `DELETE ?id=env` 会明确回一句"只能改配置文件"。
-- 校验：`verifyMcpToken` **逐条恒定时间比较**（`timingSafeEqual`，别写 `===`），平台清单与环境变量那条都算数；
+- 校验：`resolveMcpToken` **逐条恒定时间比较**（`timingSafeEqual`，别写 `===`），平台清单与环境变量那条都算数；
   返回 `configured` 让端点区分"令牌错"与"根本没配"。`mcp-endpoint.ts` 的 `authorization()` 只调它，别在那儿读 env。
-- 接口：`GET /api/mcp/token`（清单，**不含明文**）、`GET ?reveal=<id>`（单条明文）、`POST { name }`（生成，明文只回这一次）、
-  `DELETE ?id=<id>`（撤销）。**只有 ADMIN 能调**；`/api/mcp/info` 只回清单 + `canManage`，不回明文。
+- 接口：`GET /api/mcp/token`（清单，**不含明文**）、`GET ?reveal=<id>`（单条明文）、
+  `POST { name, ownerUserId }`（生成，明文只回这一次）、`DELETE ?id=<id>`（撤销）、
+  `GET /api/mcp/token/owners`（挑归属用的候选账号，只回答"谁是谁"，不返回权限点）。
+  **只有 ADMIN 能调**；`/api/mcp/info` 只回清单 + `canManage`，不回明文。
 - 界面：`mcp-studio.tsx` 里只留**一行摘要 + 「管理令牌」按钮**，清单与明文在专用弹窗
   `src/components/mcp-token-dialog.tsx`（配 `mcp-token-dialog.css`）。用户口径：「访问令牌的管理可以专门弹出来一个界面进行管理」——
   令牌会越攒越多，别再铺回页面上。弹窗把 `(tokens, revealedToken)` 回传给页面，

@@ -27,7 +27,25 @@ export type McpTokenEntry = {
   platformManaged: boolean;
   createdAt: string | null;
   createdBy: string | null;
+  /** 这条令牌代表哪个账号（生成时选定）—— 它的权限就是这条令牌的权限上限。 */
+  ownerUserId: string | null;
+  ownerEmail: string | null;
+  ownerRoleName: string | null;
+  ownerDisabled: boolean;
+  /** 现在能不能用它调 MCP；false 时 `blockedReason` 就是原因与下一步。 */
+  usable: boolean;
+  blockedReason: string | null;
 };
+
+/** 候选账号（`GET /api/mcp/token/owners`）：只回答"谁是谁"，不带权限点。 */
+export type McpOwnerOption = { id: string; email: string; roleName: string; disabled: boolean };
+
+/** 每行那句"代表谁"。没绑账号时明说 —— 这是令牌突然连不上的头号原因。 */
+export function tokenOwnerLine(entry: McpTokenEntry) {
+  if (!entry.ownerEmail) return "未绑定账号 · 这条令牌用不了";
+  const role = entry.ownerRoleName ? ` · ${entry.ownerRoleName}` : "";
+  return `代表 ${entry.ownerEmail}${role}`;
+}
 
 /** `/api/mcp/token` 的响应。 */
 type TokenListResponse = {
@@ -66,6 +84,10 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [revealed, setRevealed] = useState<RevealedToken>(null);
   const [name, setName] = useState("");
+  /** 新令牌代表哪个账号：默认就是操作者本人。 */
+  const [ownerUserId, setOwnerUserId] = useState("");
+  const [owners, setOwners] = useState<McpOwnerOption[]>([]);
+  const [ownersError, setOwnersError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -79,6 +101,27 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
 
   // 焦点落在"给新令牌起名"上：开窗后最常见的下一步就是发一条新的。
   useEffect(() => { nameRef.current?.focus(); }, []);
+
+  /*
+   * 候选账号只在开窗时读一次（账号很少变，令牌却随时会发）。
+   * 读不到就明确说一句并禁用生成 —— 宁可让人看到"读不到账号"，
+   * 也不要发出一条归属不明的令牌（那正好是这次要堵掉的洞）。
+   */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const data = await api<{ me: string | null; users: McpOwnerOption[] }>("/api/mcp/token/owners");
+        if (!alive) return;
+        setOwners(data.users);
+        setOwnerUserId((current) => current || data.me || data.users[0]?.id || "");
+      } catch (reason) {
+        if (!alive) return;
+        setOwnersError(reason instanceof Error ? reason.message : "读取账号清单失败。");
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
 
   /** 三种操作的后半段一样：把服务端回的清单写回本地，并同步给页面。 */
@@ -92,14 +135,14 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
   const create = async () => {
     setBusy(true);
     try {
-      const saved = await api<TokenListResponse & { created: { id: string; name: string; token: string } }>("/api/mcp/token", {
+      const saved = await api<TokenListResponse & { created: { id: string; name: string; token: string; ownerEmail?: string | null } }>("/api/mcp/token", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, ownerUserId }),
       });
       const next = { id: saved.created.id, token: saved.created.token };
       apply(saved, next);
       setName("");
-      notify(`已生成令牌「${saved.created.name}」：点「复制」拿走它，接进客户端就能用。`);
+      notify(`已生成令牌「${saved.created.name}」（代表 ${saved.created.ownerEmail ?? "所选账号"}）：点「复制」拿走它，接进客户端就能用。`);
       nameRef.current?.focus();
     } catch (reason) {
       fail(reason);
@@ -170,6 +213,7 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
           <p className="mcp-key-lede">
             外部客户端拿这条令牌连 MCP：<code>Authorization: Bearer &lt;令牌&gt;</code>。
             一条令牌配一个客户端或一台机器，所以停用哪条只断哪条。
+            每条令牌都<strong>代表一个账号</strong>：查数据用的就是那个账号的权限，账号被停用或改了角色，下一次请求立刻跟着变。
           </p>
 
           <ul className="mcp-key-list">
@@ -205,6 +249,10 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
                       </span>
                     </div>
                     <small className="mcp-key-origin">{tokenOrigin(entry)}</small>
+                    <small className={`mcp-key-owner${entry.usable ? "" : " bad"}`}>
+                      {tokenOwnerLine(entry)}
+                      {!entry.usable && entry.blockedReason ? ` · ${entry.blockedReason}` : ""}
+                    </small>
                     {open && revealed && (
                       <div className="mcp-key-secret">
                         <code>{revealed.token}</code>
@@ -238,10 +286,35 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
                 onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void create(); } }}
               />
             </label>
-            <button type="button" className="mcp-key-primary" disabled={!canManage || busy} onClick={() => void create()}>
+            <label className="mcp-key-field">
+              <span>代表哪个账号</span>
+              <select
+                value={ownerUserId}
+                disabled={!canManage || busy || !owners.length}
+                onChange={(event) => setOwnerUserId(event.target.value)}
+              >
+                {owners.map((item) => (
+                  <option key={item.id} value={item.id} disabled={item.disabled}>
+                    {item.email}（{item.roleName || "无角色"}）{item.disabled ? " · 已停用" : ""}
+                  </option>
+                ))}
+                {!owners.length && <option value="">（读不到账号清单）</option>}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="mcp-key-primary"
+              disabled={!canManage || busy || !ownerUserId}
+              onClick={() => void create()}
+            >
               <Plus size={14} />生成令牌
             </button>
           </div>
+
+          <p className="mcp-key-hint">
+            令牌按上面这个账号的权限走：他的角色没有「用智能问答与 MCP」时，客户端连得上也调不了工具。
+            {ownersError ? ` ${ownersError}` : ""}
+          </p>
 
           <p className="mcp-key-note">
             令牌的完整值只在生成那一刻展开一次；之后随时可以再「查看」。

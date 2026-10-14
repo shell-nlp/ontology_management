@@ -20,13 +20,22 @@ import { ALL_PERMISSIONS, BUILTIN_ROLES, PERMISSIONS, builtinRole } from "@/lib/
  */
 const API_DIR = path.join(process.cwd(), "src", "app", "api");
 
-/** 不需要平台鉴权的路由：登录、登出、会话探测、首次初始化、免令牌的技能 MCP。 */
+/**
+ * 不需要平台鉴权的路由：登录、登出、会话探测、首次初始化、免令牌的技能 MCP，
+ * 以及 OAuth 里**按规范必须匿名可达**的两个端点：
+ * - `oauth/register`：MCP 客户端第一次连接时还没有任何凭据，注册本身**不发权限**；
+ * - `oauth/token`：公开客户端没有密钥，身份由 client_id + 回调地址精确匹配 + PKCE 判，
+ *   真正的"代表谁"来自授权码里记的那个用户。
+ * 两者都只发令牌：拿到访问令牌之后，MCP 端点仍会按**账号当前的角色**再判一次权限。
+ */
 const PUBLIC_ROUTES = [
   "src/app/api/auth/login/route.ts",
   "src/app/api/auth/logout/route.ts",
   "src/app/api/auth/session/route.ts",
   "src/app/api/bootstrap/route.ts",
   "src/app/api/skills/mcp/route.ts",
+  "src/app/api/oauth/register/route.ts",
+  "src/app/api/oauth/token/route.ts",
 ];
 
 /**

@@ -240,6 +240,21 @@ export async function listPlatformUsers(): Promise<{ id: string; email: string; 
   const rows = await repo.find({ order: { email: "ASC" } });
   return rows.map((row) => ({ id: row.id, email: row.email, roleId: row.roleId, roleName: roles.get(row.roleId) ?? "" }));
 }
+
+/**
+ * 账号身份清单：只回答"这个账号是谁、还在不在"（不含密码，也不带权限点）。
+ *
+ * 用途是 MCP 访问令牌的归属回显与校验 —— 令牌上的 `ownerUserId` 要显示成邮箱，
+ * 并且账号被停用 / 删除之后，它名下的令牌要立刻变成"不能用"。
+ * 口径与 `findSessionUser` 一致（停用即视为不可用），只是这里一次取全部账号，避免一条令牌查一次库。
+ */
+export async function listUserIdentities(): Promise<{ id: string; email: string; roleName: string; disabled: boolean }[]> {
+  const repo = await platformRepo(PlatformUserEntity);
+  const roles = new Map((await (await platformRepo(RoleEntity)).find()).map((role) => [role.id, role.name]));
+  const rows = await repo.find({ order: { email: "ASC" } });
+  return rows.map((row) => ({ id: row.id, email: row.email, roleName: roles.get(row.roleId) ?? "", disabled: Boolean(row.disabledAt) }));
+}
+
 /**
  * 平台级设置：一段 JSON 存在库里，按 key 取。
  *

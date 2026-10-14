@@ -79,6 +79,10 @@
 }
 .mcp-key-actions { display: inline-flex; gap: 6px; margin-left: auto; }
 .mcp-key-origin { color: var(--key-muted); font-size: 10.5px; }
+/* 归属账号 + 为什么用不了。用不了的那条必须显形，否则用户只看到"客户端连不上"。 */
+.mcp-key-owner { color: #475569; font-size: 10.5px; line-height: 1.6; }
+.mcp-key-owner.bad { color: var(--key-danger); }
+.mcp-key-hint { margin: 0; color: var(--key-muted); font-size: 10.5px; line-height: 1.7; }
 
 /* 撕口 + 密钥条：展开时才出现，虚线是"从卡片上撕下来"的那一道。 */
 .mcp-key-secret { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; padding-top: 9px; border-top: 1px dashed var(--key-line-strong); }
@@ -99,7 +103,7 @@
 
 /* ---------- 生成新令牌 ---------- */
 
-.mcp-key-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; padding-top: 3px; }
+.mcp-key-create { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto; align-items: end; gap: 9px; padding-top: 3px; }
 .mcp-key-field { display: grid; gap: 6px; }
 .mcp-key-field > span { color: #3f5052; font-size: 11px; font-weight: 700; }
 .mcp-key-field input {
@@ -109,6 +113,12 @@
 .mcp-key-field input::placeholder { color: #a9b8cb; }
 .mcp-key-field input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29, 78, 216, .13); }
 .mcp-key-field input:disabled { background: var(--key-paper); color: var(--key-soft); }
+.mcp-key-field select {
+  width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--key-line-strong);
+  border-radius: 4px; background: #fff; color: #16233b; font-size: 12px; outline: 0;
+}
+.mcp-key-field select:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29, 78, 216, .13); }
+.mcp-key-field select:disabled { background: var(--key-paper); color: var(--key-soft); }
 .mcp-key-primary {
   display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
   border: 1px solid var(--key-accent); border-radius: 4px; background: var(--key-accent);

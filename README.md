@@ -147,6 +147,7 @@ cp .env.example .env.local
 | `AUTH_SECRET` | ✅ | ≥32 位随机串，签署会话令牌（JWT） |
 | `GRAPH_ENDPOINT_HOST_ALIAS` | 可选 | Jena 端点主机名改写；容器默认 `localhost=host.docker.internal`，外部服务可覆盖 |
 | `MCP_API_TOKEN` | 可选 | 外部 MCP 客户端访问 `/api/mcp` 用的 Bearer 令牌；平台只把它当一条只读兜底（正规做法是在「MCP 调试 → MCP 接入」里生成，可多条、可撤销） |
+| `MCP_API_TOKEN_USER` | 配 `MCP_API_TOKEN` 时必填 | 这条令牌代表哪个账号（账号邮箱）：MCP 调用按那个账号的角色权限判，账号停用 / 改角色立即生效 |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次 | 首个管理员邮箱 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次 | 首个管理员密码 |
 | `ONTOLOGY_VERSION_DIR` | 可选 | 旧部署的磁盘快照目录；**只在把历史版本一次性迁进平台库时读取**，新部署不需要 |
@@ -456,7 +457,7 @@ flowchart TB
 
 | 服务端 | 地址 | 鉴权 | 提供什么 |
 | --- | --- | --- | --- |
-| 本体数据（平台级） | `/api/mcp` | 平台会话或 `Bearer <MCP_API_TOKEN>` | 本体与 Schema 检索、对象类型详情与多跳、概念分组、接口、动作定义、表结构与只读 SQL |
+| 本体数据（平台级） | `/api/mcp` | 平台会话 / MCP 访问令牌 / **OAuth 访问令牌** | 本体与 Schema 检索、对象类型详情与多跳、概念分组、接口、动作定义、表结构与只读 SQL |
 | 本体数据（本体级） | `/api/mcp/<本体 id>` | 同上 | 同上，但**钉死在这一个本体上**：不用每次传 `ontology_id`，工具清单也按这个本体的开关给 |
 | 建模技能 | `/api/skills/mcp` | **免令牌** | 三套建模技能的正文与参考文件（公开文档，不含凭据） |
 
@@ -635,8 +636,14 @@ flowchart TB
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/mcp` | 本体数据 MCP 服务（会话或令牌） |
+| `POST` | `/api/mcp` | 本体数据 MCP 服务（会话 / MCP 访问令牌 / OAuth 访问令牌） |
 | `GET` | `/api/mcp/info` | 该 MCP 服务的接入信息与工具清单 |
+| `GET` | `/.well-known/oauth-protected-resource` | 受保护资源元数据（OAuth 客户端第一步读它） |
+| `GET` | `/.well-known/oauth-authorization-server` | 授权服务器元数据（三个端点） |
+| `POST` | `/api/oauth/register` | 客户端自助注册（公开客户端，**匿名可达**） |
+| `GET` `POST` | `/api/oauth/authorize` | 授权同意页的查询与「允许 / 拒绝」（POST 要登录） |
+| `POST` | `/api/oauth/token` | 换访问令牌 / 刷新（**匿名可达**，公开客户端无密钥） |
+| `GET` `DELETE` | `/api/oauth/clients` | 已注册的 OAuth 客户端清单与删除（要 `mcp.token.manage`） |
 | `POST` | `/api/skills/mcp` | 建模技能 MCP 服务（免令牌） |
 | `GET` | `/api/skills` | 技能清单 + MCP 接入信息 |
 | `GET` | `/api/skills/archive` | 全部技能打包成 zip |

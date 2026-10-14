@@ -24,6 +24,9 @@ export const PLATFORM_TABLE_COMMENTS: Record<string, string> = {
   reasoning_messages: "一轮问答。一行一次提问：问题、回答、思考过程与运行记录。",
   column_profiles: "列画像缓存。一行一张表，存采样出来的列表征。",
   materialization_jobs: "整份物化的后台任务。一行一个对象类型的一次物化：状态、进度与结束原因。",
+  oauth_clients: "OAuth 客户端。一行一个走授权码流程接 MCP 的外部客户端（公开客户端，不存密钥）。",
+  oauth_authorization_codes: "OAuth 授权码。一行一次授权换出来的临时码：被换走即作废，且 60 秒过期。",
+  oauth_refresh_tokens: "OAuth 刷新令牌。一行一条长期凭据（只存哈希），用来在访问令牌过期后换新的。",
 };
 
 /** 表 -> 列 -> 一句话说明。 */
@@ -173,6 +176,38 @@ export const PLATFORM_COLUMN_COMMENTS: Record<string, Record<string, string>> = 
     started_at: "开始执行时间。",
     finished_at: "结束时间。",
     created_by: "发起人（users.id）。",
+  },
+  oauth_clients: {
+    id: "客户端 id（client_id），随机串；授权请求与令牌都按它归属。",
+    client_name: "客户端名字（自助注册时由客户端提供），只用于展示。",
+    redirect_uris: "允许的回调地址数组；**精确匹配**，不支持通配。",
+    source: "来源：DCR 客户端自助注册 / ADMIN 管理员登记。",
+    created_at: "注册时间。",
+    created_by: "登记人（users.id）；自助注册的为空。",
+    disabled_at: "停用时间；null = 正常。停用后不能再发起授权。",
+    last_used_at: "最近一次换到令牌的时间；界面据此看这个客户端还在不在用。",
+  },
+  oauth_authorization_codes: {
+    code: "授权码本体（随机串），主键。",
+    client_id: "发起授权的客户端（oauth_clients.id）。",
+    redirect_uri: "这次授权用的回调地址；换令牌时必须一字不差。",
+    code_challenge: "PKCE 挑战值（S256）。",
+    code_challenge_method: "PKCE 方法；只接受 S256。",
+    scope: "授权范围；MCP 只读，固定 mcp.read。",
+    user_id: "点了「允许」的平台账号（users.id）。",
+    created_at: "签发时间。",
+    expires_at: "过期时间（签发后 60 秒）。",
+    consumed_at: "被换走的时间；**非空即作废**（防重复使用），null = 还没用过。",
+  },
+  oauth_refresh_tokens: {
+    id: "刷新令牌 id（UUID）。",
+    token_hash: "刷新令牌的 SHA-256 哈希（不存明文）。",
+    client_id: "归属客户端（oauth_clients.id）。",
+    user_id: "归属账号（users.id）；账号停用后立即用不了。",
+    scope: "授权范围。",
+    created_at: "签发时间。",
+    expires_at: "过期时间（签发后 30 天）。",
+    revoked_at: "撤销 / 轮换时间；null = 仍然有效。",
   },
 };
 

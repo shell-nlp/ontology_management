@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, Terminal, Wand2 } from "lucide-react";
+import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, ShieldCheck, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/framework/api-client";
 import { copyText } from "@/lib/framework/clipboard";
 import { stripOntologyId } from "@/lib/mcp/schema";
 import { authHeaders } from "@/lib/framework/session-token";
 import type { OntologySummary } from "@/components/ontology-studio";
 import { McpTokenDialog, type McpTokenEntry, type RevealedToken } from "@/components/mcp-token-dialog";
+import { McpClientsDialog } from "@/components/mcp-clients-dialog";
 import "./mcp-studio.css";
 
 /**
@@ -235,6 +236,8 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const [revealedToken, setRevealedToken] = useState<RevealedToken>(null);
   /** 令牌清单专门用一个弹窗管（2026-10-08 用户口径），这里只记它开没开。 */
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+  /** OAuth 客户端清单也用弹窗（和令牌同一套观感）：客户端是自助注册进来的，这里只做查看与删除。 */
+  const [clientsDialogOpen, setClientsDialogOpen] = useState(false);
   // 用**当前选中的本体**，不是列表里的第一个（2026-10-08 修：以前多本体平台下会指向第一个本体）。
   const ontologyId = (selectedOntologyId || ontologies[0]?.id || "").trim();
   const ontologyName = ontologies.find((item) => item.id === ontologyId)?.name ?? ontologyId;
@@ -391,6 +394,10 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const availableCount = info.tools.filter((tool) => !tool.disabled && !info.disabledTools.includes(tool.name)).length;
   /** 弹窗里刚「查看」过的那条：下面的接入配置片段用的就是它（片段只能带一个令牌）。 */
   const activeToken = revealedToken ? info.token.tokens.find((entry) => entry.id === revealedToken.id) ?? null : null;
+  /** 现在**真的能用**的令牌数：清单里可能还留着"没绑账号 / 账号已停用"的历史条目。 */
+  const usableTokens = info.token.tokens.filter((entry) => entry.usable).length;
+  /** 平台地址：OAuth 那三个标准地址要按"用户实际访问的地址"拼（代理后面不能落回服务端 localhost）。 */
+  const origin = new URL(info.absoluteUrl).origin;
 
   return (
     <section className="mcp-root">
@@ -423,7 +430,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
             <b>{info.transport} · 协议 {info.protocolVersion}</b>
           </div>
           <span className={`mcp-token${info.tokenConfigured ? "" : " off"}`}>
-            {info.token.configured ? `外部令牌 ${info.token.tokens.length} 条` : "未配置访问令牌"}
+            {info.token.configured ? `可用令牌 ${usableTokens} / ${info.token.tokens.length} 条` : "无可用访问令牌"}
           </span>
         </div>
         <div className="mcp-connect-row">
@@ -477,9 +484,23 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
           {info.token.warning && <p className="mcp-token-warn">{info.token.warning}</p>}
         </div>
 
+        {/* OAuth 授权（标准流程）：客户端自己注册 + 用户点「允许」，不用手工贴令牌。 */}
+        <div className="mcp-token-box">
+          <div className="mcp-token-summary">
+            <span className="mcp-token-summary-mark"><ShieldCheck size={15} /></span>
+            <div>
+              <b>OAuth 授权（标准流程）</b>
+              <small>支持 OAuth 的客户端会自己注册、再打开授权页让你点「允许」，拿到的是你的账号的只读权限。</small>
+            </div>
+            <button type="button" className="mcp-token-manage" onClick={() => setClientsDialogOpen(true)}>
+              OAuth 客户端
+            </button>
+          </div>
+        </div>
+
         <div className="mcp-connect-body">
           <ol className="mcp-steps">
-            <li>在上面的「访问令牌」里生成一条，并给它起个名字（哪台机器 / 哪个客户端在用）。</li>
+            <li>在上面的「访问令牌」里生成一条：起个名字（哪台机器 / 哪个客户端在用），再选好它<strong>代表哪个账号</strong> —— 查数用的就是这个账号的权限。</li>
             <li>点这条的「查看」，再选一个客户端，把下面的整段配置复制过去 —— 片段里带的就是真值，不用再手工替换。</li>
             <li>回到智能体的对话里直接提问，它通过 MCP 工具读这个本体 —— 只读，且每个结论都带证据。</li>
           </ol>
@@ -504,7 +525,9 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
             {!info.tokenConfigured && (
               <p className="mcp-connect-warn">
                 <AlertCircle size={13} />
-                服务端还没有 <code>MCP_API_TOKEN</code>，外面的客户端带着 Bearer 也进不来 —— 先在 <code>.env.local</code> 里补上。
+                {info.token.tokens.length
+                  ? "现在没有一条可用的访问令牌（没绑账号 / 绑定的账号被停用或删除 / 明文解不开）—— 点上面的「管理令牌」，每条的提示里都写了怎么处理。"
+                  : "还没有访问令牌：外面的客户端带着 Bearer 也进不来 —— 点上面的「管理令牌」生成一条（也可以继续用 .env.local 的 MCP_API_TOKEN，但要配 MCP_API_TOKEN_USER 指明它代表哪个账号）。"}
               </p>
             )}
 
@@ -689,6 +712,17 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
           initialWarning={info.token.warning}
           onClose={() => setTokenDialogOpen(false)}
           onState={applyTokenState}
+          notify={notify}
+          fail={fail}
+        />
+      )}
+
+      {/* OAuth 客户端弹窗：看已注册的客户端、复制三个标准地址、删掉不认识的。 */}
+      {clientsDialogOpen && (
+        <McpClientsDialog
+          origin={origin}
+          canManage={info.token.canManage}
+          onClose={() => setClientsDialogOpen(false)}
           notify={notify}
           fail={fail}
         />

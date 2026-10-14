@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bearerToken, userFromToken } from "@/lib/platform/auth";
-import { verifyMcpToken } from "@/lib/mcp/token";
+import { can } from "@/lib/platform/permissions";
+import { resolveMcpToken } from "@/lib/mcp/token";
+import type { PlatformUserView } from "@/lib/platform/platform-db";
+import { oauthProvider } from "@/lib/oauth/provider";
+import { unauthorizedHeader } from "@/lib/oauth/metadata";
+import { publicOrigin } from "@/lib/framework/public-origin";
 import { stripOntologyId } from "@/lib/mcp/schema";
 import { getOntology } from "@/lib/platform/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";
@@ -35,7 +40,7 @@ function rpcError(id: unknown, code: number, message: string) {
  */
 async function handleMessage(
   message: JsonRpcRequest,
-  options: { listPolicy: ToolPolicy; pinned: { id: string; name: string } | null },
+  options: { listPolicy: ToolPolicy; pinned: { id: string; name: string } | null; caller: McpCaller },
 ): Promise<unknown> {
   if (!message || typeof message !== "object" || message.jsonrpc !== "2.0" || typeof message.method !== "string") {
     return rpcError(message?.id, -32600, "不是合法的 JSON-RPC 2.0 请求。");
@@ -92,6 +97,18 @@ async function handleMessage(
     const name = typeof params.name === "string" ? params.name : "";
     const raw = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? (params.arguments as Record<string, unknown>) : {};
     if (!name) return rpcError(id, -32602, "tools/call 需要 name。");
+    /*
+     * 身份闸门（2026-10-14）：MCP 只开放只读查询工具，一律要 `reasoning.use`（「用智能问答与 MCP」）。
+     * 判的是**调用方代表的那个平台账号**（外部令牌 = 它绑定的账号），而且用的是每次回库取到的**当前**权限点 ——
+     * 改角色、停用账号立刻生效，不用等令牌过期。
+     */
+    if (!can(options.caller.user.permissions, "reasoning.use")) {
+      return rpcError(
+        id,
+        -32003,
+        `当前账号（${options.caller.user.email}）没有「用智能问答与 MCP」权限，MCP 工具一律拒绝。请管理员在「平台设置 → 用户与角色」里给这个角色加上该权限。`,
+      );
+    }
     const args = applyPinnedOntology(raw, options.pinned?.id ?? null);
     /*
      * 工具开关按本体分：这次调用查哪个本体，就按那个本体的策略判。
@@ -146,6 +163,12 @@ export function applyPinnedOntology(args: Record<string, unknown>, pinnedOntolog
 }
 
 /**
+ * 这一轮调用**代表谁**：站内会话就是本人；OAuth 访问令牌与 MCP 访问令牌一样，
+ * 代表授权时点过「允许」的那个账号。
+ */
+type McpCaller = { via: "session" | "oauth" | "token"; user: PlatformUserView };
+
+/**
  * 同一个 `Authorization` 头上有**两套凭据**，都要认，一个都不能少：
  *
  * - **平台会话 JWT**：站内「MCP 调试」页发的。2026-10-09 起登录态统一走请求头（不再有 cookie），
@@ -154,27 +177,37 @@ export function applyPinnedOntology(args: Record<string, unknown>, pinnedOntolog
  *
  * **先试 JWT**：令牌不是 JWT 时验签立刻失败、不查库；反过来先试 MCP 令牌则要对清单里每一条解密再比较。
  * 两个都不认就是 401，绝不静默放行。
+ *
+ * 两条路都落到**一个平台账号**上（2026-10-14）：会话是本人；令牌是它绑定的账号，
+ * 没绑账号 / 账号已停用的令牌在这里就被挡下，原因原样带出去（说清"怎么办"）。
+ * 下游的权限判断只认这个账号 —— 不再有"无身份的万能令牌"。
  */
-async function authorization(request: NextRequest) {
+async function authorization(request: NextRequest): Promise<{ ok: true; caller: McpCaller } | { ok: false; reason: string }> {
   const bearer = bearerToken(request.headers.get("authorization"));
   if (!bearer) {
-    return {
-      ok: false as const,
-      via: "none" as const,
-      reason: "未授权：带上 Authorization: Bearer <平台会话令牌>（站内）或 <MCP 访问令牌>（外部客户端）。",
-    };
+    return { ok: false, reason: "未授权：带上 Authorization: Bearer <平台会话令牌>（站内）或 <MCP 访问令牌>（外部客户端）。" };
   }
-  if (await userFromToken(bearer)) return { ok: true as const, via: "session" as const };
+  const session = await userFromToken(bearer);
+  if (session) return { ok: true, caller: { via: "session", user: session } };
+  /*
+   * OAuth 授权码流程换出来的**访问令牌**（aud = ontology-mcp）。
+   * 这一条走 `oauthProvider()` 这个中间层：将来换成企业统一认证 / Keycloak，
+   * 只换 provider 的实现（拉它的 JWKS 验签 + 把身份映射到平台账号），这里一行都不用动。
+   */
+  const viaOauth = await oauthProvider().verifyAccessToken(bearer);
+  if (viaOauth) return { ok: true, caller: { via: "oauth", user: viaOauth } };
   /*
    * MCP 令牌由 `@/lib/mcp-token` 解析：**平台库里那条优先**（「MCP 调试 → MCP 接入」里生成/撤销的），
-   * 其次才是 `.env.local` 的 `MCP_API_TOKEN`。比较走恒定时间，不用 `===`。
+   * 其次才是 `.env.local` 的 `MCP_API_TOKEN`。比较走恒定时间，不用 `===`；
+   * 返回值里已经带上它代表的账号（每次回库现取，停用 / 改角色立刻生效）。
    */
-  const { ok, configured } = await verifyMcpToken(bearer);
-  if (ok) return { ok: true as const, via: "token" as const };
+  const resolved = await resolveMcpToken(bearer);
+  if (resolved.ok) return { ok: true, caller: { via: "token", user: resolved.caller.user } };
+  // 认出来了但绑定有问题（没绑账号 / 账号没了）时，`resolveMcpToken` 已经给了准确原因，直接用它。
+  if (resolved.reason) return { ok: false, reason: resolved.reason };
   return {
-    ok: false as const,
-    via: "token" as const,
-    reason: configured
+    ok: false,
+    reason: resolved.configured
       ? "令牌不正确：平台会话可能已过期，MCP 访问令牌可能已被撤销。到「MCP 调试 → MCP 接入」核对现在有效的令牌。"
       : "既没有有效的平台会话，服务端也还没有配置 MCP 访问令牌：站内请重新登录；外部客户端到「MCP 调试 → MCP 接入」生成一条。",
   };
@@ -184,7 +217,16 @@ export async function handleMcpRequest(request: NextRequest, options: { pinnedOn
   const pinnedId = (options.pinnedOntologyId ?? "").trim();
   const auth = await authorization(request);
   const headers = { ...CORS_HEADERS, ...(auth.ok ? { "MCP-Protocol-Version": MCP_PROTOCOL_VERSION } : {}) };
-  if (!auth.ok) return NextResponse.json(rpcError(null, -32001, auth.reason), { status: 401, headers });
+  if (!auth.ok) {
+    return NextResponse.json(rpcError(null, -32001, auth.reason), {
+      status: 401,
+      /*
+       * 这一行是"外部客户端能自动接上"的入口：客户端读它才知道这儿支持 OAuth、元数据在哪儿，
+       * 然后自己去注册客户端并打开授权页。少了它，只会报一句"未授权"。
+       */
+      headers: { ...headers, "WWW-Authenticate": unauthorizedHeader(publicOrigin(request)) },
+    });
+  }
 
   // 本体级端点：先把本体解析出来（顺便校验它存不存在），后面 tools/list 与 tools/call 都用它。
   let pinned: { id: string; name: string } | null = null;
@@ -213,7 +255,7 @@ export async function handleMcpRequest(request: NextRequest, options: { pinnedOn
   const messages = (batch ? body : [body]) as JsonRpcRequest[];
   const responses: unknown[] = [];
   for (const message of messages) {
-    const response = await handleMessage(message, { listPolicy, pinned });
+    const response = await handleMessage(message, { listPolicy, pinned, caller: auth.caller });
     if (response) responses.push(response);
   }
 

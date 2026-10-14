@@ -12,6 +12,9 @@ import {
   EmbeddedGraphEntity,
   GraphTargetEntity,
   MaterializationJobEntity,
+  OAuthAuthorizationCodeEntity,
+  OAuthClientEntity,
+  OAuthRefreshTokenEntity,
   OntologyConceptEntity,
   OntologyEntity,
   OntologyVersionEntity,
@@ -64,6 +67,9 @@ export const PLATFORM_ENTITIES = [
   OntologyVersionEntity,
   OntologyConceptEntity,
   MaterializationJobEntity,
+  OAuthClientEntity,
+  OAuthAuthorizationCodeEntity,
+  OAuthRefreshTokenEntity,
 ];
 
 type PlatformCache = {

@@ -47,6 +47,59 @@ export class PlatformUserEntity {
   @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
 }
 
+/**
+ * OAuth 客户端：走授权码流程接 MCP 的外部客户端。
+ *
+ * **只有公开客户端**（没有 client_secret）：客户端身份靠 redirect_uri 精确匹配 + PKCE 把关，
+ * 密钥放在桌面 / 浏览器客户端里等于公开，存了也保护不了什么。`source` 区分自助注册（DCR）还是管理员登记。
+ */
+@Entity({ schema: "ontology_platform", name: "oauth_clients" })
+export class OAuthClientEntity {
+  /** client_id：随机串，授权请求与令牌都按它归属。 */
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "client_name" }) clientName!: string;
+  /** 允许的回调地址（字符串数组）；匹配是**一字不差**，不支持通配。 */
+  @Column("jsonb", { name: "redirect_uris" }) redirectUris!: JsonColumn;
+  @Column("text") source!: string;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("text", { name: "created_by", nullable: true }) createdBy!: string | null;
+  @Column("timestamptz", { name: "disabled_at", nullable: true }) disabledAt!: Date | null;
+  @Column("timestamptz", { name: "last_used_at", nullable: true }) lastUsedAt!: Date | null;
+}
+
+/**
+ * 授权码：一次授权换出来的临时凭据。
+ *
+ * **一次性**：换令牌时先原子地把 `consumed_at` 占住（`WHERE consumed_at IS NULL`），抢不到就作废 ——
+ * 这是防"同一个码被换两次"的唯一手段，不能退化成"先读后写"。60 秒过期是刻意的，够跳转、不够被利用。
+ */
+@Entity({ schema: "ontology_platform", name: "oauth_authorization_codes" })
+export class OAuthAuthorizationCodeEntity {
+  @PrimaryColumn("text") code!: string;
+  @Column("text", { name: "client_id" }) clientId!: string;
+  @Column("text", { name: "redirect_uri" }) redirectUri!: string;
+  @Column("text", { name: "code_challenge" }) codeChallenge!: string;
+  @Column("text", { name: "code_challenge_method" }) codeChallengeMethod!: string;
+  @Column("text") scope!: string;
+  @Column("text", { name: "user_id" }) userId!: string;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "expires_at" }) expiresAt!: Date;
+  @Column("timestamptz", { name: "consumed_at", nullable: true }) consumedAt!: Date | null;
+}
+
+/** 刷新令牌：**只存哈希**（库被读走也换不出令牌）；换新时旧的那条立即撤销（轮换）。 */
+@Entity({ schema: "ontology_platform", name: "oauth_refresh_tokens" })
+export class OAuthRefreshTokenEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "token_hash", unique: true }) tokenHash!: string;
+  @Column("text", { name: "client_id" }) clientId!: string;
+  @Column("text", { name: "user_id" }) userId!: string;
+  @Column("text") scope!: string;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "expires_at" }) expiresAt!: Date;
+  @Column("timestamptz", { name: "revoked_at", nullable: true }) revokedAt!: Date | null;
+}
+
 /** 本体存储（图库连接）。内置类型图是虚拟入口，不占这张表。 */
 @Entity({ schema: "ontology_platform", name: "graph_targets" })
 export class GraphTargetEntity {
