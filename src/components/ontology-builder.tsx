@@ -376,7 +376,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   {selectedEntity.properties.map((property) => (
                     <div key={property.name} className={matchedProperty && (property.name === matchedProperty || property.displayName === matchedProperty) ? "ob-property-match" : undefined}>
                       <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
-                      <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
+                      <span>{property.dataType}{property.primaryKey ? " · 主键" : ""}</span>
                     </div>
                   ))}
 
@@ -453,7 +453,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
                   {selectedRelation.properties.map((property) => (
                     <div key={property.name} className={matchedProperty && (property.name === matchedProperty || property.displayName === matchedProperty) ? "ob-property-match" : undefined}>
                       <div><b>{property.name}</b>{property.required && <em>必填</em>}</div>
-                      <span>{property.dataType}{property.unique ? " · 唯一" : ""}</span>
+                      <span>{property.dataType}{property.primaryKey ? " · 主键" : ""}</span>
                     </div>
                   ))}
                 </div>

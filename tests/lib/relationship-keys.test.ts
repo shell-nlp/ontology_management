@@ -9,17 +9,17 @@ const 客户类型 = {
   id: 客户,
   name: "客户",
   properties: [
-    { name: "客户标识", sourceField: "CUST_ID", required: true, unique: true },
+    { name: "客户标识", sourceField: "CUST_ID", required: true, primaryKey: true },
     { name: "客户名称", sourceField: "CUST_NAME", required: true },
   ],
   sources: [{ id: "primary", primaryKey: ["CUST_ID"] }],
 };
-/** 没绑来源的类型：主键按导入约定记成"必填 + 唯一"。 */
+/** 没绑来源的类型：主键是属性上的「主键」标记（导入外部本体时主键列就打上它）。 */
 const 订单类型 = {
   id: 订单,
   name: "订单",
   properties: [
-    { name: "订单号", required: true, unique: true },
+    { name: "订单号", required: true, primaryKey: true },
     { name: "金额", required: false },
   ],
   sources: [],
@@ -42,7 +42,7 @@ describe("关系类型的键映射", () => {
     expect(keyMappingRows([{ linkProperty: " CUST_ID ", entityProperty: " 客户标识 " }, { linkProperty: "", entityProperty: "" }])).toEqual([{ linkProperty: "CUST_ID", entityProperty: "客户标识" }]);
   });
 
-  it("主键属性：绑了来源按主键列反查，没绑来源按必填 + 唯一", () => {
+  it("主键属性：绑了来源按主键列反查，没绑来源按「主键」标记", () => {
     expect(primaryKeyPropertyNames(客户类型)).toEqual(["客户标识"]);
     expect(primaryKeyPropertyNames(订单类型)).toEqual(["订单号"]);
     expect(primaryKeyPropertyNames(null)).toEqual([]);

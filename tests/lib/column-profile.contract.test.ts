@@ -34,7 +34,7 @@ function definitionFor(dataSourceId: string): OntologyDefinition {
       displayProperty: "",
       groupId: "",
       implements: [],
-      properties: [{ name: "用户状态", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "USR_STATUS" }],
+      properties: [{ name: "用户状态", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "USR_STATUS" }],
       sources: [{ id: "primary", dataSourceId, schema: SCHEMA, view: TABLE, primaryKey: [], titleField: "" }],
     }],
     relationshipTypes: [], actionTypes: [], rules: [],

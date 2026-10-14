@@ -7,7 +7,7 @@ const snapshot: GraphWriteSnapshot = {
   definition: {
     interfaces: [{ id: "i", name: "可识别对象", extends: [] }],
     entityTypes: [
-      { id: "a", name: "客户", implements: ["i"], properties: [{ name: "名称", dataType: "TEXT", required: true, unique: false, indexed: false }] },
+      { id: "a", name: "客户", implements: ["i"], properties: [{ name: "名称", dataType: "TEXT", required: true, primaryKey: false, indexed: false }] },
       { id: "b", name: "产品", properties: [] },
     ],
     relationshipTypes: [{ name: "订购", sourceEntityTypeId: "a", targetEntityTypeId: "b", properties: [] }],

@@ -17,15 +17,15 @@ function definition(options: { studentQualified: boolean; ruleEnabled?: boolean;
   return ontologyDefinitionSchema.parse({
     entityTypes: [
       { id: passengerTypeId, name: "乘客", description: "", displayProperty: "姓名", properties: [
-        { name: "姓名", dataType: "TEXT", required: true, unique: true, indexed: false },
-        { name: "学生资质", dataType: "BOOLEAN", required: false, unique: false, indexed: false },
+        { name: "姓名", dataType: "TEXT", required: true, primaryKey: true, indexed: false },
+        { name: "学生资质", dataType: "BOOLEAN", required: false, primaryKey: false, indexed: false },
       ] },
       { id: ticketTypeId, name: "车票", description: "", displayProperty: "票号", properties: [
-        { name: "票号", dataType: "TEXT", required: true, unique: true, indexed: false },
-        { name: "票种", dataType: "TEXT", required: true, unique: false, indexed: false },
+        { name: "票号", dataType: "TEXT", required: true, primaryKey: true, indexed: false },
+        { name: "票种", dataType: "TEXT", required: true, primaryKey: false, indexed: false },
       ] },
       { id: trainTypeId, name: "车次", description: "", displayProperty: "车次号", properties: [
-        { name: "车次号", dataType: "TEXT", required: true, unique: true, indexed: false },
+        { name: "车次号", dataType: "TEXT", required: true, primaryKey: true, indexed: false },
       ] },
     ],
     relationshipTypes: [

@@ -107,7 +107,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
         description: text(entry.comment),
         dataType,
         required: isKey,
-        unique: isKey,
+        primaryKey: isKey,
         indexed: false,
         // bkn 的 mapped_field 是「这个属性来自哪一列」，"-" 表示没有对应列。
         sourceField: resourceName && mappedName && mappedName !== "-" ? mappedName : "",

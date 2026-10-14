@@ -196,7 +196,7 @@ export function InterfaceEditDialog({ definition, value, canEdit, onSave, onNoti
                 {!draft.properties.length && <p className="ted-props-empty">还没有属性。这里必填的属性，实现方必须有对应属性（同名，或在映射里显式对上）。</p>}
               </div>
               <div className="ted-add">
-                <button type="button" className="ted-add-button" disabled={!canEdit} onClick={() => patch({ properties: [...draft.properties, { name: "", displayName: "", description: "", dataType: "TEXT" as PropertyDataType, required: true, unique: false, indexed: false }] })}><Plus size={14} />添加属性</button>
+                <button type="button" className="ted-add-button" disabled={!canEdit} onClick={() => patch({ properties: [...draft.properties, { name: "", displayName: "", description: "", dataType: "TEXT" as PropertyDataType, required: true, primaryKey: false, indexed: false }] })}><Plus size={14} />添加属性</button>
               </div>
             </section>
 

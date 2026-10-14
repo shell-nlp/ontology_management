@@ -84,7 +84,7 @@
 .ted-prop-main code { flex: none; padding: 2px 6px; border-radius: 3px; background: #eef3fb; color: #3b5f9e; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 10px; }
 .ted-tag { flex: none; padding: 2px 6px; border-radius: 2px; font-size: 9.5px; font-style: normal; font-weight: 600; }
 .ted-tag.required { background: #fdf1ea; color: #a2622f; }
-.ted-tag.unique { background: #eef7f1; color: #2f6b4d; }
+.ted-tag.primary-key { background: #eef7f1; color: #2f6b4d; }
 .ted-prop-actions { display: flex; gap: 5px; }
 .ted-icon-button { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--ted-line); border-radius: 4px; background: #fff; color: #5c6b82; }
 .ted-icon-button:hover { border-color: #b9d1f5; background: #f4f8ff; color: #1d4ed8; }

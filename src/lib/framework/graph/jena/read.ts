@@ -13,7 +13,7 @@ export function buildRuntimeProperties(rows: { name: string; key: string; count:
       name: row.key,
       dataType: dataTypeFromSparqlDatatype(row.datatype),
       required: false,
-      unique: isAutoUniqueCandidate({ cnt: row.count, distinctCount: row.distinctCount, maxCharacterLength: row.maxLength }),
+      primaryKey: isAutoUniqueCandidate({ cnt: row.count, distinctCount: row.distinctCount, maxCharacterLength: row.maxLength }),
       indexed: false,
     });
   }

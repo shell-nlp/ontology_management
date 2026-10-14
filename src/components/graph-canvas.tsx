@@ -19,7 +19,7 @@ const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module
 /** 只需要"这个人能不能写实例"这一件事 —— 权限判断统一在 functional-workbench 的 may()。 */
 type User = { permissions: string[] } | null;
 
-type OntologyPropertyDefinition = PropertyDefinition & { unique?: boolean; indexed?: boolean };
+type OntologyPropertyDefinition = PropertyDefinition & { primaryKey?: boolean; indexed?: boolean };
 
 type ManagedDefinition = {
   entityTypes: { id?: string; name: string; description?: string; displayProperty?: string; groupId?: string; properties: OntologyPropertyDefinition[] }[];
@@ -231,7 +231,7 @@ function computeStableNodePositions(nodes: SigmaNode[], edges: SigmaEdge[], seed
 function OntologyPropertyList({ properties }: { properties: OntologyPropertyDefinition[] }) {
   if (!properties.length) return <small>此类型未定义属性。</small>;
   return <div className="ontology-property-list">{properties.map((property) => {
-    const constraints = [property.required ? "必填" : "可选", property.unique ? "唯一" : "", property.indexed ? "索引" : ""].filter(Boolean).join(" · ");
+    const constraints = [property.required ? "必填" : "可选", property.primaryKey ? "主键" : "", property.indexed ? "索引" : ""].filter(Boolean).join(" · ");
     return <div className="ontology-property-rule" key={property.name}><b>{property.name}</b><span>{property.dataType}</span><small>{constraints}</small></div>;
   })}</div>;
 }

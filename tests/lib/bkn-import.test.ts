@@ -80,7 +80,7 @@ describe("bkn → 本体包", () => {
     expect(group.displayProperty).toBe("CUST_NAME");
     const byName = new Map(group.properties.map((property) => [property.name, property]));
     // 显示名和机器名一样就不重复存
-    expect(byName.get("CUST_ID")).toMatchObject({ dataType: "TEXT", displayName: "", description: "集团客户编码", required: true, unique: true });
+    expect(byName.get("CUST_ID")).toMatchObject({ dataType: "TEXT", displayName: "", description: "集团客户编码", required: true, primaryKey: true });
     expect(byName.get("CUST_NAME")).toMatchObject({ displayName: "客户名称", description: "集团客户名称" });
     expect(byName.get("FEE_MON")).toMatchObject({ dataType: "DECIMAL" });
     // 不认识的类型退到 TEXT
@@ -95,7 +95,7 @@ describe("bkn → 本体包", () => {
     const { bundle } = fromBknKnowledgeNetwork(knowledgeNetwork());
     const customer = bundle.definition.entityTypes.find((item) => item.name === "客户")!;
     expect(customer.sources).toEqual([]);
-    expect(customer.properties.find((property) => property.name === "customer_id")).toMatchObject({ required: true, unique: true, sourceField: "", sourceId: "" });
+    expect(customer.properties.find((property) => property.name === "customer_id")).toMatchObject({ required: true, primaryKey: true, sourceField: "", sourceId: "" });
     expect(customer.properties.find((property) => property.name === "customer_id")?.displayName).toBe("客户编号");
   });
 

@@ -39,7 +39,14 @@ const propertySchema = z.object({
   })).max(200).optional(),
   dataType: propertyDataTypeSchema,
   required: z.boolean().default(false),
-  unique: z.boolean().default(false),
+  /**
+   * 这个属性是不是对象类型主键的一部分（勾多个 = 复合主键）。
+   * 绑了数据来源的类型以来源声明的 `sources[].primaryKey` 列为准；
+   * 这条标记给**没绑来源**的对象类型认身份用（导入外部本体时主键列就打上它）。
+   */
+  primaryKey: z.boolean().default(false),
+  /** 加这一项之前主键标记存在 `unique` 上（沿用「必填 + 唯一」的导入约定）；读进来折成 `primaryKey`，老快照不用迁移。 */
+  unique: z.boolean().optional(),
   indexed: z.boolean().default(false),
   /** 这个属性的值来自数据源里的哪一列；缺省或空表示还没映射（老快照里没有这一项）。 */
   sourceField: z.string().trim().max(200).optional(),
@@ -48,7 +55,10 @@ const propertySchema = z.object({
    * 空表示主来源；加多来源之前的老快照没有这一项，读出来也按主来源算。
    */
   sourceId: z.string().trim().max(64).optional(),
-});
+}).transform(({ unique, ...property }) => ({
+  ...property,
+  primaryKey: property.primaryKey || unique === true,
+}));
 
 /**
  * 类的一份数据来源：一张表或视图，属性按列映射。
@@ -142,7 +152,7 @@ export const interfaceLinkConstraintSchema = z.object({
  * 一个接口可以被多个对象类型实现，也可以继承多个别的接口（多继承）。
  *
  * 属性沿用 `propertySchema`：接口属性只关心 name / displayName / description / dataType / required，
- * `unique` / `indexed` / `sourceField` 对接口没有意义（接口不绑数据），界面也不展示。
+ * `primaryKey` / `indexed` / `sourceField` 对接口没有意义（接口不绑数据），界面也不展示。
  */
 /** 接口上的一条动作约束：实现方必须有一条动作跟它对上。 */
 export const interfaceActionConstraintSchema = z.object({

@@ -79,7 +79,7 @@ describe("planLinkSource", () => {
           id: SOURCE_ID,
           name: "用户",
           properties: [
-            { name: "user_id", dataType: "TEXT", required: true, unique: true, description: "用户实例的唯一标识。" },
+            { name: "user_id", dataType: "TEXT", required: true, primaryKey: true, description: "用户实例的唯一标识。" },
             { name: "customer_id", dataType: "TEXT" },
           ],
           sources: [],
@@ -87,7 +87,7 @@ describe("planLinkSource", () => {
         {
           id: TARGET_ID,
           name: "专线产品用户",
-          properties: [{ name: "USER_ID", dataType: "TEXT", sourceField: "USER_ID", required: true, unique: true }],
+          properties: [{ name: "USER_ID", dataType: "TEXT", sourceField: "USER_ID", required: true, primaryKey: true }],
           sources: [{ id: "primary", dataSourceId: DS_ID, schema: "GISTOOLS", view: "TB_MK_GRP_LINE_LIST_DAY", primaryKey: ["USER_ID"] }],
         },
       ],

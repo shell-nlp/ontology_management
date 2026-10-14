@@ -7,7 +7,7 @@ const 集团客户 = "22222222-2222-4222-8222-222222222222";
 const 接口 = "33333333-3333-4333-8333-333333333333";
 const 关系 = "44444444-4444-4444-8444-444444444444";
 
-const property = { name: "名称", dataType: "TEXT" as const, required: false, unique: false, indexed: false };
+const property = { name: "名称", dataType: "TEXT" as const, required: false, primaryKey: false, indexed: false };
 
 function definition(overrides: Partial<Definition> = {}): Definition {
   return {

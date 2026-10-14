@@ -14,9 +14,9 @@ const 停机动作 = "55555555-5555-4555-8555-555555555555";
 function definition(): OntologyDefinition {
   return {
     entityTypes: [
-      { id: 用户类, name: "用户", description: "使用业务的客户", displayProperty: "姓名", properties: [{ name: "姓名", dataType: "TEXT", required: true, unique: false, indexed: false }], sources: [] },
-      { id: 专线类, name: "专业线产品用户", description: "开通了专线产品的用户", displayProperty: "姓名", properties: [{ name: "套餐", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
-      { id: 订单类, name: "订单", description: "业务订单", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+      { id: 用户类, name: "用户", description: "使用业务的客户", displayProperty: "姓名", properties: [{ name: "姓名", dataType: "TEXT", required: true, primaryKey: false, indexed: false }], sources: [] },
+      { id: 专线类, name: "专业线产品用户", description: "开通了专线产品的用户", displayProperty: "姓名", properties: [{ name: "套餐", dataType: "TEXT", required: false, primaryKey: false, indexed: false }], sources: [] },
+      { id: 订单类, name: "订单", description: "业务订单", displayProperty: "编号", properties: [{ name: "编号", dataType: "TEXT", required: true, primaryKey: true, indexed: false }], sources: [] },
     ],
     relationshipTypes: [{ id: 下单关系, name: "下单", sourceEntityTypeId: 用户类, targetEntityTypeId: 订单类, properties: [] }],
     actionTypes: [{ id: 停机动作, name: "停机", code: "suspend_line", description: "暂停专线服务", scopeEntityTypeId: 专线类, params: [{ name: "原因", dataType: "TEXT", required: true }], edits: [] }],
@@ -234,7 +234,7 @@ function boundDefinition(): OntologyDefinition {
                 description: "用户当前主套餐",
                 dataType: "TEXT",
                 required: false,
-                unique: false,
+                primaryKey: false,
                 indexed: false,
                 sourceField: "PACKAGE_NAME",
               },
@@ -278,8 +278,8 @@ function enumDefinition(): OntologyDefinition {
       description: "用户的全球通等级等标签",
       displayProperty: "USER_ID",
       properties: [
-        { name: "USER_ID", dataType: "TEXT", required: true, unique: true, indexed: false, sourceField: "USER_ID" },
-        { name: "U_TYPE", displayName: "全球通等级", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "U_TYPE", enumValues: [{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }] },
+        { name: "USER_ID", dataType: "TEXT", required: true, primaryKey: true, indexed: false, sourceField: "USER_ID" },
+        { name: "U_TYPE", displayName: "全球通等级", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "U_TYPE", enumValues: [{ value: "1", label: "全球通" }, { value: "0", label: "非全球通" }] },
       ],
       sources: [{ id: "primary", dataSourceId: 线路资源, schema: "GISTOOLS", view: "TB_KR_GRP_ALL_USER_FLAG_DAY", primaryKey: ["USER_ID"], titleField: "USER_ID" }],
     }],
@@ -622,10 +622,10 @@ function profiledDefinition(): OntologyDefinition {
         description: "开通了专线产品的用户",
         displayProperty: "姓名",
         properties: [
-          { name: "姓名", dataType: "TEXT", required: true, unique: false, indexed: false, sourceField: "CUST_NAME" },
-          { name: "专线类型", description: "专线类型：2=互联网专线，3=语音专线", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "ZX_FLAG" },
-          { name: "账单产品大类", description: "账单产品大类", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "OFFER_FLAG" },
-          { name: "条数", dataType: "INTEGER", required: false, unique: false, indexed: false, sourceField: "ZX_COUNT" },
+          { name: "姓名", dataType: "TEXT", required: true, primaryKey: false, indexed: false, sourceField: "CUST_NAME" },
+          { name: "专线类型", description: "专线类型：2=互联网专线，3=语音专线", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "ZX_FLAG" },
+          { name: "账单产品大类", description: "账单产品大类", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "OFFER_FLAG" },
+          { name: "条数", dataType: "INTEGER", required: false, primaryKey: false, indexed: false, sourceField: "ZX_COUNT" },
         ],
         sources: [{ id: "primary", dataSourceId: 线路资源, schema: "GISTOOLS", view: 线路表, primaryKey: ["CUST_ID"], titleField: "CUST_NAME" }],
       },
@@ -851,7 +851,7 @@ describe("objectTypesBoundTo（get_table_ddl 的反向引用）", () => {
       name: `属性${index + 1}`,
       dataType: "TEXT",
       required: false,
-      unique: false,
+      primaryKey: false,
       indexed: false,
       sourceField: `COL_${String(index + 1).padStart(2, "0")}`,
     }));

@@ -361,7 +361,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         description: property.description ?? "",
         data_type: property.dataType,
         required: property.required,
-        unique: property.unique,
+        primary_key: property.primaryKey,
         // 取值枚举（码值 + 含义）：口径从列注释搬到定义层，模型不用猜码值。
         ...(property.enumValues?.length ? { enum_values: property.enumValues.map((item) => ({ value: item.value, label: item.label })) } : {}),
         // 属性取自源表的哪一列、哪一份来源；没映射就是空串。

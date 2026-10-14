@@ -22,9 +22,9 @@ function definition(): OntologyDefinition {
         groupId: "",
         implements: [],
         properties: [
-          { name: "专线类型", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "ZX_FLAG" },
-          { name: "客户标识", dataType: "TEXT", required: false, unique: false, indexed: false, sourceField: "CUST_ID" },
-          { name: "没映射的属性", dataType: "TEXT", required: false, unique: false, indexed: false },
+          { name: "专线类型", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "ZX_FLAG" },
+          { name: "客户标识", dataType: "TEXT", required: false, primaryKey: false, indexed: false, sourceField: "CUST_ID" },
+          { name: "没映射的属性", dataType: "TEXT", required: false, primaryKey: false, indexed: false },
         ],
         sources: [{ id: "primary", dataSourceId: 资源id, schema: "GISTOOLS", view: "TB_MK_GRP_LINE_LIST_DAY", primaryKey: ["CUST_ID"], titleField: "" }],
       },

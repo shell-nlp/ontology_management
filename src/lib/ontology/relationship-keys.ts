@@ -11,7 +11,7 @@ export type KeyMapping = { linkProperty?: string; entityProperty?: string };
  * 入参用结构类型而不是 `OntologyDefinition`：这里的规则只关心属性名与主键列，
  * 这样单测可以摆一个最小对象、工具也不必先过一遍 zod（和 modeling-review.ts 的做法一致）。
  */
-export type KeyMappableProperty = { name: string; required?: boolean; unique?: boolean; sourceField?: string | null; sourceId?: string | null };
+export type KeyMappableProperty = { name: string; required?: boolean; primaryKey?: boolean; sourceField?: string | null; sourceId?: string | null };
 export type KeyMappableEntity = {
   id?: string;
   properties?: readonly KeyMappableProperty[];
@@ -48,7 +48,7 @@ export function keyMappingRows(mappings: readonly KeyMapping[] | undefined) {
  * 对象类型的主键属性名。
  *
  * 主键在来源上是"列"（`sources[].primaryKey`），属性用 `sourceField` 指回列，所以要反过来找。
- * 没有绑来源的对象类型按导入约定把主键记成「必填 + 唯一」，这里同样认。
+ * 没有绑来源的对象类型按属性上的「主键」标记认（导入外部本体时主键列就打上它），勾多个就是复合主键。
  */
 export function primaryKeyPropertyNames(entity: KeyMappableEntity | null | undefined): string[] {
   if (!entity) return [];
@@ -65,7 +65,7 @@ export function primaryKeyPropertyNames(entity: KeyMappableEntity | null | undef
     }
   }
   if (!names.size) {
-    for (const property of properties) if (property.required && property.unique) names.add(property.name);
+    for (const property of properties) if (property.primaryKey) names.add(property.name);
   }
   return [...names];
 }

@@ -55,7 +55,7 @@ export type ReviewableProperty = {
   description?: string;
   dataType: string;
   required?: boolean;
-  unique?: boolean;
+  primaryKey?: boolean;
   indexed?: boolean;
   sourceField?: string;
   sourceId?: string;

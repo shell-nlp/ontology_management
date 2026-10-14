@@ -187,7 +187,7 @@ export function InterfaceManager({ definition, canEdit, save, notify, fail, focu
   };
 
   const addProperty = () => {
-    setDraft((state) => (state ? { ...state, properties: [...state.properties, { name: "", displayName: "", description: "", dataType: "TEXT" as PropertyDataType, required: true, unique: false, indexed: false }] } : state));
+    setDraft((state) => (state ? { ...state, properties: [...state.properties, { name: "", displayName: "", description: "", dataType: "TEXT" as PropertyDataType, required: true, primaryKey: false, indexed: false }] } : state));
   };
   const patchProperty = (index: number, patch: Partial<Property>) => {
     setDraft((state) => (state ? { ...state, properties: state.properties.map((item, position) => (position === index ? { ...item, ...patch } : item)) } : state));

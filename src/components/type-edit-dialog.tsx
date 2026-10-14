@@ -129,6 +129,8 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [propName, setPropName] = useState("");
   const [dataType, setDataType] = useState<Property["dataType"]>("TEXT");
   const [required, setRequired] = useState(false);
+  /** 新加的属性是不是主键；勾上就同时算必填（主键不能缺值）。 */
+  const [primaryKey, setPrimaryKey] = useState(false);
   const [editingProp, setEditingProp] = useState<number | null>(null);
   const [propDraft, setPropDraft] = useState<Property | null>(null);
   // 取值枚举的文本编辑态：避免受控输入在「解析 → 回写」之间跳字（空行、半截的 = 都会抖）。
@@ -243,7 +245,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
           description: property.description ?? "接口要求的属性",
           dataType: (property.dataType ?? "TEXT") as Property["dataType"],
           required: true,
-          unique: false,
+          primaryKey: false,
           indexed: false,
         })),
     ]);
@@ -293,9 +295,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
       const trimmed = propName.trim();
       if (!trimmed) throw new Error("请填写属性名称。");
       if (properties.some((item) => item.name === trimmed)) throw new Error("属性名称已存在。");
-      const prop: Property = { name: trimmed, dataType, required, unique: false, indexed: false };
+      const prop: Property = { name: trimmed, dataType, required: primaryKey ? true : required, primaryKey, indexed: false };
       setProperties((current) => [...current, prop]);
       setPropName("");
+      setRequired(false);
+      setPrimaryKey(false);
       setLocalError("");
     } catch (reason) { setLocalError(reason instanceof Error ? reason.message : "添加属性失败。"); }
   };
@@ -744,6 +748,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                           {propertyTypeOptions.map((item) => <option key={item}>{item}</option>)}
                         </select>
                         <label className="ted-toggle"><input type="checkbox" checked={propDraft.required} onChange={(event) => setPropDraft({ ...propDraft, required: event.target.checked })} />必填</label>
+                        {kind === "entity" && (
+                          <label className="ted-toggle" title="主键：勾多个就是复合主键。绑了数据来源的类型以来源声明的主键列为准。">
+                            <input type="checkbox" checked={propDraft.primaryKey} onChange={(event) => setPropDraft({ ...propDraft, primaryKey: event.target.checked, required: event.target.checked ? true : propDraft.required })} />主键
+                          </label>
+                        )}
                         <div className="ted-prop-actions">
                           <button type="button" className="ted-icon-button confirm" onClick={saveProperty} title="保存这条属性"><Check size={14} /></button>
                           <button type="button" className="ted-icon-button" onClick={cancelEditProperty} title="放弃修改"><X size={14} /></button>
@@ -759,7 +768,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                         {prop.displayName && <code>{prop.name}</code>}
                         <code>{prop.dataType}</code>
                         {prop.required && <i className="ted-tag required">必填</i>}
-                        {prop.unique && <i className="ted-tag unique">唯一</i>}
+                        {prop.primaryKey && <i className="ted-tag primary-key">主键</i>}
                         {prop.enumValues?.length ? <i className="ted-tag">{prop.enumValues.length} 个码值</i> : null}
                         {prop.description && <small className="ted-prop-desc-text" title={prop.description}>{prop.description}</small>}
                       </div>
@@ -780,6 +789,11 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   {propertyTypeOptions.map((item) => <option key={item}>{item}</option>)}
                 </select>
                 <label className="ted-toggle"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />必填</label>
+                {kind === "entity" && (
+                  <label className="ted-toggle" title="主键：勾多个就是复合主键。勾上主键即视为必填。">
+                    <input type="checkbox" checked={primaryKey} onChange={(event) => { setPrimaryKey(event.target.checked); if (event.target.checked) setRequired(true); }} />主键
+                  </label>
+                )}
                 <button type="button" className="ted-add-button" onClick={addProperty}><Plus size={13} />添加</button>
               </div>
             </section>

@@ -10,7 +10,7 @@ import type { OntologyDefinition } from "@/lib/ontology";
  */
 
 type Source = { id: string; kind: "PHYSICAL" | "DERIVED"; sql: string; rule: null; dataSourceId: string; schema: string; view: string; primaryKey: string[]; titleField: string };
-type Property = { name: string; dataType: string; required: boolean; unique: boolean; indexed: boolean; sourceField?: string; sourceId?: string };
+type Property = { name: string; dataType: string; required: boolean; primaryKey: boolean; indexed: boolean; sourceField?: string; sourceId?: string };
 
 const source = (over: Partial<Source> = {}): Source => ({
   id: "primary",
@@ -39,7 +39,7 @@ const text = (name: string, over: Partial<Property> = {}): Property => ({
   name,
   dataType: "TEXT",
   required: false,
-  unique: false,
+  primaryKey: false,
   indexed: false,
   ...over,
 });

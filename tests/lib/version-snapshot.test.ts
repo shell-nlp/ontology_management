@@ -14,8 +14,8 @@ function validSnapshot(): VersionSnapshot {
       groups: [],
       interfaces: [],
       entityTypes: [
-        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", implements: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
-        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", implements: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, unique: true, indexed: false }], sources: [] },
+        { id: customerTypeId, name: "客户", description: "", displayProperty: "名称", groupId: "", implements: [], properties: [{ name: "名称", displayName: "名称", description: "", dataType: "TEXT", required: true, primaryKey: true, indexed: false }], sources: [] },
+        { id: orderTypeId, name: "订单", description: "", displayProperty: "编号", groupId: "", implements: [], properties: [{ name: "编号", displayName: "编号", description: "", dataType: "TEXT", required: true, primaryKey: true, indexed: false }], sources: [] },
       ],
       relationshipTypes: [
         { id: relationshipTypeId, name: "下单", description: "", sourceEntityTypeId: customerTypeId, targetEntityTypeId: orderTypeId, properties: [] },
@@ -44,23 +44,23 @@ describe("version snapshot", () => {
     expect(validateVersionSnapshot(validSnapshot())).toEqual([]);
   });
 
-  it("blocks duplicate unique values, invalid endpoints and unknown types", () => {
+  it("blocks duplicate primary key values, invalid endpoints and unknown types", () => {
     const snapshot = validSnapshot();
     snapshot.nodes.push({ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", labels: ["客户"], properties: { 名称: "商客" } });
     snapshot.relationships[0].targetId = customerId;
     snapshot.relationships.push({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sourceId: customerId, targetId: orderId, type: "不存在", properties: {} });
     const messages = validateVersionSnapshot(snapshot).map((violation) => violation.message);
-    expect(messages).toContain("唯一属性存在重复值。");
+    expect(messages).toContain("主键重复：「名称=商客」在本体里出现了不止一个对象。");
     expect(messages).toContain("关系端点不符合草稿中的对象类型契约。");
     expect(messages).toContain("关系使用了草稿中不存在的关系类型。");
   });
 
-  it("flags unique values that are too large to be a unique key", () => {
+  it("flags primary key values that are too large to be a key", () => {
     const snapshot = validSnapshot();
     const oversized = "汉".repeat(2800);
     snapshot.nodes[0].properties.名称 = oversized;
     const violations = validateVersionSnapshot(snapshot);
-    const match = violations.find((violation) => violation.message.includes("不适合当唯一键"));
+    const match = violations.find((violation) => violation.message.includes("不适合当主键"));
     expect(match).toBeDefined();
     expect(match!.rule).toBe("客户.名称");
     expect(match!.count).toBe(1);
@@ -99,7 +99,7 @@ describe("按对象类型筛：字面匹配（类之间没有继承）", () => {
         groups: [],
         interfaces: [],
         entityTypes: [
-          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", implements: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }], sources: [] },
+          { id: 用户类, name: "用户", description: "", displayProperty: "姓名", groupId: "", implements: [], properties: [{ name: "姓名", displayName: "姓名", description: "", dataType: "TEXT", required: false, primaryKey: false, indexed: false }], sources: [] },
           { id: 专线类, name: "专线产品用户", description: "", displayProperty: "姓名", groupId: "", implements: [], properties: [], sources: [] },
         ],
         relationshipTypes: [],
@@ -143,7 +143,7 @@ describe("发布前校验：接口实现", () => {
         groups: [],
         interfaces: [{
           id: 接口id, name: "可服务对象", description: "",
-          properties: [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: true, unique: false, indexed: false }],
+          properties: [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: true, primaryKey: false, indexed: false }],
           extends: [],
           linkConstraints: [{ id: 约束id, name: "归属", description: "", targetKind: "OBJECT_TYPE", targetId: 客户类id, cardinality: "ONE", required: true }],
         }],
@@ -151,7 +151,7 @@ describe("发布前校验：接口实现", () => {
           { id: 客户类id, name: "客户", description: "", displayProperty: "", groupId: "", implements: [], properties: [], sources: [] },
           {
             id: 用户类id, name: "用户", description: "", displayProperty: "", groupId: "", implements: [接口id], sources: [],
-            properties: 有属性 ? [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: false, unique: false, indexed: false }] : [],
+            properties: 有属性 ? [{ name: "服务号码", displayName: "", description: "", dataType: "TEXT", required: false, primaryKey: false, indexed: false }] : [],
           },
         ],
         relationshipTypes: 有关系 ? [{ id: 归属关系id, name: "用户归属客户", description: "", sourceEntityTypeId: 用户类id, targetEntityTypeId: 客户类id, properties: [] }] : [],

@@ -178,7 +178,7 @@ export type ConnectionInfo = {
   detail?: Record<string, unknown>;
 };
 
-export type RuntimeProperty = { name: string; dataType: DataType; required: boolean; unique: boolean; indexed: boolean };
+export type RuntimeProperty = { name: string; dataType: DataType; required: boolean; primaryKey: boolean; indexed: boolean };
 export type RuntimeTypeInfo = { name: string; count: number; properties?: RuntimeProperty[] };
 export type RuntimeTypeSet = {
   labels: RuntimeTypeInfo[];
@@ -209,7 +209,7 @@ export type GraphPropertyDefinition = {
   name: string;
   dataType: DataType;
   required: boolean;
-  unique: boolean;
+  primaryKey: boolean;
   indexed: boolean;
   /** 只用于界面展示，图库侧不落这两个字段。 */
   displayName?: string;

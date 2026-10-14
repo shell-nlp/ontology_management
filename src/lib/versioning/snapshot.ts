@@ -684,8 +684,13 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceId
   const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
   const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
   const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
-  const uniqueValues = new Map<string, Set<string>>();
-  const oversizedUnique = new Map<string, { typeName: string; propertyName: string; nodes: SnapshotNode[] }>();
+  /*
+   * 主键不能重复：勾了「主键」的属性按**整组值**判重（复合主键单列重复不算，整组一样才算）。
+   * 绑了来源的类型另有 `primaryKeyConflicts` 按对象身份再判一次，两条互补、都挡发布。
+   * 单列主键值太长会塞不进检索索引的唯一键，也一起挡在发布前。
+   */
+  const primaryKeyValues = new Map<string, Set<string>>();
+  const oversizedPrimaryKey = new Map<string, { typeName: string; propertyName: string; nodes: SnapshotNode[] }>();
   for (const node of snapshot.nodes) {
     const managed = node.labels.filter((label) => entityTypes.has(label));
     if (managed.length !== 1 || managed.length !== node.labels.length) {
@@ -698,20 +703,26 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceId
     try { parsePropertyValues(properties, businessProperties); } catch (error) {
       violations.push({ rule: `${type.name}:${node.id}`, message: error instanceof Error ? error.message : "对象属性校验失败。", count: 1 });
     }
-    for (const property of properties.filter((item) => item.unique && node.properties[item.name] != null)) {
-      const key = `${type.id}:${property.name}`;
-      const raw = node.properties[property.name];
-      const value = JSON.stringify(raw);
-      const seen = uniqueValues.get(key) ?? new Set<string>();
-      if (seen.has(value)) violations.push({ rule: `${type.name}.${property.name}`, message: "唯一属性存在重复值。", count: 1 });
+    const keyProperties = properties.filter((item) => item.primaryKey);
+    if (keyProperties.length && keyProperties.every((item) => node.properties[item.name] != null)) {
+      const value = JSON.stringify(keyProperties.map((item) => node.properties[item.name]));
+      const seen = primaryKeyValues.get(type.id) ?? new Set<string>();
+      if (seen.has(value)) {
+        const keyText = keyProperties.map((item) => `${item.name}=${String(node.properties[item.name])}`).join("&");
+        violations.push({ rule: `${type.name}.${keyProperties.map((item) => item.name).join("+")}`, message: `主键重复：「${keyText}」在本体里出现了不止一个对象。`, count: 1 });
+      }
       seen.add(value);
-      uniqueValues.set(key, seen);
-      const serialized = typeof raw === "string" ? raw : value;
+      primaryKeyValues.set(type.id, seen);
+    }
+    for (const property of keyProperties) {
+      if (node.properties[property.name] == null) continue;
+      const raw = node.properties[property.name];
+      const serialized = typeof raw === "string" ? raw : JSON.stringify(raw);
       if (Buffer.byteLength(serialized, "utf8") > MAX_INDEXED_VALUE_BYTES) {
         const rule = `${type.name}.${property.name}`;
-        const entry = oversizedUnique.get(rule) ?? { typeName: type.name, propertyName: property.name, nodes: [] };
+        const entry = oversizedPrimaryKey.get(rule) ?? { typeName: type.name, propertyName: property.name, nodes: [] };
         entry.nodes.push(node);
-        oversizedUnique.set(rule, entry);
+        oversizedPrimaryKey.set(rule, entry);
       }
     }
   }
@@ -730,7 +741,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceId
       violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
     }
   }
-  for (const entry of oversizedUnique.values()) {
+  for (const entry of oversizedPrimaryKey.values()) {
     const displayProperty = snapshot.definition.entityTypes.find((type) => type.name === entry.typeName)?.displayProperty;
     const fallbackKeys = ["表名", "名称", "name", "title", "id"];
     const involved = entry.nodes.map((node) => {
@@ -742,7 +753,7 @@ export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceId
       const snippet = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
       return `「${shortName}」(${node.id}，${entry.propertyName}开头：${snippet})`;
     }).join("、");
-    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `唯一属性「${entry.propertyName}」有 ${entry.nodes.length} 个值的长度超过 ${MAX_INDEXED_VALUE_BYTES} 字节（约 8KB），不适合当唯一键。涉及：${involved}。请将该属性改为非唯一，或缩短字段内容后重试。`, count: entry.nodes.length });
+    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `主键属性「${entry.propertyName}」有 ${entry.nodes.length} 个值的长度超过 ${MAX_INDEXED_VALUE_BYTES} 字节（约 8KB），不适合当主键。涉及：${involved}。请换一个短一点的主键列，或缩短字段内容后重试。`, count: entry.nodes.length });
   }
   /*
    * 接口是抽象契约：声明实现了就必须满足它的必填属性与必填关系约束，否则应用拿到的是缺字段的对象。
