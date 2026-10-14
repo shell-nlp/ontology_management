@@ -36,6 +36,7 @@ export const AUDIT_ACTIONS: readonly AuditActionInfo[] = [
   { code: "VERSION_PUBLISHED", label: "发布成功", group: "version" },
   { code: "VERSION_PUBLISH_FAILED", label: "发布失败", group: "version", failure: true },
   { code: "VERSION_ACTIVATED", label: "激活历史版本", group: "version" },
+  { code: "VERSION_DELETED", label: "删除版本", group: "version" },
   { code: "VERSIONS_RESET", label: "重置版本记录", group: "version" },
 
   { code: "DRAFT_ENTITY_CREATED", label: "新建对象", group: "draft" },

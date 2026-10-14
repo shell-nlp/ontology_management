@@ -3,7 +3,7 @@ import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platfo
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
-import { ensureVersionSnapshot, getVersionRecord, updateSnapshotDefinition } from "@/lib/versioning/snapshot";
+import { deleteVersionRecord, ensureVersionSnapshot, getVersionRecord, updateSnapshotDefinition, withTargetLock } from "@/lib/versioning/snapshot";
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
   try {
@@ -21,5 +21,36 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
     return NextResponse.json({ saved: true, definition: savedDefinition });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "保存草稿失败。") }, { status: apiErrorStatus(error) });
+  }
+}
+
+export async function DELETE(_request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
+  try {
+    const user = await requirePermission("ontology.version.delete");
+    const { versionId } = await context.params;
+    const initial = await getVersionRecord(versionId);
+    if (!initial) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+
+    return await withTargetLock(initial.target_id, async () => {
+      const version = await getVersionRecord(versionId);
+      if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+      if (version.status === "PUBLISHED") {
+        return NextResponse.json(
+          { error: "当前生效版本不能删除，请先激活其他完整的历史版本，再删除不再需要的版本。" },
+          { status: 409 },
+        );
+      }
+
+      await deleteVersionRecord(versionId);
+      await writeAuditEntry({
+        actorId: user.id,
+        targetId: version.target_id,
+        action: "VERSION_DELETED",
+        details: { versionId, versionNumber: version.version_number, status: version.status },
+      });
+      return NextResponse.json({ deleted: true, versionNumber: version.version_number, status: version.status });
+    });
+  } catch (error) {
+    return NextResponse.json({ error: apiErrorMessage(error, "删除版本失败。") }, { status: apiErrorStatus(error) });
   }
 }

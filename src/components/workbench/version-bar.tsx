@@ -2,18 +2,24 @@
 
 import { type User, may, type Version } from "@/components/workbench/shared";
 import { useState } from "react";
-import { History, Plus, RotateCcw } from "lucide-react";
+import { History, Plus, RotateCcw, Trash2 } from "lucide-react";
 
 
 
 
 
-export function VersionBar({ versions, draft, published, user, onCreate, onActivate, fail }: { versions: Version[]; draft: Version | null; published: Version | null; user: User; onCreate: () => Promise<Version>; onActivate: (version: Version) => Promise<void>; fail: (reason: unknown) => void }) {
+export function VersionBar({ versions, draft, published, user, onCreate, onActivate, onDelete, fail }: { versions: Version[]; draft: Version | null; published: Version | null; user: User; onCreate: () => Promise<Version>; onActivate: (version: Version) => Promise<void>; onDelete: (version: Version) => Promise<void>; fail: (reason: unknown) => void }) {
   const [open, setOpen] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<{ id: string; action: "activate" | "delete" } | null>(null);
   const activate = async (version: Version) => {
     if (!window.confirm(`确认将图数据切换到历史版本 v${version.version_number}？当前图数据会由该版本快照完整替换。`)) return;
-    try { setBusyId(version.id); await onActivate(version); setOpen(false); } catch (reason) { fail(reason); } finally { setBusyId(null); }
+    try { setBusy({ id: version.id, action: "activate" }); await onActivate(version); setOpen(false); } catch (reason) { fail(reason); } finally { setBusy(null); }
+  };
+  const remove = async (version: Version) => {
+    const label = version.status === "DRAFT" ? "草稿" : "历史版本";
+    const consequence = version.status === "DRAFT" ? "草稿里的未发布修改将永久丢失。" : "该版本的定义、实例快照与概念索引将一并删除，无法恢复。";
+    if (!window.confirm(`确认删除${label} v${version.version_number}？${consequence}`)) return;
+    try { setBusy({ id: version.id, action: "delete" }); await onDelete(version); setOpen(false); } catch (reason) { fail(reason); } finally { setBusy(null); }
   };
   return (
     <div className="version-bar header-version-bar">
@@ -26,7 +32,7 @@ export function VersionBar({ versions, draft, published, user, onCreate, onActiv
         {may(user, "ontology.write") && !draft && <button className="action primary" onClick={() => void onCreate().catch(fail)}><Plus size={14} />创建草稿</button>}
         <button className="action" aria-expanded={open} onClick={() => setOpen((value) => !value)}><History size={14} />版本记录</button>
       </div>
-      {open && <div className="version-menu">{versions.map((version) => <div className="version-menu-row" key={version.id}><span><b>v{version.version_number}</b><small>{version.status === "DRAFT" ? "草稿" : version.status === "PUBLISHED" ? "当前生效" : "历史归档"}</small></span><span>{version.entity_count ?? 0} 对象 · {version.relationship_count ?? 0} 关系</span>{version.artifact_path ? <code>{version.content_hash?.slice(0, 10) ?? "snapshot"}</code> : <em>无实例快照</em>}{may(user, "ontology.publish") && version.status === "ARCHIVED" && <button className="action compact" disabled={Boolean(draft) || !version.artifact_path || busyId === version.id} onClick={() => void activate(version)} title={!version.artifact_path ? "旧版本未保存实例快照，不能激活" : draft ? "请先发布当前草稿" : "重新导入该版本快照"}><RotateCcw size={13} />{busyId === version.id ? "切换中" : "激活"}</button>}</div>)}{!versions.length && <p className="empty">尚无版本记录。</p>}</div>}
+      {open && <div className="version-menu">{versions.map((version) => <div className="version-menu-row" key={version.id}><span><b>v{version.version_number}</b><small>{version.status === "DRAFT" ? "草稿" : version.status === "PUBLISHED" ? "当前生效" : "历史归档"}</small></span><span>{version.entity_count ?? 0} 对象 · {version.relationship_count ?? 0} 关系</span>{version.artifact_path ? <code>{version.content_hash?.slice(0, 10) ?? "snapshot"}</code> : <em>无实例快照</em>}<div className="version-menu-actions">{may(user, "ontology.publish") && version.status === "ARCHIVED" && <button className="action compact" disabled={Boolean(draft) || !version.artifact_path || Boolean(busy)} onClick={() => void activate(version)} title={!version.artifact_path ? "旧版本未保存实例快照，不能激活" : draft ? "请先发布当前草稿" : "重新导入该版本快照"}><RotateCcw size={13} />{busy?.id === version.id && busy.action === "activate" ? "切换中" : "激活"}</button>}{may(user, "ontology.version.delete") && <button className="action compact danger" disabled={version.status === "PUBLISHED" || Boolean(busy)} onClick={() => void remove(version)} title={version.status === "PUBLISHED" ? "当前生效版本不能删除，请先激活其他完整的历史版本" : "删除这个版本，无法恢复"}><Trash2 size={13} />{busy?.id === version.id && busy.action === "delete" ? "删除中" : "删除"}</button>}</div></div>)}{!versions.length && <p className="empty">尚无版本记录。</p>}</div>}
     </div>
   );
 }

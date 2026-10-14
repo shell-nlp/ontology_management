@@ -2,13 +2,13 @@
  * 权限点与内置角色 —— 平台的授权模型（2026-10-09 RBAC）。
  *
  * 在这之前只有一列 `users.role`（`ADMIN` / `VIEWER`）加 70 处 `requireRole()`：能表达"是不是管理员"，
- * 表达不了"能改本体但不能碰数据资源"。现在按**模块 × 动作**划 13 个权限点，角色 = 一组权限点，
+ * 表达不了"能改本体但不能碰数据资源"。现在按**模块 × 动作**划 14 个权限点，角色 = 一组权限点，
  * 守卫也从 `requireRole("ADMIN")` 换成 `requirePermission("ontology.publish")`。
  *
  * 三条口径，改之前先读：
  * 1. **权限点是代码里的常量**（下面 `PERMISSIONS`），不是库里可随便造的数据 —— 每个点都对应真实的守卫调用，
  *    库里造一个没人检查的点只是装饰。
- * 2. **粒度是模块级，不是接口级**：13 个点对 70 处守卫。刻意不按单个接口划（那会变成"每个端点一个权限"，
+ * 2. **粒度是模块级，不是接口级**：14 个点对 70 处守卫。刻意不按单个接口划（那会变成"每个端点一个权限"，
  *    配置的人根本读不懂）。真要更细，先想清楚界面怎么表达。
  * 3. **内置角色不可改不可删**（界面上只读，要改就复制一份自定义角色）。它们的权限集**由代码决定**，
  *    启动时按下面的定义同步进库 —— 所以以后新增权限点，`ADMIN` 会自动拿到，不用写数据迁移。
@@ -28,7 +28,8 @@ export type PermissionSpec = {
 export const PERMISSIONS = [
   { code: "ontology.read", group: "本体模型", label: "查看本体与版本", detail: "对象类型、关系类型、接口、指标、版本记录与导出" },
   { code: "ontology.write", group: "本体模型", label: "编辑草稿", detail: "改草稿里的对象类型、关系类型、接口、指标、动作、规则、概念分组，以及绑定数据源" },
-  { code: "ontology.publish", group: "本体模型", label: "校验与发布", detail: "校验、发布、激活历史版本、清空与重置图数据" },
+  { code: "ontology.publish", group: "本体模型", label: "校验与发布", detail: "校验、发布、激活历史版本、清空图数据" },
+  { code: "ontology.version.delete", group: "本体模型", label: "删除版本", detail: "删除草稿、历史版本与整份版本记录" },
   { code: "instance.read", group: "本体实例", label: "查看对象与关系", detail: "对象、关系、实例图谱与实例检索" },
   { code: "instance.write", group: "本体实例", label: "编辑对象与关系", detail: "增删改对象与关系、把业务库的对象取进草稿、对对象跑动作" },
   { code: "datasource.read", group: "数据资源", label: "查看数据资源", detail: "数据资源清单、库表与字段结构、连通性试连" },
@@ -70,6 +71,11 @@ export function can(permissions: readonly string[] | undefined, code: Permission
 /** 内置管理员的固定 id。 */
 export const ADMIN_ROLE_ID = "admin";
 
+/** 是否是内置管理员角色；管理员按既有口径永远拥有全部权限。 */
+export function isAdminRole(roleId: string | null | undefined): boolean {
+  return roleId === ADMIN_ROLE_ID;
+}
+
 /**
  * 一个角色**实际生效**的权限集。
  *
@@ -79,7 +85,7 @@ export const ADMIN_ROLE_ID = "admin";
  * 其它角色（内置的 editor / viewer 与自定义角色）按库里存的走，并过滤掉已经不存在的点。
  */
 export function effectivePermissions(roleId: string, stored: unknown): Permission[] {
-  if (roleId === ADMIN_ROLE_ID) return ALL_PERMISSIONS;
+  if (isAdminRole(roleId)) return ALL_PERMISSIONS;
   return normalizePermissions(stored);
 }
 
@@ -95,7 +101,7 @@ export function isBuiltinRole(id: string): boolean {
  * 所以它们不需要也不允许在界面上改。
  *
  * - `管理员`：全权。
- * - `编辑者`：能建模、能发布、能管数据资源 —— 但碰不到用户与角色、MCP 访问令牌、图引擎连接。
+ * - `编辑者`：能建模、能发布、能管数据资源 —— 但碰不到版本删除、用户与角色、MCP 访问令牌、图引擎连接。
  *   这是"干活的人"和"管平台的人"之间那条线。
  * - `查看者`：只读 + 问答。审计也看不到（跟这一版之前 ADMIN 之外什么都没有的边界一致）。
  */

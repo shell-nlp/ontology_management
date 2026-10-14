@@ -45,9 +45,9 @@ export function SettingsManager({ target, user, versions, displaySettings, onSav
       <span className="eyebrow">危险操作</span>
       <h2>版本数据初始化</h2>
       {target ? <>
-        <p className="subtle">将当前本体存储「{target.name}」的全部版本记录（共 {versions.length} 个）与对应快照文件删除，回到「尚无版本」状态。图数据不受影响，下次创建草稿时从当前图数据重新导出。</p>
+        <p className="subtle">将当前本体存储「{target.name}」的全部版本记录（共 {versions.length} 个）与对应快照文件删除，回到「尚无版本」状态。图数据不受影响，下次创建草稿时从当前图数据重新导出。需要“删除版本”权限，内置角色默认只有管理员拥有。</p>
         <div className="functional-actions">
-          <button className="action danger" disabled={!may(user, "ontology.publish") || resetting} onClick={() => setConfirmOpen(true)}><RotateCcw size={15} />{resetting ? "初始化中…" : "初始化版本数据"}</button>
+          <button className="action danger" disabled={!may(user, "ontology.version.delete") || resetting} title={may(user, "ontology.version.delete") ? undefined : "当前角色没有「删除版本」权限"} onClick={() => setConfirmOpen(true)}><RotateCcw size={15} />{resetting ? "初始化中…" : "初始化版本数据"}</button>
         </div>
         <div className="danger-split">
           <h2>清空图数据</h2>

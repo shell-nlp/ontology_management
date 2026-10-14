@@ -462,9 +462,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
   <span class="nav-node" aria-hidden="true">04</span>
   <span class="nav-copy"><b>本体建模</b><small>对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。</small></span>
 </a>
-<a class="nav-link" href="#doc-05-版本管理与本体包" data-doc-id="doc-05-版本管理与本体包" title="草稿、校验、发布、历史激活、导入导出和本体包交付。">
+<a class="nav-link" href="#doc-05-版本管理与本体包" data-doc-id="doc-05-版本管理与本体包" title="草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。">
   <span class="nav-node" aria-hidden="true">05</span>
-  <span class="nav-copy"><b>版本管理与本体包</b><small>草稿、校验、发布、历史激活、导入导出和本体包交付。</small></span>
+  <span class="nav-copy"><b>版本管理与本体包</b><small>草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。</small></span>
 </a>
 <a class="nav-link" href="#doc-06-本体实例与对象检索" data-doc-id="doc-06-本体实例与对象检索" title="实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。">
   <span class="nav-node" aria-hidden="true">06</span>
@@ -521,7 +521,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
   </nav>
   <div class="sidebar-foot">
     <b>19 篇 · 单文件阅读版</b><br>
-    生成于 2026/10/13 23:08<br>
+    生成于 2026/10/14 08:49<br>
     源码目录：docs/系统说明书
   </div>
 </aside>
@@ -557,7 +557,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
       <span>00-新手指南.md</span>
       <span>3,398 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/13 23:02</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -924,7 +924,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
       <span>00A-从零跑通第一个本体.md</span>
       <span>5,000 字</span>
       <span>14 个主节</span>
-      <span>更新 2026/10/13 23:02</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -1394,9 +1394,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
     <p class="chapter-lede">按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。</p>
     <div class="chapter-meta">
       <span>00B-常见任务教程.md</span>
-      <span>4,958 字</span>
-      <span>17 个主节</span>
-      <span>更新 2026/10/13 23:03</span>
+      <span>5,214 字</span>
+      <span>18 个主节</span>
+      <span>更新 2026/10/14 08:48</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -1675,7 +1675,19 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 </ol>
 <p><strong>导出包含：</strong> 结构定义、关系、接口、指标、动作、规则和数据资源坐标。</p>
 <p><strong>导出不包含：</strong> 实例数据、关系数据、数据库密码、MCP 令牌。</p>
-<h2 id="doc-00B-常见任务教程--任务-14-我要给外部-agent-或-mcp-客户端使用"><span>任务 14：我要给外部 Agent 或 MCP 客户端使用</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-14-我要给外部-agent-或-mcp-客户端使用" aria-label="复制本节链接">#</a></h2>
+<h2 id="doc-00B-常见任务教程--任务-14-我要删除草稿或历史版本"><span>任务 14：我要删除草稿或历史版本</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-14-我要删除草稿或历史版本" aria-label="复制本节链接">#</a></h2>
+<p><strong>入口：</strong> 本体建模 → 页头右侧“版本记录”</p>
+<p>版本删除由“删除版本”权限控制，内置角色默认只有管理员拥有。自定义角色需要在“设置 → 用户与角色”里显式授予。</p>
+<ol>
+<li>打开“版本记录”。</li>
+<li>找到要删除的草稿或历史归档。</li>
+<li>点该行的“删除”。</li>
+<li>确认删除。草稿删除后未发布修改会丢失；历史版本删除后不能再激活。</li>
+<li>版本列表会自动刷新。</li>
+</ol>
+<p><strong>不能删除：</strong> 当前生效版本。要替换当前版本，先发布新版本，或先激活另一个有实例快照的历史版本。</p>
+<p><strong>删除不会影响：</strong> 图库当前投影、业务库数据和对象索引。</p>
+<h2 id="doc-00B-常见任务教程--任务-15-我要给外部-agent-或-mcp-客户端使用"><span>任务 15：我要给外部 Agent 或 MCP 客户端使用</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-15-我要给外部-agent-或-mcp-客户端使用" aria-label="复制本节链接">#</a></h2>
 <p><strong>入口：</strong> 能力验证 → MCP 调试</p>
 <p>这一项通常由管理员或集成人员操作。</p>
 <ol>
@@ -1694,7 +1706,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>外部 MCP 默认只读。</li>
 <li>草稿不会作为外部 Agent 的正式读源，先发布版本。</li>
 </ul>
-<h2 id="doc-00B-常见任务教程--任务-15-我要新增用户或调整权限"><span>任务 15：我要新增用户或调整权限</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-15-我要新增用户或调整权限" aria-label="复制本节链接">#</a></h2>
+<h2 id="doc-00B-常见任务教程--任务-16-我要新增用户或调整权限"><span>任务 16：我要新增用户或调整权限</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-16-我要新增用户或调整权限" aria-label="复制本节链接">#</a></h2>
 <p><strong>入口：</strong> 设置 → 用户与角色</p>
 <p>需要用户管理权限。</p>
 <ol>
@@ -1709,7 +1721,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>修改角色后，旧令牌也会立即按新权限生效。</li>
 </ol>
 <p><strong>注意：</strong> 平台不会允许删除、停用或降级最后一个能管理用户的账号。</p>
-<h2 id="doc-00B-常见任务教程--任务-16-我遇到问题-先按这个顺序排查"><span>任务 16：我遇到问题，先按这个顺序排查</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-16-我遇到问题-先按这个顺序排查" aria-label="复制本节链接">#</a></h2>
+<h2 id="doc-00B-常见任务教程--任务-17-我遇到问题-先按这个顺序排查"><span>任务 17：我遇到问题，先按这个顺序排查</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-17-我遇到问题-先按这个顺序排查" aria-label="复制本节链接">#</a></h2>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -1780,7 +1792,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <td>检查角色权限</td>
 </tr>
 </tbody></table></div>
-<h2 id="doc-00B-常见任务教程--任务-17-我要继续深入学习"><span>任务 17：我要继续深入学习</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-17-我要继续深入学习" aria-label="复制本节链接">#</a></h2>
+<h2 id="doc-00B-常见任务教程--任务-18-我要继续深入学习"><span>任务 18：我要继续深入学习</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-18-我要继续深入学习" aria-label="复制本节链接">#</a></h2>
 <p>按下面的路线继续：</p>
 <ol>
 <li>想理解平台整体结构：第 1 章。</li>
@@ -1806,7 +1818,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
       <span>01-系统概览.md</span>
       <span>5,521 字</span>
       <span>9 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/14 08:48</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -2237,7 +2249,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <td>权限与审计</td>
 <td>已实现</td>
 <td>设置</td>
-<td>13 个权限点；内置角色不可改不可删</td>
+<td>14 个权限点；内置角色不可改不可删</td>
 </tr>
 </tbody></table></div>
 <h2 id="doc-01-系统概览--1-8-系统边界"><span>1.8 系统边界</span><a class="heading-anchor" href="#doc-01-系统概览--1-8-系统边界" aria-label="复制本节链接">#</a></h2>
@@ -2272,7 +2284,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
       <span>04-本体建模.md</span>
       <span>8,228 字</span>
       <span>11 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -3017,12 +3029,12 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
   <header class="chapter-hero">
     <div class="chapter-kicker"><span>功能说明（边用边查）</span><i></i><span>章节 05</span></div>
     <h1>第 5 章 · 版本管理与本体包</h1>
-    <p class="chapter-lede">草稿、校验、发布、历史激活、导入导出和本体包交付。</p>
+    <p class="chapter-lede">草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。</p>
     <div class="chapter-meta">
       <span>05-版本管理与本体包.md</span>
-      <span>5,266 字</span>
+      <span>5,875 字</span>
       <span>8 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/14 08:48</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -3135,6 +3147,14 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>存在草稿时禁止激活历史版本，必须先发布或删除草稿；</li>
 <li>激活走与发布相同的整图替换流程；</li>
 <li>旧归档版本若没有实例快照，不能用当前图数据伪造历史状态，会明确报错。</li>
+</ul>
+<h3 id="doc-05-版本管理与本体包--删除版本"><span>删除版本</span><a class="heading-anchor" href="#doc-05-版本管理与本体包--删除版本" aria-label="复制本节链接">#</a></h3>
+<ul>
+<li><strong>版本删除由 <code>ontology.version.delete</code> 权限控制</strong>；内置角色里默认只有管理员拥有，编辑者即使能发布、激活也不能删除。自定义角色如需该能力，必须显式授予。</li>
+<li>草稿可以删除，用来放弃这次未发布的修改；删除后草稿里的对象、关系、画布位置和定义都会一起消失。</li>
+<li>历史归档可以删除；删除会连同该版本的定义、实例快照和概念检索索引一起删除，之后不能再激活。</li>
+<li>当前生效版本（<code>PUBLISHED</code>）不能直接删除。需要先激活另一个有实例快照的历史版本；重置整份版本记录同样需要“删除版本”权限。</li>
+<li>删除版本不会清空图库当前投影，也不会删除业务库数据；它只删除平台库里的这一份版本记录。</li>
 </ul>
 <h2 id="doc-05-版本管理与本体包--5-3-发布的原子性与并发"><span>5.3 发布的原子性与并发</span><a class="heading-anchor" href="#doc-05-版本管理与本体包--5-3-发布的原子性与并发" aria-label="复制本节链接">#</a></h2>
 <p><code>GraphStore.replaceGraph()</code> 有硬性契约：<strong>失败时图数据必须保持替换前的状态</strong>，由 <code>capabilities.atomicReplace</code> 声明能力。</p>
@@ -3348,6 +3368,10 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
 <td>有实例快照的历史版本可以激活并整图替换；没有快照的旧归档版本不行</td>
 </tr>
 <tr>
+<td>删除版本会删图库或业务数据吗？</td>
+<td>不会。只删除平台库中的版本定义、实例快照和概念索引；图库是投影，业务库数据也不受影响</td>
+</tr>
+<tr>
 <td>删图库数据会删版本吗？</td>
 <td>不会。图库是投影，版本与快照在平台库</td>
 </tr>
@@ -3383,6 +3407,15 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
 <li>点“激活”，等待整图替换完成。</li>
 <li>用对象页和问答验证；激活记录写审计。</li>
 </ol>
+<h3 id="doc-05-版本管理与本体包--删除草稿或历史版本"><span>删除草稿或历史版本</span><a class="heading-anchor" href="#doc-05-版本管理与本体包--删除草稿或历史版本" aria-label="复制本节链接">#</a></h3>
+<p>只有拥有“删除版本”权限的账号能看到并执行“删除”按钮；内置角色默认只有管理员拥有。</p>
+<ol>
+<li>打开本体建模页头右侧的“版本记录”。</li>
+<li>找到要删除的草稿或历史归档。</li>
+<li>点该行的“删除”并确认。</li>
+<li>删除后版本列表立即刷新；草稿删除后可以重新创建草稿，历史归档删除后不能再激活。</li>
+</ol>
+<p>当前生效版本不能删除。要替换当前版本，先发布新版本，或激活另一个有快照的历史版本。</p>
 <h3 id="doc-05-版本管理与本体包--导出与交付"><span>导出与交付</span><a class="heading-anchor" href="#doc-05-版本管理与本体包--导出与交付" aria-label="复制本节链接">#</a></h3>
 <ol>
 <li>在本体卡片或建模页头点“导出”。</li>
@@ -3397,6 +3430,7 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
 <li>历史激活不是“合并”，而是用历史快照整图替换；不会保留当前实例的增量修改。</li>
 <li>本体包不携带实例数据，也不携带凭据；跨环境迁移实例需要另行物化或从业务库回源。</li>
 <li>旧归档版本如果没有实例快照，无法激活。</li>
+<li>当前生效版本不能删除；版本删除使用独立的 <code>ontology.version.delete</code> 权限，内置角色默认只给管理员。</li>
 <li>版本快照内容哈希用于完整性校验；如果快照被外部改写，读取或激活会失败。</li>
 <li>发布过程中的对象索引同步失败不会回滚已替换的图数据，而是把版本留在草稿并提示重新发布，以确保数据最终一致。</li>
 </ul>
@@ -3412,7 +3446,7 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
       <span>06-本体实例与对象检索.md</span>
       <span>9,309 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -3944,9 +3978,9 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
     <p class="chapter-lede">动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。</p>
     <div class="chapter-meta">
       <span>07-动作与规则.md</span>
-      <span>3,551 字</span>
+      <span>4,440 字</span>
       <span>9 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/14 00:30</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -4236,9 +4270,20 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 </ul>
 <h3 id="doc-07-动作与规则--对象只存在于数据源时"><span>对象只存在于数据源时</span><a class="heading-anchor" href="#doc-07-动作与规则--对象只存在于数据源时" aria-label="复制本节链接">#</a></h3>
 <p>动作作用在草稿快照上；如果主对象或入参对象只存在于业务库，平台会先按主键把它取进草稿，再执行动作。这一步是幂等的，不会重复创建对象。</p>
-<blockquote>
-<p>当前动作执行写入的是<strong>平台草稿快照</strong>，不是业务库。业务回写尚未实现，不要把动作当作对生产业务库的写通道。</p>
-</blockquote>
+<h3 id="doc-07-动作与规则--写回业务库-可选-默认关闭"><span>写回业务库（可选，默认关闭）</span><a class="heading-anchor" href="#doc-07-动作与规则--写回业务库-可选-默认关闭" aria-label="复制本节链接">#</a></h3>
+<p>动作默认只写<strong>平台草稿快照</strong>（本体里的副本）。要让它改业务库那一行，在「运行」阶段把「写回业务库」勾上再执行。</p>
+<ul>
+<li><strong>干跑永远不写库</strong>：勾上写回后干跑会把&quot;这次会写哪张表、按什么键、改哪几列&quot;作为计划列出来，供你点执行之前核对。</li>
+<li><strong>写哪张表</strong>：对象类型的<strong>主来源</strong>（表 / 视图）。主来源是取数口径（<code>DERIVED</code>）时<strong>写不回去</strong> —— 口径是算出来的结果，没有可以改的那一行；界面会直接说清并给出路。</li>
+<li><strong>按什么键</strong>：主来源的主键列（复合主键按多列）。主键列必须都映射到属性、且这个对象上都有值，少一列就拒绝。</li>
+<li><strong>只改已有行</strong>：动作新建的对象没有源行，不参与写回（当前不支持 INSERT）。</li>
+<li><strong>主键不能改</strong>：主键是对象的身份，用动作改它等于换一个对象，会被拒绝。</li>
+<li><strong>键必须唯一命中一行</strong>：连接器写之前先按键回读，0 行（行不在了）或 2 行以上（键不唯一）都拒绝，绝不盲写。</li>
+<li><strong>要么全写，要么都不写</strong>：一次动作里只要有一处写不回去，整批不执行，业务库与草稿都保持原样；界面上逐条列出&quot;哪一处、为什么、去哪儿改&quot;。</li>
+<li><strong>写完要确认</strong>：语句发出后会回读那几列比对，确认不到就回滚（Oracle 等驱动不给影响行数，一律靠回读算）。</li>
+<li><strong>先写库、后落草稿</strong>：权威在业务库，草稿只是副本。极端情况下（业务库已改、草稿没落上）接口会<strong>明说</strong>这一点，重新执行一次即可对齐。</li>
+</ul>
+<p>看得到的地方：运行阶段的写回报告（计划 / 结果 / 拒绝理由）、决策记录里「已写库 N 处」的状态牌、审计详情里的写回清单与实际语句。</p>
 <h2 id="doc-07-动作与规则--7-6-决策记录与审计"><span>7.6 决策记录与审计</span><a class="heading-anchor" href="#doc-07-动作与规则--7-6-决策记录与审计" aria-label="复制本节链接">#</a></h2>
 <p>每次动作执行都会落一条审计：</p>
 <div class="table-wrap"><table>
@@ -4270,7 +4315,8 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <li>拦截原因、警告、隐藏命中；</li>
 <li>执行步骤；</li>
 <li>新建的实体；</li>
-<li>是否为主对象补了物化。</li>
+<li>是否为主对象补了物化；</li>
+<li><strong>写回业务库的清单</strong>：这次要写 / 已写哪张表的哪几列、旧值 → 新值、实际语句；写不回去的逐条原因。</li>
 </ul>
 <p>查看入口：</p>
 <ul>
@@ -4319,13 +4365,16 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 </ul>
 </li>
 <li><strong>干跑</strong>：选一条未开通专线，确认步骤和规则命中。</li>
-<li><strong>正式执行</strong>：写入草稿快照。</li>
+<li><strong>正式执行</strong>：写入草稿快照；要让业务库也变，勾上「写回业务库」—— 它会按主键改源表那一行，并把「旧值 → 新值」记进决策记录与审计。</li>
 <li><strong>决策记录</strong>：在动作页和审计里看到这一条 <code>ACTION_EXECUTED</code>。</li>
 <li><strong>发布</strong>：把草稿发布成新版本，动作结果进入新的已发布视图。</li>
 </ol>
 <h2 id="doc-07-动作与规则--7-9-当前限制"><span>7.9 当前限制</span><a class="heading-anchor" href="#doc-07-动作与规则--7-9-当前限制" aria-label="复制本节链接">#</a></h2>
 <ul>
-<li>动作只写草稿快照，不回写业务库。</li>
+<li>写回只支持 <strong>UPDATE 已有行</strong>：不支持 INSERT / DELETE，也不支持跨表事务；要删要建得走数据源自己的作业。</li>
+<li>写回只认<strong>主来源的表 / 视图</strong>：取数口径来源、补充来源上的属性都不写回。</li>
+<li>写回一次只改<strong>一条键命中的那一行</strong>：批量改一批对象要逐个执行动作（动作本来就是&quot;一次业务动作&quot;的模板）。</li>
+<li>不被写回的部分照旧只进草稿快照（动作仍然可以只做本体层的事）。</li>
 <li>动作只能在草稿版本上执行；没有草稿时先创建草稿。</li>
 <li>没有触发器、定时任务、外部 API 调用等“副作用步骤”；编辑步骤限定在三类图写操作。</li>
 <li>规则条件只覆盖定义层可见的主对象、参数、编辑对象、属性和关系，不执行任意函数或脚本。</li>
@@ -4343,7 +4392,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
       <span>08-数据资源与列画像.md</span>
       <span>4,521 字</span>
       <span>9 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -4673,7 +4722,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
       <span>09-智能问答.md</span>
       <span>6,140 字</span>
       <span>12 个主节</span>
-      <span>更新 2026/10/13 23:05</span>
+      <span>更新 2026/10/13 23:13</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -5575,9 +5624,9 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
     <p class="chapter-lede">登录、权限点、内置角色、用户/角色/审计/图引擎配置。</p>
     <div class="chapter-meta">
       <span>03-账号权限与平台设置.md</span>
-      <span>4,053 字</span>
+      <span>4,215 字</span>
       <span>7 个主节</span>
-      <span>更新 2026/10/12 00:30</span>
+      <span>更新 2026/10/14 08:49</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-03-账号权限与平台设置--3-1-登录与会话"><span>3.1 登录与会话</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--3-1-登录与会话" aria-label="复制本节链接">#</a></h2>
@@ -5662,7 +5711,7 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
 <p><code>401</code> 和 <code>403</code> 要分清：<strong>401 是“你是谁不认”，403 是“你是谁认了，但你不能做这个”。</strong></p>
 <h2 id="doc-03-账号权限与平台设置--3-2-权限模型"><span>3.2 权限模型</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--3-2-权限模型" aria-label="复制本节链接">#</a></h2>
 <p>权限点是代码里的稳定常量，界面按模块分组展示。角色是一组权限点，用户绑定一个角色。</p>
-<h3 id="doc-03-账号权限与平台设置--13-个权限点"><span>13 个权限点</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--13-个权限点" aria-label="复制本节链接">#</a></h3>
+<h3 id="doc-03-账号权限与平台设置--14-个权限点"><span>14 个权限点</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--14-个权限点" aria-label="复制本节链接">#</a></h3>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -5688,7 +5737,13 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
 <td>本体模型</td>
 <td><code>ontology.publish</code></td>
 <td>校验与发布</td>
-<td>校验、发布、激活历史版本；清空与重置图数据</td>
+<td>校验、发布、激活历史版本；清空图数据</td>
+</tr>
+<tr>
+<td>本体模型</td>
+<td><code>ontology.version.delete</code></td>
+<td>删除版本</td>
+<td>删除草稿、历史版本与整份版本记录</td>
 </tr>
 <tr>
 <td>本体实例</td>
@@ -5754,6 +5809,9 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
 <blockquote>
 <p>粒度是<strong>模块级</strong>，不是每个接口一个权限点。这样角色配置人能读懂，服务端也不用维护几百个权限名。</p>
 </blockquote>
+<blockquote>
+<p><strong>版本删除由 <code>ontology.version.delete</code> 单独控制</strong>：内置角色里默认只有管理员拥有；编辑者即使能发布、激活，也不能删除版本。自定义角色如需该能力，必须在角色配置里显式授予。</p>
+</blockquote>
 <h3 id="doc-03-账号权限与平台设置--内置角色"><span>内置角色</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--内置角色" aria-label="复制本节链接">#</a></h3>
 <p>内置角色不可改、不可删；要定制就复制一份自定义角色。<code>admin</code> 角色永远拥有全部权限，即使库存权限被改坏也不会被锁死。</p>
 <div class="table-wrap"><table>
@@ -5767,11 +5825,11 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
 <tbody><tr>
 <td>管理员（<code>admin</code>）</td>
 <td>平台全权</td>
-<td>13 个权限点全部</td>
+<td>14 个权限点全部</td>
 </tr>
 <tr>
 <td>编辑者（<code>editor</code>）</td>
-<td>干活的人：建模、发布、管数据资源与对象</td>
+<td>干活的人：建模、发布、管数据资源与对象，但不能删版本</td>
 <td><code>ontology.read/write/publish</code>、<code>instance.read/write</code>、<code>datasource.read/write</code>、<code>target.read</code>、<code>reasoning.use</code></td>
 </tr>
 <tr>
@@ -5780,7 +5838,7 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
 <td><code>ontology.read</code>、<code>instance.read</code>、<code>datasource.read</code>、<code>target.read</code>、<code>reasoning.use</code></td>
 </tr>
 </tbody></table></div>
-<p>编辑者碰不到用户与角色、MCP 访问令牌、图引擎连接；这是“干活的人”和“管平台的人”之间的边界。</p>
+<p>编辑者碰不到版本删除、用户与角色、MCP 访问令牌、图引擎连接；这是“干活的人”和“管平台的人”之间的边界。</p>
 <h3 id="doc-03-账号权限与平台设置--导航可见性"><span>导航可见性</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--导航可见性" aria-label="复制本节链接">#</a></h3>
 <p>左侧导航每一项都绑一个权限点；没有权限的功能<strong>不显示</strong>。当前视图没权限时，界面会落到该用户第一个能进的页面，不留下空白页。</p>
 <div class="table-wrap"><table>
@@ -6991,9 +7049,9 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
     <p class="chapter-lede">REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。</p>
     <div class="chapter-meta">
       <span>13-接口与集成参考.md</span>
-      <span>7,308 字</span>
+      <span>8,212 字</span>
       <span>15 个主节</span>
-      <span>更新 2026/10/12 00:30</span>
+      <span>更新 2026/10/14 08:48</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-13-接口与集成参考--13-1-接口总则"><span>13.1 接口总则</span><a class="heading-anchor" href="#doc-13-接口与集成参考--13-1-接口总则" aria-label="复制本节链接">#</a></h2>
@@ -7184,6 +7242,12 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <td>更新草稿定义</td>
 </tr>
 <tr>
+<td><code>DELETE</code></td>
+<td><code>/api/ontology/:versionId</code></td>
+<td><code>ontology.version.delete</code></td>
+<td>删除草稿或历史版本；当前生效版本返回 <code>409</code></td>
+</tr>
+<tr>
 <td><code>POST</code></td>
 <td><code>/api/ontology/:versionId/validate</code></td>
 <td><code>ontology.publish</code></td>
@@ -7205,7 +7269,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <td><code>GET</code> / <code>POST</code></td>
 <td><code>/api/ontology/:versionId/actions</code></td>
 <td>读 / <code>instance.write</code></td>
-<td>动作决策预览 / 执行动作</td>
+<td>动作决策预览 / 执行动作（可带写回业务库）</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -7217,7 +7281,50 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <blockquote>
 <p><code>GET /api/ontology/:versionId</code> 不在当前路由中；读取版本定义走版本列表和快照接口。以 OpenAPI 为准。</p>
 </blockquote>
-<p>创建草稿示例：</p>
+<p>动作执行请求体（<code>POST /api/ontology/:versionId/actions</code>）：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>actionId</code></td>
+<td>是</td>
+<td>动作 id</td>
+</tr>
+<tr>
+<td><code>subjectEntityId</code> / <code>subjectRef</code></td>
+<td>否</td>
+<td>主对象（<code>subjectRef</code> 形如 <code>对象类型/主键串</code>；对象只存在于数据源时，平台先按主键把它取进草稿再执行）</td>
+</tr>
+<tr>
+<td><code>inputs</code></td>
+<td>否</td>
+<td>入参：<code>{ code, entityId?, entityRef?, value? }</code></td>
+</tr>
+<tr>
+<td><code>dryRun</code></td>
+<td>否（默认 <code>true</code>）</td>
+<td>只算不写：不改草稿快照，<strong>也永远不写业务库</strong></td>
+</tr>
+<tr>
+<td><code>writeback</code></td>
+<td>否（默认 <code>false</code>）</td>
+<td>是否把改动写回业务库（只对<strong>表 / 视图主来源</strong>生效；干跑时只产出&quot;会写什么&quot;的计划）</td>
+</tr>
+</tbody></table></div>
+<ul>
+<li>写回只支持改<strong>已有行</strong>（UPDATE），按对象类型主来源的主键列定位；键命中 0 行或 2 行以上一律拒绝（不盲写）。</li>
+<li>一次动作里只要有一处写不回去，返回 <code>409</code> 且<strong>整批不执行</strong>，响应里带逐条原因与出路。</li>
+<li>响应里的 <code>writeback</code> 分四态：<code>OFF</code>（没勾）/ <code>PREVIEW</code>（干跑出的计划）/ <code>APPLIED</code>（已写库，带旧值 → 新值与实际语句）/ <code>REFUSED</code>（被拒，整批没执行）。</li>
+</ul>
+<p>写回示例：</p>
+<pre class="code-block"><code class="language-bash">curl -s -X POST http://localhost:3000/api/ontology/&lt;versionId&gt;/actions \
+  -H &quot;Authorization: Bearer $TOKEN&quot; -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;actionId&quot;:&quot;&lt;id&gt;&quot;,&quot;subjectRef&quot;:&quot;专线产品用户/371&quot;,&quot;dryRun&quot;:false,&quot;writeback&quot;:true,&quot;inputs&quot;:[]}&#39;</code></pre><p>创建草稿示例：</p>
 <pre class="code-block"><code class="language-bash">curl -s http://localhost:3000/api/ontology \
   -H &quot;Authorization: Bearer $TOKEN&quot; \
   -H &#39;Content-Type: application/json&#39; \
@@ -7577,8 +7684,8 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <tr>
 <td><code>POST</code></td>
 <td><code>/api/targets/:targetId/reset</code></td>
-<td><code>ontology.publish</code></td>
-<td>重置存储状态</td>
+<td><code>ontology.version.delete</code></td>
+<td>删除该存储的全部版本记录；不清空图数据</td>
 </tr>
 </tbody></table></div>
 <h2 id="doc-13-接口与集成参考--13-13-平台管理"><span>13.13 平台管理</span><a class="heading-anchor" href="#doc-13-接口与集成参考--13-13-平台管理" aria-label="复制本节链接">#</a></h2>
@@ -7686,7 +7793,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
       <span>14-运维安全与故障排查.md</span>
       <span>5,363 字</span>
       <span>8 个主节</span>
-      <span>更新 2026/10/12 00:30</span>
+      <span>更新 2026/10/14 08:48</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-14-运维安全与故障排查--14-1-安全模型"><span>14.1 安全模型</span><a class="heading-anchor" href="#doc-14-运维安全与故障排查--14-1-安全模型" aria-label="复制本节链接">#</a></h2>
@@ -7704,7 +7811,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 </tr>
 <tr>
 <td>授权</td>
-<td>13 个模块级权限点；角色 = 权限集合；服务端每个写入/敏感接口执行 <code>requirePermission</code></td>
+<td>14 个模块级权限点；角色 = 权限集合；服务端每个写入/敏感接口执行 <code>requirePermission</code></td>
 </tr>
 <tr>
 <td>数据访问</td>
@@ -8250,9 +8357,9 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
     <p class="chapter-lede">面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。</p>
     <div class="chapter-meta">
       <span>查询DSL.md</span>
-      <span>8,242 字</span>
+      <span>9,826 字</span>
       <span>14 个主节</span>
-      <span>更新 2026/10/12 21:40</span>
+      <span>更新 2026/10/14 00:30</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -8332,7 +8439,62 @@ SQL 编译器
 <li>待补：接真实业务问题集运行影子对拍、跨来源对象类型、更复杂的多跳关系规划</li>
 <li>与 <code>run_sql</code> 的真实问题集影子对拍</li>
 </ul>
-<h3 id="doc-查询DSL--2-3-暂不支持"><span>2.3 暂不支持</span><a class="heading-anchor" href="#doc-查询DSL--2-3-暂不支持" aria-label="复制本节链接">#</a></h3>
+<h3 id="doc-查询DSL--2-3-本体-sql-sql-形状的表层-2026-10-14-落地"><span>2.3 本体 SQL（SQL 形状的表层，2026-10-14 落地）</span><a class="heading-anchor" href="#doc-查询DSL--2-3-本体-sql-sql-形状的表层-2026-10-14-落地" aria-label="复制本节链接">#</a></h3>
+<p>用户口径（2026-10-14 拍板）：<strong>表层用 SQL 形状、内核仍是本体语义</strong>。理由很简单 —— 模型和人都会 SQL，
+不必为平台再学一门自创语法；而&quot;保证&quot;（基数 fail-closed、跨数据资源拒绝、指标口径、只读闸门）
+全部来自内核，与表层无关，所以换表层一条都不会丢。</p>
+<p>两种表层产出<strong>同一份 <code>QueryDsl</code></strong>：本体 SQL 解析 + 绑定之后，与 JSON DSL 共用
+<code>resolveQueryDsl</code> → <code>compileQuerySql</code> → 只读执行。<strong>不存在&quot;两套语义&quot;</strong>，改校验或改编译只需要改一处。</p>
+<p><code>run_query</code> 工具<strong>只收本体 SQL</strong>（<code>sql</code> + <code>parameters</code>）：一个工具只留一种表层，模型才不用在两套语法之间挑。
+JSON DSL 仍在代码里（<code>executeQueryDsl</code>，程序化构造与影子对拍用），只是不出现在工具入参上。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>层</th>
+<th>文件</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>词法 / 语法</td>
+<td><code>src/lib/query-dsl/sql-surface/parse.ts</code></td>
+<td>文本 → 语法树（<code>SqlQueryAst</code>）；不认识本体</td>
+</tr>
+<tr>
+<td>语义绑定</td>
+<td><code>src/lib/query-dsl/sql-surface/bind.ts</code></td>
+<td>语法树 + 本体定义 → <code>QueryDsl</code>；判属性 / 指标、判别名、判 <code>kind</code></td>
+</tr>
+<tr>
+<td>执行入口</td>
+<td><code>src/lib/query-dsl/execute.ts</code></td>
+<td><code>executeOntologySql</code>（本体 SQL）与 <code>executeQueryDsl</code>（JSON DSL）</td>
+</tr>
+</tbody></table></div>
+<p><strong>语法子集（v0）</strong></p>
+<pre class="code-block"><code class="language-sql">SELECT 输出项 [AS 列名] [, …]
+FROM 对象类型 [AS 别名]
+[[LEFT] JOIN 关系类型 [AS 别名] [FORWARD | BACKWARD | BOTH]] …
+[WHERE 条件]
+[GROUP BY 属性, …]
+[ORDER BY 输出列名 | 属性 [ASC | DESC], …]
+[LIMIT n]</code></pre><ul>
+<li>输出项：<code>属性</code> / <code>别名.属性</code> / <code>指标名</code> / <code>COUNT(*)</code> / <code>COUNT(DISTINCT 属性)</code> / <code>SUM|AVG|MIN|MAX(属性)</code>。
+裸名字<strong>先按当前实体的属性找，再按指标找</strong> —— 两个都不是就把&quot;两条路 + 候选名字&quot;写进错误里。</li>
+<li>条件：<code>= &lt;&gt; &gt; &gt;= &lt; &lt;=</code>、<code>IN</code> / <code>NOT IN</code>、<code>BETWEEN … AND …</code>、<code>IS [NOT] NULL</code>、
+<code>LIKE &#39;%值%&#39;</code>（也支持 <code>&#39;值%&#39;</code> / <code>&#39;%值&#39;</code>，其余模式拒绝并提示改用 <code>=</code>）、
+<code>LABEL(属性) = &#39;枚举标签&#39;</code>（按码值的中文标签过滤）、<code>AND</code> / <code>OR</code> / <code>NOT</code> 与括号。</li>
+<li>参数：<code>:名字</code>，取值走 <code>parameters</code> —— 与 JSON DSL 的 <code>{&quot;param&quot;:&quot;名字&quot;}</code> 是同一套机制。</li>
+<li>关系遍历：<code>JOIN</code> 只能写<strong>关系类型</strong>，<strong>不给写 ON 条件</strong>（连接的读法由关系类型与它的键映射决定）；
+<code>LEFT JOIN</code> = 可选（对不上也保留左边这一行）。<code>FORWARD</code>（默认）/ <code>BACKWARD</code> / <code>BOTH</code> 是本方言
+<strong>唯一的语法扩展</strong>：SQL 没有&quot;边方向&quot;这个概念，而本体关系是双向的一条定义。</li>
+<li><code>kind</code> 不用手写：有指标或聚合就是 <code>aggregate</code>，否则 <code>records</code>。</li>
+<li><strong>不接受</strong>：<code>SELECT *</code>、子查询、CTE（<code>WITH</code>）、<code>UNION</code>、窗口函数、任意函数、跨数据资源 join ——
+一律如实报错，不做静默近似；这些情况用 <code>run_sql</code> 兜底。</li>
+<li><strong>主来源是取数口径（<code>DERIVED</code>）时也能查</strong>：口径本身就是来源（<code>view</code> 只是给界面拿列清单的参考表），
+编译出来是 <code>(口径) 别名</code> 子查询。口径只能当主来源；放到补充来源上（MDO 合并）会被拒绝。</li>
+</ul>
+<h3 id="doc-查询DSL--2-4-暂不支持"><span>2.4 暂不支持</span><a class="heading-anchor" href="#doc-查询DSL--2-4-暂不支持" aria-label="复制本节链接">#</a></h3>
 <ul>
 <li>任意 JOIN</li>
 <li>用户自定义 SQL 表达式</li>
@@ -8891,9 +9053,9 @@ src/lib/reasoning/tool-summary.ts      步骤摘要</code></pre><h2 id="doc-查�
     <p class="chapter-lede">阅读地图、状态标记与维护规则。</p>
     <div class="chapter-meta">
       <span>README.md</span>
-      <span>3,013 字</span>
+      <span>3,021 字</span>
       <span>7 个主节</span>
-      <span>更新 2026/10/13 23:04</span>
+      <span>更新 2026/10/14 08:42</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -8990,7 +9152,7 @@ src/lib/reasoning/tool-summary.ts      步骤摘要</code></pre><h2 id="doc-查�
 </ul>
 </li>
 <li><a href="#doc-05-版本管理与本体包" class="doc-link">第 5 章 · 版本管理与本体包</a><ul>
-<li>草稿、校验、发布、历史激活、导入导出和本体包交付。</li>
+<li>草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。</li>
 </ul>
 </li>
 <li><a href="#doc-06-本体实例与对象检索" class="doc-link">第 6 章 · 本体实例与对象检索</a><ul>
@@ -9124,7 +9286,7 @@ src/lib/reasoning/tool-summary.ts      步骤摘要</code></pre><h2 id="doc-查�
   <div class="search-hint">输入关键词，结果会定位到章节。支持 Ctrl/⌘ + K。</div>
   <div class="search-results" id="search-results"></div>
 </dialog>
-<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/13 23:08","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3398,"updatedAt":"2026/10/13 23:02"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5000,"updatedAt":"2026/10/13 23:02"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":4958,"updatedAt":"2026/10/13 23:03"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5521,"updatedAt":"2026/10/13 23:05"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":8228,"updatedAt":"2026/10/13 23:05"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5266,"updatedAt":"2026/10/13 23:05"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":9309,"updatedAt":"2026/10/13 23:05"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":3551,"updatedAt":"2026/10/13 23:05"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":4521,"updatedAt":"2026/10/13 23:05"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6140,"updatedAt":"2026/10/13 23:05"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5609,"updatedAt":"2026/10/12 00:30"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":4053,"updatedAt":"2026/10/12 00:30"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":4375,"updatedAt":"2026/10/12 00:30"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":4436,"updatedAt":"2026/10/12 00:30"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":7308,"updatedAt":"2026/10/12 00:30"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/12 00:30"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":8242,"updatedAt":"2026/10/12 21:40"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3013,"updatedAt":"2026/10/13 23:04"}]}</script><script>
+<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/14 08:49","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3398,"updatedAt":"2026/10/13 23:13"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5000,"updatedAt":"2026/10/13 23:13"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":5214,"updatedAt":"2026/10/14 08:48"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5521,"updatedAt":"2026/10/14 08:48"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":8228,"updatedAt":"2026/10/13 23:13"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5875,"updatedAt":"2026/10/14 08:48"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":9309,"updatedAt":"2026/10/13 23:13"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":4440,"updatedAt":"2026/10/14 00:30"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":4521,"updatedAt":"2026/10/13 23:13"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6140,"updatedAt":"2026/10/13 23:13"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5609,"updatedAt":"2026/10/12 00:30"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":4215,"updatedAt":"2026/10/14 08:49"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":4375,"updatedAt":"2026/10/12 00:30"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":4436,"updatedAt":"2026/10/12 00:30"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":8212,"updatedAt":"2026/10/14 08:48"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/14 08:48"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":9826,"updatedAt":"2026/10/14 00:30"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3021,"updatedAt":"2026/10/14 08:42"}]}</script><script>
 (() => {
   "use strict";
   const manifest = JSON.parse(document.getElementById("manual-manifest").textContent);

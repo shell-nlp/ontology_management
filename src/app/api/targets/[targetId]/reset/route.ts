@@ -7,7 +7,7 @@ import { deleteTargetVersions } from "@/lib/versioning/snapshot";
 
 export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
   try {
-    const user = await requirePermission("ontology.publish");
+    const user = await requirePermission("ontology.version.delete");
     const { targetId } = await context.params;
     if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，不能重置版本；请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);

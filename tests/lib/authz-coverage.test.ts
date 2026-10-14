@@ -6,7 +6,7 @@ import { ALL_PERMISSIONS, BUILTIN_ROLES, PERMISSIONS, builtinRole } from "@/lib/
 /**
  * 授权覆盖的**安全网**（2026-10-09 RBAC）。
  *
- * 为什么必须有这一条：这次把 74 处 `requireRole("ADMIN"|"VIEWER")` 换成了 13 个权限点，
+ * 为什么必须有这一条：这次把 74 处 `requireRole("ADMIN"|"VIEWER")` 换成了模块级权限点，
  * 而"漏改一处"的后果是**权限被放宽**（不是收紧）—— 新加一个路由、忘了写守卫，
  * 或者权限点拼错（写成 `ontolgy.read`），界面看不出来，测试也不会红，只有攻击者会知道。
  * 所以这里直接扫源码：
@@ -63,6 +63,17 @@ describe("授权覆盖", () => {
     expect(unguarded, `这些路由没有声明任何权限守卫：\n${unguarded.join("\n")}`).toEqual([]);
   });
 
+  it("版本删除使用独立权限点", () => {
+    const file = "src/app/api/ontology/[versionId]/route.ts";
+    const source = readFileSync(path.join(process.cwd(), file), "utf8");
+    const deleteBlock = source.slice(source.indexOf("export async function DELETE"));
+    expect(deleteBlock).toMatch(/requirePermission\("ontology\.version\.delete"\)/);
+
+    const resetFile = "src/app/api/targets/[targetId]/reset/route.ts";
+    const resetSource = readFileSync(path.join(process.cwd(), resetFile), "utf8");
+    expect(resetSource).toMatch(/requirePermission\("ontology\.version\.delete"\)/);
+  });
+
   it("代码里用的权限点都是真权限点（拼错就红）", () => {
     const known = new Set(ALL_PERMISSIONS);
     const used = new Map<string, string>();
@@ -91,12 +102,14 @@ describe("授权覆盖", () => {
     for (const forbidden of ["users.manage", "mcp.token.manage", "target.write"]) {
       expect(editor.has(forbidden), `编辑者不该有 ${forbidden}`).toBe(false);
     }
+    expect(admin.has("ontology.version.delete")).toBe(true);
+    expect(editor.has("ontology.version.delete")).toBe(false);
     expect(editor.has("ontology.publish")).toBe(true);
     expect(editor.has("datasource.write")).toBe(true);
 
     const viewer = new Set(builtinRole("viewer")!.permissions);
     for (const spec of PERMISSIONS) {
-      const writeish = /\.(write|publish|manage)$/.test(spec.code);
+      const writeish = /\.(write|publish|manage|delete)$/.test(spec.code);
       if (writeish) expect(viewer.has(spec.code), `查看者不该有 ${spec.code}`).toBe(false);
     }
     expect(viewer.has("reasoning.use")).toBe(true);

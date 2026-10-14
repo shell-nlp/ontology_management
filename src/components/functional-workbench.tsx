@@ -252,6 +252,12 @@ export function FunctionalWorkbench() {
     await loadVersions(targetId);
   };
 
+  const deleteVersion = async (version: Version) => {
+    await api<{ deleted: true }>(`/api/ontology/${version.id}`, { method: "DELETE" });
+    notify(version.status === "DRAFT" ? `已删除草稿 v${version.version_number}，未发布的修改已丢弃。` : `已删除历史版本 v${version.version_number}。`);
+    await loadVersions(targetId);
+  };
+
   const resetVersions = async () => {
     await loadVersions(targetId);
   };
@@ -263,7 +269,7 @@ export function FunctionalWorkbench() {
 
   return <main className="functional-shell">
     <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section, sectionIndex) => { const items = section.items.filter(([, , , code]) => code === null || may(user, code)); if (!items.length) return null; return <div className="nav-section" key={section.label || `root-${sectionIndex}`}>{section.label && <p className="nav-section-label">{section.label}</p>}{items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>; })}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Toast message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+    <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} onDelete={deleteVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Toast message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
       {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
       {view === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(user); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}

@@ -100,6 +100,8 @@ button, input, textarea { font: inherit; } button { cursor: pointer; } button:di
 .version-menu-row > span:first-child small { margin-top:2px; }
 .version-menu-row code { color:#53736e; font-size:10px; }
 .version-menu-row em { justify-self:start; color:#91634f; background:#fff0e9; }
+.version-menu-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.version-menu-actions .action { min-height:28px; padding:0 8px; }
 @media (max-width:700px) { .version-bar { align-items:flex-start; flex-direction:column; } .version-menu { left:0; right:auto; width:100%; } .version-menu-row { grid-template-columns:75px 1fr auto; } .version-menu-row code, .version-menu-row em { display:none; } }
 
 /* Knowledge-network workspace: dense blue-and-white operational surface. */
