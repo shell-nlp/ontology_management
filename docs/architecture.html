@@ -261,7 +261,7 @@
                 <div class="svc-node blue"><strong>Platform &amp; Governance API</strong><span>平台与治理：登录会话、审计、图引擎连接</span><em>Auth + audit</em></div>
               </div>
             </div>
-            <div class="layer-flow"><span>↓ 接口只做鉴权与参数校验，业务口径在领域服务</span></div>
+            <div class="layer-flow"><span>↓ 接口只做三件事：middleware 粗筛凭据 → 守卫细判权限点 → 参数校验；业务口径在领域服务</span></div>
             <div class="arch-layer">
               <div class="layer-tag green"><strong>领域服务层</strong><span>Domain Services</span></div>
               <div class="layer-nodes">

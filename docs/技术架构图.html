@@ -55,6 +55,7 @@
   .band.b-purple .band-tag{border-top:3px solid var(--purple)}
   .band.b-orange .band-tag{border-top:3px solid var(--orange)}
   .band.b-ink .band-tag{border-top:3px solid var(--ink)}
+  .band.b-red .band-tag{border-top:3px solid var(--red)}
   .nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(202px,1fr));gap:7px}
   .node{padding:9px 11px;border:1px solid var(--line);border-left:3px solid var(--blue);background:var(--panel);min-width:0}
   .node strong{display:block;font-size:12.5px;line-height:1.3}
@@ -63,6 +64,7 @@
   .node.blue{border-left-color:var(--blue)} .node.green{border-left-color:var(--green)}
   .node.purple{border-left-color:var(--purple)} .node.orange{border-left-color:var(--orange)} .node.ink{border-left-color:var(--ink)}
   .node.hollow{border-left-color:#b9c4cc;background:#fbfcfd}
+  .node.red{border-left-color:var(--red)}
   .flow{display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px;align-items:center;padding:0 8px}
   .flow span{grid-column:2;position:relative;padding:3px 0 3px 26px;color:var(--muted);font:600 10.5px/1.35 var(--mono)}
   .flow span::before{content:"↓";position:absolute;left:6px;top:1px;color:var(--orange);font-size:15px;font-weight:800}
@@ -79,7 +81,7 @@
 
   /* ---------- 链路 ---------- */
   .section{margin-top:20px;padding-top:14px;border-top:2px solid var(--ink)}
-  .chains{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+  .chains{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:12px}
   .chain{border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow);padding:13px 14px}
   .chain h3{margin-bottom:4px}
   .chain .who{font:700 10px/1.3 var(--mono);color:var(--blue);letter-spacing:.04em}
@@ -136,6 +138,7 @@
       <div class="meta-chip">栈 <b>Next.js 16 · React 19 · TypeScript</b></div>
       <div class="meta-chip">平台库 <b>PostgreSQL</b></div>
       <div class="meta-chip">对象索引 <b>ClickHouse</b></div>
+      <div class="meta-chip">鉴权 <b>middleware 粗筛 + 路由守卫</b></div>
     </div>
   </div>
 
@@ -164,6 +167,17 @@
       <div class="flow"><span>统一入口：会话 JWT（<code>AUTH_SECRET</code>，浏览器）或 OAuth 访问令牌（<code>aud=ontology-mcp</code>）</span></div>
 
       <div class="band b-blue">
+        <div class="band-tag"><strong>鉴权粗筛</strong><span>Middleware</span><b>src/middleware.ts</b></div>
+        <div class="nodes">
+          <div class="node blue"><strong>只判「有没有凭据」</strong><span>没带 <code>Authorization: Bearer</code> 的 <code>/api/**</code> 直接 401；<b>一个权限点都不判</b> —— 拿不到本体 / 资源，也拿不到 handler 的声明</span><em>PEP 的最外层 · src/middleware.ts</em></div>
+          <div class="node blue"><strong>公开前缀名单</strong><span>登录 / 登出 / 会话探测 / 首次初始化 / OAuth 两个匿名端点 / 技能 MCP / MCP 端点（自带鉴权）；<code>OPTIONS</code> 预检一律放行 —— 浏览器预检不带 Authorization</span><em>lib/platform/public-routes.ts</em></div>
+          <div class="node blue"><strong>这一层挡住了什么</strong><span>无凭据的请求在这里就结束：不必进路由、不必查一次会话。名单多一个只是少一层提前拒绝（fail-safe 的方向是故意选的）</span><em>不判权限点 = 不产生第二个真相</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>带凭据才进来 → 路由只做三件事：<b>声明这个接口要哪个权限点</b>、入参校验（zod）、把请求交给领域服务</span></div>
+
+      <div class="band b-blue">
         <div class="band-tag"><strong>接口层</strong><span>API Layer</span><b>src/app/api</b></div>
         <div class="nodes">
           <div class="node blue"><strong>本体与版本</strong><span>草稿、校验、发布、激活、导入导出</span><em>/api/ontologies · /api/ontology/[versionId]</em></div>
@@ -177,7 +191,17 @@
         </div>
       </div>
 
-      <div class="flow"><span>路由只做三件事：鉴权（<code>requirePermission</code>）、入参校验（zod）、把请求交给领域服务 —— 业务口径不在路由里</span></div>
+      <div class="band b-red">
+        <div class="band-tag"><strong>授权守卫</strong><span>Guard · PEP</span><b>lib/platform</b></div>
+        <div class="nodes">
+          <div class="node red"><strong>声明即守卫</strong><span>权限点在<b>导出处声明一次</b>，执行只住在这一处，401 / 403 也只在这一处映射；handler 的第三个参数就是已认证的用户，不用再取一次</span><em>withPermission("权限点", handler) × 95</em></div>
+          <div class="node red"><strong>另外三种声明</strong><span><code>withUser</code> 只要求登录 × 2 ｜ <code>withPublic</code> 按设计公开 × 14（含 5 个 OPTIONS 预检）｜ <code>withOwnAuth</code> 自带鉴权 × 4（MCP 同一个头认两套凭据）</span><em>lib/platform/route-guard.ts</em></div>
+          <div class="node red"><strong>决策内核（PDP）</strong><span>纯函数：给定权限集与权限点 → 是 / 否。<b>全平台只有这一份</b> —— 前端按钮可见性、MCP 端点的自判、路由守卫共用它</span><em>can(permissions, code) · lib/platform/permissions.ts</em></div>
+          <div class="node red"><strong>两条自动闸门</strong><span>① 每个导出的 HTTP 方法都必须包在四种包装器之一（方法级，扫语法树）；② 免鉴权的方法必须<b>恰好等于</b>显式名单 —— 想加公开接口就得改名单，评审看得见</span><em>tests/lib/authz-coverage.test.ts</em></div>
+        </div>
+      </div>
+
+      <div class="flow"><span>通过之后才进领域服务；<b>路由里不许再手写 <code>requirePermission</code></b>（覆盖测试会扫出来）</span></div>
 
       <div class="band b-green">
         <div class="band-tag"><strong>领域服务层</strong><span>Domain</span><b>src/lib</b></div>
@@ -225,10 +249,11 @@
 
     <div class="aside">
       <div class="card cross">
-        <div class="label">横切关注点 · 每一层都要过</div>
+        <div class="label">横切关注点 · 分两层，不是"每个页面各判一遍"</div>
         <ul>
-          <li><b>鉴权</b>：会话 JWT 或 OAuth 访问令牌；每个接口单独 <code>requirePermission</code></li>
-          <li><b>权限点</b>：RBAC 角色 → 权限点；界面按钮可见性与服务端校验同源</li>
+          <li><b>鉴权分两层</b>：middleware 粗筛（有没有凭据）+ 路由守卫细判（要哪个权限点）；<b>权限点只在导出处声明一次</b>，执行只在一处</li>
+          <li><b>PDP / PEP 分得清</b>：决策内核是 <code>can()</code>（纯函数）；中间件与守卫都只是 PEP。将来做数据级授权（行 / 列）时判断落在领域层 —— 那时把 <code>can()</code> 升级成 <code>authorize(user, action, resource)</code>，别再新起一套</li>
+          <li><b>权限点</b>：RBAC 角色 → 权限点；界面按钮可见性与服务端校验共用同一份决策内核</li>
           <li><b>审计</b>：发布、删除、数据资源变更、工具开关、动作决策、问答运行全部留痕</li>
           <li><b>只读闸门</b>：<code>assertReadOnlySql</code> 拦写语句；业务写只走模板化动作</li>
           <li><b>工具开关</b>：按全局 / 按本体关掉的工具，同时不进工具清单、提示词与工具返回正文</li>
@@ -237,7 +262,7 @@
       <div class="card">
         <div class="label">读图顺序（30 秒）</div>
         <ul>
-          <li>先看<b>四段颜色的层</b>：调用方 → 接口 → 领域 → 适配器 → 存储</li>
+          <li>先看<b>分段颜色的层</b>：调用方 → 鉴权粗筛 → 接口 → 授权守卫 → 领域 → 适配器 → 存储</li>
           <li>再看层间的<b>箭头文字</b>：那才是这一层的契约</li>
           <li>最后看<b>紫色那层</b>：它是「换中间件不动上层」的全部答案</li>
         </ul>
@@ -254,7 +279,7 @@
   </div>
 
   <div class="section">
-    <h2>三条运行时链路：一次操作到底经过谁</h2>
+    <h2>四条运行时链路：一次操作到底经过谁</h2>
     <div class="chains">
 
       <div class="chain">
@@ -293,6 +318,18 @@
         </ol>
       </div>
 
+      <div class="chain">
+        <div class="who">CHAIN 04 · 鉴权</div>
+        <h3>一个请求怎么被放行</h3>
+        <ol>
+          <li><i>1</i><span><b>middleware 粗筛</b>：不是公开前缀、又没带 Bearer → 直接 401（<code>OPTIONS</code> 放行）</span></li>
+          <li><i>2</i><span>进到路由：导出时那句 <code>withPermission("...")</code> 已经声明了这个接口要什么</span></li>
+          <li><i>3</i><span><b>守卫执行</b>：取当前账号的权限集 → 过 <code>can()</code> 决策</span></li>
+          <li><i>4</i><span>没登录 <b>401</b>、登录了但没权限 <b>403</b>、通过则把用户注入 handler</span></li>
+          <li><i>5</i><span>handler 自己的 <code>try/catch</code> 照旧管业务错误 —— 守卫不吞它，只负责"放不放进来"</span></li>
+        </ol>
+      </div>
+
     </div>
   </div>
 
@@ -306,6 +343,7 @@
         <tr><td>业务库类型</td><td>PostgreSQL · MySQL · Oracle（<code>pg</code> · <code>mysql2</code> · <code>oracledb</code>）</td><td><code>lib/datasource/sql.ts</code> 的方言分支</td><td>不改（SQL 只在适配器里）</td></tr>
         <tr><td>模型提供方</td><td>OpenAI 兼容 HTTP 端点（当前配 DeepSeek-V4.1-Flash）</td><td><code>lib/reasoning/provider.ts</code>（OpenAI 兼容即可）</td><td>不改（工具循环与提示词不动）</td></tr>
         <tr><td>授权服务器</td><td>平台自带的 OAuth 2.1 授权服务器（授权码 + PKCE + 动态注册）</td><td><code>lib/oauth/provider.ts</code> 再写一个实现（如 Keycloak）</td><td>不改（元数据路由与 MCP 端点一行不动）</td></tr>
+        <tr><td>授权决策（PDP）</td><td>平台自带的 <code>can()</code>：RBAC「角色 → 权限点」，纯函数、无外部依赖</td><td>要做行 / 列级的数据级授权、或把策略外置（OPA / Cedar）时，换 <code>lib/platform/permissions.ts</code> 这个判断内核</td><td><b>不改</b>（这就是 PEP 收口买到的东西：中间件与路由守卫一行都不用动）</td></tr>
       </table>
     </div>
     <div class="card">
