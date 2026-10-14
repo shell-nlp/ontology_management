@@ -401,6 +401,40 @@ export function forgetLastSeenConversation(targetId: string): void {
 }
 
 /**
+ * 用户点了侧栏那一行"运行中"：把这一轮重新接回画面（它可能被「新对话」让到后台了）。
+ *
+ * 认的是 **runId** —— 还没落库的新对话没有对话 id，只能按运行 id 认。
+ * 返回它属于哪段对话（新对话是 null）；`undefined` 表示这不是一轮在册的运行（那就是历史对话的 id）。
+ */
+export function attachLiveRun(runId: string): string | null | undefined {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+  if (run.detached) {
+    run.detached = false;
+    notify();
+  }
+  return toLiveRun(run).conversationId;
+}
+
+/**
+ * 打开某段历史对话时，把它**还在跑**的那几轮也接回画面。
+ *
+ * 不接的话：用户在那段对话里点了「新对话」把它让到后台，再点回这段历史 ——
+ * 侧栏写着"运行中"，画面里却看不到那一轮（被 detached 挡住了）。
+ * 新对话（`conversationId === null`）不走这里：那种情况只能按 runId 认，见 `attachLiveRun`。
+ */
+export function attachRunsForConversation(targetId: string, conversationId: string | null): void {
+  if (!conversationId) return;
+  let changed = false;
+  for (const run of runs.values()) {
+    if (!run.detached || !run.running || run.targetId !== targetId) continue;
+    if (toLiveRun(run).conversationId !== conversationId) continue;
+    run.detached = false;
+    changed = true;
+  }
+  if (changed) notify();
+}
+/**
  * 用户按了「新对话」：把**现在这一段画面上**的那几轮让到后台。
  *
  * 这就是用户口径里的"新建聊天了，放后台运行" —— 中间那一栏换上一段干净的对话；

@@ -428,8 +428,12 @@
   `POST /api/reasoning/stream` 保留为「起一轮 + 就地看完」的薄壳，协议只有 `run-stream.ts` 一处实现。
 - **断开 ≠ 停止**：关页面、切页、刷新都只是「不看了」，运行照常跑完并落进历史；真停只认 cancel。
   界面侧 `src/lib/reasoning/live-runs.ts` 是本机登记处，`qa-studio.tsx` 只订阅它 —— 组件卸载不中断运行。
-- 界面三条规矩：「新对话」不停正在跑的那一轮（`detachRunningRuns()` 让到后台）；切走再回来要接回画面
-  （`lastSeenConversation` + `openConversation`）；`busy` 只按**当前这一段**算，翻历史/开新对话不受影响。
+- 界面四条规矩：「新对话」不停正在跑的那一轮（`detachRunsForView()` 让到后台）；切走再回来要接回画面
+  （`lastSeenConversation` + `openConversation`）；`busy` 只按**当前这一段**算，翻历史/开新对话不受影响；
+  **侧栏那一行「运行中」必须能点开切回去**（2026-10-14 用户口径：「这里运行中不能切换过去」）——
+  那一行的 id 是**运行 id**、不是对话 id（还没落库的新对话没有对话 id），点它走 `attachLiveRun(runId)`
+  （把它从"让到后台"接回画面、返回归属的对话 id），别拿去读历史接口（只会 404）；
+  点回某段历史对话时也要 `attachRunsForConversation()`，否则被让到后台的那一轮仍然看不见。
 - **时间一律用前端时钟**：展示耗时由浏览器算（`startedAtMs` → `Turn.liveElapsedMs`），
   服务端回的 `elapsedMs` 只写运行记录、**不用它显示**；侧栏的「今天/昨天 + 时刻」由 `conversationTimeLabel`
   在浏览器格式化 —— 别在服务端渲染里烤死时区（容器是 UTC，烤进去就差 8 小时）。

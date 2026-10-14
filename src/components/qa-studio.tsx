@@ -22,7 +22,7 @@ import {
 import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
 import { historyLabel } from "@/lib/reasoning/history";
 import type { ReasoningAttachment, ReasoningContext, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
-import { cancelLiveRun, detachRunsForView, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
+import { attachLiveRun, attachRunsForConversation, cancelLiveRun, detachRunsForView, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
 import "./qa-studio.css";
 
 /**
@@ -387,7 +387,13 @@ function HistoryRail({ items, loading, activeId, loadingId, confirmingId, onOpen
                       </div>
                     ) : (
                       <>
-                        <button type="button" className="qa-history-open" onClick={() => onOpen(item.id)} disabled={item.pending} title={item.title}>
+                        {/* 运行中的那一行也要能点开（用户口径 2026-10-14）：点它就切到这一轮看进度。 */}
+                        <button
+                          type="button"
+                          className="qa-history-open"
+                          onClick={() => onOpen(item.id)}
+                          title={item.pending ? `${item.title || "未命名对话"}（后台运行中，点开看这一轮）` : item.title}
+                        >
                           <b>{item.title || "未命名对话"}</b>
                           <span className="qa-history-meta">
                             {loadingId === item.id && <Loader2 size={11} className="qa-spin" />}
@@ -492,6 +498,11 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       ...conversations.map((item) => ({ id: item.id, title: item.title, turns: item.turns, updatedAt: item.updatedAt, running: runningIds.has(item.id) })),
     ];
   }, [conversations, liveRuns]);
+  /**
+   * 侧栏该高亮哪一行：通常是当前这段对话；而"还没落库、正在跑"的那一轮没有对话 id，
+   * 它的行 id 是运行 id —— 不认它的话，切过去以后侧栏会没有任何一行是亮的。
+   */
+  const railActiveId = conversationId ?? viewRuns.find((run) => run.running && !run.conversationId)?.runId ?? null;
   /** 还没为当前本体读过列表：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
   const historyPending = history.targetId !== targetId;
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
@@ -721,6 +732,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
        * 留着会在画面上重一遍。还在跑的不能摘 —— 它的内容只在登记处里。
        */
       dropFinishedLiveRuns(conversation.id);
+      // 它可能被「新对话」让到后台过：既然用户点回这段，就把还在跑的那一轮接回画面。
+      attachRunsForConversation(targetId, conversation.id);
       // 记住"现在在看这段"：切走再回来时把画面接回这里，而不是空着。
       rememberConversation(targetId, conversation.id);
       setSession({ targetId, conversationId: conversation.id, turns: conversation.messages.map(messageToTurn) });
@@ -733,6 +746,34 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
       setLoadingConversation(null);
     }
   }, [fail, loadingConversation, refreshConversations, targetId]);
+
+  /**
+   * 侧栏点开一行。
+   *
+   * 那一行的 id 有两种：**历史对话 id**，以及**还没落库的那一轮的运行 id**（"运行中"那一行）。
+   * 后者拿去读历史接口只会 404 —— 用户口径（2026-10-14）：「这里运行中不能切换过去」。
+   * 所以先按运行 id 认一轮：认到了就把画面接回这一轮（它属于哪段对话就开哪段；
+   * 还没落库的新对话直接切到这一段画面上）。
+   */
+  const openRailItem = useCallback(async (id: string) => {
+    const runConversationId = attachLiveRun(id);
+    if (runConversationId === undefined) {
+      // 不是在册的运行 —— 那就是一段历史对话。
+      await openConversation(id);
+      return;
+    }
+    if (runConversationId) {
+      // 它属于某段已有对话：按那段打开，把前面几轮也一起铺出来。
+      await openConversation(runConversationId);
+      return;
+    }
+    if (loadingConversation) return;
+    // 还没落库的新对话：画面直接接到这一轮上，其余为空。
+    forgetLastSeenConversation(targetId);
+    setConfirmingDelete(null);
+    setSession({ targetId, conversationId: null, turns: [] });
+    stickRef.current = true;
+  }, [loadingConversation, openConversation, targetId]);
 
   /**
    * 切走再回来、或者重新挂上这一档时，把画面接回**最近跑完的那一轮**。
@@ -999,10 +1040,10 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         <HistoryRail
           items={railItems}
           loading={historyPending}
-          activeId={conversationId}
+          activeId={railActiveId}
           loadingId={loadingConversation}
           confirmingId={confirmingDelete}
-          onOpen={(id) => void openConversation(id)}
+          onOpen={(id) => void openRailItem(id)}
           onAskDelete={setConfirmingDelete}
           onCancelDelete={() => setConfirmingDelete(null)}
           onConfirmDelete={(id) => void removeConversation(id)}
