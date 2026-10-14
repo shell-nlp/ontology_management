@@ -43,8 +43,8 @@ function navEntries(text: string) {
 describe("左侧导航可见性", () => {
   it("扫到了导航与视图（防止扫描逻辑自己坏掉）", () => {
     const entries = navEntries(sourceText());
-    expect(entries.length).toBeGreaterThanOrEqual(12);
-    expect(declaredViews(sourceText()).length).toBeGreaterThanOrEqual(12);
+    expect(entries.length).toBeGreaterThanOrEqual(10);
+    expect(declaredViews(sourceText()).length).toBeGreaterThanOrEqual(10);
   });
 
   it("每个视图都登记了权限点（null 表示所有登录用户可见）", () => {

@@ -12,7 +12,7 @@ import { TargetManager, NewTargetDialog } from "@/components/workbench/target-ma
 import { VersionBar } from "@/components/workbench/version-bar";
 import { useEffect, useRef, useState } from "react";
 import { Activity, BookOpen, CircleDot, GitBranch, Link2, LogOut, Network, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Sparkles, Table2, Terminal, UserRound, type LucideIcon } from "lucide-react";
-import { ActionStudio } from "@/components/action-studio";
+
 import { AuditLog } from "@/components/audit-log";
 import { type EntitySearchResult } from "@/components/entity-search-picker";
 import { UserRoleManager } from "@/components/user-role-manager";
@@ -51,7 +51,6 @@ export const NAV_SECTIONS: { label: string; items: readonly NavItem[] }[] = [
   { label: "", items: [["overview", "总览", Activity, "ontology.read"]] },
   { label: "本体模型", items: [["ontology", "本体建模", BookOpen, "ontology.read"], ["skills", "本体技能", Sparkles, "ontology.read"]] },
   { label: "本体实例", items: [["graph", "实例图谱", Network, "instance.read"], ["entities", "对象", CircleDot, "instance.read"], ["relations", "关系", Link2, "instance.read"]] },
-  { label: "动力模型", items: [["actions", "动作", ShieldAlert, "ontology.read"], ["rules", "规则", ShieldCheck, "ontology.read"]] },
   { label: "能力验证", items: [["qa", "智能问答", MessagesSquare, "reasoning.use"], ["mcp", "MCP 调试", Terminal, "reasoning.use"]] },
   { label: "平台", items: [["data", "数据资源", Table2, "datasource.read"], ["settings", "设置", Settings2, null]] },
 ];
@@ -98,6 +97,8 @@ export function FunctionalWorkbench() {
   const [focusEntityId, setFocusEntityId] = useState<string | null>(null);
   // 从对象详情跳到「动作」页时带上的预填：动作 + 主对象。
   const [pendingRun, setPendingRun] = useState<{ actionId: string; subject: EntitySearchResult } | null>(null);
+  /** 从对象页跳到「本体建模 → 动力模型」时，指定先落在动作还是规则。 */
+  const [openDynamics, setOpenDynamics] = useState<"actions" | "rules" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -273,9 +274,7 @@ export function FunctionalWorkbench() {
       {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
       {view === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(user); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
-      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} onOpenActions={() => setView("actions")} fail={fail} />}
-      {view === "actions" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={may(userProp, "ontology.write")} canRun={may(userProp, "instance.write")} initialRun={pendingRun} onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
-      {view === "rules" && <ActionStudio definition={definition} versionId={draft?.id} targetId={selectedTarget?.id} canEdit={may(userProp, "ontology.write")} canRun={may(userProp, "instance.write")} initialStage="rules" onSave={saveDefinition} onRan={async () => { await loadVersions(targetId); }} notify={notify} fail={fail} />}
+      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} initialRun={pendingRun} openDynamics={openDynamics} onDynamicsOpened={() => setOpenDynamics(null)} onRan={async () => { await loadVersions(targetId); setPendingRun(null); }} fail={fail} />}
       {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
       {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
       {view === "qa" && <QaStudio
@@ -288,7 +287,7 @@ export function FunctionalWorkbench() {
       />}
       {view === "mcp" && <McpStudio ontologies={ontologies} ontologyId={selectedOntology?.id ?? ""} notify={notify} fail={fail} />}
       {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
-      {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setView("actions"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
+      {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setOpenDynamics("actions"); setView("ontology"); }} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
       {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button>{may(user, "target.read") && <button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>}{may(user, "audit.read") && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}{may(user, "users.manage") && <button type="button" className={settingsTab === "users" ? "active" : ""} aria-pressed={settingsTab === "users"} onClick={() => setSettingsTab("users")}>用户与角色</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} canWrite={may(user, "target.write")} notify={notify} fail={fail} /> : settingsTab === "audit" ? <AuditLog fail={fail} /> : <UserRoleManager me={{ id: user.id, email: user.email }} notify={notify} fail={fail} />}</section>}
     </section>
   </main>;

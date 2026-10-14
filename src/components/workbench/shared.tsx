@@ -44,7 +44,7 @@ export type Target = { id: string; name: string; kind: GraphTargetKind; kindLabe
 
 export type Version = { id: string; target_id: string; version_number: number; status: "DRAFT" | "PUBLISHED" | "ARCHIVED"; definition: Definition; artifact_path?: string | null; entity_count?: number; relationship_count?: number; content_hash?: string | null };
 
-export type View = "overview" | "ontology" | "actions" | "rules" | "qa" | "mcp" | "skills" | "graph" | "entities" | "relations" | "data" | "settings";
+export type View = "overview" | "ontology" | "qa" | "mcp" | "skills" | "graph" | "entities" | "relations" | "data" | "settings";
 
 export type EntityRow = { id: string; labels: string[]; properties: Record<string, unknown> };
 
