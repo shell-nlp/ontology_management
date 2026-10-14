@@ -169,7 +169,19 @@ function assertOperatorCompatible(field: ResolvedField, op: CompareOperator): vo
     throw new QueryDslError("INVALID_QUERY", `操作符「${op}」不支持属性「${field.name}」的类型 ${field.dataType}。`);
   }
   if (["contains", "starts_with", "ends_with"].includes(op) && field.dataType !== "TEXT") {
-    throw new QueryDslError("INVALID_QUERY", `操作符「${op}」只支持 TEXT 属性，「${field.name}」是 ${field.dataType}。`);
+    /*
+     * 日期列上写 LIKE 是最常见的错法（模型想表达"某一天"）：只说"不支持"它会接着试
+     * （2026-10-14 实测连撞 3 次），所以把正确写法直接写进错误里。
+     * **不能建议用 `=`**：列里带时分秒时 `= '当天'` 会静默返回 0 行，比报错更危险。
+     */
+    const temporal = field.dataType === "DATE" || field.dataType === "DATETIME";
+    const howTo = temporal
+      ? `日期不能用 LIKE 取「某一天」：某一天写 ${field.name} >= '2026-09-13' AND ${field.name} < '2026-09-14'，`
+        + `区间写 ${field.name} BETWEEN '2026-09-13' AND '2026-09-30'；`
+        + `字面量用 'YYYY-MM-DD' 或 'YYYY-MM-DD HH24:MI:SS'。`
+        + `（写 = '2026-09-13' 只在列里没有时分秒时才等于当天，列里有时间就一条也匹配不到 —— 别用。）`
+      : `${field.dataType} 属性请用 = / <> / 大小比较 / BETWEEN，或换一个文本属性做模糊匹配。`;
+    throw new QueryDslError("INVALID_QUERY", `操作符「${op}」（LIKE 匹配）只支持 TEXT 属性，「${field.name}」是 ${field.dataType}。${howTo}`);
   }
   if (op === "enum_label" && !field.enumValues.length) {
     throw new QueryDslError("INVALID_QUERY", `属性「${field.name}」没有定义 enumValues，不能用 enum_label。`);

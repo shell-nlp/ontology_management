@@ -60,7 +60,7 @@ export function toolGuide(enabledTools: readonly string[]): string {
   if (has("list_interfaces")) lines.push("- list_interfaces：看接口的属性与关系约束。");
   if (has("list_metrics")) lines.push("- list_metrics：看指标的完整口径（聚合、过滤、维度、单位）。");
   if (has("list_actions")) lines.push("- list_actions：看动作的完整定义。");
-  if (has("run_query")) lines.push("- run_query：**要具体数据优先用它** —— 写本体 SQL（对象类型 / 属性 / 关系类型 / 指标），不要写物理表名、列名。");
+  if (has("run_query")) lines.push("- run_query：**要具体数据优先用它** —— 写本体 SQL（对象类型 / 属性 / 关系类型 / 指标），不要写物理表名、列名。日期属性按天过滤写 >= '当日' AND < '次日'（**不要用 LIKE**；= '当日' 只在列里没有时分秒时才等于当天），区间写 BETWEEN。");
   const ddl = has("get_table_ddl");
   const sql = has("run_sql");
   if (ddl || sql) {

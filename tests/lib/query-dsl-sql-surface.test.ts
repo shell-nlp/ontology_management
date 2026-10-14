@@ -158,6 +158,11 @@ describe("本体 SQL：比较与运算符", () => {
     expect(() => where("产品名称 LIKE '互联网'")).toThrowError(/LIKE 只支持/);
   });
 
+  it("LIKE 用在日期属性上：错误不只说「不支持」，还把按天 / 区间的正确写法给出来", () => {
+    expect(() => 编译("SELECT 地市编码 FROM 专线产品用户 WHERE 统计日期 LIKE '2026-09-13%'")).toThrowError(/日期不能用 LIKE 取「某一天」/);
+    expect(() => 编译("SELECT 地市编码 FROM 专线产品用户 WHERE 统计日期 LIKE '2026-09-13%'")).toThrowError(/统计日期 >= '2026-09-13' AND 统计日期 < '2026-09-14'/);
+  });
+
   it("LABEL(属性) 按枚举标签过滤；取反要走 NOT (...)", () => {
     expect(where("LABEL(业务状态) = '状态正常'")).toEqual({ field: { alias: "root", property: "业务状态" }, op: "enum_label", value: "状态正常" });
     expect(() => where("LABEL(业务状态) <> '状态正常'")).toThrowError(/LABEL\(\.\.\.\) 只支持 =/);

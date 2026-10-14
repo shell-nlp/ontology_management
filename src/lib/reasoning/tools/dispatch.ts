@@ -22,6 +22,18 @@ export function describeBriefly(text: string, limit = 80) {
 }
 
 /**
+ * `QueryDslError` 的第三个参数是"怎么修"（hint），但工具出口以前只回 message —— 写了也没人看见，
+ * 模型只能靠 message 自己撞出正确写法（2026-10-14 实测：日期属性上写 LIKE 连撞 3 次）。
+ * 在这里把 hint 接到 message 上再抛：就地改 message，保留错误码与堆栈。
+ */
+function withQueryHint(error: unknown): unknown {
+  if (error instanceof QueryDslError && error.hint.trim()) {
+    error.message = `${error.message} ${error.hint.trim()}`;
+  }
+  return error;
+}
+
+/**
  * 对象类型这一层的多跳遍历（纯函数，有单测）。
  *
  * 沿关系类型走：起点是 `start`（留空 = 全部对象类型），最多 `hops` 跳（默认 3、上限 5）。
@@ -828,9 +840,13 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         ? args.parameters as Record<string, unknown>
         : {};
       if (!sql) {
-        throw new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码");
+        throw withQueryHint(new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码"));
       }
-      const result = await executeOntologySql(definition, sql, { parameters, targetId: context.store.target.id });
+      /*
+       * 错误里的"怎么修"统一在这里接上再往外抛：模型看得到下一步，才不会接着撞同一堵墙。
+       */
+      const result = await executeOntologySql(definition, sql, { parameters, targetId: context.store.target.id })
+        .catch((error: unknown) => { throw withQueryHint(error); });
       return {
         payload: result,
         // 查询结果不是本体里的对象，不能当"证据"引用。

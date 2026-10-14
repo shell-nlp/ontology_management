@@ -923,3 +923,10 @@ describe("get_table_ddl 自动定位数据资源（不给 data_source 也能查�
     expect(spec.parameters.required).toEqual(["tables"]);
   });
 });
+
+describe("run_query 的错误带路", () => {
+  it("QueryDslError 的 hint 接在 message 后面给模型（以前整条丢掉）", async () => {
+    const context = { store: {} as never, definition: definition(), runtimeTypes };
+    await expect(runReasoningTool("run_query", {}, context)).rejects.toThrowError(/例：SELECT 地市编码, COUNT\(\*\) AS 条数/);
+  });
+});
