@@ -252,6 +252,7 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
           targetId: target,
           entityType: "客户",
           rows: 100,
+          sourceRows: 50000,
           scanned: 50000,
           folded: 0,
           truncated: true,
@@ -260,7 +261,7 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
         });
         const list = await index.listMaterializations(target);
         expect(list).toHaveLength(1);
-        expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, scanned: 50000, folded: 0, truncated: true, pages: 100 });
+        expect(list[0]).toMatchObject({ entityType: "客户", rows: 100, sourceRows: 50000, scanned: 50000, folded: 0, truncated: true, pages: 100 });
         expect(list[0].completedAt).toBeTruthy();
       });
     });
@@ -275,6 +276,7 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
           targetId: target,
           entityType: "客户",
           rows: 800,
+          sourceRows: 1000,
           scanned: 1000,
           folded: 200,
           truncated: false,
@@ -283,7 +285,7 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
         });
         const list = await index.listMaterializations(target);
         expect(list).toHaveLength(1);
-        expect(list[0]).toMatchObject({ entityType: "客户", rows: 800, scanned: 1000, folded: 200, truncated: false });
+        expect(list[0]).toMatchObject({ entityType: "客户", rows: 800, sourceRows: 1000, scanned: 1000, folded: 200, truncated: false });
       });
     });
 
@@ -372,6 +374,7 @@ export function runObjectIndexContract(options: ObjectIndexContractOptions) {
         const stats = await index.stats(target);
         expect(stats.entries).toBe(3);
         expect(stats.byLabel.find((item) => item.label === "客户")?.count).toBe(2);
+        expect(stats.byLabelOrigin.find((item) => item.label === "客户" && item.origin === "SNAPSHOT")?.count).toBe(2);
         expect(stats.updatedAt).toBeTruthy();
       });
     });

@@ -208,30 +208,6 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
 }
 
 /**
- * 从任务列表里**删掉一条记录**（2026-10-12 用户要求：取消之后要能删掉这条记录）。
- *
- * 只允许删**不在跑**的任务：排队/运行中的任务删了会被 drain 重新写回来（库里那行还会复活），
- * 所以口径是"先取消、等它变成已取消/失败/中断，再删"。删的是任务记录本身，**不动物化数据**
- * （要清数据走「清除物化」）。进程重启后内存里的任务会丢，只剩库里那一行 —— 这种情况直接删库里的行。
- */
-export async function deleteMaterializeJob(jobId: string): Promise<{ ok: true } | { ok: false; reason: "RUNNING" | "NOT_FOUND" }> {
-  const state = registry();
-  const job = state.jobs.get(jobId);
-  if (job && (job.status === "QUEUED" || job.status === "RUNNING")) return { ok: false, reason: "RUNNING" };
-  let existed = Boolean(job);
-  try {
-    const repo = await platformRepo(MaterializationJobEntity);
-    const result = await repo.delete({ id: jobId });
-    existed = existed || (result.affected ?? 0) > 0;
-  } catch {
-    if (!job) return { ok: false, reason: "NOT_FOUND" };
-  }
-  state.jobs.delete(jobId);
-  state.queue = state.queue.filter((id) => id !== jobId);
-  return existed ? { ok: true } : { ok: false, reason: "NOT_FOUND" };
-}
-
-/**
  * 取一个任务的**断点**（已经读到第几条）：内存里在跑/刚跑完的优先，其次读库里的历史行
  * （进程重启后任务只剩库里那一行，靠它才能续跑）。任务不存在返回 null。
  */

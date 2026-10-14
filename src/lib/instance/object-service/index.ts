@@ -249,6 +249,7 @@ export async function syncObjectsToIndex(
         targetId: context.targetId,
         entityType: entityTypeName,
         rows: synced.upserted,
+        sourceRows: entries.length,
         scanned: entries.length,
         // 这条路径只是「补一批」，不整份读源，算不出折叠数（folded 只在整份物化那一次有意义）。
         folded: 0,
@@ -306,15 +307,8 @@ export async function materializeObjectType(
   // **默认不限制**（2026-10-12 用户口径）：不传 maxRows 就是"读到源读完"。
   // 传了正数才是硬上限（撞上就 truncated=true 且不 prune，如实报数）。
   const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
-  const entries: ObjectIndexEntry[] = [];
-  const warnings: string[] = [];
   // 断点续跑：offset/scanned 从断点开始（第一页就是"接着上次没读完的那一行"）。
   const startOffset = Math.max(0, Math.floor(options.startOffset ?? 0));
-  let offset = startOffset;
-  let pages = 0;
-  let scanned = startOffset;
-  let total: number | null = null;
-  let truncated = false;
 
   /*
    * 深表翻页走**键集（游标）**：按主键列升序排，下一页只取"排序键 > 上一页最后一个键"的行。
@@ -335,73 +329,144 @@ export async function materializeObjectType(
       }
     }
   }
-  let cursorActive = cursorColumns.length > 0;
-  let cursorValues: unknown[] | null = null;
+  /**
+   * 跑一整趟读取。`useCursor=false` 时走 OFFSET，专门给"主键不唯一导致游标漏行"做兜底重读。
+   * 返回完整结果再交给调用方决定写不写索引；中途失败绝不写半份。
+   */
+  const readPages = async (input: { startOffset: number; useCursor: boolean; reportProgress: boolean }) => {
+    const readEntries: ObjectIndexEntry[] = [];
+    const readWarnings: string[] = [];
+    let offset = input.startOffset;
+    let pages = 0;
+    let scanned = input.startOffset;
+    let total: number | null = null;
+    let truncated = false;
+    let cancelled = false;
+    let stalled = false;
+    let cursorActive = input.useCursor && cursorColumns.length > 0;
+    let cursorValues: unknown[] | null = null;
+    /** 上一页的"身份签名"：整整一页跟上一页一模一样 = 源侧分页没前进。 */
+    let previousPageKey: string | null = null;
 
-  let cancelled = false;
-  /** 上一页的"身份签名"：整整一页跟上一页一模一样 = 源侧分页没前进。 */
-  let previousPageKey: string | null = null;
-  let stalled = false;
-  while (scanned < maxRows) {
-    if (options.shouldCancel?.()) { cancelled = true; break; }
-    const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
-    // 第一页也按同一组列排序（此时还没有 values）：否则第一页无序，游标会从中间插进去 —— 既漏行又重复读。
-    const useCursor = cursorActive ? { columns: cursorColumns, ...(cursorValues ? { values: cursorValues } : {}) } : null;
-    // 只有第一页问总数：物化不需要每页都 COUNT(*)；游标翻页时 offset 让位给游标（传 0）。
-    const result = await source.query(context.definition, entityTypeName, {
-      entityType: entityTypeName,
-      limit,
-      offset: useCursor ? 0 : offset,
-      count: pages === 0,
-      // 自己在翻页：这一页读满 500 不是"被截断"，别刷假告警。
-      paging: true,
-      ...(useCursor ? { cursor: useCursor } : {}),
-    });
-    options.onProgress?.({ scanned: scanned + result.rows.length, rows: entries.length + result.rows.length, pages: pages + 1 });
-    warnings.push(...result.warnings);
-    if (total === null && Number.isFinite(result.total)) total = result.total;
-    pages += 1;
-    scanned += result.rows.length;
-    for (const record of result.rows) {
-      if (record.objectId) {
-        entries.push(buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties }));
+    while (scanned < maxRows) {
+      if (options.shouldCancel?.()) { cancelled = true; break; }
+      const limit = Number.isFinite(maxRows) ? Math.min(pageSize, maxRows - scanned) : pageSize;
+      // 第一页也按同一组列排序（此时还没有 values）：否则第一页无序，游标会从中间插进去 —— 既漏行又重复读。
+      const useCursor = cursorActive ? { columns: cursorColumns, ...(cursorValues ? { values: cursorValues } : {}) } : null;
+      // 只有第一页问总数：物化不需要每页都 COUNT(*)；游标翻页时 offset 让位给游标（传 0）。
+      const result = await source.query(context.definition, entityTypeName, {
+        entityType: entityTypeName,
+        limit,
+        offset: useCursor ? 0 : offset,
+        count: pages === 0,
+        // 自己在翻页：这一页读满 500 不是"被截断"，别刷假告警。
+        paging: true,
+        ...(useCursor ? { cursor: useCursor } : {}),
+      });
+      if (input.reportProgress) {
+        options.onProgress?.({ scanned: scanned + result.rows.length, rows: readEntries.length + result.rows.length, pages: pages + 1 });
       }
-    }
-    // 这一页没读满 = 源读完了；读满就继续下一页。
-    if (result.rows.length < limit) break;
-    /*
-     * **翻页没前进就停**（绝不空转）：源侧分页一旦不生效（offset 被丢、或 Oracle 的 ROWNUM
-     * 深翻页到了上限），每页都会"读满"，循环就会永远跑下去、scanned 越报越大，而索引里其实
-     * 只有第一页那几百条（2026-10-12 真踩过：837 行的表被报成 28000 条 / 56 页）。
-     * 判据是"这一页的对象身份跟上一页完全相同" —— 正常数据不会连续两页一模一样。
-     */
-    const pageKey = JSON.stringify(result.rows.map((record) => record.objectRef || record.objectId || record.title));
-    if (pageKey === previousPageKey) { stalled = true; break; }
-    previousPageKey = pageKey;
-    /*
-     * 下一页的游标 = 这一页最后一行的主键值（取**原始列值**，不是规范化后的字符串：
-     * 日期之类按原始类型绑回去才比得准）。主键值拿不全就退回 OFFSET 翻页，绝不带半个游标往下走。
-     */
-    if (cursorActive) {
-      const last = result.rows[result.rows.length - 1];
-      const next = last ? cursorProperties.map((property) => last.properties[property]) : null;
-      if (next && next.every((value) => value !== undefined && value !== null)) {
-        cursorValues = next;
-      } else {
-        cursorActive = false;
-        cursorValues = null;
+      readWarnings.push(...result.warnings);
+      if (total === null && Number.isFinite(result.total)) total = result.total;
+      pages += 1;
+      scanned += result.rows.length;
+      for (const record of result.rows) {
+        if (record.objectId) {
+          readEntries.push(buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties }));
+        }
       }
+      // 这一页没读满 = 源读完了；读满就继续下一页。
+      if (result.rows.length < limit) break;
+      /*
+       * **翻页没前进就停**（绝不空转）：源侧分页一旦不生效（offset 被丢、或 Oracle 的 ROWNUM
+       * 深翻页到了上限），每页都会"读满"，循环就会永远跑下去、scanned 越报越大，而索引里其实
+       * 只有第一页那几百条（2026-10-12 真踩过：837 行的表被报成 28000 条 / 56 页）。
+       * 判据是"这一页的对象身份跟上一页完全相同" —— 正常数据不会连续两页一模一样。
+       */
+      const pageKey = JSON.stringify(result.rows.map((record) => record.objectRef || record.objectId || record.title));
+      if (pageKey === previousPageKey) { stalled = true; break; }
+      previousPageKey = pageKey;
+      /*
+       * 下一页的游标 = 这一页最后一行的主键值（取**原始列值**，不是规范化后的字符串：
+       * 日期之类按原始类型绑回去才比得准）。主键值拿不全就退回 OFFSET 翻页，绝不带半个游标往下走。
+       */
+      if (cursorActive) {
+        const last = result.rows[result.rows.length - 1];
+        const next = last ? cursorProperties.map((property) => last.properties[property]) : null;
+        if (next && next.every((value) => value !== undefined && value !== null)) {
+          cursorValues = next;
+        } else {
+          cursorActive = false;
+          cursorValues = null;
+        }
+      }
+      offset += result.rows.length;
+      if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
     }
-    offset += result.rows.length;
-    if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
+
+    if (stalled) {
+      readWarnings.push(
+        "源侧分页没有前进（每页读到的还是上一批对象），已停止：这个对象类型只物化了第一页。" +
+        "请先把数据来源的分页 / 深翻页上限修好，再重新整份物化。",
+      );
+    }
+    return { entries: readEntries, warnings: readWarnings, pages, scanned, total, truncated, cancelled, stalled };
+  };
+
+  const cursorAttempted = startOffset === 0 && cursorColumns.length > 0;
+  let read = await readPages({ startOffset, useCursor: cursorAttempted, reportProgress: true });
+
+  /*
+   * 主键游标的严格 `k > last` 在两个页边界遇到重复主键时，会跳过同一主键的其它行。
+   * 这不是"主键折叠"的显示问题，而是真少读：游标读完后拿源侧总数对账，一旦少读就从 0 用 OFFSET 重读。
+   * 小表兜底能读全；大表若 OFFSET 也不可用，宁可让任务失败，也绝不把半份写成"物化完成"。
+   */
+  if (
+    startOffset === 0 &&
+    !read.truncated &&
+    !read.cancelled &&
+    !read.stalled &&
+    typeof read.total === "number" &&
+    read.total > read.scanned
+  ) {
+    if (!cursorAttempted) {
+      throw new Error(
+        `源里共 ${read.total} 行，这一趟只读到 ${read.scanned} 行：当前分页方式没有读全。` +
+          "请改用取数口径（先去重），或者把主键换成真正唯一的键。",
+      );
+    }
+    const cursorScanned = read.scanned;
+    const sourceTotal = read.total;
+    const cursorWarnings = [
+      ...read.warnings,
+      `主键游标分页只读到 ${cursorScanned}/${sourceTotal} 行（重复主键在页边界被跳过），已自动改用 OFFSET 从头重读。`,
+    ];
+    try {
+      read = await readPages({ startOffset: 0, useCursor: false, reportProgress: false });
+      read.warnings.unshift(...cursorWarnings);
+    } catch (error) {
+      throw new Error(
+        `主键在源数据里不唯一，主键游标只读到 ${cursorScanned}/${sourceTotal} 行；` +
+          `OFFSET 兜底重读失败：${error instanceof Error ? error.message : String(error)}。` +
+          "请改用取数口径（先去重），或者把主键换成真正唯一的键。",
+      );
+    }
+    options.onProgress?.({ scanned: read.scanned, rows: read.entries.length, pages: read.pages });
+    if (
+      !read.truncated &&
+      !read.cancelled &&
+      !read.stalled &&
+      typeof read.total === "number" &&
+      read.total > read.scanned
+    ) {
+      throw new Error(
+        `源里共 ${read.total} 行，主键游标和 OFFSET 兜底都只读到 ${read.scanned} 行，不能把半份当完成。` +
+          "请改用取数口径（先去重），或者把主键换成真正唯一的键。",
+      );
+    }
   }
 
-  if (stalled) {
-    warnings.push(
-      "源侧分页没有前进（每页读到的还是上一批对象），已停止：这个对象类型只物化了第一页。" +
-      "请先把数据来源的分页 / 深翻页上限修好，再重新整份物化。",
-    );
-  }
+  const { entries, warnings, pages, scanned, total, truncated, cancelled, stalled } = read;
   const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
     versionId: context.versionId,
     origin: "MATERIALIZED",
@@ -450,6 +515,7 @@ export async function materializeObjectType(
     targetId: context.targetId,
     entityType: entityTypeName,
     rows: synced.upserted,
+    sourceRows: total ?? scanned,
     scanned,
     folded,
     truncated: truncated || cancelled || stalled,
@@ -602,6 +668,7 @@ export async function materializeRelationshipType(
     targetId: context.targetId,
     entityType: relation.name,
     rows: synced.upserted,
+    sourceRows: total ?? scanned,
     scanned,
     // 边没有「主键重复折叠」这回事：同一条边的重复行本来就该合成一条。
     folded: 0,

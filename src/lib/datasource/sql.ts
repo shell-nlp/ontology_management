@@ -1061,7 +1061,13 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
                * 把数组转成 `{ "1": v1, "2": v2 }`（Oracle 的绑定名就是数字）后驱动才认得。
                * 直接 `getRawMany()` 在 Oracle 上会丢掉绑定值 —— 过滤条件悄悄变成"匹配不到任何行"。
                */
-              const skip = Math.min(offset, ORACLE_MAX_OFFSET);
+              if (offset > ORACLE_MAX_OFFSET) {
+                throw new Error(
+                  `Oracle 普通 OFFSET 分页最多支持 ${ORACLE_MAX_OFFSET} 行；当前要跳过 ${offset} 行，` +
+                    "继续翻页会重复读同一段数据。请给对象类型配一个真正唯一的排序键，或改用先去重的取数口径。",
+                );
+              }
+              const skip = offset;
               builder.andWhere(`ROWNUM <= ${rows + 1 + skip}`);
               const [sql, values] = builder.getQueryAndParameters();
               statement = sql;

@@ -410,6 +410,7 @@ body.resizing-manager-split * { cursor:col-resize !important; }
 .index-type small { display:block; margin-top:3px; color:#8695a8; font-family:ui-monospace,"Cascadia Code",monospace; font-size:10px; }
 .index-cell { color:#41556b; font-variant-numeric:tabular-nums; }
 .index-cell.muted { color:#9aa8b8; }
+.index-materialization-cell { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
 .index-state { font-style:normal; font-size:11px; padding:3px 7px; border-radius:3px; border:1px solid; }
 .index-state.full { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; }
 .index-state.partial { color:#b45309; background:#fffbeb; border-color:#fde68a; }

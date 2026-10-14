@@ -97,7 +97,10 @@ export type ObjectSearchResult = {
 
 export type ObjectIndexStats = {
   entries: number;
+  /** 当前索引里按对象类型标签统计的对象数（所有来源合计，用于“当前对象”）。 */
   byLabel: { label: string; count: number }[];
+  /** 按对象类型标签 + 来源拆开的计数（用于区分快照对象与物化对象）。 */
+  byLabelOrigin: { label: string; origin: ObjectIndexOrigin; count: number }[];
   /** 关系（边）行数；图谱与多跳遍历靠它。 */
   links: number;
   /** 按关系类型的边数分布。 */
@@ -159,8 +162,10 @@ export type ObjectLinkSearchResult = {
 export type ObjectIndexMaterialization = {
   targetId: string;
   entityType: string;
-  /** 写进索引的条数。 */
+  /** 这一次物化提交/写入索引的条目数；**不等于当前对象数**。 */
   rows: number;
+  /** 最近一次物化时源侧报告的总行数；源不支持总数时退化为 scanned。 */
+  sourceRows: number;
   /** 从源里读过的行数（撞上限时 = 上限）。 */
   scanned: number;
   /**

@@ -21,6 +21,7 @@ import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 type Materialization = {
   entityType: string;
   rows: number;
+  sourceRows: number;
   scanned: number;
   /** 源里被主键折叠掉的行数：读过的行 - 去重后的对象数。> 0 说明主键在源数据里不唯一。 */
   folded: number;
@@ -48,7 +49,14 @@ type MaterializeJob = {
 };
 
 type Capabilities = { available: boolean; fullText: boolean; trigram: boolean; vector: boolean; embeddingDim: number | null; reason?: string };
-type Stats = { entries: number; byLabel: { label: string; count: number }[]; links: number; byRelationship: { label: string; count: number }[]; updatedAt: string | null };
+type Stats = {
+  entries: number;
+  byLabel: { label: string; count: number }[];
+  byLabelOrigin: { label: string; origin: "SNAPSHOT" | "MATERIALIZED"; count: number }[];
+  links: number;
+  byRelationship: { label: string; count: number }[];
+  updatedAt: string | null;
+};
 
 export type IndexTypeRow = {
   name: string;
@@ -136,8 +144,6 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
   const [completionFilter, setCompletionFilter] = useState<"ALL" | "PENDING" | "DONE">("ALL");
   /** 已点取消、还在等服务端回执的任务 id（这一小段时间界面先显示「取消中…」）。 */
   const [cancelling, setCancelling] = useState<string[]>([]);
-  /** 正在删记录的任务 id。 */
-  const [deleting, setDeleting] = useState<string[]>([]);
   /** 每页读多少行（源侧分页大小）。上限 500 —— 页面越大，单次查询越重。 */
   const [pageSize, setPageSize] = useState(500);
 
@@ -321,22 +327,10 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
     }
   };
 
-  // 删掉一条任务记录（不动物化数据）：只对不在跑的任务开放，正在跑的会被服务端拒绝。
-  const deleteJob = async (jobId: string) => {
-    setDeleting((current) => (current.includes(jobId) ? current : [...current, jobId]));
-    try {
-      await api(`/api/objects/materialize-type?deleteJobId=${encodeURIComponent(jobId)}`, { method: "DELETE" });
-      await load();
-    } catch (reason) {
-      fail(reason);
-    } finally {
-      setDeleting((current) => current.filter((id) => id !== jobId));
-    }
-  };
-
   const busy = queuing;
 
-  const snapshotCount = (name: string) => stats?.byLabel.find((item) => item.label === name)?.count ?? 0;
+  const currentObjectCount = (name: string) => stats?.byLabel.find((item) => item.label === name)?.count ?? 0;
+  const snapshotCount = (name: string) => stats?.byLabelOrigin.find((item) => item.label === name && item.origin === "SNAPSHOT")?.count ?? 0;
   const indexed = (name: string) => rows.find((item) => item.entityType === name);
   /** 这个类型最近一条任务（服务端已按 `kind|类型` 去重，一个类型最多一条）。 */
   const jobFor = (kind: "OBJECT_TYPE" | "RELATIONSHIP_TYPE", name: string) =>
@@ -491,15 +485,16 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
               <small>{type.sourceLabel || "未绑定数据资源"}</small>
             </span>
             <span className={type.sourceLabel ? "index-cell" : "index-cell muted"}>{type.sourceLabel ? "可读取" : "不可读"}</span>
-            <span className="index-cell">
+            <span className="index-cell index-materialization-cell">
+              <em className={state === "none" ? "index-state none" : "index-state full"}>当前对象 {currentObjectCount(type.name)} 个</em>
               {state === "none" && <em className="index-state none">未物化</em>}
-              {state === "full" && <em className="index-state full">已整份物化 {item?.rows ?? 0} 条</em>}
+              {state !== "none" && <em className={state === "full" ? "index-state full" : "index-state partial"}>源表 {item?.sourceRows ?? item?.scanned ?? 0} 行</em>}
               {state === "full" && (item?.folded ?? 0) > 0 && (
                 <em className="index-state partial" title="源里读到的行比对象多：主键在源数据里不唯一，重复的行被并进了同一个对象">
-                  主键重复折叠 {item?.folded ?? 0} 行
+                  折叠 {item?.folded ?? 0} 行
                 </em>
               )}
-              {state === "partial" && <em className="index-state partial">只补过一批 · {item?.rows ?? 0} 条</em>}
+              {state === "partial" && <em className="index-state partial">只补过一批 · 扫描 {item?.scanned ?? 0} 行</em>}
               {job && <JobStateInline job={job} cancelling={cancelling.includes(job.id)} />}
             </span>
             <span className="index-cell">{snapshotCount(type.name)} 条</span>
@@ -523,10 +518,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
                 ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
                 : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
               {job && !jobBusy && job.status !== "DONE" && (
-                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
-              )}
-              {job && !jobBusy && (
-                <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="删掉这条任务记录（不动物化数据；要清数据用「清除物化」）" onClick={() => void deleteJob(job.id)}>删记录</button>
+                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过；失败在开头时就是重试" onClick={() => void resume(job)}>{job.status === "FAILED" && job.scanned === 0 ? "重试物化" : "继续物化"}</button>
               )}
             </span>
           </div>
@@ -585,10 +577,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
                 ? <button className="quiet-button small" disabled title="正在读完当前这一页，读完就停">取消中…</button>
                 : <button className="quiet-button small" disabled={!mayWrite} title="排队中会立刻取消；运行中会在当前这一页读完后停" onClick={() => void cancel(job.id)}>取消</button>)}
               {job && !jobBusy && job.status !== "DONE" && (
-                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过" onClick={() => void resume(job)}>从断点继续</button>
-              )}
-              {job && !jobBusy && (
-                <button className="quiet-button small" disabled={!mayWrite || deleting.includes(job.id)} title="删掉这条任务记录（不动物化边；要清边用「清除物化」）" onClick={() => void deleteJob(job.id)}>删记录</button>
+                <button className="quiet-button small" disabled={!mayWrite || queuing} title="从上次读到的地方接着跑，不从头来过；失败在开头时就是重试" onClick={() => void resume(job)}>{job.status === "FAILED" && job.scanned === 0 ? "重试物化" : "继续物化"}</button>
               )}
             </span>
           </div>;
