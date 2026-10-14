@@ -3,7 +3,7 @@ import { userMessageContent } from "@/lib/reasoning/attachments";
 import type { ReasoningHistory } from "@/lib/reasoning/history";
 import { llmModel, llmSettings, thinkingProviderOptions } from "@/lib/reasoning/provider";
 import { buildInstructions } from "@/lib/reasoning/prompt";
-import { reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
+import { enabledReasoningToolNames, reasoningToolSet, type ToolContext } from "@/lib/reasoning/tools";
 import { toolResultSummary } from "@/lib/reasoning/tool-summary";
 import type { ReasoningAttachment, ReasoningEvidence, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 
@@ -129,14 +129,23 @@ export async function runReasoning(options: RunReasoningOptions): Promise<Reason
    */
   let stepCount = 0;
 
+  /*
+   * 工具清单先算出来，**提示词与工具集用同一份**：关掉的工具既不能进工具集，也不能出现在提示词里 ——
+   * 否则模型会照着一个不存在的名字去调（见 prompt.ts 的 toolGuide 与 dispatch.ts 的 enabledReasoningToolNames）。
+   */
+  const disabledTools = options.disabledTools ?? [];
+  const enabledTools = enabledReasoningToolNames(disabledTools);
+  // 工具自己也要知道这一轮开没开某个工具：它返回给模型的文字里不能提关掉的名字（见 registry.ts 的 ToolContext.enabledTools）。
+  const toolContext = { ...options.context, enabledTools };
+
   const agent = new ToolLoopAgent({
     model: llmModel(settings),
     // 提示词可由用户在「问答配置」里改；本体概念清单永远由 buildInstructions 接在后面，
     // 对话上文摘要接在概念清单之后（见 prompt.ts 对顺序的说明）。
-    instructions: buildInstructions(options.systemPrompt, options.context, { historySummary: options.history?.summary }),
-    tools: reasoningToolSet(options.context, (toolCallId, items) => {
+    instructions: buildInstructions(options.systemPrompt, toolContext, { historySummary: options.history?.summary, enabledTools }),
+    tools: reasoningToolSet(toolContext, (toolCallId, items) => {
       evidenceByCall.set(toolCallId, items.map((item) => ({ ...item, step: 0 })));
-    }, options.disabledTools ?? []),
+    }, disabledTools),
     stopWhen: stepCountIs(maxSteps),
     // 思考开关必须放在构造层：AgentCallParameters（stream()/generate() 的入参）没有 providerOptions。
     providerOptions: thinkingProviderOptions(options.thinking),

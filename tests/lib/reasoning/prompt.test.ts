@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildInstructions, DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt, schemaBrief } from "@/lib/reasoning/prompt";
+import { buildInstructions, DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt, schemaBrief, toolGuide } from "@/lib/reasoning/prompt";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/framework/graph/types";
 
@@ -58,6 +58,14 @@ describe("schemaBrief", () => {
     expect(brief).not.toContain("42");
     expect(brief).not.toContain("7 条");
   });
+
+  it("工具关了，就不再把它的 data_source 提示写给模型", () => {
+    const withSource = { store: {} as never, definition: definition(), runtimeTypes, dataSources: [{ id: "s", name: "Oracle 测试", kind: "ORACLE", schema_name: "GISTOOLS" }] as never };
+    expect(schemaBrief(withSource, ["search_schema"])).not.toContain("data_source 用这里的名字");
+    expect(schemaBrief(withSource, ["search_schema", "run_sql"])).toContain("run_sql 的 data_source 用这里的名字");
+    // 不传 = 老行为（单测与老调用方不受影响）
+    expect(schemaBrief(withSource)).toContain("get_table_ddl / run_sql 的 data_source 用这里的名字");
+  });
 });
 
 describe("buildInstructions", () => {
@@ -68,11 +76,38 @@ describe("buildInstructions", () => {
     expect(instructions).toContain("概念分组：客户域（2 个：客户、用户）");
   });
 
-  it("工具清单里有 run_query 就优先用它，没打开就直接走 run_sql 兜底", () => {
-    const instructions = buildInstructions(undefined, context());
-    expect(instructions).toContain("优先用 run_query");
-    expect(instructions).toContain("没看到这个工具就直接走后面的 get_table_ddl + run_sql");
-    expect(instructions).toContain("兜底");
+  /*
+   * 这一组是 2026-10-14 用户实测的回归：管理员在「MCP 调试」里关掉 get_table_ddl，
+   * 工具清单里已经没有它了，可提示词还写着"先 get_table_ddl 看表结构"，模型照着调，
+   * 回一条 `AI_NoSuchToolError: Model tried to call unavailable tool 'get_table_ddl'`。
+   * 判据：**关掉的工具名在最终 instructions 里一个字都不能出现**。
+   */
+  it("关掉的工具不会出现在提示词里（模型看不到，就不该让它去调）", () => {
+    const instructions = buildInstructions(undefined, context(), {
+      enabledTools: ["search_schema", "get_object_type", "list_concept_groups", "traverse_object_types", "run_query"],
+    });
+    expect(instructions).toContain("本轮可用工具");
+    expect(instructions).toContain("run_query：**要具体数据优先用它**");
+    expect(instructions).not.toContain("get_table_ddl");
+    expect(instructions).not.toContain("run_sql");
+  });
+
+  it("提示词正文不再写死任何工具名（工具名只由「本轮可用工具」一节给）", () => {
+    for (const name of ["search_schema", "get_object_type", "traverse_object_types", "list_concept_groups", "list_interfaces", "list_metrics", "list_actions", "run_query", "get_table_ddl", "run_sql"]) {
+      expect(DEFAULT_SYSTEM_PROMPT).not.toContain(name);
+    }
+  });
+
+  it("只开源表那条路时，说明里给的是 get_table_ddl + run_sql", () => {
+    const instructions = buildInstructions(undefined, context(), { enabledTools: ["search_schema", "get_object_type", "get_table_ddl", "run_sql"] });
+    expect(instructions).toContain("先 get_table_ddl");
+    expect(instructions).not.toContain("run_query");
+  });
+
+  it("一个取数工具都没开时，明说这一轮取不了数", () => {
+    const instructions = buildInstructions(undefined, context(), { enabledTools: ["search_schema", "get_object_type"] });
+    expect(instructions).toContain("当前不开放取数");
+    expect(toolGuide(["search_schema"])).not.toContain("get_table_ddl");
   });
   it("空白（只打了空格）也算没配", () => {
     expect(buildInstructions("   \n  ", context()).startsWith(DEFAULT_SYSTEM_PROMPT)).toBe(true);
@@ -84,6 +119,13 @@ describe("buildInstructions", () => {
     expect(instructions).not.toContain("你是本体（ontology）推理助手");
     // 概念清单是数据不是提示词：无论用哪段提示词都自动带上
     expect(instructions).toContain("当前本体的概念清单");
+  });
+
+  it("自定义提示词也去不掉工具一节：它由代码按这一轮的真实开关生成", () => {
+    const instructions = buildInstructions("你是专线业务的助手，回答必须先说结论。", context(), { enabledTools: ["search_schema", "run_query"] });
+    expect(instructions).toContain("你是专线业务的助手，回答必须先说结论。");
+    expect(instructions).toContain("本轮可用工具");
+    expect(instructions).not.toContain("get_table_ddl");
   });
 });
 

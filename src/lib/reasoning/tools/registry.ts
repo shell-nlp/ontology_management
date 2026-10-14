@@ -25,7 +25,20 @@ export type ToolContext = {
    * 不填 = 用工具自己的兜底上限。
    */
   sqlRowLimit?: number;
+  /**
+   * 这一轮**实际发给模型**的工具名（`enabledReasoningToolNames()` 算出来那份）。
+   *
+   * 关掉一个工具不只是把它从工具清单里摘掉：**工具自己返回给模型的文字里也不能再提它的名字** ——
+   * 模型看到"先调 get_table_ddl"，多半就照着去调一个不存在的工具（2026-10-14 实测）。
+   * 用 `toolEnabled(context, name)` 判。不传 = 不做裁剪（老调用方与单测）。
+   */
+  enabledTools?: readonly string[];
 };
+
+/** 这一轮这个工具有没有开放。不传 `enabledTools` = 认为开着（维持老文案）。 */
+export function toolEnabled(context: { enabledTools?: readonly string[] }, name: string): boolean {
+  return !context.enabledTools || context.enabledTools.includes(name);
+}
 
 export type ConceptKind = "OBJECT_TYPE" | "RELATION_TYPE" | "ACTION" | "PROPERTY" | "INTERFACE" | "METRIC";
 

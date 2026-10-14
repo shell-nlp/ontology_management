@@ -47,9 +47,17 @@ async function handleMessage(
   if (method === "notifications/initialized" || method.startsWith("notifications/")) return null;
 
   if (method === "initialize") {
+    /*
+     * 说明里只列**这个端点这一轮真正开放**的工具：关掉的工具名字一旦出现在这里，
+     * 外部客户端会照着让模型去调，然后拿一条"没有叫这个名字的工具"（跟智能问答那条路同一个坑，见 prompt.ts 的 toolGuide）。
+     */
+    const enabled = mcpTools(options.listPolicy.disabledTools).map((tool) => tool.name);
+    const toolLine = enabled.length
+      ? `本轮开放的工具是：${enabled.join(" / ")}（只能调这些名字，清单里没有的一律不要调）。`
+      : "这一轮没有开放任何工具。";
     const instructions = options.pinned
-      ? `这是本体平台的 MCP 服务，已经绑定到本体「${options.pinned.name}」（id ${options.pinned.id}）：所有工具都会自动用这个本体，你不必自己填 ontology_id，也不要改它。用 search_schema 确认概念名，再用 get_object_type / list_actions / get_table_ddl / run_sql 读定义与数据。只读，且只覆盖本体定义这一层（不查实例数据）。`
-      : "这是本体平台的 MCP 服务，一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁；也可以改用本体级端点 /api/mcp/<本体 id>，那里地址已把本体钉死，无需自己填。用 search_schema 确认概念名，再用 get_object_type / list_actions 读对象类型与动作的定义。本服务只覆盖本体定义这一层（对象类型、属性、关系类型、动作、数据来源绑定），不查实例数据；所有工具只读。";
+      ? `这是本体平台的 MCP 服务，已经绑定到本体「${options.pinned.name}」（id ${options.pinned.id}）：所有工具都会自动用这个本体，你不必自己填 ontology_id，也不要改它。先用 search_schema 确认概念名，再读定义与数据。${toolLine}只读，且只覆盖本体定义这一层（不查实例数据）。`
+      : `这是本体平台的 MCP 服务，一个端点覆盖平台上所有本体：每次调用由参数 ontology_id 决定查谁；也可以改用本体级端点 /api/mcp/<本体 id>，那里地址已把本体钉死，无需自己填。先用 search_schema 确认概念名，再读对象类型、属性、关系类型、动作的定义。${toolLine}本服务只覆盖本体定义这一层（对象类型、属性、关系类型、动作、数据来源绑定），不查实例数据；所有工具只读。`;
     return {
       jsonrpc: "2.0" as const,
       id: id ?? null,

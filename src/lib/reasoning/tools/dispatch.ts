@@ -1,4 +1,4 @@
-import { ToolContext, ConceptKind, CONCEPT_KINDS, DEFAULT_SEARCH_MATCHES, MAX_SEARCH_MATCHES, SQL_ROW_CEILING, DEFAULT_SQL_ROWS, REASONING_TOOLS } from "./registry";
+import { ToolContext, toolEnabled, ConceptKind, CONCEPT_KINDS, DEFAULT_SEARCH_MATCHES, MAX_SEARCH_MATCHES, SQL_ROW_CEILING, DEFAULT_SQL_ROWS, REASONING_TOOLS } from "./registry";
 import { schemaConcepts, schemaQueryHasStrongHit, rankSchemaConcepts } from "./search";
 import { objectContextOf, instanceOf, keyMappingsOf, dataSourcesForTable, objectTypesBoundTo, clamp, DEFAULT_TRAVERSE_HOPS, MAX_TRAVERSE_HOPS, TypeGraphNode, TypeGraphEdge, interfaceDerivedLinks, TraverseDirection, parseTraverseDirection, TypeGraphTraversal } from "./projection";
 import { jsonSchema, tool } from "ai";
@@ -176,8 +176,21 @@ export function reasoningToolSet(
     },
   });
   // 标记为 disabled 的工具不进模型能看到的那份工具集（MCP 调试页里仍然灰着列出来）。
+  const enabled = new Set(enabledReasoningToolNames(disabledTools));
+  return Object.fromEntries(REASONING_TOOLS.filter((spec) => enabled.has(spec.name)).map((spec) => [spec.name, build(spec)]));
+}
+
+/**
+ * 这一轮真正能发给模型的工具名（平台自己停用的 + 用户关掉的都去掉）。
+ *
+ * **工具集与系统提示词共用这一处**：关工具不只是把它从工具清单里摘掉，提示词里也不能再提它 ——
+ * 只掐一头等于没关，模型会照着提示词去调一个不存在的名字，回一条
+ * `AI_NoSuchToolError: Model tried to call unavailable tool 'get_table_ddl'`
+ * （2026-10-14 用户实测：手动关掉 get_table_ddl，模型仍然去调它）。
+ */
+export function enabledReasoningToolNames(disabledTools: readonly string[] = []): string[] {
   const off = new Set(disabledTools);
-  return Object.fromEntries(REASONING_TOOLS.filter((spec) => !spec.disabled && !off.has(spec.name)).map((spec) => [spec.name, build(spec)]));
+  return REASONING_TOOLS.filter((spec) => !spec.disabled && !off.has(spec.name)).map((spec) => spec.name);
 }
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
@@ -315,12 +328,14 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             : {}),
           hint: noMatch
             ? `「${query}」在对象类型 / 属性 / 关系类型 / 动作 / 接口 / 指标的名字、说明与已缓存的列取值里**都没有命中**。下面这些是按本体概念清单**兜底**给的（不代表本体里有对应概念），别当成命中结果，也别拿它硬凑口径。换个更贴业务的原词再试；如果确认本体内没这个概念，就如实说"本体里还没有这个口径"。`
-            : "这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点，可直接拿去 run_sql 过滤）；要字段级细节调 get_object_type。",
+            : `这些名字是本体里的真实定义，后续查询只能用它们。matched=name 是名字命中；matched=value 是**某列的取值**命中（bound_table + source_column 就是落点${toolEnabled(context, "run_sql") ? "，可直接拿去 run_sql 过滤" : ""}）${toolEnabled(context, "get_object_type") ? "；要字段级细节调 get_object_type" : ""}。`,
           ...(noMatch ? { no_match: true } : {}),
           // 表只能通过对象类型到达：明确写出来，免得模型退回"直接枚举数据源里的表"。
-          note: "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，需要换角度查就用 search_schema、get_object_type。",
+          note: "本平台里表只能通过对象类型到达；不要枚举数据源里的表和列，换关键词重搜，或者看对象类型绑了哪张表。",
           ...(includeValues && !valueTables
-            ? { values_note: "还没有任何列的取值画像（列画像是按天缓存的采样结果）：想按业务码值（例如「互联网专线」）检索，先对相关对象类型绑定的表调一次 get_table_ddl，画像会随表结构一起给出。" }
+            ? { values_note: toolEnabled(context, "get_table_ddl")
+              ? "还没有任何列的取值画像（列画像是按天缓存的采样结果）：想按业务码值（例如「互联网专线」）检索，先对相关对象类型绑定的表调一次 get_table_ddl，画像会随表结构一起给出。"
+              : "还没有任何列的取值画像（列画像是按天缓存的采样结果）：这一轮没开放看表结构的工具，拿不到码值画像 —— 别猜码值，也别用一轮轮分组去试。" }
             : {}),
         },
         // 属性不是可寻址的实体，不做证据；类型、动作、接口、指标才是。
@@ -463,9 +478,19 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
               title_field: source.titleField,
             };
           }),
-          // 一句话点明对象与来源的关系，省得模型把“绑了表”说成“没有数据”。
+          // 一句话点明对象与来源的关系，省得模型把"绑了表"说成"没有数据"。
+          // 提哪条取数路取决于这一轮真开了哪些工具：关掉的工具名字不许出现在给模型的文字里。
           data_source_note: sources.length
-            ? "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。要看真实数据就调 get_table_ddl / run_sql，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。"
+            ? (() => {
+              const lookups = [
+                toolEnabled(context, "get_table_ddl") ? "要看表结构与列画像就调 get_table_ddl" : "",
+                toolEnabled(context, "run_sql") ? "要查真实数据就调 run_sql" : "",
+              ].filter(Boolean);
+              const base = "对象是这个对象类型绑定的表 / 视图里的一行；sources 就是它的数据来源，属性上的 source_field 是它在源表里的列名。";
+              return lookups.length
+                ? `${base}${lookups.join("，")}，表名把 schema 与 view 拼成「模式.表」（例如 GISTOOLS.TB_DIC_AREA_CODE）。`
+                : `${base}这一轮没有开放读源表的工具，拿不到明细数据。`;
+            })()
             : "这个对象类型还没有绑定数据资源，本体里只有定义。",
           // 实现的接口：Palantir 里对象类型靠接口被通用地消费，模型要能顺着接口理解它。
           interfaces: implementsIdsOf(type).map((interfaceId) => {
@@ -732,7 +757,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           ...(profile?.profile?.coverage?.length
             ? {
               sample_coverage: profile.profile.coverage,
-              sample_coverage_note: "sample_coverage 是这个日期列采样覆盖到的日期与每日期行数。column_profile 的取值清单是把这些日期**混在一起**统计的：某个取值只说明采样里出现过，不代表每个日期都有（反过来，清单里没有也不代表那天没有）。按日期过滤前先用 run_sql 确认那天真有这个值。",
+              sample_coverage_note: `sample_coverage 是这个日期列采样覆盖到的日期与每日期行数。column_profile 的取值清单是把这些日期**混在一起**统计的：某个取值只说明采样里出现过，不代表每个日期都有（反过来，清单里没有也不代表那天没有）。${toolEnabled(context, "run_sql") ? "按日期过滤前先用 run_sql 确认那天真有这个值。" : "按日期过滤前先确认那天真有这个值（这一轮没有只读查数工具，验证不了）。"}`,
             }
             : {}),
           ...(profile?.profile?.columns.some((column) => column.padded)
@@ -1015,7 +1040,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       return {
         payload: {
           metrics,
-          note: "指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL 走 run_sql；scope_object_type 是它作用的对象类型，绑定的表在 get_object_type 里。status=verified 才算已验收口径；draft 是还没定稿的（老快照默认也算 draft），引用前先跟用户确认，别把测试残留 / 配置示例当正式口径。",
+          note: `指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL${toolEnabled(context, "run_sql") ? "走 run_sql" : ""}；scope_object_type 是它作用的对象类型${toolEnabled(context, "get_object_type") ? "，绑定的表在 get_object_type 里" : ""}。status=verified 才算已验收口径；draft 是还没定稿的（老快照默认也算 draft），引用前先跟用户确认，别把测试残留 / 配置示例当正式口径。`,
         },
         evidence: metrics.map((metric) => ({ kind: "METRIC" as const, id: metric.name, label: metric.name })),
       };

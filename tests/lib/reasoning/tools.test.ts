@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
-import { dataSourcesForTable, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
+import { dataSourcesForTable, enabledReasoningToolNames, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import { profileTableKey, type ColumnValueIndex } from "@/lib/datasource/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { RuntimeTypeSet } from "@/lib/framework/graph/types";
@@ -126,6 +126,13 @@ describe("工具范围", () => {
     expect(() => reasoningToolSet(context, () => {}, [])).not.toThrow();
     // 被用户关掉的工具不进模型能看到的那一份，别把开关做丢了。
     expect(Object.keys(reasoningToolSet(context, () => {}, ["run_sql"]))).not.toContain("run_sql");
+    /*
+     * 提示词（prompt.ts 的 toolGuide）与工具集**必须是同一份名单**：
+     * 工具集里没有的名字一旦出现在提示词里，模型就会照着调，然后回一条 AI_NoSuchToolError。
+     * 钉住这条不变量，改哪边漏了都会红。
+     */
+    expect(Object.keys(reasoningToolSet(context, () => {}, ["get_table_ddl", "run_sql"]))).toEqual(enabledReasoningToolNames(["get_table_ddl", "run_sql"]));
+    expect(enabledReasoningToolNames(["get_table_ddl"])).not.toContain("get_table_ddl");
   });
 });
 
@@ -361,6 +368,36 @@ describe("get_object_type 的数据来源", () => {
     const payload = outcome.payload as { sources: unknown[]; data_source_note: string };
     expect(payload.sources).toEqual([]);
     expect(payload.data_source_note).toContain("还没有绑定数据资源");
+  });
+
+  /*
+   * 2026-10-14 用户报的坑的"另一半"：工具自己返回给模型的文字里也不能提关掉的工具。
+   * 光把工具从清单里摘掉、提示词也改了，但工具结果里写着"要真实数据就调 get_table_ddl / run_sql"，
+   * 模型照样会去调一个不存在的名字。
+   */
+  it("关掉的工具名字不出现在工具返回给模型的文字里", async () => {
+    const off = await runReasoningTool(
+      "get_object_type",
+      { type_name: "专业线产品用户" },
+      { store: {} as never, definition: boundDefinition(), runtimeTypes, enabledTools: ["search_schema", "get_object_type"] },
+    );
+    const offNote = (off.payload as { data_source_note: string }).data_source_note;
+    expect(offNote).not.toContain("get_table_ddl");
+    expect(offNote).not.toContain("run_sql");
+    expect(offNote).toContain("没有开放读源表的工具");
+
+    const on = await runReasoningTool(
+      "get_object_type",
+      { type_name: "专业线产品用户" },
+      { store: {} as never, definition: boundDefinition(), runtimeTypes, enabledTools: ["search_schema", "get_object_type", "get_table_ddl", "run_sql"] },
+    );
+    const onNote = (on.payload as { data_source_note: string }).data_source_note;
+    expect(onNote).toContain("get_table_ddl");
+    expect(onNote).toContain("run_sql");
+
+    // 不传 enabledTools = 老行为（老调用方不受影响）
+    const legacy = await runReasoningTool("get_object_type", { type_name: "专业线产品用户" }, { store: {} as never, definition: boundDefinition(), runtimeTypes });
+    expect((legacy.payload as { data_source_note: string }).data_source_note).toContain("get_table_ddl");
   });
 
   it("来源没绑数据资源（dataSourceId 为空）时如实标出，并用唯一的模式名匹配兜底给出资源名", async () => {
