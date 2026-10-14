@@ -188,13 +188,28 @@ function aggregateExpression(
   return `${aggregation.toLowerCase()}If(${expression}, ${condition})`;
 }
 
-function compileSelect(plan: LogicalPlan, bag: ParameterBag): { items: string[]; columns: string[]; warnings: string[] } {
+/**
+ * 标签表达式：码值 → `enumValues` 里的中文标签（与 SQL 编译器的 `labelExpression` 同一口径）。
+ * 认不出的码值给 NULL（`multiIf` 的兜底），和 `LABEL(属性) = '标签'` 的过滤语义一致。
+ */
+function labelExpression(field: ResolvedField, bag: ParameterBag): string {
+  if (!field.enumValues.length) {
+    throw new QueryDslError("INVALID_QUERY", `属性「${field.name}」没有定义 enumValues，不能用 LABEL(...) 输出标签。`);
+  }
+  const column = comparableExpr(field, bag);
+  const branches = field.enumValues.map((item) => `${column} = ${addValue(bag, field, item.value)}, ${bag.add(item.label, "String")}`);
+  return `multiIf(${branches.join(", ")}, NULL)`;
+}
+
+function compileSelect(plan: LogicalPlan, bag: ParameterBag, labelExprOf: (field: ResolvedField) => string): { items: string[]; columns: string[]; warnings: string[] } {
   const items: string[] = [];
   const columns: string[] = [];
   const warnings: string[] = [];
   for (const item of plan.select) {
     if (item.kind === "field") {
       items.push(`${propertyExpr(item.field, bag)} AS ${quote(item.as)}`);
+    } else if (item.kind === "label") {
+      items.push(`${labelExprOf(item.field)} AS ${quote(item.as)}`);
     } else if (item.kind === "metric") {
       items.push(`${aggregateExpression(plan, item.metric.aggregation, item.metric.property, item.metric.filters, bag)} AS ${quote(item.as)}`);
       if (item.metric.status === "draft") warnings.push(`指标「${item.metric.name}」状态为 draft，尚未验收。`);
@@ -253,9 +268,25 @@ export function compileLogicalQueryForClickHouse(plan: LogicalPlan, targetId: st
   for (const relationship of plan.relationships) from.push(...compileRelationshipJoin(relationship, database, target, bag));
   if (plan.where) conditions.push(compileExpr(plan, plan.where, bag));
 
-  const select = compileSelect(plan, bag);
+  /*
+   * 标签维度要把**同一个标签表达式**放进 GROUP BY：ClickHouse 不接受"选中的表达式不在 GROUP BY 里"，
+   * 而且它是按表达式结构匹配的 —— SELECT 与 GROUP BY 必须**一字不差**（占位符编号也要一样），
+   * 所以这里缓存同一份字符串给两边用。
+   */
+  const labelCache = new Map<string, string>();
+  const labelExprOf = (field: ResolvedField): string => {
+    const key = `${field.alias}|${field.name}`;
+    const cached = labelCache.get(key);
+    if (cached) return cached;
+    const built = labelExpression(field, bag);
+    labelCache.set(key, built);
+    return built;
+  };
+  const labelFields = new Set<string>();
+  for (const item of plan.select) if (item.kind === "label") labelFields.add(`${item.field.alias}|${item.field.name}`);
+  const select = compileSelect(plan, bag, labelExprOf);
   const group = plan.query.kind === "aggregate" && plan.groupBy.length
-    ? ` GROUP BY ${plan.groupBy.map((field) => propertyExpr(field, bag)).join(", ")}`
+    ? ` GROUP BY ${plan.groupBy.map((field) => (labelFields.has(`${field.alias}|${field.name}`) ? labelExprOf(field) : propertyExpr(field, bag))).join(", ")}`
     : "";
   const order = plan.query.order_by.length
     ? ` ORDER BY ${plan.query.order_by.map((item) => `${resolveOrderExpression(plan, item.ref, bag)} ${item.direction.toUpperCase()}`).join(", ")}`

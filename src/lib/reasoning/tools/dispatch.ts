@@ -7,11 +7,10 @@ import { type DataSourceRecord } from "@/lib/datasource/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology/sources";
 import { cardinalityLabel, cardinalityPhrase } from "@/lib/ontology/relationship-cardinality";
 import { readOnlyPolicyNote } from "@/lib/datasource/sql-guard";
-import { cachedColumnValueIndex, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
+import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";
-import { executeOntologySql } from "@/lib/query-dsl";
-import { QueryDslError } from "@/lib/query-dsl";
+import { columnValuesHint, executeOntologySql, QueryDslError, type QueryDslValueLookup } from "@/lib/query-dsl";
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
@@ -22,15 +21,33 @@ export function describeBriefly(text: string, limit = 80) {
 }
 
 /**
- * `QueryDslError` 的第三个参数是"怎么修"（hint），但工具出口以前只回 message —— 写了也没人看见，
- * 模型只能靠 message 自己撞出正确写法（2026-10-14 实测：日期属性上写 LIKE 连撞 3 次）。
- * 在这里把 hint 接到 message 上再抛：就地改 message，保留错误码与堆栈。
+ * 工具出口的错误加工：`QueryDslError` 的 hint（"怎么修"）与 lookup（"要查哪一列的取值"）
+ * 以前都到不了模型 —— 出口只回 message，写了也没人看见（2026-10-14 实测：日期属性上写 LIKE 连撞 3 次、
+ * 按标签过滤却不知道码值）。这里统一接上：
+ * - hint 直接拼在 message 后面；
+ * - lookup 去**列画像**里捞这一列的真实取值（画像已经采过，只读平台库，不碰源库）。
+ * 就地改 message，保留错误码与堆栈。
  */
-function withQueryHint(error: unknown): unknown {
-  if (error instanceof QueryDslError && error.hint.trim()) {
-    error.message = `${error.message} ${error.hint.trim()}`;
+async function enrichQueryError(error: unknown, definition: OntologyDefinition): Promise<unknown> {
+  if (!(error instanceof QueryDslError)) return error;
+  let message = error.message;
+  if (error.hint.trim()) message = `${message} ${error.hint.trim()}`;
+  if (error.lookup) {
+    const values = await columnValuesFor(definition, error.lookup);
+    message = `${message} ${columnValuesHint(error.lookup.propertyName, values)}`;
   }
+  error.message = message;
   return error;
+}
+
+/** 列画像里的低基数列取值（拿不到就当没有 —— 报错文案不因为查画像失败而变成另一个错）。 */
+async function columnValuesFor(definition: OntologyDefinition, lookup: QueryDslValueLookup): Promise<string[]> {
+  try {
+    const index = await cachedColumnValueIndex(definition);
+    return columnValueOf(index, lookup.schema, lookup.table, lookup.column);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -840,13 +857,16 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         ? args.parameters as Record<string, unknown>
         : {};
       if (!sql) {
-        throw withQueryHint(new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码"));
+        throw await enrichQueryError(
+          new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码"),
+          definition,
+        );
       }
       /*
-       * 错误里的"怎么修"统一在这里接上再往外抛：模型看得到下一步，才不会接着撞同一堵墙。
+       * 错误里的"怎么修"（hint）与"这一列有哪些值"（lookup）统一在这里接上再往外抛。
        */
       const result = await executeOntologySql(definition, sql, { parameters, targetId: context.store.target.id })
-        .catch((error: unknown) => { throw withQueryHint(error); });
+        .catch(async (error: unknown) => { throw await enrichQueryError(error, definition); });
       return {
         payload: result,
         // 查询结果不是本体里的对象，不能当"证据"引用。

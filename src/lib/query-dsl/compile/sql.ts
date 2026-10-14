@@ -166,7 +166,12 @@ function compileCondition(plan: LogicalPlan, expr: Extract<ResolvedExpr, { kind:
       if (typeof raw !== "string") throw new QueryDslError("INVALID_QUERY", "enum_label 只支持字符串标签。");
       const values = enumValues(expr.field, raw);
       if (!values.length) {
-        throw new QueryDslError("INVALID_QUERY", `属性「${expr.field.name}」没有枚举标签「${raw}」。`, "先补 enumValues，或改用显式 eq / in。");
+        const labels = [...new Set(expr.field.enumValues.map((item) => item.label))];
+        throw new QueryDslError(
+          "INVALID_QUERY",
+          `属性「${expr.field.name}」没有枚举标签「${raw}」。`,
+          labels.length ? `这个属性上定义了的标签：${labels.join("、")}。` : "先补 enumValues，或改用显式 eq / in。",
+        );
       }
       return values.length === 1 ? `${comparable} = ${bag.add(values[0])}` : `${comparable} IN (${values.map((item) => bag.add(item)).join(", ")})`;
     }
@@ -213,6 +218,22 @@ function aggregateExpression(
   return `${aggregation}(${wrapped(column)})`;
 }
 
+/**
+ * 标签表达式：码值列 → `enumValues` 里的中文标签。
+ *
+ * 用 searched CASE（不是 `CASE 列 WHEN …`）：Oracle 的 CHAR 列是空格填充的，
+ * `TRIM(列) = :p` 才比得准（与普通过滤同一个口径，见 `comparableColumn`）。
+ * 认不出的码值给 NULL —— 与 `LABEL(属性) = '标签'` 的过滤语义一致：不在枚举里就不算这一档。
+ */
+function labelExpression(field: ResolvedField, kind: DataSourceKind, bag: ParameterBag): string {
+  if (!field.enumValues.length) {
+    throw new QueryDslError("INVALID_QUERY", `属性「${field.name}」没有定义 enumValues，不能用 LABEL(...) 输出标签。`);
+  }
+  const column = comparableColumn(field, kind);
+  const branches = field.enumValues.map((item) => `WHEN ${column} = ${bag.add(item.value)} THEN ${bag.add(item.label)}`);
+  return `CASE ${branches.join(" ")} END`;
+}
+
 function compileMetricExpression(plan: LogicalPlan, metric: ResolvedMetric, kind: DataSourceKind, bag: ParameterBag): string {
   return aggregateExpression(plan, metric.aggregation, metric.property, metric.filters, kind, bag);
 }
@@ -224,6 +245,8 @@ function compileSelect(plan: LogicalPlan, kind: DataSourceKind, bag: ParameterBa
   for (const item of plan.select) {
     if (item.kind === "field") {
       items.push(`${columnRef(item.field, kind)} AS ${quoteIdentifier(kind, item.as)}`);
+    } else if (item.kind === "label") {
+      items.push(`${labelExpression(item.field, kind, bag)} AS ${quoteIdentifier(kind, item.as)}`);
     } else if (item.kind === "metric") {
       items.push(`${compileMetricExpression(plan, item.metric, kind, bag)} AS ${quoteIdentifier(kind, item.as)}`);
       if (item.metric.status === "draft") warnings.push(`指标「${item.metric.name}」状态为 draft，尚未验收。`);

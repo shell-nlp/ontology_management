@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { compileQuerySql, executeOntologySql, parseOntologySql, resolveQueryDsl, toQueryDsl } from "@/lib/query-dsl";
 import { REASONING_TOOLS } from "@/lib/reasoning/tools/registry";
+import { runReasoningTool } from "@/lib/reasoning/tools";
 
 /**
  * 本体 SQL（SQL 形状的查询表层）。
@@ -134,6 +135,27 @@ describe("本体 SQL：语法与语义绑定", () => {
   });
 });
 
+describe("本体 SQL：LABEL 当输出 / 分组维度", () => {
+  it("LABEL(属性) AS 列名：编译成 CASE，把码值翻成中文标签", () => {
+    const compiled = 编译("SELECT LABEL(业务状态) AS 状态 FROM 专线产品用户 LIMIT 5");
+    expect(compiled.statement).toMatch(/CASE WHEN TRIM\("root"\.\"STATS"\) = :p\d+ THEN :p\d+ END AS "状态"/);
+  });
+
+  it("聚合查询按标签分组：输出是标签，GROUP BY 走它下面那一列", () => {
+    const compiled = 编译("SELECT LABEL(业务状态) AS 状态, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY LABEL(业务状态)");
+    expect(compiled.statement).toMatch(/CASE WHEN TRIM\("root"\.\"STATS"\) = :p\d+ THEN :p\d+ END AS "状态"/);
+    expect(compiled.statement).toMatch(/GROUP BY "root"\."STATS"/);
+  });
+
+  it("标签列没进 GROUP BY 一样被拦住（与普通字段同一条规则）", () => {
+    expect(() => 编译("SELECT LABEL(业务状态) AS 状态, COUNT(*) AS 条数 FROM 专线产品用户")).toThrowError(/必须出现在 group_by 中/);
+  });
+
+  it("属性没配 enumValues 时如实拒绝（码值提示由工具层按列画像补）", () => {
+    expect(() => 编译("SELECT LABEL(统计日期) AS 日期 FROM 专线产品用户")).toThrowError(/没有定义 enumValues/);
+  });
+});
+
 describe("本体 SQL：比较与运算符", () => {
   const where = (sql: string) => toQueryDsl(`SELECT 地市编码 FROM 专线产品用户 WHERE ${sql}`, 定义()).where;
 
@@ -220,6 +242,15 @@ describe("本体 SQL：错误必须带路", () => {
     expect(() => toQueryDsl("SELECT 地市编码 FROM 专线产品用户 ORDER BY 地市", 定义())).toThrowError(/ORDER BY 的「地市」不在输出里/);
   });
 
+  it("属性名一个都不沾边时，把该对象类型的属性清单摊开（不让模型再猜一次）", () => {
+    expect(() => toQueryDsl("SELECT MAX(tot) AS 合计 FROM 专线产品用户", 定义()))
+      .toThrowError(/属性是：统计日期、业务状态、产品名称、地市编码（共 4 个/);
+  });
+
+  it("写的是列名时直接说属性叫什么（属性名与列名不同的本体最需要这条）", () => {
+    expect(() => toQueryDsl("SELECT MAX(STATIS_DATE) AS 最新日期 FROM 专线产品用户", 定义()))
+      .toThrowError(/「STATIS_DATE」是这一列的列名，属性名是「统计日期」/);
+  });
   it("不支持的语法如实拒绝：SELECT * / 子查询 / 尾部多余内容", () => {
     expect(() => toQueryDsl("SELECT * FROM 专线产品用户", 定义())).toThrow(/SELECT \* 不接受/);
     expect(() => toQueryDsl("SELECT 地市编码 FROM (SELECT 1) t", 定义())).toThrow(/本体 SQL 解析失败/);
@@ -319,6 +350,18 @@ describe("本体 SQL：主来源是取数口径（DERIVED）时编成子查询",
 });
 
 describe("run_query 工具：只暴露一种表层", () => {
+  it("报错把 hint 与「这一列有哪些值」一起送到模型（列画像拿不到就指路）", async () => {
+    const context = { store: { target: { id: "target-1" } } as never, definition: 定义(), runtimeTypes: null };
+    const message = await runReasoningTool("run_query", { sql: "SELECT LABEL(统计日期) AS 日期 FROM 专线产品用户" }, context)
+      .then(() => "")
+      .catch((error: unknown) => (error as Error).message);
+
+    expect(message).toContain("没有定义 enumValues");
+    expect(message).toContain("先按码值输出（统计日期）");
+    // 有列画像就给真实取值，没有就说去哪儿看 —— 两条路都要有下一步。
+    expect(message).toMatch(/列画像采样|get_table_ddl/);
+  });
+
   it("入参只有 sql（必填）与 parameters —— 不再有 query（JSON DSL）", () => {
     const tool = REASONING_TOOLS.find((item) => item.name === "run_query")!;
     expect(tool.name).toBe("run_query");

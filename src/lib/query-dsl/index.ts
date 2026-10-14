@@ -1,5 +1,6 @@
 export * from "./schema";
 export * from "./errors";
+export * from "./property-hint";
 export * from "./ast";
 export * from "./resolve";
 export * from "./compile/sql";

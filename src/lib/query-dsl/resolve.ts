@@ -2,7 +2,8 @@ import type { OntologyDefinition } from "@/lib/ontology";
 import { planLinkSource } from "@/lib/ontology/link-source";
 import { entitySources } from "@/lib/ontology/sources";
 import { flipCardinality } from "@/lib/ontology/relationship-cardinality";
-import { QueryDslError } from "./errors";
+import { QueryDslError, type QueryDslValueLookup } from "./errors";
+import { unknownPropertyHint } from "./property-hint";
 import type {
   LogicalPlan,
   ResolvedEntity,
@@ -109,6 +110,8 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
       sourceId: owner.id,
       sourceAlias: owner.alias,
       column: sourceField || property.name,
+      sourceSchema: owner.schema,
+      sourceTable: owner.table,
       enumValues: property.enumValues ?? [],
     }];
   }));
@@ -144,7 +147,8 @@ function resolveField(entities: Map<string, ResolvedEntity>, ref: FieldRef): Res
     throw new QueryDslError(
       "UNKNOWN_PROPERTY",
       `对象类型「${entity.entityTypeName}」里没有属性「${ref.property}」。`,
-      "先用 get_object_type 或 search_schema 确认属性名。",
+      unknownPropertyHint(entity.entityTypeName, [...entity.properties.values()], ref.property)
+        || "先用 get_object_type 或 search_schema 确认属性名。",
     );
   }
 
@@ -154,6 +158,12 @@ function resolveField(entities: Map<string, ResolvedEntity>, ref: FieldRef): Res
     entityTypeId: entity.entityTypeId,
     entityTypeName: entity.entityTypeName,
   };
+}
+
+/** 报错要补"这一列有哪些值"时带的定位；表都定位不到就返回 null（工具层会跳过这一步）。 */
+function valueLookupOf(field: ResolvedField): QueryDslValueLookup | null {
+  if (!field.sourceTable) return null;
+  return { schema: field.sourceSchema, table: field.sourceTable, column: field.column, propertyName: field.name };
 }
 
 const NUMERIC_TYPES = new Set(["INTEGER", "DECIMAL"]);
@@ -184,7 +194,12 @@ function assertOperatorCompatible(field: ResolvedField, op: CompareOperator): vo
     throw new QueryDslError("INVALID_QUERY", `操作符「${op}」（LIKE 匹配）只支持 TEXT 属性，「${field.name}」是 ${field.dataType}。${howTo}`);
   }
   if (op === "enum_label" && !field.enumValues.length) {
-    throw new QueryDslError("INVALID_QUERY", `属性「${field.name}」没有定义 enumValues，不能用 enum_label。`);
+    throw new QueryDslError(
+      "INVALID_QUERY",
+      `属性「${field.name}」没有定义 enumValues，不能用 LABEL(...) / enum_label 按标签过滤。`,
+      `先按码值过滤（${field.name} = '码值'），或到「本体建模 → 对象类型 → 属性」给它补 enumValues。`,
+      valueLookupOf(field),
+    );
   }
 }
 
@@ -311,6 +326,23 @@ function resolveSelect(
   groupBy: ResolvedField[],
 ): ResolvedSelectItem {
   if ("field" in item) return { kind: "field", field: resolveField(entities, item.field), as: item.as };
+  if ("label" in item) {
+    /*
+     * `LABEL(属性) AS 列名`：输出 / 分组的是中文标签。
+     * 与 `LABEL(属性) = '标签'` 用**同一份 enumValues** —— 没配就如实拒绝，并按列画像把
+     * 这一列的真实取值带上（工具层补），让人能立刻改成按码值筛。
+     */
+    const field = resolveField(entities, item.label);
+    if (!field.enumValues.length) {
+      throw new QueryDslError(
+        "INVALID_QUERY",
+        `属性「${field.name}」没有定义 enumValues，不能用 LABEL(...) 输出标签。`,
+        `先按码值输出（${field.name}），或到「本体建模 → 对象类型 → 属性」给它补 enumValues。`,
+        valueLookupOf(field),
+      );
+    }
+    return { kind: "label", field, as: item.as };
+  }
   if ("metric" in item) {
     const on = item.on ?? rootAlias;
     return { kind: "metric", metric: resolveMetric(definition, entities, on, item.metric, groupBy), as: item.as };
@@ -448,7 +480,8 @@ export function resolveQueryDsl(definition: OntologyDefinition, query: QueryDsl)
   }
   if (query.kind === "aggregate") {
     for (const item of select) {
-      if (item.kind === "field" && !groupBy.some((field) => field.alias === item.field.alias && field.name === item.field.name)) {
+      // 标签列与普通字段列一样要进 group_by：分组的是它下面那一列，标签只是显示形态。
+      if ((item.kind === "field" || item.kind === "label") && !groupBy.some((field) => field.alias === item.field.alias && field.name === item.field.name)) {
         throw new QueryDslError("INVALID_QUERY", `聚合查询里的字段「${item.as}」必须出现在 group_by 中。`);
       }
     }

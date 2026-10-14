@@ -17,6 +17,7 @@ const definition: OntologyDefinition = ontologyDefinitionSchema.parse({
       properties: [
         { name: "地市编码", dataType: "TEXT", sourceField: "AREA_CODE" },
         { name: "专线数率MB", dataType: "INTEGER", sourceField: "ZX_RATE" },
+        { name: "业务状态", dataType: "TEXT", sourceField: "STATS", enumValues: [{ value: "1", label: "停机" }, { value: "2", label: "正常" }] },
       ],
       sources: [{
         id: "primary",
@@ -70,6 +71,20 @@ describe("Query DSL -> ClickHouse 对象索引", () => {
     expect(compiled.statement).not.toContain("GISTOOLS");
   });
 
+  it("标签维度走 ClickHouse：multiIf 翻标签，GROUP BY 与 SELECT 用同一个表达式", () => {
+    const dsl = toQueryDsl(
+      "SELECT LABEL(业务状态) AS 状态, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY LABEL(业务状态)",
+      definition,
+      {},
+    );
+    const compiled = compileLogicalQueryForClickHouse(resolveQueryDsl(definition, dsl), "target-1", "ontology_index");
+
+    expect(compiled.statement).toContain("multiIf(");
+    // ClickHouse 按表达式结构匹配分组：SELECT 与 GROUP BY 必须一字不差（占位符也一样）。
+    const selectExpr = compiled.statement.split(" AS \"状态\"")[0].replace("SELECT ", "");
+    expect(selectExpr.startsWith("multiIf(")).toBe(true);
+    expect(compiled.statement).toContain(`GROUP BY ${selectExpr}`);
+  });
   it("关系查询读 object_links，不依赖业务库连接表", () => {
     const dsl = toQueryDsl(
       "SELECT 地市.地市名称 AS 地市名称, COUNT(*) AS 条数 FROM 专线产品用户 LEFT JOIN 归属地市 AS 地市 GROUP BY 地市.地市名称",

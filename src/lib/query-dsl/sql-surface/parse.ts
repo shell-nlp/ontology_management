@@ -52,7 +52,9 @@ export type SqlSelectItem =
   | { kind: "field"; field: SqlFieldRef; as: string }
   /** `SELECT 客户数` —— 是属性还是指标由 `bind.ts` 拿着本体定义判定。 */
   | { kind: "name"; name: string; as: string; position: number }
-  | { kind: "aggregate"; aggregate: SqlAggregate; field?: SqlFieldRef; as: string };
+  | { kind: "aggregate"; aggregate: SqlAggregate; field?: SqlFieldRef; as: string }
+  /** `SELECT LABEL(属性) AS 标签` —— 输出 / 分组的是中文标签，不是码值。 */
+  | { kind: "label"; field: SqlFieldRef; as: string };
 
 export type SqlJoin = {
   relation: string;
@@ -231,7 +233,7 @@ class Parser {
     const groupBy: SqlFieldRef[] = [];
     if (this.eatKeyword("group")) {
       this.expectKeyword("by");
-      do { groupBy.push(this.parseFieldRef()); } while (this.eatPunct(","));
+      do { groupBy.push(this.parseGroupByRef()); } while (this.eatPunct(","));
     }
 
     const orderBy: { ref: string; direction: "asc" | "desc" }[] = [];
@@ -288,8 +290,11 @@ class Parser {
       this.expectPunct(")");
       return { kind: "aggregate", aggregate, field, as: this.readAs(`${aggregate.toLowerCase()}`) };
     }
+    // LABEL(属性)：既能按标签过滤，也能把标签当输出列 / 分组维度（"按中文标签分组统计"的常见问法）。
     if (token.kind === "ident" && !token.quoted && token.value.toLowerCase() === "label") {
-      this.fail("LABEL(...) 只能写在 WHERE 里（按枚举标签过滤），不能作为输出列。");
+      this.cursor += 1; // 吃掉 LABEL，parseLabelCall 从 "(" 开始读
+      const field = this.parseLabelCall();
+      return { kind: "label", field, as: this.readAs(field.property) };
     }
     // `别名.属性` 还是 `属性`：先按字段引用解析，再回看它带没带别名。
     const field = this.parseFieldRef();
@@ -301,6 +306,23 @@ class Parser {
   private readAs(fallback: string): string {
     if (this.eatKeyword("as")) return this.readName("输出列名");
     return fallback;
+  }
+
+  /** `LABEL(属性)` → 里面那个字段引用（输出还是分组、怎么显示，由调用方决定）。 */
+  private parseLabelCall(): SqlFieldRef {
+    this.expectPunct("(");
+    const field = this.parseFieldRef();
+    this.expectPunct(")");
+    return field;
+  }
+
+  /** GROUP BY 允许 `LABEL(属性)`：分组的是它下面那一列，标签只是显示形态。 */
+  private parseGroupByRef(): SqlFieldRef {
+    if (this.peekKeyword("label")) {
+      this.cursor += 1;
+      return this.parseLabelCall();
+    }
+    return this.parseFieldRef();
   }
 
   private parseFieldRef(): SqlFieldRef {

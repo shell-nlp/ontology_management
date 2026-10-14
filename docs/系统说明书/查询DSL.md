@@ -121,7 +121,7 @@ FROM 对象类型 [AS 别名]
 [LIMIT n]
 ```
 
-- 输出项：`属性` / `别名.属性` / `指标名` / `COUNT(*)` / `COUNT(DISTINCT 属性)` / `SUM|AVG|MIN|MAX(属性)`。
+- 输出项：`属性` / `别名.属性` / `指标名` / `COUNT(*)` / `COUNT(DISTINCT 属性)` / `SUM|AVG|MIN|MAX(属性)` / `LABEL(属性)`。
   裸名字**先按当前实体的属性找，再按指标找** —— 两个都不是就把"两条路 + 候选名字"写进错误里。
 - 条件：`= <> > >= < <=`、`IN` / `NOT IN`、`BETWEEN … AND …`、`IS [NOT] NULL`、
   `LIKE '%值%'`（也支持 `'值%'` / `'%值'`，其余模式拒绝并提示改用 `=`）、
@@ -235,7 +235,7 @@ FROM 对象类型 [AS 别名]
 | `ends_with` | 后缀匹配 | 参数化 LIKE |
 | `is_null` | 为空 | 不接受比较值 |
 | `is_not_null` | 非空 | 不接受比较值 |
-| `enum_label` | 按枚举标签比较 | 由属性 `enumValues` 解析到实际码值 |
+| `enum_label` | 按枚举标签比较 | 由属性 `enumValues` 解析到实际码值；本体 SQL 里写 `LABEL(属性)`，它也能当输出 / 分组维度（见 3.4） |
 | `in_range` | 闭区间 | 值必须是 `[from, to]` 两个元素 |
 
 > `contains` / `starts_with` / `ends_with` 只作用于文本属性；日期属性按天过滤请用范围比较（见 2.3 节）。
@@ -279,6 +279,22 @@ FROM 对象类型 [AS 别名]
   "as": "条数"
 }
 ```
+
+标签输出（把码值翻成中文标签）：
+
+```json
+{
+  "label": { "alias": "root", "property": "业务状态" },
+  "as": "状态"
+}
+```
+
+- 编译成 `CASE WHEN TRIM(列) = '码值' THEN '标签' END`（Oracle 的 CHAR 列是空格填充的，先按既有口径去空格）；
+  认不出的码值给 `NULL`，与 `LABEL(属性) = '标签'` 的过滤语义一致。
+- **要求该属性配了 `enumValues`**；没配就如实拒绝 —— 错误里会带上**这一列真实的取值**（来自列画像），
+  可以直接改成按码值筛。
+- 聚合查询里标签维度要写进 `group_by`：`GROUP BY LABEL(属性)`（分组的是它下面那一列，标签只是显示形态）。
+  在对象索引（ClickHouse）那条路上，`SELECT` 与 `GROUP BY` 用的是**同一个标签表达式**。
 
 临时聚合：
 

@@ -197,7 +197,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
 执行时会自动路由：查询涉及的对象类型与关系类型都已完整物化时读 ClickHouse 对象索引；任意一处没物化或只物化了一部分时回源业务库。返回值里的 data_source / data_source_kind 会标明这次实际读了哪一边。
 语法子集：SELECT … FROM 对象类型 [AS 别名] [[LEFT] JOIN 关系类型 [AS 别名] [FORWARD|BACKWARD|BOTH]] … [WHERE …] [GROUP BY …] [ORDER BY …] [LIMIT n]。
 例：① SELECT 统计日期, 地市编码 FROM 专线产品用户 WHERE 业务状态 = '在用' ORDER BY 统计日期 DESC LIMIT 20；② SELECT 地市名称, COUNT(*) AS 条数 FROM 专线产品用户 LEFT JOIN 归属地市 AS 地市 GROUP BY 地市名称 ORDER BY 条数 DESC；③ SELECT 专线条数 AS 条数 FROM 专线产品用户 WHERE 统计日期 = :day（:名字 的取值放 parameters）。
-写法要点：聚合写 COUNT(*) / COUNT(DISTINCT 属性) / SUM|AVG|MIN|MAX(属性)，每项都要 AS 列名；聚合查询里出现的普通属性必须同时写进 GROUP BY；ORDER BY 用输出列名或属性名；筛选支持 = <> > >= < <= / IN / NOT IN / BETWEEN … AND … / IS [NOT] NULL / LIKE '%值%'（也支持 '值%' / '%值'）/ LABEL(属性) = '枚举标签'（按码值的中文标签过滤）/ AND OR NOT 与括号。**日期属性（DATE / DATETIME 列）不能用 LIKE 取某一天**：某一天写 统计日期 >= '2026-09-13' AND 统计日期 < '2026-09-14'，区间写 BETWEEN … AND …（= '当天' 只在列里没有时分秒时才等于当天）。
+写法要点：聚合写 COUNT(*) / COUNT(DISTINCT 属性) / SUM|AVG|MIN|MAX(属性)，每项都要 AS 列名；聚合查询里出现的普通属性必须同时写进 GROUP BY；ORDER BY 用输出列名或属性名；筛选支持 = <> > >= < <= / IN / NOT IN / BETWEEN … AND … / IS [NOT] NULL / LIKE '%值%'（也支持 '值%' / '%值'）/ LABEL(属性) = '枚举标签'（按码值的中文标签过滤；也支持 SELECT LABEL(属性) AS 列名 … GROUP BY LABEL(属性) 把标签当输出 / 分组维度，要求该属性配了 enumValues）/ AND OR NOT 与括号。**日期属性（DATE / DATETIME 列）不能用 LIKE 取某一天**：某一天写 统计日期 >= '2026-09-13' AND 统计日期 < '2026-09-14'，区间写 BETWEEN … AND …（= '当天' 只在列里没有时分秒时才等于当天）。
 JOIN 只能写关系类型、不给写 ON 条件（连接的读法由关系类型和它的键映射决定）；方向用 FORWARD（默认）/ BACKWARD / BOTH。
 不接受：SELECT *、子查询、CTE（WITH）、UNION、窗口函数、任意函数、跨数据资源 join —— 这些情况用 run_sql 兜底（它只读、且始终可用）。返回里带 statement：那是本次真正发到源库的物理 SQL，排障用。`,
     parameters: {

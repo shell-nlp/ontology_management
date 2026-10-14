@@ -49,6 +49,8 @@ const queryExprSchema: z.ZodType<QueryExpr, z.ZodTypeDef, unknown> = z.lazy(() =
 
 const selectItemSchema = z.union([
   z.strictObject({ field: fieldRefSchema, as: z.string().trim().min(1) }),
+  /** `LABEL(属性)`：把码值翻成 `enumValues` 里的中文标签（过滤、输出、分组都是这一份口径）。 */
+  z.strictObject({ label: fieldRefSchema, as: z.string().trim().min(1) }),
   z.strictObject({ metric: z.string().trim().min(1), on: z.string().trim().min(1).optional(), as: z.string().trim().min(1) }),
   z.strictObject({
     aggregate: z.enum(["COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"]),

@@ -1,5 +1,6 @@
 import type { OntologyDefinition } from "@/lib/ontology";
 import { QueryDslError } from "../errors";
+import { unknownPropertyHint } from "../property-hint";
 import { parseQueryDsl, type QueryDsl } from "../schema";
 import { parseOntologySql, type SqlCondition, type SqlExpr, type SqlFieldRef, type SqlQueryAst, type SqlSelectItem, type SqlValue } from "./parse";
 
@@ -103,7 +104,7 @@ function toDslField(ref: SqlFieldRef, byName: Map<string, AliasBinding>) {
    */
   const entity = binding.entity;
   if (entity && !entity.properties.some((candidate) => candidate.name === ref.property)) {
-    throw new QueryDslError("UNKNOWN_PROPERTY", `对象类型「${entity.name}」上没有属性「${ref.property}」。${suggest(ref.property, entity.properties.map((candidate) => candidate.name))}`);
+    throw new QueryDslError("UNKNOWN_PROPERTY", `对象类型「${entity.name}」上没有属性「${ref.property}」。${unknownPropertyHint(entity.name, entity.properties, ref.property)}`);
   }
   return { alias: binding.alias, property: ref.property };
 }
@@ -150,6 +151,10 @@ function toDslSelectItem(item: SqlSelectItem, byName: Map<string, AliasBinding>,
       },
     };
   }
+  if (item.kind === "label") {
+    const field = toDslField(item.field, byName);
+    return { aggregated: false, dsl: { label: field, as: item.as } };
+  }
   if (item.kind === "field") {
     const field = toDslField(item.field, byName);
     return { aggregated: false, dsl: { field, as: item.as } };
@@ -166,10 +171,11 @@ function toDslSelectItem(item: SqlSelectItem, byName: Map<string, AliasBinding>,
   if (metric) {
     return { aggregated: true, dsl: { metric: metric.name, ...(binding.alias !== "root" ? { on: binding.entityTypeName } : {}), as: item.as } };
   }
+  const candidates = [...(entity?.properties ?? []).map((candidate) => candidate.name), ...definition.metrics.map((candidate) => candidate.name)];
   throw new QueryDslError(
     "UNKNOWN_PROPERTY",
     `认不出「${item.name}」：它既不是对象类型「${binding.entityTypeName}」的属性，也不是本体的指标。`
-    + `${suggest(item.name, [...(entity?.properties ?? []).map((candidate) => candidate.name), ...definition.metrics.map((candidate) => candidate.name)])}`,
+    + `${suggest(item.name, candidates) || unknownPropertyHint(binding.entityTypeName, entity?.properties ?? [], item.name)}`,
   );
 }
 
