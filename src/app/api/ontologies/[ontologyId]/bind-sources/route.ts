@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
 import { getOntology } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { applySourceBindings } from "@/lib/datasource/source-binding";
 import { planSourceBindingsFor } from "@/lib/datasource/source-hints";
 import { getVersionRecord, listVersionRecords, updateSnapshotDefinition } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const bindInput = z.object({
   versionId: z.string().uuid(),
@@ -20,9 +21,8 @@ const bindInput = z.object({
  * 导入时能按表名唯一命中的已经自动绑好了；剩下的（命中多个或都没命中）在导入弹窗里让人选一次，
  * 选完打到这里写进草稿 —— 不重新导入一遍，也不碰已发布的版本。
  */
-export async function GET(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const GET = withPermission("ontology.read", async (request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) => {
   try {
-    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -45,11 +45,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ont
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取待补绑定的数据来源。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const POST = withPermission("ontology.write", async (request: NextRequest, context: { params: Promise<{ ontologyId: string }> }, user) => {
   try {
-    const user = await requirePermission("ontology.write");
     const { ontologyId } = await context.params;
     const input = bindInput.parse(await request.json());
     const ontology = await getOntology(ontologyId);
@@ -71,4 +70,4 @@ export async function POST(request: NextRequest, context: { params: Promise<{ on
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "保存数据来源绑定失败。");
     return NextResponse.json({ error: message }, { status: apiErrorStatus(error) });
   }
-}
+});

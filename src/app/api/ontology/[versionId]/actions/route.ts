@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { ensureVersionSnapshot, getVersionRecord, readVersionSnapshot, runSnapshotAction, visibleSnapshotActions } from "@/lib/versioning/snapshot";
@@ -9,6 +9,7 @@ import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object
 import { applyWritebackPlan, type WritebackExecution } from "@/lib/instance/object-service/writeback";
 import { getDataSource } from "@/lib/datasource/sources";
 import { actionWritebackDiffs, describeWritebackPlan, planActionWriteback, type WritebackPlan } from "@/lib/ontology/action-writeback";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 给界面看的写回计划：连接器要的字段（schema / view / sourceId）不出这一层，
@@ -55,9 +56,8 @@ async function snapshotHasEntity(versionId: string, entityId: string) {
  * 某个对象上应该出现哪些动作。
  * 对象详情页据此过滤掉被「隐藏」规则挡掉的入口，读的是快照，不改任何东西。
  */
-export async function GET(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
+export const GET = withPermission("ontology.read", async (request: NextRequest, context: { params: Promise<{ versionId: string }> }) => {
   try {
-    await requirePermission("ontology.read");
     const { versionId } = await context.params;
     const subjectEntityId = request.nextUrl.searchParams.get("subjectEntityId");
     if (!subjectEntityId) return NextResponse.json({ error: "subjectEntityId 不能为空。" }, { status: 400 });
@@ -70,11 +70,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取动作可见性。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
+export const POST = withPermission("instance.write", async (request: NextRequest, context: { params: Promise<{ versionId: string }> }, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const { versionId } = await context.params;
     const input = actionRunInput.parse(await request.json());
     const version = await getVersionRecord(versionId);
@@ -210,4 +209,4 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ve
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "动作执行失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

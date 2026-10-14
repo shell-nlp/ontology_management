@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeToken, OAuthError } from "@/lib/oauth/authorize";
+import { withPublic } from "@/lib/platform/route-guard";
 
 /**
  * 令牌端点：`authorization_code` 与 `refresh_token` 两种 grant。
@@ -24,7 +25,7 @@ async function readBody(request: NextRequest): Promise<Record<string, unknown>> 
   return Object.fromEntries(form.entries());
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withPublic(async (request: NextRequest) => {
   try {
     const token = await exchangeToken(await readBody(request));
     return NextResponse.json(token, { headers: CORS_HEADERS });
@@ -37,8 +38,8 @@ export async function POST(request: NextRequest) {
       { status: 500, headers: CORS_HEADERS },
     );
   }
-}
+});
 
-export async function OPTIONS() {
+export const OPTIONS = withPublic(async () => {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
-}
+});

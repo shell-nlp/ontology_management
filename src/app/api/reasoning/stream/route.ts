@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { getReasoningRun, reasoningRunInput, startReasoningRun } from "@/lib/reasoning/run-registry";
 import { runEventStream } from "@/lib/reasoning/run-stream";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 「起一轮 + 就地看完」：一条请求里把推理跑起来并流式看完。
@@ -12,11 +13,10 @@ import { runEventStream } from "@/lib/reasoning/run-stream";
  * 只是实现改成复用同一套运行登记处，不再自己编排一遍。
  */
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("reasoning.use", async (request: NextRequest, _context, user) => {
   let actorId: string;
   let input;
   try {
-    const user = await requirePermission("reasoning.use");
     actorId = user.id;
     input = reasoningRunInput.parse(await request.json());
   } catch (error) {
@@ -32,4 +32,4 @@ export async function POST(request: NextRequest) {
   }
 
   return runEventStream(getReasoningRun(runId), runId, 0, request.signal);
-}
+});

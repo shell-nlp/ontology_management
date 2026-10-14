@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { createRole, listRoles } from "@/lib/platform/users";
 import { PERMISSIONS } from "@/lib/platform/permissions";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 角色：`GET` 列清单，`POST` 新建。都要 `users.manage`。
@@ -18,9 +19,8 @@ const roleCreateInput = z.object({
   permissions: z.array(z.string().trim().min(1).max(60)).optional(),
 });
 
-export async function GET() {
+export const GET = withPermission("users.manage", async () => {
   try {
-    await requirePermission("users.manage");
     return NextResponse.json({
       roles: await listRoles(),
       // 界面画权限矩阵要用：代码 / 分组 / 中文名 / 说明都从服务端来，别在前端再抄一份。
@@ -29,11 +29,10 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取角色。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("users.manage", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("users.manage");
     const input = roleCreateInput.parse(await request.json());
     const role = await createRole(input);
     await writeAuditEntry({
@@ -45,4 +44,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "新建角色失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

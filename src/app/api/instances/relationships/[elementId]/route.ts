@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteSnapshotRelationship, ensureVersionSnapshot, updateSnapshotRelationship } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const relationshipPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
 
@@ -15,9 +16,8 @@ function versionIdOf(request: NextRequest) {
   return request.nextUrl.searchParams.get("versionId") ?? "";
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ elementId: string }> }) {
+export const PATCH = withPermission("instance.write", async (request: NextRequest, context: { params: Promise<{ elementId: string }> }, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const { elementId } = await context.params;
     const input = relationshipPatchInput.parse(await request.json());
     const target = await getTarget(targetIdOf(request));
@@ -33,11 +33,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     const message = apiErrorMessage(error, "无法更新关系。");
     return NextResponse.json({ error: message }, { status: isUnauthorized(error) ? 401 : 400 });
   }
-}
+});
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ elementId: string }> }) {
+export const DELETE = withPermission("instance.write", async (request: NextRequest, context: { params: Promise<{ elementId: string }> }, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const { elementId } = await context.params;
     const target = await getTarget(targetIdOf(request));
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -51,4 +50,4 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法删除关系。") }, { status: apiErrorStatus(error) });
   }
-}
+});

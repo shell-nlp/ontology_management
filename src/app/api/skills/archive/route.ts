@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { readSkillsArchive } from "@/lib/skills/index";
 import { createZip } from "@/lib/framework/zip";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 把**全部技能**打成一个 zip。
@@ -12,9 +13,8 @@ import { createZip } from "@/lib/framework/zip";
  *
  * 自己打 zip 的理由见 `@/lib/zip`：只为"一次下载、解压即用"，不值得引一个打包库。
  */
-export async function GET(_: Request) {
+export const GET = withPermission("ontology.read", async (_: Request) => {
   try {
-    await requirePermission("ontology.read");
     const files = await readSkillsArchive();
     if (files.length === 0) return NextResponse.json({ error: "技能目录里没有内容。" }, { status: 404 });
     const zip = createZip(files);
@@ -28,4 +28,4 @@ export async function GET(_: Request) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法打包技能。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});

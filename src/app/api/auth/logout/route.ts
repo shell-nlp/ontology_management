@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withPublic } from "@/lib/platform/route-guard";
 
 /**
  * 登出：**空操作**。
@@ -8,6 +9,6 @@ import { NextResponse } from "next/server";
  * 这个路由留着有两个原因：一是老脚本/书签还会 POST 它，回 404 会让人以为坏了；
  * 二是将来如果要加"令牌吊销名单"，落点就在这里。
  */
-export async function POST() {
+export const POST = withPublic(async () => {
   return NextResponse.json({ ok: true });
-}
+});

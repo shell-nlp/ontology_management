@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { registerClient } from "@/lib/oauth/store";
+import { withPublic } from "@/lib/platform/route-guard";
 
 /**
  * 客户端自助注册（RFC 7591 的精简版：只收 **public client**）。
@@ -17,7 +18,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-export async function POST(request: NextRequest) {
+export const POST = withPublic(async (request: NextRequest) => {
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const client = await registerClient({
@@ -53,8 +54,8 @@ export async function POST(request: NextRequest) {
       { status: 400, headers: CORS_HEADERS },
     );
   }
-}
+});
 
-export async function OPTIONS() {
+export const OPTIONS = withPublic(async () => {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
-}
+});

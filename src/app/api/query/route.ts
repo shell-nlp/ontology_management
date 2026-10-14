@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/framework/graph";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 后端无关的只读查询入口。
@@ -17,10 +18,9 @@ const requestInput = z.object({
   confirmWrite: z.boolean().default(false),
 });
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.read", async (request: NextRequest, _context, user) => {
   try {
     // 只读图查询：能看实例的人就能查（和实例图谱同一档权限）。
-    const user = await requirePermission("instance.read");
     const input = requestInput.parse(await request.json());
     const statement = input.query;
     if (!statement) return NextResponse.json({ error: "查询语句不能为空。" }, { status: 400 });
@@ -36,4 +36,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "查询执行失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

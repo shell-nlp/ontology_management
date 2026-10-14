@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { deleteOntology, getOntology, updateOntology } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const updateInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),
@@ -11,9 +12,8 @@ const updateInput = z.object({
   tags: z.array(z.string().trim().min(1).max(32)).max(12).optional(),
 });
 
-export async function GET(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const GET = withPermission("ontology.read", async (_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) => {
   try {
-    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -21,11 +21,10 @@ export async function GET(_: NextRequest, context: { params: Promise<{ ontologyI
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const PATCH = withPermission("ontology.write", async (request: NextRequest, context: { params: Promise<{ ontologyId: string }> }, user) => {
   try {
-    const user = await requirePermission("ontology.write");
     const { ontologyId } = await context.params;
     const input = updateInput.parse(await request.json());
     if (Object.keys(input).length === 0) return NextResponse.json({ error: "没有需要更新的字段。" }, { status: 400 });
@@ -36,11 +35,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ o
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "无法更新本体。");
     return NextResponse.json({ error: message }, { status: apiErrorStatus(error, 400) });
   }
-}
+});
 
-export async function DELETE(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const DELETE = withPermission("ontology.publish", async (_: NextRequest, context: { params: Promise<{ ontologyId: string }> }, user) => {
   try {
-    const user = await requirePermission("ontology.publish");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -55,4 +53,4 @@ export async function DELETE(_: NextRequest, context: { params: Promise<{ ontolo
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体。") }, { status: apiErrorStatus(error, 400) });
   }
-}
+});

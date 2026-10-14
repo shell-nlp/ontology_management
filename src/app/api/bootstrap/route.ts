@@ -1,8 +1,9 @@
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { countUsers, insertUser } from "@/lib/platform/platform-db";
+import { withPublic } from "@/lib/platform/route-guard";
 
-export async function POST() {
+export const POST = withPublic(async () => {
   try {
     if (await countUsers()) return NextResponse.json({ created: false, reason: "ALREADY_INITIALIZED" }, { status: 409 });
 
@@ -15,4 +16,4 @@ export async function POST() {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Bootstrap failed." }, { status: 500 });
   }
-}
+});

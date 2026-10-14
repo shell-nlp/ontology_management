@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { isUnauthorized } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/framework/graph";
 import type { GraphTargetKind } from "@/lib/framework/graph/types";
 import { describeTargetError, getTarget } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
+export const POST = withPermission("target.write", async (_: Request, context: { params: Promise<{ targetId: string }> }) => {
   // 出错时也要按这个存储的引擎给提示，所以 kind 提到 try 外面。
   let kind: GraphTargetKind = "JENA";
   try {
-    await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -19,4 +19,4 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
     const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
-}
+});

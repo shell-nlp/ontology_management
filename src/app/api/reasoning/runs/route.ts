@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { listReasoningRuns, reasoningRunInput, startReasoningRun } from "@/lib/reasoning/run-registry";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 起一轮推理 / 看当前本体上还在跑的那些。
@@ -10,20 +11,18 @@ import { listReasoningRuns, reasoningRunInput, startReasoningRun } from "@/lib/r
  * 界面切走再回来、刷新页面，都走 GET 接回原来的运行（见 `[runId]/events`）。
  */
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("reasoning.use", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     const input = reasoningRunInput.parse(await request.json());
     const run = await startReasoningRun({ userId: user.id, actorId: user.id, input });
     return NextResponse.json({ run }, { status: 202 });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法开始这次推理。") }, { status: apiErrorStatus(error, 400) });
   }
-}
+});
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("reasoning.use", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const ontology = await getOntologyByTargetId(targetId);
@@ -32,4 +31,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取正在运行的推理。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});

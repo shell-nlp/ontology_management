@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 import { cachedStructure } from "@/lib/datasource/structure-cache";
 import type { DataViewSummary } from "@/lib/datasource/types";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /** 清单里最多回这么多条；缓存里存的就是这一份，调用方再按 search / limit 自己收口。 */
 const CATALOG_LIMIT_MAX = 5000;
@@ -13,9 +14,8 @@ const CATALOG_LIMIT_MAX = 5000;
  * **默认从平台库取**（`data_sources.catalog` 里那一份）：只有 `refresh=1` 才回源库重读，
  * 读完顺手存回平台库。远端 Oracle 扫一次数据字典要几秒，不该每点一次都扫。
  */
-export async function GET(request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
+export const GET = withPermission("datasource.read", async (request: NextRequest, context: { params: Promise<{ sourceId: string }> }) => {
   try {
-    await requirePermission("datasource.read");
     const { sourceId } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -51,4 +51,4 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取结构清单。") }, { status: apiErrorStatus(error) });
   }
-}
+});

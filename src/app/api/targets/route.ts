@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { encryptSecret } from "@/lib/framework/crypto";
 import { GraphTargetEntity, jsonValue, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
 import { graphTargetKindInfo, type GraphTarget } from "@/lib/framework/graph/types";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const targetInput = z.object({
   name: z.string().trim().min(2).max(100),
@@ -17,19 +18,17 @@ const targetInput = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
 });
 
-export async function GET() {
+export const GET = withPermission("target.read", async () => {
   try {
-    await requirePermission("target.read");
     const targets = await listTargets();
     return NextResponse.json(targets.map(publicTarget));
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体存储。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("target.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("target.write");
     const input = targetInput.parse(await request.json());
     if (input.kind === "EMBEDDED") {
       return NextResponse.json({ error: "内置类型图由平台自动提供，请在新建本体时直接选择。" }, { status: 409 });
@@ -64,4 +63,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法创建本体存储。") }, { status: apiErrorStatus(error) });
   }
-}
+});

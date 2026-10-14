@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorMessage, createSession, findUserByEmail } from "@/lib/platform/auth";
+import { withPublic } from "@/lib/platform/route-guard";
 
 /**
  * 登录：验密码，发一枚**平台会话 JWT**。
@@ -9,7 +10,7 @@ import { apiErrorMessage, createSession, findUserByEmail } from "@/lib/platform/
  * —— 2026-10-09 起不再下发 Cookie（见 `@/lib/session-token` 的说明）。
  * 所以这个接口是**公开**的：除了邮箱密码，没有任何前置凭据。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPublic(async (request: NextRequest) => {
   try {
     const body = await request.json() as { email?: string; password?: string };
     if (!body.email || !body.password) return NextResponse.json({ error: "邮箱和密码不能为空。" }, { status: 400 });
@@ -30,4 +31,4 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "登录请求无效。" }, { status: 400 });
   }
-}
+});

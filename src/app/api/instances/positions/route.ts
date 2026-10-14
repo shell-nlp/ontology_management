@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { ensureVersionSnapshot, updateSnapshotPositions } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const positionUpdateInput = z.object({
   targetId: z.string().uuid(),
@@ -11,9 +12,8 @@ const positionUpdateInput = z.object({
   items: z.array(z.object({ elementId: z.string().min(1), x: z.number(), y: z.number() })).max(500),
 });
 
-export async function PUT(request: NextRequest) {
+export const PUT = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = positionUpdateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -24,4 +24,4 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法保存节点位置。") }, { status: apiErrorStatus(error) });
   }
-}
+});

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/framework/graph";
 import { getTarget } from "@/lib/platform/targets";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     const q = (request.nextUrl.searchParams.get("q") ?? "").trim();
     const labelParam = request.nextUrl.searchParams.get("labels");
@@ -47,4 +47,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法搜索对象。") }, { status: apiErrorStatus(error) });
   }
-}
+});

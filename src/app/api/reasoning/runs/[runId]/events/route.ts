@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { getReasoningRun, reasoningRunOwner } from "@/lib/reasoning/run-registry";
 import { runEventStream } from "@/lib/reasoning/run-stream";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 接上一轮推理：SSE。
@@ -10,10 +11,9 @@ import { runEventStream } from "@/lib/reasoning/run-stream";
  * "这个人不看了"，服务端照常跑完并落库。这正是"切页面 / 新开一轮，后台继续跑"的实现方式。
  */
 
-export async function GET(request: NextRequest, context: { params: Promise<{ runId: string }> }) {
+export const GET = withPermission("reasoning.use", async (request: NextRequest, context: { params: Promise<{ runId: string }> }, user) => {
   let userId: string;
   try {
-    const user = await requirePermission("reasoning.use");
     userId = user.id;
   } catch (error) {
     return Response.json({ error: apiErrorMessage(error, "无法读取这次推理。") }, { status: apiErrorStatus(error, 401) });
@@ -24,4 +24,4 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
   if (reasoningRunOwner(runId) !== userId) return Response.json({ error: "这次推理不存在，可能已经结束很久了。" }, { status: 404 });
   const after = Number(request.nextUrl.searchParams.get("after") ?? "0");
   return runEventStream(getReasoningRun(runId), runId, after, request.signal);
-}
+});

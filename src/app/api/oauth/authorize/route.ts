@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, currentUser, isUnauthorized, requireUser } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage, currentUser } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { approveAuthorization, checkAuthorizationRequest, denyAuthorization, readAuthorizationParams } from "@/lib/oauth/authorize";
+import { withPublic, withUser } from "@/lib/platform/route-guard";
 
 /**
  * 授权的**决定**：浏览器里的用户在同意页点「允许 / 拒绝」之后调这里。
@@ -16,7 +17,7 @@ import { approveAuthorization, checkAuthorizationRequest, denyAuthorization, rea
  * 放在**服务端**算，页面只管显示 —— 同意页不参与任何安全判断（"回调地址可不可信"只在
  * `checkAuthorizationRequest` 里判一次），它要是自己判一遍，早晚跟服务端判得不一样。
  */
-export async function GET(request: NextRequest) {
+export const GET = withPublic(async (request: NextRequest) => {
   try {
     const params = readAuthorizationParams(Object.fromEntries(new URL(request.url).searchParams.entries()));
     const check = await checkAuthorizationRequest(params);
@@ -36,9 +37,9 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: "server_error", error_description: apiErrorMessage(error, "读取授权请求失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withUser(async (request: NextRequest, _context, user) => {
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const params = readAuthorizationParams(body);
@@ -54,9 +55,9 @@ export async function POST(request: NextRequest) {
 
     /*
      * 同意（以及拒绝）都必须挂在一个**明确的账号**上 —— 令牌将来就代表他，
-     * 所以这里用 requireUser（没登录直接抛 UNAUTHORIZED），而不是"没登录也让它过"。
+     * 所以这条路由包的是 `withUser`（没登录直接 401），而不是 `withPublic`；
+     * 401 由 `lib/platform/route-guard.ts` 统一回，handler 里不再自己判。
      */
-    const user = await requireUser();
 
     if (body.decision === "deny") {
       return NextResponse.json({ redirect: denyAuthorization({ check, params }) });
@@ -76,13 +77,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ redirect });
   } catch (error) {
-    // 会话缺失/过期时不复用"登录已过期"那句：这一步的下一步是"先登录再点允许"。
-    if (isUnauthorized(error)) {
-      return NextResponse.json(
-        { error: "login_required", error_description: "先登录平台账号，再回到这个页面点「允许」。" },
-        { status: 401 },
-      );
-    }
     return NextResponse.json({ error: apiErrorMessage(error, "授权失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

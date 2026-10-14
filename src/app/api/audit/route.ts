@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { AUDIT_SCOPE_OPTIONS, auditActionsForScope, normalizeAuditScope } from "@/lib/platform/audit";
 import { listPlatformAudit, listPlatformUsers } from "@/lib/platform/platform-db";
 import { listTargets } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 审计记录（backlog U2）。
@@ -19,9 +20,8 @@ import { listTargets } from "@/lib/platform/targets";
  * - `targetId=` / `actorId=` / `from=` / `to=`（ISO 时间）
  * - `limit=`（默认 50，上限 200）/ `offset=`
  */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("audit.read", async (request: NextRequest) => {
   try {
-    await requirePermission("audit.read");
     const params = request.nextUrl.searchParams;
     const scope = normalizeAuditScope(params.get("scope"));
     const action = params.get("action")?.trim() ?? "";
@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取审计记录。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
 /** 空的 / 非法的日期一律当成"没传"，由调用方决定是 400 还是忽略。 */
 function parseTime(value: string | null): Date | null {

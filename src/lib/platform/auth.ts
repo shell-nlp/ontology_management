@@ -2,13 +2,15 @@ import { SignJWT, jwtVerify } from "jose";
 import { headers } from "next/headers";
 import { findSessionUser, findUserByEmail as findUserRow, type PlatformUser, type PlatformUserView } from "@/lib/platform/platform-db";
 import { can, type Permission } from "@/lib/platform/permissions";
+// 这句话的**唯一定义处**在 public-routes（Edge 中间件也要用，不能反过来 import 这个文件）。
+import { AUTH_EXPIRED_MESSAGE } from "@/lib/platform/public-routes";
 
 /** 会话失效的哨兵值：路由用它判断状态码，不要把它当消息回给用户。 */
 const UNAUTHORIZED = "UNAUTHORIZED";
 /** 登录了但权限不够。**和 UNAUTHORIZED 分开**：401 是"令牌不认"，403 是"你没有这个权限"。 */
 const FORBIDDEN = "FORBIDDEN";
 
-export const AUTH_EXPIRED_MESSAGE = "登录已过期，请刷新页面重新登录。";
+export { AUTH_EXPIRED_MESSAGE };
 export const FORBIDDEN_MESSAGE = "当前账号没有这个权限。";
 
 export function isUnauthorized(error: unknown) {

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
 import { getObject, queryAllObjects, queryObjects, resolveObjectContext } from "@/lib/instance/object-service";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),
@@ -41,9 +42,8 @@ function parseFilters(values: string[]) {
   return filters;
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const params = request.nextUrl.searchParams;
     const targetId = params.get("targetId");
     const entityType = params.get("entityType");
@@ -83,4 +83,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status: apiErrorStatus(error) });
   }
-}
+});

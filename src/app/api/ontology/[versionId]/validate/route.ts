@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/versioning/snapshot";
 import { getTarget } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function POST(_: Request, context: { params: Promise<{ versionId: string }> }) {
+export const POST = withPermission("ontology.publish", async (_: Request, context: { params: Promise<{ versionId: string }> }) => {
   try {
-    await requirePermission("ontology.publish");
     const { versionId } = await context.params;
     const row = await getVersionRecord(versionId);
     if (!row) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
@@ -19,4 +19,4 @@ export async function POST(_: Request, context: { params: Promise<{ versionId: s
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "本体校验失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

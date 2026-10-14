@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 import { cachedStructure } from "@/lib/datasource/structure-cache";
 import type { DataViewField, DataViewPreview } from "@/lib/datasource/types";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 一个表/视图的字段清单与若干行预览；两条都只读，不改来源里的任何数据。
@@ -11,9 +12,8 @@ import type { DataViewField, DataViewPreview } from "@/lib/datasource/types";
  * 字段清单一天也未必变一次，样本行也只是给人一个"长什么样"的印象，
  * 真的要看最新数据用「重新取数」或 run_sql。
  */
-export async function GET(request: NextRequest, context: { params: Promise<{ sourceId: string; viewName: string }> }) {
+export const GET = withPermission("datasource.read", async (request: NextRequest, context: { params: Promise<{ sourceId: string; viewName: string }> }) => {
   try {
-    await requirePermission("datasource.read");
     const { sourceId, viewName } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -42,4 +42,4 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sou
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取表结构。") }, { status: apiErrorStatus(error) });
   }
-}
+});

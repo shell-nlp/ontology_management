@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requireUser } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { changeOwnPassword } from "@/lib/platform/users";
+import { withUser } from "@/lib/platform/route-guard";
 
 /**
  * 改**自己的**密码。任何登录用户都能改自己的，不需要 `users.manage`
@@ -14,9 +15,8 @@ const passwordChangeInput = z.object({
   newPassword: z.string().min(1).max(200),
 });
 
-export async function POST(request: NextRequest) {
+export const POST = withUser(async (request: NextRequest, _context, actor) => {
   try {
-    const actor = await requireUser();
     const input = passwordChangeInput.parse(await request.json());
     await changeOwnPassword(actor.id, input.currentPassword, input.newPassword);
     await writeAuditEntry({ action: "PASSWORD_CHANGED", actorId: actor.id, details: { userId: actor.id, email: actor.email } });
@@ -24,4 +24,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "改密码失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

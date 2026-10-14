@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { handleMcpRequest, mcpGetNotAllowed, mcpOptionsResponse } from "@/lib/reasoning/mcp-endpoint";
+import { withOwnAuth, withPublic } from "@/lib/platform/route-guard";
 
 /**
  * MCP（Model Context Protocol）服务端 —— **平台级**端点：一个端点覆盖平台上所有本体。
@@ -12,15 +13,15 @@ import { handleMcpRequest, mcpGetNotAllowed, mcpOptionsResponse } from "@/lib/re
  * （配置片段一眼看出查的是谁、模型不用自己填 id），用本体级端点 `/api/mcp/<ontologyId>` ——
  * 见 `src/app/api/mcp/[ontologyId]/route.ts`。协议实现在 `@/lib/reasoning/mcp-endpoint`，两个入口共用一份。
  */
-export async function POST(request: NextRequest) {
+export const POST = withOwnAuth(async (request: NextRequest) => {
   return handleMcpRequest(request);
-}
+});
 
-export async function OPTIONS() {
+export const OPTIONS = withPublic(async () => {
   return mcpOptionsResponse();
-}
+});
 
 /** MCP 的 GET 用于服务端主动推送；这个实现没有服务端推送，按规范回 405。 */
-export async function GET() {
+export const GET = withOwnAuth(async () => {
   return mcpGetNotAllowed();
-}
+});

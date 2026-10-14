@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { listUserIdentities } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 生成访问令牌时"这条令牌代表谁"的候选账号。
@@ -11,9 +12,8 @@ import { listUserIdentities } from "@/lib/platform/platform-db";
  *
  * `me` 是当前登录账号的 id：界面据此把新令牌默认绑给操作者自己。
  */
-export async function GET() {
+export const GET = withPermission("mcp.token.manage", async (_request, _context, user) => {
   try {
-    const user = await requirePermission("mcp.token.manage");
     const users = await listUserIdentities();
     return NextResponse.json({
       me: user.id,
@@ -22,4 +22,4 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取账号清单。") }, { status: apiErrorStatus(error) });
   }
-}
+});

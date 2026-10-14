@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteClient, listClients } from "@/lib/oauth/store";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 已注册的 OAuth 客户端清单：`GET` 看、`DELETE` 删。要 `mcp.token.manage`（和管访问令牌同一档）。
@@ -13,18 +14,16 @@ function errorResponse(error: unknown, fallback: string) {
   return NextResponse.json({ error: apiErrorMessage(error, fallback) }, { status: apiErrorStatus(error) });
 }
 
-export async function GET() {
+export const GET = withPermission("mcp.token.manage", async () => {
   try {
-    await requirePermission("mcp.token.manage");
     return NextResponse.json({ clients: await listClients() });
   } catch (error) {
     return errorResponse(error, "无法读取 OAuth 客户端清单。");
   }
-}
+});
 
-export async function DELETE(request: NextRequest) {
+export const DELETE = withPermission("mcp.token.manage", async (request: NextRequest, _context, actor) => {
   try {
-    const actor = await requirePermission("mcp.token.manage");
     const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
     if (!id) return NextResponse.json({ error: "删除客户端要带 id。" }, { status: 400 });
     const removed = await deleteClient(id);
@@ -38,4 +37,4 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     return errorResponse(error, "删除 OAuth 客户端失败。");
   }
-}
+});

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { ensureVersionSnapshot, listVersionRecords } from "@/lib/versioning/snapshot";
 import { enqueueMaterializeJob } from "@/lib/instance/object-service/materialize-jobs";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const reindexInput = z.object({
   targetId: z.string().uuid(),
@@ -25,9 +26,8 @@ const reindexInput = z.object({
  * 索引是派生数据，所以「重建」永远是安全操作：它不碰图库，也不碰版本记录。
  * 已有存量本体存储（发布时代码还没有索引时）靠这个接口补索引。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = reindexInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -78,4 +78,4 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "重建检索索引失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
-}
+});

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
 import { getOntology } from "@/lib/platform/ontologies";
 import { buildOntologyBundle, bundleFileName } from "@/lib/ontology/bundle";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 导出本体包：一个 JSON 文件带走这份本体的**结构**。
@@ -13,9 +14,8 @@ import { listVersionRecords } from "@/lib/versioning/snapshot";
  * （用户看到卡片上写着"对象类型 3"，导出的就该是这 3 个）。
  * 实例数据不导出，只把数量写进 statistics，让接收方能一眼看出这份包有没有配套数据。
  */
-export async function GET(_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const GET = withPermission("ontology.read", async (_: NextRequest, context: { params: Promise<{ ontologyId: string }> }) => {
   try {
-    await requirePermission("ontology.read");
     const { ontologyId } = await context.params;
     const ontology = await getOntology(ontologyId);
     if (!ontology) return NextResponse.json({ error: "本体不存在。" }, { status: 404 });
@@ -47,4 +47,4 @@ export async function GET(_: NextRequest, context: { params: Promise<{ ontologyI
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法导出本体。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});

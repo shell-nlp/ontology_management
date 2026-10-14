@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { can } from "@/lib/platform/permissions";
 import { listMcpTokens } from "@/lib/mcp/token";
 import { publicOrigin } from "@/lib/framework/public-origin";
 import { mcpToolCatalog, MCP_PROTOCOL_VERSION, MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
 import { loadResolvedToolPolicy } from "@/lib/reasoning/tool-policy";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /** 「MCP 调试」页启动时读一次：连哪个地址、有哪些工具、令牌配没配。 */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("reasoning.use", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     // 地址要跟着**用户实际访问的地址**走，不能落回服务端的 localhost（见 `@/lib/public-origin`）。
     const origin = publicOrigin(request);
     /*
@@ -50,4 +50,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取 MCP 信息。") }, { status: apiErrorStatus(error) });
   }
-}
+});

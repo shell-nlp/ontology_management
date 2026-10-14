@@ -150,6 +150,29 @@
 - 验收标准：一个没有使用过系统、也不懂数据库/编程的用户，只按教程阅读，就能知道从哪里进入、每步点什么、完成什么、遇到问题先查哪里；做不到就是说明书不合格。
 ## 查询工具策略（2026-10-10 / 2026-10-11 用户要求）
 
+## 授权守卫：一处执行、一处声明（2026-10-14 落地，口径长期有效）
+
+用户口径：横切关注点要收口，别耦合到每一个接口。做法是 **middleware 粗筛 + 路由守卫细判**，两者分工不许混：
+
+- **中间件（`src/middleware.ts`）只判"有没有带凭据"**：没带 `Authorization: Bearer` 的 `/api/**` 直接 401。
+  **它一个权限点都不判** —— 拿不到本体 / 资源，也拿不到 handler 的声明；在那里另立一张"路径 → 权限点"的表
+  就是第二个真相，漂移的后果要么是权限洞、要么把有权限的人挡在外面。**OPTIONS 必须放行**：CORS 预检按规范不带 Authorization。
+- **权限点只在路由的导出处声明一次**，执行只住在 `@/lib/platform/route-guard` 的四个包装器：
+  `withPermission("权限点", handler)` / `withUser(handler)` / `withPublic(handler)` / `withOwnAuth(handler)`。
+  **route 里不许再手写 `requirePermission` / `requireUser`** —— 覆盖测试会扫出来。
+  `withPermission` 的 handler 第三个参数就是已认证的用户，别在 handler 里再取一次。
+- **公开名单只有一处来源**：`@/lib/platform/public-routes` 的 `PUBLIC_API_PREFIXES`（中间件按它放行）
+  与 `tests/lib/authz-coverage.test.ts` 的 `PUBLIC_METHODS`（方法级名单）。覆盖测试会核对
+  "每个 `withPublic` / `withOwnAuth` 的路由都被中间件名单覆盖"，**漏一个就是把公开接口挡成 401**。
+- **新增接口**：`export const POST = withPermission("权限点", async (request, context, user) => { … })`；
+  真要公开就必须同时改上面两份名单，并说得出理由。
+- **覆盖测试是方法级的**：每个导出的 HTTP 方法（含 `OPTIONS`）都必须包在四个包装器之一，漏包当场红
+  —— 以前那条只扫到**文件级**，"文件里某个方法漏了"抓不住。**别把它改回字符串扫描**。
+- **PDP / PEP 分得清**：决策内核仍是 `can()`（纯函数），前端 `may()`、MCP 端点自判、路由守卫共用同一份；
+  中间件与包装器都只是 PEP。将来做**数据级授权**（行 / 列级）时判断落在领域层 ——
+  中间件和包装器都判不了，那时把 `can()` 升级成 `authorize(user, action, resource)`，不要另起一套。
+
+
 - **`run_sql` 必须保留，不删除、不改成不可用工具**：它是排障与 DSL 暂不支持场景的兜底能力。
 - `run_query`（查询 DSL）**出厂默认关闭**（2026-10-11 用户口径，实现是 `tool-policy.ts` 的 `DEFAULT_DISABLED_TOOLS`）：
   管理员在「MCP 调试」里打开后，它是结构化问数的优先入口，DSL 能用时优先走 DSL。

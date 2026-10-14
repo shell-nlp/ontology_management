@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { deleteConversation, getConversation, type ConversationScope } from "@/lib/reasoning/conversations";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 一段对话的读取与删除。
@@ -14,9 +15,8 @@ async function scopeOf(targetId: string): Promise<ConversationScope> {
   return { ontologyId: ontology?.id ?? null, targetId };
 }
 
-export async function GET(request: NextRequest, context: { params: Promise<{ conversationId: string }> }) {
+export const GET = withPermission("reasoning.use", async (request: NextRequest, context: { params: Promise<{ conversationId: string }> }, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const { conversationId } = await context.params;
@@ -26,11 +26,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ con
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取这段对话。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ conversationId: string }> }) {
+export const DELETE = withPermission("reasoning.use", async (request: NextRequest, context: { params: Promise<{ conversationId: string }> }, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim() ?? "";
     if (!targetId) return NextResponse.json({ error: "缺少 targetId。" }, { status: 400 });
     const { conversationId } = await context.params;
@@ -40,4 +39,4 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法删除这段对话。") }, { status: apiErrorStatus(error, 400) });
   }
-}
+});

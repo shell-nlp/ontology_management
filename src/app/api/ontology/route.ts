@@ -1,27 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { createVersionRecord, deleteVersionRecord, ensureVersionSnapshot, initializeVersionSnapshot, listVersionRecords, withTargetLock } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const draftCreateInput = z.object({ targetId: z.string().uuid(), baseVersionId: z.string().uuid().optional(), definition: ontologyDefinitionSchema.optional() });
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("ontology.read", async (request: NextRequest) => {
   try {
-    await requirePermission("ontology.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     return NextResponse.json(await listVersionRecords(targetId));
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体版本。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("ontology.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("ontology.write");
     const input = draftCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -48,4 +47,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法创建本体草稿。") }, { status: apiErrorStatus(error) });
   }
-}
+});

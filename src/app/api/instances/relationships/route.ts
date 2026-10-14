@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/framework/graph";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const relationshipCreateInput = z.object({
   targetId: z.string().uuid(),
@@ -21,9 +22,8 @@ function parseLimit(value: string | null, fallback = 200) {
   return Math.min(10000, Math.floor(parsed));
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     const type = request.nextUrl.searchParams.get("type");
     const search = request.nextUrl.searchParams.get("search");
@@ -41,11 +41,10 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = relationshipCreateInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -56,4 +55,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法创建关系。") }, { status: apiErrorStatus(error) });
   }
-}
+});

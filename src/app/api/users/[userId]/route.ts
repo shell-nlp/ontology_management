@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteUser, updateUser } from "@/lib/platform/users";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 单个账号：`PATCH` 改角色 / 重置密码 / 停用，`DELETE` 真删。
@@ -17,9 +18,8 @@ const userPatchInput = z.object({
   disabled: z.boolean().optional(),
 });
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ userId: string }> }) {
+export const PATCH = withPermission("users.manage", async (request: NextRequest, { params }: { params: Promise<{ userId: string }> }, actor) => {
   try {
-    const actor = await requirePermission("users.manage");
     const { userId } = await params;
     const input = userPatchInput.parse(await request.json());
     const user = await updateUser(userId, input);
@@ -40,11 +40,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "保存账号失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ userId: string }> }) {
+export const DELETE = withPermission("users.manage", async (_request: NextRequest, { params }: { params: Promise<{ userId: string }> }, actor) => {
   try {
-    const actor = await requirePermission("users.manage");
     const { userId } = await params;
     const user = await deleteUser(userId);
     await writeAuditEntry({
@@ -62,4 +61,4 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "删除账号失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

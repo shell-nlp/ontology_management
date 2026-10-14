@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteRole, updateRole } from "@/lib/platform/users";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 单个角色：`PATCH` 改（内置角色改不了），`DELETE` 删（内置角色删不了、还挂着人删不了）。
@@ -14,9 +15,8 @@ const rolePatchInput = z.object({
   permissions: z.array(z.string().trim().min(1).max(60)).optional(),
 });
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ roleId: string }> }) {
+export const PATCH = withPermission("users.manage", async (request: NextRequest, { params }: { params: Promise<{ roleId: string }> }, user) => {
   try {
-    const user = await requirePermission("users.manage");
     const { roleId } = await params;
     const input = rolePatchInput.parse(await request.json());
     const role = await updateRole(roleId, input);
@@ -29,11 +29,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "保存角色失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ roleId: string }> }) {
+export const DELETE = withPermission("users.manage", async (_request: NextRequest, { params }: { params: Promise<{ roleId: string }> }, user) => {
   try {
-    const user = await requirePermission("users.manage");
     const { roleId } = await params;
     const role = await deleteRole(roleId);
     await writeAuditEntry({
@@ -45,4 +44,4 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "删除角色失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

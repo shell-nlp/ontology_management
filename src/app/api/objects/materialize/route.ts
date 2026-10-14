@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
 import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object-service";
 import { getTarget } from "@/lib/platform/targets";
 import { getVersionRecord } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const materializeInput = z.object({
   targetId: z.string().uuid(),
@@ -22,9 +23,8 @@ const materializeInput = z.object({
  * 数据源里的对象本体里没有副本，所以先按主键取进来（身份是确定性的，重复取不会造出第二份）。
  * 这是**平台自己的草稿写入**，不写业务库 —— 回写是另一件事（动作写回，尚未实现）。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.write", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.write");
     const input = materializeInput.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -43,4 +43,4 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "取进草稿失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
-}
+});

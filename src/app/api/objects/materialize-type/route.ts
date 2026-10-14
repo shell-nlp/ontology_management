@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { cancelMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const materializeInput = z.object({
   targetId: z.string().uuid(),
@@ -33,9 +34,8 @@ const materializeInput = z.object({
  *
  * 只写 `MATERIALIZED` 这一来源：发布与「重建索引」只替换 `SNAPSHOT`，互不覆盖。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = materializeInput.parse(await request.json());
     let startOffset = 0;
     if (input.resumeFromJobId) {
@@ -74,15 +74,14 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "整份物化失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
-}
+});
 
 /**
  * 读某个本体存储下各对象类型的**物化清单**：最近一次整份物化的条数 / 扫描数 / 是否截断 / 时间。
  * 界面用它显示"哪些类型已经整份物化、哪些只补过一批、哪些还没物化"。
  */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId")?.trim();
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const [materializations, capabilities, stats, jobs] = await Promise.all([
@@ -99,7 +98,7 @@ export async function GET(request: NextRequest) {
       { status: unauthorized ? 401 : 400 },
     );
   }
-}
+});
 
 /**
  * 物化任务操作（2026-10-12）：
@@ -107,9 +106,8 @@ export async function GET(request: NextRequest) {
  * - `?entityType=&targetId=` 清除某个**对象类型**的物化数据（保留快照对象）；
  * - `?relationshipType=&targetId=` 清除某个**关系类型**的物化边。
  */
-export async function DELETE(request: NextRequest) {
+export const DELETE = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const url = request.nextUrl;
     const entityType = url.searchParams.get("entityType")?.trim();
     if (entityType) {
@@ -159,4 +157,4 @@ export async function DELETE(request: NextRequest) {
       { status: unauthorized ? 401 : 400 },
     );
   }
-}
+});

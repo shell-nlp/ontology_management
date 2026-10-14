@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { graphTargetKindInfo, isGraphTargetKind } from "@/lib/framework/graph/types";
 import { createOntology, listOntologies } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const ontologyCreateInput = z.object({
   name: z.string().trim().min(1).max(100),
@@ -50,20 +51,18 @@ async function withSummary() {
   }));
 }
 
-export async function GET() {
+export const GET = withPermission("ontology.read", async () => {
   try {
-    await requirePermission("ontology.read");
     // 存储资源不是本体：列表只展示用户显式创建或导入的本体。
     // 旧版「给未关联资源自动补本体」会把平台内置资源也误建成一条本体。
     return NextResponse.json(await withSummary());
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取本体列表。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("ontology.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("ontology.write");
     const input = ontologyCreateInput.parse(await request.json());
     const ontology = await createOntology(input, user.id);
     await writeAuditEntry({
@@ -77,4 +76,4 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "无法创建本体。");
     return NextResponse.json({ error: message }, { status: apiErrorStatus(error, 400) });
   }
-}
+});

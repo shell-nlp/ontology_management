@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { createMcpToken, listMcpTokens, revealMcpToken, revokeMcpToken } from "@/lib/mcp/token";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * MCP 访问令牌的管理面。**可以有多条**（2026-10-08 用户口径：「token 应该能生成多个，
@@ -22,9 +23,8 @@ function errorResponse(error: unknown, fallback: string) {
   return NextResponse.json({ error: apiErrorMessage(error, fallback) }, { status: apiErrorStatus(error) });
 }
 
-export async function GET(request: Request) {
+export const GET = withPermission("mcp.token.manage", async (request: Request) => {
   try {
-    await requirePermission("mcp.token.manage");
     const revealId = new URL(request.url).searchParams.get("reveal")?.trim() ?? "";
     const list = await listMcpTokens();
     const token = revealId ? await revealMcpToken(revealId) : null;
@@ -38,11 +38,10 @@ export async function GET(request: Request) {
   } catch (error) {
     return errorResponse(error, "无法读取 MCP 访问令牌。");
   }
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withPermission("mcp.token.manage", async (request: Request, _context, actor) => {
   try {
-    const actor = await requirePermission("mcp.token.manage");
     // 名字是可选的人话标签；不传就给个兜底名，别让清单里出现无名条目。
     const body = (await request.json().catch(() => ({}))) as { name?: unknown; ownerUserId?: unknown };
     /*
@@ -68,11 +67,10 @@ export async function POST(request: Request) {
   } catch (error) {
     return errorResponse(error, "生成 MCP 访问令牌失败。");
   }
-}
+});
 
-export async function DELETE(request: Request) {
+export const DELETE = withPermission("mcp.token.manage", async (request: Request, _context, actor) => {
   try {
-    const actor = await requirePermission("mcp.token.manage");
     const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
     if (!id) return NextResponse.json({ error: "撤销令牌要带 id。" }, { status: 400 });
     const removed = await revokeMcpToken(id, actor.id);
@@ -90,4 +88,4 @@ export async function DELETE(request: Request) {
   } catch (error) {
     return errorResponse(error, "撤销 MCP 访问令牌失败。");
   }
-}
+});

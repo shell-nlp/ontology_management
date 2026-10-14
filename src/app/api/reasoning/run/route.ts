@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/framework/graph";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
@@ -11,6 +11,7 @@ import { runReasoning } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
 import { getTarget } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const reasoningRunInput = z.object({
   targetId: z.string().uuid(),
@@ -32,9 +33,8 @@ const reasoningRunInput = z.object({
  * 刻意只在**已发布版本**上推理 —— 只有发布过的定义与图库里的实际数据是同一份，
  * 拿草稿去推理会得到"定义说有、图里没有"的矛盾结论。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("reasoning.use", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("reasoning.use");
     const input = reasoningRunInput.parse(await request.json());
     const question = effectiveQuestion(input.question, input.attachments ?? []);
     if (!question) return NextResponse.json({ error: "问题不能为空。" }, { status: 400 });
@@ -75,4 +75,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "推理失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /** 试连：只做一次连接与版本探测，不读业务数据。 */
-export async function POST(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
+export const POST = withPermission("datasource.read", async (_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) => {
   try {
     // 试连只读一次服务端版本，不改任何东西，看过结构的人都能测。
-    await requirePermission("datasource.read");
     const { sourceId } = await context.params;
     const source = await getDataSource(sourceId);
     if (!source) return NextResponse.json({ error: "数据资源不存在。" }, { status: 404 });
@@ -17,4 +17,4 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ s
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

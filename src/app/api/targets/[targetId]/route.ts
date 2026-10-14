@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { encryptSecret } from "@/lib/framework/crypto";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { GraphTargetEntity, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
@@ -18,9 +19,8 @@ const targetUpdate = z.object({
   options: z.record(z.string(), z.unknown()).optional(),
 });
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ targetId: string }> }) {
+export const PATCH = withPermission("target.write", async (request: NextRequest, context: { params: Promise<{ targetId: string }> }, user) => {
   try {
-    const user = await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -56,11 +56,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法更新本体存储。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function DELETE(_: Request, context: { params: Promise<{ targetId: string }> }) {
+export const DELETE = withPermission("target.write", async (_: Request, context: { params: Promise<{ targetId: string }> }, user) => {
   try {
-    const user = await requirePermission("target.write");
     const { targetId } = await context.params;
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -87,4 +86,4 @@ export async function DELETE(_: Request, context: { params: Promise<{ targetId: 
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体存储。") }, { status: apiErrorStatus(error) });
   }
-}
+});

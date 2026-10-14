@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { isUnauthorized } from "@/lib/platform/auth";
 import { decryptSecret, encryptSecret } from "@/lib/framework/crypto";
 import { getGraphStore } from "@/lib/framework/graph";
 import type { GraphTarget, GraphTargetKind } from "@/lib/framework/graph/types";
 import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 试连一个还没保存（或刚改过）的本体存储：弹窗里的「测试连接」用它。
@@ -21,11 +22,10 @@ const testInput = z.object({
   targetId: z.string().uuid().optional(),
 });
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("target.write", async (request: NextRequest) => {
   // 解析失败时也要按用户选的类型给提示，所以 kind 提到 try 外面。
   let kind: GraphTargetKind = "JENA";
   try {
-    await requirePermission("target.write");
     const input = testInput.parse(await request.json());
     kind = input.kind;
     if (kind === "JENA" && !input.uri) throw new Error("请填写 Jena 服务地址。");
@@ -52,4 +52,4 @@ export async function POST(request: NextRequest) {
     const unauthorized = isUnauthorized(error);
     return NextResponse.json({ error: unauthorized ? "未授权。" : describeTargetError(kind, error) }, { status: unauthorized ? 401 : 400 });
   }
-}
+});

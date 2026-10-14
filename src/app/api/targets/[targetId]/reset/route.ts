@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/framework/graph/types";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { deleteTargetVersions } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function POST(_: Request, context: { params: Promise<{ targetId: string }> }) {
+export const POST = withPermission("ontology.version.delete", async (_: Request, context: { params: Promise<{ targetId: string }> }, user) => {
   try {
-    const user = await requirePermission("ontology.version.delete");
     const { targetId } = await context.params;
     if (targetId === BUILTIN_EMBEDDED_TARGET_ID) return NextResponse.json({ error: "内置类型图是存储入口，不能重置版本；请先选择具体本体。" }, { status: 409 });
     const target = await getTarget(targetId);
@@ -24,4 +24,4 @@ export async function POST(_: Request, context: { params: Promise<{ targetId: st
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "初始化失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { getGraphStore } from "@/lib/framework/graph";
 import { ensureVersionSnapshot, runtimeTypesFromSnapshot } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
@@ -18,4 +18,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取运行时类型。") }, { status: apiErrorStatus(error) });
   }
-}
+});

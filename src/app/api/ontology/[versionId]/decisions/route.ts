@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { listAuditEntries } from "@/lib/platform/platform-db";
 import { getVersionRecord } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const DECISION_ACTIONS = ["ACTION_DRY_RUN", "ACTION_EXECUTED", "ACTION_BLOCKED"];
 
 /** 当前草稿的决策记录：每次干跑 / 执行 / 被拦截都会留一条。 */
-export async function GET(request: NextRequest, context: { params: Promise<{ versionId: string }> }) {
+export const GET = withPermission("instance.read", async (request: NextRequest, context: { params: Promise<{ versionId: string }> }) => {
   try {
-    await requirePermission("instance.read");
     const { versionId } = await context.params;
     const requested = Number(request.nextUrl.searchParams.get("limit") ?? "30");
     const version = await getVersionRecord(versionId);
@@ -23,4 +23,4 @@ export async function GET(request: NextRequest, context: { params: Promise<{ ver
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取决策记录。") }, { status: apiErrorStatus(error) });
   }
-}
+});

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { getTarget } from "@/lib/platform/targets";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),
@@ -30,9 +31,8 @@ function fail(error: unknown, fallback: string) {
  * 对象检索：全文 + 模糊 + 属性过滤，可选向量。
  * 这一层不碰图库，读的是 PostgreSQL 里的派生索引，因此对图后端是中立的。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const input = searchSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
@@ -41,12 +41,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return fail(error, "检索对象失败。");
   }
-}
+});
 
 /** 索引状态与能力：条目数、按类的分布、以及全文/模糊/向量是否可用。 */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
@@ -57,4 +56,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return fail(error, "读取检索索引状态失败。");
   }
-}
+});

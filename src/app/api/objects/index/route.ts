@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, isUnauthorized, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { objectKeyOf } from "@/lib/instance/object-identity";
 import { resolveObjectContext, syncObjectsToIndex } from "@/lib/instance/object-service";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
 const syncInput = z.object({
   targetId: z.string().uuid(),
@@ -22,9 +23,8 @@ const syncInput = z.object({
  * 发布走的是整体同步（按快照 prune），这里走**增量**：给几个主键就只同步这几条，
  * 适合"某一行数据改了，让检索立刻跟上"的场景。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = syncInput.parse(await request.json());
     const context = await resolveObjectContext(input.targetId, input.versionId);
     const result = await syncObjectsToIndex(context, input.entityType, {
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "同步索引失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
-}
+});
 
 /**
  * 把指定对象从**索引里移除**（对象页对"来自索引"的对象给这个入口）。
@@ -51,9 +51,8 @@ export async function POST(request: NextRequest) {
  * 只删检索副本，不动快照、不动业务库：下一次发布或整份物化会按各自来源把它重新写回来。
  * 删除按对象键（对象类型 + 主键），与写入用的是同一套身份口径。
  */
-export async function DELETE(request: NextRequest) {
+export const DELETE = withPermission("instance.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("instance.write");
     const input = syncInput.parse(await request.json());
     const context = await resolveObjectContext(input.targetId, input.versionId);
     const keys = (input.keys ?? []).map((key) => objectKeyOf(input.entityType, parsePrimaryKeyInput(key)));
@@ -71,4 +70,4 @@ export async function DELETE(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "从索引移除对象失败。");
     return NextResponse.json({ error: unauthorized ? "未授权。" : message }, { status: unauthorized ? 401 : 400 });
   }
-}
+});

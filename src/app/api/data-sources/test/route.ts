@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { openDataSourceConnector } from "@/lib/datasource";
 import { dataSourceInput, resolvePort } from "@/lib/datasource/input";
 import { normalizeDataSourceKind } from "@/lib/datasource/sources";
 import type { DataSourceRecord } from "@/lib/datasource/types";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 试连一个还没保存的数据来源：向导里「测试连接」用的就是这里。
  * 只做一次连接与版本探测，不落库、不读业务数据。
  */
-export async function POST(request: NextRequest) {
+export const POST = withPermission("datasource.write", async (request: NextRequest) => {
   try {
-    await requirePermission("datasource.write");
     const input = dataSourceInput.parse(await request.json());
     const kind = normalizeDataSourceKind(input.kind);
     // 过一遍校验后就丢：这里只是把表单参数拼成连接器认识的形状。
@@ -35,4 +35,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "连接失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

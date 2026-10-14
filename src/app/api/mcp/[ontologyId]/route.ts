@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { handleMcpRequest, mcpGetNotAllowed, mcpOptionsResponse } from "@/lib/reasoning/mcp-endpoint";
+import { withOwnAuth, withPublic } from "@/lib/platform/route-guard";
 
 /**
  * MCP 服务端的**本体级**端点：`/api/mcp/<ontologyId>`。
@@ -13,15 +14,15 @@ import { handleMcpRequest, mcpGetNotAllowed, mcpOptionsResponse } from "@/lib/re
  *
  * 路径段与 `/api/mcp/info` 并存：Next 会优先匹配静态段 `info`，本体 id 是 UUID，不会撞。
  */
-export async function POST(request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) {
+export const POST = withOwnAuth(async (request: NextRequest, context: { params: Promise<{ ontologyId: string }> }) => {
   const { ontologyId } = await context.params;
   return handleMcpRequest(request, { pinnedOntologyId: ontologyId });
-}
+});
 
-export async function OPTIONS() {
+export const OPTIONS = withPublic(async () => {
   return mcpOptionsResponse();
-}
+});
 
-export async function GET() {
+export const GET = withOwnAuth(async () => {
   return mcpGetNotAllowed();
-}
+});

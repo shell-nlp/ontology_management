@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { getGraphStore } from "@/lib/framework/graph";
 import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/versioning/snapshot";
 import { resolveObjectContext } from "@/lib/instance/object-service";
 import { readInstanceGraph } from "@/lib/instance/object-service/instance-graph";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 实例图谱：**已发布视图走对象服务（对象索引 + 边索引），不再读图库**。
@@ -14,9 +15,8 @@ import { readInstanceGraph } from "@/lib/instance/object-service/instance-graph"
  * 草稿视图（带 `versionId`）仍然读**这一版草稿快照** —— 草稿还没发布，索引里当然没有。
  * 索引里一条数据都没有时（老库 / 还没发布过 / 还没物化过）退回图库，并如实说明。
  */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const targetId = request.nextUrl.searchParams.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
     const target = await getTarget(targetId);
@@ -48,4 +48,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取图谱。") }, { status: apiErrorStatus(error) });
   }
-}
+});

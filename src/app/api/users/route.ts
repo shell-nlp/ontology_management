@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { createUser, listUsers } from "@/lib/platform/users";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 用户：`GET` 列清单，`POST` 建账号。都要 `users.manage`。
@@ -16,18 +17,16 @@ const userCreateInput = z.object({
   roleId: z.string().trim().min(1).max(60),
 });
 
-export async function GET() {
+export const GET = withPermission("users.manage", async () => {
   try {
-    await requirePermission("users.manage");
     return NextResponse.json({ users: await listUsers() });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取用户。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("users.manage", async (request: NextRequest, _context, actor) => {
   try {
-    const actor = await requirePermission("users.manage");
     const input = userCreateInput.parse(await request.json());
     const created = await createUser(input);
     await writeAuditEntry({
@@ -39,4 +38,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "新建账号失败。") }, { status: apiErrorStatus(error) });
   }
-}
+});

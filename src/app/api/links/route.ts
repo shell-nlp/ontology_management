@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
 import { resolveObjectContext } from "@/lib/instance/object-service";
 import { queryLinks } from "@/lib/instance/object-service/links";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 关系实例接口（D2）。
@@ -13,9 +14,8 @@ import { queryLinks } from "@/lib/instance/object-service/links";
  *
  * 和 `/api/objects` 一样，这一层不认识图库与业务表：定义怎么落成取数由 `@/lib/link-source` 决定。
  */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
-    await requirePermission("instance.read");
     const params = request.nextUrl.searchParams;
     const targetId = params.get("targetId");
     if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
@@ -35,4 +35,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系实例。") }, { status: apiErrorStatus(error) });
   }
-}
+});

@@ -3,23 +3,22 @@ import { encryptSecret } from "@/lib/framework/crypto";
 import { dataSourceInput, resolvePort } from "@/lib/datasource/input";
 import type { DataSourceRecord } from "@/lib/datasource/types";
 import { listDataSources, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/datasource/sources";
-import { apiErrorStatus, apiErrorMessage, requirePermission } from "@/lib/platform/auth";
+import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { DataSourceEntity, jsonValue, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
+import { withPermission } from "@/lib/platform/route-guard";
 
-export async function GET() {
+export const GET = withPermission("datasource.read", async () => {
   try {
-    await requirePermission("datasource.read");
     const sources = await listDataSources();
     return NextResponse.json(sources.map(publicDataSource));
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取数据资源。") }, { status: apiErrorStatus(error) });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("datasource.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("datasource.write");
     const input = dataSourceInput.parse(await request.json());
     const kind = normalizeDataSourceKind(input.kind);
     const record: DataSourceRecord = {
@@ -55,4 +54,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法创建数据资源。") }, { status: apiErrorStatus(error) });
   }
-}
+});

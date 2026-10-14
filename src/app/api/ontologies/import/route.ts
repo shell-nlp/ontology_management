@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { fromBknKnowledgeNetwork, isBknKnowledgeNetwork } from "@/lib/ontology/bkn-import";
 import { listDataSources } from "@/lib/datasource/sources";
 import { createOntology, deleteOntology } from "@/lib/platform/ontologies";
@@ -10,6 +10,7 @@ import { applySourceBindings, planSourceBindings } from "@/lib/datasource/source
 import { collectSourceHints, toPendingSources } from "@/lib/datasource/source-hints";
 import { getTarget } from "@/lib/platform/targets";
 import { createVersionRecord, initializeVersionSnapshot } from "@/lib/versioning/snapshot";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 导入本体包：把单文件里的结构还原成这个平台上的一个新本体。
@@ -38,9 +39,8 @@ const importInput = z.object({
   dryRun: z.boolean().optional(),
 });
 
-export async function POST(request: NextRequest) {
+export const POST = withPermission("ontology.write", async (request: NextRequest, _context, user) => {
   try {
-    const user = await requirePermission("ontology.write");
     const input = importInput.parse(await request.json());
     // 各阶段耗时随响应带出去：导入慢的时候能一眼看出是解析、绑定还是建快照慢。
     const startedAt = Date.now();
@@ -156,4 +156,4 @@ export async function POST(request: NextRequest) {
     const message = error instanceof z.ZodError ? (error.issues[0]?.message ?? "请求不合法。") : apiErrorMessage(error, "无法导入本体。");
     return NextResponse.json({ error: message }, { status: apiErrorStatus(error, 400) });
   }
-}
+});

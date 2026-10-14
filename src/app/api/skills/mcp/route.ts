@@ -10,6 +10,7 @@ import {
   SKILLS_MCP_SERVER_VERSION,
   SKILL_MCP_TOOLS,
 } from "@/lib/skills/mcp";
+import { withPublic } from "@/lib/platform/route-guard";
 
 /**
  * 「本体技能」的 MCP 服务端：Streamable HTTP 传输，JSON 响应。
@@ -121,7 +122,7 @@ async function handleMessage(message: JsonRpcRequest) {
   return isNotification ? null : rpcError(id, -32601, `不支持的方法：${method}`);
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withPublic(async (request: NextRequest) => {
   const headers = { ...CORS_HEADERS, "MCP-Protocol-Version": MCP_PROTOCOL_VERSION };
 
   let body: unknown;
@@ -142,13 +143,13 @@ export async function POST(request: NextRequest) {
   // 全是通知时按 MCP 约定回 202，不带响应体。
   if (!responses.length) return new NextResponse(null, { status: 202, headers });
   return NextResponse.json(batch ? responses : responses[0], { headers });
-}
+});
 
-export async function OPTIONS() {
+export const OPTIONS = withPublic(async () => {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
-}
+});
 
 /** MCP 的 GET 用于服务端主动推送；这个实现没有服务端推送，按规范回 405。 */
-export async function GET() {
+export const GET = withPublic(async () => {
   return NextResponse.json(rpcError(null, -32601, "这个 MCP 服务端不支持服务端推送，请用 POST。"), { status: 405, headers: CORS_HEADERS });
-}
+});

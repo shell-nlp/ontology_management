@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorMessage, apiErrorStatus, requirePermission } from "@/lib/platform/auth";
+import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
 import { publicOrigin } from "@/lib/framework/public-origin";
 import { listSkills } from "@/lib/skills/index";
 import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
+import { withPermission } from "@/lib/platform/route-guard";
 
 /**
  * 本体技能清单 + 它的 MCP 接入信息。
@@ -15,9 +16,8 @@ import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
  *
  * 正文一律不下发 —— 「本体技能」页只给清单，不必一进页面就传几百 KB。
  */
-export async function GET(request: NextRequest) {
+export const GET = withPermission("ontology.read", async (request: NextRequest) => {
   try {
-    await requirePermission("ontology.read");
     const skills = await listSkills();
     const origin = publicOrigin(request);
     return NextResponse.json({
@@ -51,4 +51,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取技能清单。") }, { status: apiErrorStatus(error, 401) });
   }
-}
+});
