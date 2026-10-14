@@ -6,9 +6,12 @@ import { parseQueryDsl } from "./schema";
 import type { QueryDsl } from "./schema";
 import { compileQuerySql } from "./compile/sql";
 import { QueryDslError } from "./errors";
+import { tryExecuteMaterializedQuery } from "./materialized";
 import { toQueryDsl } from "./sql-surface";
 
 export type QueryDslExecutionDeps = {
+  /** 当前本体存储；有它才会判断“完整物化优先”。 */
+  targetId?: string;
   getDataSource?: (sourceId: string) => Promise<DataSourceRecord | null>;
   openConnector?: (record: DataSourceRecord) => Promise<DataSourceConnector>;
   /** 只在定义里有没绑资源的来源时才会被调（见 bindings.ts）。 */
@@ -17,7 +20,8 @@ export type QueryDslExecutionDeps = {
 
 export type QueryDslExecutionResult = {
   data_source: string;
-  data_source_kind: DataSourceRecord["kind"];
+  /** 源库类型，或对象索引的 ClickHouse。 */
+  data_source_kind: DataSourceRecord["kind"] | "CLICKHOUSE";
   columns: string[];
   rows: unknown[][];
   returned: number;
@@ -79,6 +83,8 @@ async function runQuery(
    */
   const bound = await withInferredDataSources(definition, deps.listDataSources ?? defaultListDataSources);
   const plan = resolveQueryDsl(bound.definition, query);
+  const materialized = await tryExecuteMaterializedQuery(plan, deps.targetId);
+  if (materialized) return materialized;
   const record = await (deps.getDataSource ?? defaultDataSource)(plan.root.dataSourceId);
   if (!record) {
     throw new QueryDslError("ENTITY_NOT_BOUND", `对象类型「${plan.root.entityTypeName}」绑定的数据资源已不存在。`);

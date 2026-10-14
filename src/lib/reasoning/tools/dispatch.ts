@@ -805,7 +805,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       if (!sql) {
         throw new QueryDslError("INVALID_QUERY", "run_query 要一句本体 SQL（没有给 sql）。", "例：SELECT 地市编码, COUNT(*) AS 条数 FROM 专线产品用户 GROUP BY 地市编码");
       }
-      const result = await executeOntologySql(definition, sql, { parameters });
+      const result = await executeOntologySql(definition, sql, { parameters, targetId: context.store.target.id });
       return {
         payload: result,
         // 查询结果不是本体里的对象，不能当"证据"引用。

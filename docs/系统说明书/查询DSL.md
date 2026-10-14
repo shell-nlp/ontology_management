@@ -69,6 +69,7 @@ SQL 编译器
 - 枚举标签到实际码值的解析
 - `run_query` 工具已开放；出厂默认关闭，管理员在「MCP 调试」里打开后模型可用
 - 单对象类型主来源查询
+- 执行路由：根对象类型（以及 JOIN 涉及的关系类型）已**完整物化**时优先查 ClickHouse 对象索引；否则回源业务数据库
 - 外键式关系 JOIN
 - 中间表式关系 JOIN
 - 关系基数放大保护
@@ -92,7 +93,12 @@ SQL 编译器
 全部来自内核，与表层无关，所以换表层一条都不会丢。
 
 两种表层产出**同一份 `QueryDsl`**：本体 SQL 解析 + 绑定之后，与 JSON DSL 共用
-`resolveQueryDsl` → `compileQuerySql` → 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
+`resolveQueryDsl` → 执行路由 → 编译 / 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
+执行路由只换“从哪里读”，不换解析、校验、指标口径、JOIN 语义或基数保护：
+
+- 查询涉及的对象类型和关系类型都已有“完整跑到源尾”的物化清单 → 编译到 ClickHouse 对象索引（`object_entries` / `object_links`）；
+- 任意一处没物化、只物化了一部分或清单已清掉 → 沿用原来的业务库 SQL 执行链；
+- 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse 对象索引` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把“到底查了哪边”藏起来。
 
 `run_query` 工具**只收本体 SQL**（`sql` + `parameters`）：一个工具只留一种表层，模型才不用在两套语法之间挑。
 JSON DSL 仍在代码里（`executeQueryDsl`，程序化构造与影子对拍用），只是不出现在工具入参上。
@@ -514,10 +520,10 @@ executeQueryDsl(definition, dsl, deps?)
 
 1. 解析 DSL
 2. Resolver 生成 LogicalPlan
-3. 根据根对象解析数据资源
-4. 根据数据资源类型选择 SQL 编译器
-5. 调用连接器只读执行
-6. 归一化结果
+3. 检查查询涉及的对象类型与关系类型是否有完整物化清单
+4. 已完整物化 → 编译到 ClickHouse 对象索引并只读执行；否则按根对象解析数据资源
+5. 未完整物化 → 根据数据资源类型选择业务库 SQL 编译器并调用连接器只读执行
+6. 归一化结果，并回传实际执行侧的 `data_source` / `data_source_kind`
 
 结果形状：
 
