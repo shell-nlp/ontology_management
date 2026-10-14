@@ -135,7 +135,16 @@ async function bootstrapPlatformSchema(source: DataSource) {
   await withAdvisoryLock("ontology_platform_schema", async () => {
     for (const migration of PLATFORM_MIGRATIONS) {
       await withPlatformQueryRunner(async (runner) => {
-        await migration.up(runner);
+        try {
+          await migration.up(runner);
+        } catch (error) {
+          /*
+           * 迁移失败 = 整个平台不可用，而路由层会把异常吞成一句笼统的"请求无效"，
+           * 排查时根本看不出是哪一支迁移、为什么。这里必须把**名字与原因**打到服务端日志上。
+           */
+          console.error(`[platform-db] 迁移 ${migration.name} 失败：${error instanceof Error ? error.message : String(error)}`);
+          throw error;
+        }
       });
     }
   });

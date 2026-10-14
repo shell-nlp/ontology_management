@@ -9,6 +9,7 @@ import { MaterializationJobs0008 } from "@/lib/platform/db/migrations/0008-mater
 import { MaterializationJobKind0009 } from "@/lib/platform/db/migrations/0009-materialization-job-kind";
 import { OrphanTargetCleanup0010 } from "@/lib/platform/db/migrations/0010-orphan-target-cleanup";
 import { OAuthTables0011 } from "@/lib/platform/db/migrations/0011-oauth";
+import { MaterializeJobCursor0012 } from "@/lib/platform/db/migrations/0012-materialize-job-cursor";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -26,4 +27,5 @@ export const PLATFORM_MIGRATIONS = [
   new MaterializationJobKind0009(),
   new OrphanTargetCleanup0010(),
   new OAuthTables0011(),
+  new MaterializeJobCursor0012(),
 ];

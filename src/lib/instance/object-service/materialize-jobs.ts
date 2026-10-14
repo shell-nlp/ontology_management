@@ -1,6 +1,40 @@
 import { materializeObjectType, materializeRelationshipType, resolveObjectContext } from "@/lib/instance/object-service";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
-import { MaterializationJobEntity, platformRepo } from "@/lib/platform/db";
+import { MaterializationJobEntity, jsonValue, platformRepo } from "@/lib/platform/db";
+import type { MaterializeCursor } from "@/lib/instance/object-service/types";
+
+/**
+ * 游标值落库前的编码：`Date` 存不得 JSON 原样（会被拍成字符串，续跑时绑回去类型就变了），
+ * 所以包成 `{ __date: ISO }`；解码时还原成 Date。其余标量原样存。
+ * 这是**纯函数**，有单测 —— 它错了的表现是"续跑时翻页翻错"，很难现场看出来。
+ */
+function encodeCursorValue(value: unknown): unknown {
+  return value instanceof Date ? { __date: value.toISOString() } : value;
+}
+
+function decodeCursorValue(value: unknown): unknown {
+  if (value && typeof value === "object" && "__date" in (value as Record<string, unknown>)) {
+    const date = new Date(String((value as Record<string, unknown>).__date ?? ""));
+    return Number.isNaN(date.getTime()) ? value : date;
+  }
+  return value;
+}
+
+/** 游标 → 可落库的形状（空游标一律 null，别存一个没用的空壳）。 */
+export function encodeCursor(cursor: MaterializeCursor | null): { columns: string[]; values: unknown[] } | null {
+  if (!cursor || !cursor.columns.length || cursor.columns.length !== cursor.values.length) return null;
+  return { columns: [...cursor.columns], values: cursor.values.map(encodeCursorValue) };
+}
+
+/** 落库的形状 → 游标；形状不对一律当"没有游标"（宁可退回 OFFSET，也不拿半截游标去翻页）。 */
+export function decodeCursor(value: unknown): MaterializeCursor | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as { columns?: unknown; values?: unknown };
+  if (!Array.isArray(record.columns) || !Array.isArray(record.values)) return null;
+  const columns = record.columns.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (!columns.length || columns.length !== record.values.length) return null;
+  return { columns, values: record.values.map(decodeCursorValue) };
+}
 
 /**
  * 整份物化的**后台任务**（2026-10-12 用户要求：默认不限制 + 放后台跑 + 能看进度）。
@@ -45,6 +79,10 @@ type JobState = MaterializeJob & {
   maxRows: number | null;
   /** 断点：这一趟从第几条开始读（0 = 从头）。 */
   startOffset: number;
+  /** 这一趟开始时接的游标（续跑才有）；与 startOffset 一起决定从哪儿接着读。 */
+  startCursor: MaterializeCursor | null;
+  /** 最近一次"可以接着续"的位置（每读完一页更新），落库供中断后续跑用。 */
+  cursor: MaterializeCursor | null;
 };
 
 type Registry = { jobs: Map<string, JobState>; queue: string[]; running: boolean };
@@ -89,6 +127,8 @@ async function persist(job: JobState): Promise<void> {
         pages: job.pages,
         truncated: job.truncated,
         message: job.message,
+        // 游标按"能落库的形状"存（Date 要编码，见 encodeCursor）。
+        cursor: job.cursor ? jsonValue(encodeCursor(job.cursor)) : null,
         queuedAt: new Date(job.queuedAt),
         startedAt: job.startedAt ? new Date(job.startedAt) : null,
         finishedAt: job.finishedAt ? new Date(job.finishedAt) : null,
@@ -212,13 +252,21 @@ export function cancelMaterializeJob(jobId: string): MaterializeJob | null {
  * 取一个任务的**断点**（已经读到第几条）：内存里在跑/刚跑完的优先，其次读库里的历史行
  * （进程重启后任务只剩库里那一行，靠它才能续跑）。任务不存在返回 null。
  */
-export async function jobCursor(jobId: string): Promise<number | null> {
+/**
+ * 读一个任务的**续跑点**：读到第几条 + 当时的游标。
+ *
+ * 内存里有就直接用；没有（进程重启过）就**读库** —— 任务表里那两列就是为这件事存的，
+ * 否则重启之后的"继续物化"会静默从 0 重头跑（大表上等于白跑一遍）。
+ * 读库失败一律当"没有续跑点"（调用方会退回从头跑，安全方向）。
+ */
+export async function jobResumePoint(jobId: string): Promise<{ scanned: number; cursor: MaterializeCursor | null } | null> {
   const live = registry().jobs.get(jobId);
-  if (live) return live.scanned;
+  if (live) return { scanned: live.scanned, cursor: live.cursor ?? live.startCursor ?? null };
   try {
     const repo = await platformRepo(MaterializationJobEntity);
     const row = await repo.findOne({ where: { id: jobId } });
-    return row ? Number(row.scanned ?? 0) : null;
+    if (!row) return null;
+    return { scanned: Number(row.scanned ?? 0), cursor: decodeCursor(row.cursor) };
   } catch {
     return null;
   }
@@ -233,14 +281,16 @@ export function enqueueMaterializeJob(input: {
   versionId?: string | null;
   pageSize?: number;
   maxRows?: number | null;
-  /** 从哪条记录断点续跑（传上一轮任务的 id）：取它的 scanned 当起点。 */
+  /** 从哪条记录断点续跑（传上一轮任务的 id）：取它的 scanned + 游标当起点。 */
   resumeFromJobId?: string | null;
-  /** 或直接给起点条数（内部用；与 resumeFromJobId 二选一）。 */
+  /** 或直接给起点（内部用；与 resumeFromJobId 二选一）。 */
   startOffset?: number;
+  startCursor?: MaterializeCursor | null;
 }): MaterializeJob {
   const state = registry();
   const previous = input.resumeFromJobId ? state.jobs.get(input.resumeFromJobId) : undefined;
   const startOffset = Math.max(0, Math.floor(input.startOffset ?? previous?.scanned ?? 0));
+  const startCursor = input.startCursor ?? previous?.cursor ?? null;
   const job: JobState = {
     id: crypto.randomUUID(),
     targetId: input.targetId,
@@ -252,7 +302,9 @@ export function enqueueMaterializeJob(input: {
     pages: 0,
     total: null,
     truncated: false,
-    message: startOffset > 0 ? `从第 ${startOffset} 条继续（断点续跑）。` : null,
+    message: startOffset > 0
+      ? `从第 ${startOffset} 条继续（断点续跑${startCursor ? "，接着用键集翻页" : ""}）。`
+      : null,
     queuedAt: new Date().toISOString(),
     startedAt: null,
     finishedAt: null,
@@ -260,6 +312,8 @@ export function enqueueMaterializeJob(input: {
     pageSize: input.pageSize ?? DEFAULT_MATERIALIZE_PAGE_SIZE,
     maxRows: typeof input.maxRows === "number" && input.maxRows > 0 ? input.maxRows : null,
     startOffset,
+    startCursor,
+    cursor: startCursor,
     cancelRequested: false,
   };
   state.jobs.set(job.id, job);
@@ -289,10 +343,13 @@ async function drain(): Promise<void> {
           pageSize: job.pageSize,
           maxRows: job.maxRows,
           startOffset: job.startOffset,
-          onProgress: (progress: { scanned: number; rows: number; pages: number }) => {
+          // 断点游标：有它才能接着用键集翻页（只靠条数还原不出游标，会退回 OFFSET）。
+          startCursor: job.startCursor,
+          onProgress: (progress: { scanned: number; rows: number; pages: number; cursor?: MaterializeCursor | null }) => {
             job.scanned = progress.scanned;
             job.rows = progress.rows;
             job.pages = progress.pages;
+            if (progress.cursor) job.cursor = progress.cursor;
             // 每页一次（onProgress 本来就是按页触发的），不每行写。
             void persist(job);
           },

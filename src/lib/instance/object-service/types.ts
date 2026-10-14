@@ -77,6 +77,14 @@ export type ObjectSourceRead = {
   warnings: string[];
 };
 
+/**
+ * 整份物化的**断点游标**：上一页最后一行的排序键值。
+ *
+ * 落库之后续跑就接着用键集翻页（而不是退回 OFFSET —— Oracle 的 OFFSET 上限是 5000 行，
+ * 大表一旦中断就再也续不上）。`columns` 是源侧列名，`values` 是那一行对应的原始值。
+ */
+export type MaterializeCursor = { columns: string[]; values: unknown[] };
+
 export type ObjectSourceQuery = {
   rows: ObjectRecord[];
   total: number | null;

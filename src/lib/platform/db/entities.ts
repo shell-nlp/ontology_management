@@ -275,6 +275,11 @@ export class MaterializationJobEntity {
   @Column("timestamptz", { name: "started_at", nullable: true }) startedAt!: Date | null;
   @Column("timestamptz", { name: "finished_at", nullable: true }) finishedAt!: Date | null;
   @Column("text", { name: "created_by", nullable: true }) createdBy!: string | null;
+  /**
+   * 断点游标：上一页最后一行的排序键值（`{ columns, values }`）。
+   * 续跑接着用键集翻页，不再退回 OFFSET（Oracle 的 OFFSET 上限 5000 行，大表一断就续不上）。
+   */
+  @Column("jsonb", { name: "cursor", nullable: true }) cursor!: JsonColumn | null;
 }
 
 /**

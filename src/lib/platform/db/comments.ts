@@ -176,6 +176,7 @@ export const PLATFORM_COLUMN_COMMENTS: Record<string, Record<string, string>> = 
     started_at: "开始执行时间。",
     finished_at: "结束时间。",
     created_by: "发起人（users.id）。",
+    cursor: "断点游标：上一页最后一行的排序键值（{columns, values}）；续跑用它接着用键集翻页，不退回 OFFSET。",
   },
   oauth_clients: {
     id: "客户端 id（client_id），随机串；授权请求与令牌都按它归属。",

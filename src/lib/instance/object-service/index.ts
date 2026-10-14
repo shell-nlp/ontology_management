@@ -6,7 +6,7 @@ import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForCol
 import { connectorFor, createDataSourceObjectSource, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
 import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
-import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
+import type { MaterializeCursor, ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
 import type { ObjectIndexLink } from "@/lib/framework/object-index/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
@@ -298,7 +298,12 @@ export async function materializeObjectType(
     maxRows?: number | null;
     /** 断点续跑：从第几条开始接着读（上一轮任务已读的条数）。默认 0 = 从头读。 */
     startOffset?: number;
-    onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void;
+    /**
+     * 断点续跑的**游标**（上一轮任务落库的那个）：给了就接着用键集翻页，
+     * 不再退回 OFFSET —— 大表中断之后只有这条路能续上。
+     */
+    startCursor?: MaterializeCursor | null;
+    onProgress?: (progress: { scanned: number; rows: number; pages: number; cursor?: MaterializeCursor | null }) => void;
     shouldCancel?: () => boolean;
   } = {},
 ): Promise<MaterializeTypeResult> {
@@ -326,10 +331,12 @@ export async function materializeObjectType(
    */
   const cursorColumns: string[] = [];
   const cursorProperties: string[] = [];
-  if (startOffset === 0) {
+  const startCursor = options.startCursor && options.startCursor.columns.length ? options.startCursor : null;
+  if (startCursor || startOffset === 0) {
     const entityType = context.definition.entityTypes.find((item) => item.name === entityTypeName);
     if (entityType) {
-      const columns = primaryKeyColumns(entityType);
+      // 续跑用**落库的那组列**（期间改过主键就别硬套）；从头读用当前主键。
+      const columns = startCursor ? startCursor.columns : primaryKeyColumns(entityType);
       const properties = columns.map((column) => propertyForColumn(entityType, column));
       if (columns.length && properties.every(Boolean)) {
         cursorColumns.push(...columns);
@@ -358,8 +365,12 @@ export async function materializeObjectType(
     let truncated = false;
     let cancelled = false;
     let stalled = false;
+    /** 这一趟**读到了源尾**（最后一页没读满 = 源给完了）。续跑跑完也算。 */
+    let reachedEnd = false;
     let cursorActive = input.useCursor && cursorColumns.length > 0;
-    let cursorValues: unknown[] | null = null;
+    // 续跑：落库的游标只在"列完全一致"时采用（否则宁可退回 OFFSET，也不拿错列去翻页）。
+    let cursorValues: unknown[] | null =
+      input.useCursor && startCursor && startCursor.columns.join("\u0001") === cursorColumns.join("\u0001") ? startCursor.values : null;
     /** 上一页的"身份签名"：整整一页跟上一页一模一样 = 源侧分页没前进。 */
     let previousPageKey: string | null = null;
 
@@ -418,9 +429,6 @@ export async function materializeObjectType(
           pageSize = Math.min(pageSize, next);
         }
       }
-      if (input.reportProgress) {
-        options.onProgress?.({ scanned, rows: written, pages });
-      }
       /*
        * "这一页没读满 = 源读完了"里的"满"，要用**连接器实际给的上限**（result.limit），
        * 而不是我们请求的页大小：请求 20000 而连接器只给 5000 时，拿 20000 判会把
@@ -429,7 +437,10 @@ export async function materializeObjectType(
        */
       const effectiveLimit = result.limit > 0 ? result.limit : limit;
       if (pageSize > effectiveLimit) pageSize = effectiveLimit;
-      if (result.rows.length < effectiveLimit) break;
+      if (result.rows.length < effectiveLimit) {
+        reachedEnd = true;
+        break;
+      }
       /*
        * **翻页没前进就停**（绝不空转）：源侧分页一旦不生效（offset 被丢、或 Oracle 的 ROWNUM
        * 深翻页到了上限），每页都会"读满"，循环就会永远跑下去、scanned 越报越大，而索引里其实
@@ -455,6 +466,18 @@ export async function materializeObjectType(
       }
       offset += result.rows.length;
       if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
+      /*
+       * 进度**在游标推进之后再报**：这样任务表里存的就是"上一页最后一行"的位置，
+       * 中断后续跑接着用键集翻页（只存条数是还原不出来的）。
+       */
+      if (input.reportProgress) {
+        options.onProgress?.({
+          scanned,
+          rows: written,
+          pages,
+          cursor: cursorActive && cursorValues ? { columns: [...cursorColumns], values: [...cursorValues] } : null,
+        });
+      }
     }
 
     if (stalled) {
@@ -463,11 +486,13 @@ export async function materializeObjectType(
         "请先把数据来源的分页 / 深翻页上限修好，再重新整份物化。",
       );
     }
-    return { written, warnings: readWarnings, pages, scanned, total, truncated, cancelled, stalled };
+    return { written, warnings: readWarnings, pages, scanned, total, truncated, cancelled, stalled, reachedEnd };
   };
 
-  const cursorAttempted = startOffset === 0 && cursorColumns.length > 0;
-  let read = await readPages({ startOffset, useCursor: cursorAttempted, reportProgress: true });
+  // "游标少读 → OFFSET 兜底重读"只对**从头读**那一趟有意义；续跑那趟本来就只读后半段。
+  const cursorAttempted = startOffset === 0 && !startCursor && cursorColumns.length > 0;
+  // 有落库游标就用键集接着翻（哪怕 startOffset > 0）；没有才退回 OFFSET。
+  let read = await readPages({ startOffset, useCursor: cursorColumns.length > 0 && (startOffset === 0 || Boolean(startCursor)), reportProgress: true });
 
   /*
    * 主键游标的严格 `k > last` 在两个页边界遇到重复主键时，会跳过同一主键的其它行。
@@ -476,6 +501,7 @@ export async function materializeObjectType(
    */
   if (
     startOffset === 0 &&
+    !startCursor &&
     !read.truncated &&
     !read.cancelled &&
     !read.stalled &&
@@ -519,7 +545,7 @@ export async function materializeObjectType(
     }
   }
 
-  const { written, warnings, pages, scanned, total, truncated, cancelled, stalled } = read;
+  const { written, warnings, pages, scanned, total, truncated, cancelled, stalled, reachedEnd } = read;
 
   /*
    * 收尾：把这一趟**没读到**的旧行清掉（源里已经没有了）。判据是版本 —— 每一页写进去的行都盖了
@@ -542,7 +568,11 @@ export async function materializeObjectType(
    * 没读到源尾就得说清楚索引现在是什么状态：流式之后"半份"是真实存在的中间态，
    * 不说的话用户会以为这个类型就这么多对象（每条仍然只有一行，不会重复也不会丢）。
    */
-  if (truncated || cancelled || stalled || startOffset > 0) {
+  /*
+   * 只有**确实没读到源尾**才说"混合"。续跑跑完（reachedEnd）时数据是完整的，
+   * 再补一句"没读到源尾"只会让人以为还差一截 —— 告警说错话比不说更糟。
+   */
+  if (!reachedEnd) {
     warnings.push(
       "这一趟没读到源尾：索引里现在是「本次新读的 + 上一次剩下的」混合（每个对象键仍然只有一行）。" +
         "从断点继续、或者重跑一次整份物化，旧行就会被清掉。",
@@ -653,7 +683,9 @@ export async function materializeRelationshipType(
     pageSize?: number;
     maxRows?: number | null;
     startOffset?: number;
-    onProgress?: (progress: { scanned: number; rows: number; pages: number }) => void;
+    /** 同对象侧：断点续跑的游标（落库的那个），给了就接着用键集翻页。 */
+    startCursor?: MaterializeCursor | null;
+    onProgress?: (progress: { scanned: number; rows: number; pages: number; cursor?: MaterializeCursor | null }) => void;
     shouldCancel?: () => boolean;
   } = {},
 ): Promise<MaterializeTypeResult> {
@@ -672,9 +704,12 @@ export async function materializeRelationshipType(
   const startOffset = Math.max(0, Math.floor(options.startOffset ?? 0));
   const columns = linkReadColumns(relation, plan);
   const table = { schema: plan.table.schema, view: plan.table.name };
-  const orderColumns = startOffset === 0 ? linkOrderColumns(plan) : [];
+  // 有落库游标也要拿排序键（续跑接着用键集翻页）；只有"既不是从头、又没有游标"才退回 OFFSET。
+  const startCursor = options.startCursor && options.startCursor.columns.length ? options.startCursor : null;
+  const orderColumns = startOffset === 0 || startCursor ? linkOrderColumns(plan) : [];
   let cursorActive = orderColumns.length > 0;
-  let cursorValues: unknown[] | null = null;
+  let cursorValues: unknown[] | null =
+    startCursor && startCursor.columns.join("\u0001") === orderColumns.join("\u0001") ? startCursor.values : null;
   let offset = startOffset;
   let pages = 0;
   let scanned = startOffset;
@@ -682,6 +717,8 @@ export async function materializeRelationshipType(
   let truncated = false;
   let cancelled = false;
   let stalled = false;
+  /** 这一趟**读到了源尾**（最后一页没读满 = 源给完了）。 */
+  let reachedEnd = false;
   let previousPageKey: string | null = null;
   const warnings: string[] = [];
   /** 这一趟写进索引的边数。 */
@@ -743,11 +780,13 @@ export async function materializeRelationshipType(
     }
     pages += 1;
     scanned += result.rows.length;
-    options.onProgress?.({ scanned, rows: written, pages });
     // 同上：用连接器**实际**给的上限判断读没读完（它自己还有一层硬上限，Oracle 那条是 5000）。
     const effectiveLimit = result.rowLimit > 0 ? result.rowLimit : limit;
     if (pageSize > effectiveLimit) pageSize = effectiveLimit;
-    if (result.rows.length < effectiveLimit) break;
+    if (result.rows.length < effectiveLimit) {
+      reachedEnd = true;
+      break;
+    }
     const pageKey = JSON.stringify(result.rows.map((row) => orderColumns.map((column) => rawColumn(row, column)).join("\u0001")));
     if (pageKey === previousPageKey) { stalled = true; break; }
     previousPageKey = pageKey;
@@ -762,6 +801,13 @@ export async function materializeRelationshipType(
     }
     offset += result.rows.length;
     if (Number.isFinite(maxRows) && scanned >= maxRows) truncated = true;
+    // 与对象侧一致：游标推进之后再报进度，任务表里存的才是"能接着续"的位置。
+    options.onProgress?.({
+      scanned,
+      rows: written,
+      pages,
+      cursor: cursorActive && cursorValues ? { columns: [...orderColumns], values: [...cursorValues] } : null,
+    });
   }
 
   if (stalled) {
@@ -781,7 +827,8 @@ export async function materializeRelationshipType(
       warnings.push(`旧边没清掉（这次写进去的边不受影响）：${error instanceof Error ? error.message : "未知错误"}。重跑一次会再清一遍。`);
     }
   }
-  if (truncated || cancelled || stalled || startOffset > 0) {
+  // 同对象侧：确实没读到源尾才说"混合"（续跑跑完时数据是完整的）。
+  if (!reachedEnd) {
     warnings.push(
       "这一趟没读到源尾：索引里现在是「本次新读的 + 上一次剩下的」混合（同一条边仍然只留一行）。" +
         "从断点继续、或者重跑一次整份物化，旧边就会被清掉。",

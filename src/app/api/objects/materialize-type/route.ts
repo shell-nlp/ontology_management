@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
-import { cancelMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
+import { cancelMaterializeJob, enqueueMaterializeJob, jobResumePoint, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
+import type { MaterializeCursor } from "@/lib/instance/object-service/types";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { withPermission } from "@/lib/platform/route-guard";
 
@@ -42,12 +43,14 @@ export const POST = withPermission("instance.write", async (request: NextRequest
   try {
     const input = materializeInput.parse(await request.json());
     let startOffset = 0;
+    let startCursor: MaterializeCursor | null = null;
     if (input.resumeFromJobId) {
-      const cursor = await jobCursor(input.resumeFromJobId);
-      if (cursor === null) {
+      const resume = await jobResumePoint(input.resumeFromJobId);
+      if (resume === null) {
         return NextResponse.json({ error: "要续跑的那个任务找不到（内存与库里都没有）。" }, { status: 404 });
       }
-      startOffset = cursor;
+      startOffset = resume.scanned;
+      startCursor = resume.cursor;
     }
     const job = enqueueMaterializeJob({
       targetId: input.targetId,
@@ -57,6 +60,7 @@ export const POST = withPermission("instance.write", async (request: NextRequest
       pageSize: input.pageSize,
       maxRows: input.maxRows ?? null,
       startOffset,
+      startCursor,
     });
     await writeAuditEntry({
       actorId: user.id,
@@ -70,6 +74,8 @@ export const POST = withPermission("instance.write", async (request: NextRequest
         maxRows: input.maxRows ?? null,
         resumedFrom: input.resumeFromJobId ?? null,
         startOffset,
+        // 续跑是靠游标接着翻页还是退回 OFFSET，审计里也要看得见（排查"续跑没续上"时全靠它）。
+        resumeMode: startCursor ? "CURSOR" : "OFFSET",
       },
     });
     return NextResponse.json({ job }, { status: 202 });
