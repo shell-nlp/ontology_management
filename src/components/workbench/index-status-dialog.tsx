@@ -6,6 +6,7 @@ import { api } from "@/lib/framework/api-client";
 import { copyText } from "@/lib/framework/clipboard";
 import type { DataSourceKind, DataViewField, PublicDataSource } from "@/lib/datasource/types";
 import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
+import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 
 /**
  * 「索引与物化」面板（2026-10-12）。
@@ -146,8 +147,8 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
   const [completionFilter, setCompletionFilter] = useState<"ALL" | "PENDING" | "DONE">("ALL");
   /** 已点取消、还在等服务端回执的任务 id（这一小段时间界面先显示「取消中…」）。 */
   const [cancelling, setCancelling] = useState<string[]>([]);
-  /** 每页读多少行（源侧分页大小）。上限 500 —— 页面越大，单次查询越重。 */
-  const [pageSize, setPageSize] = useState(500);
+  /** 每页读多少行（源侧分页大小）。物化是"读一页写一页"，页越大往返越少、越快，但单次查询在业务库那侧越重。 */
+  const [pageSize, setPageSize] = useState(DEFAULT_MATERIALIZE_PAGE_SIZE);
 
   /**
    * `silent` = 后台轮询用的静默刷新：**不碰 loading**，所以表格不会被"读取中…"整块顶掉。
@@ -417,12 +418,19 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
           </div>
         </span>
         <span className="index-selected">已选 {selected.length} 个类型</span>
-        <label className="index-pagesize" title="每次从业务库读多少行；页面越大，单次查询越重（单次上限 500）">
+        <label
+          className="index-pagesize"
+          title={
+            `每次从业务库读多少行。物化是"读一页写一页"，页越大往返越少、跑得越快；` +
+            `但单次查询在业务库那侧也更重（上限 ` + MAX_MATERIALIZE_PAGE_SIZE + ` 行）。大表用大页。`
+          }
+        >
           每页
           <select value={pageSize} disabled={busy} onChange={(event) => setPageSize(Number(event.target.value))}>
             <option value={100}>100 行</option>
-            <option value={200}>200 行</option>
             <option value={500}>500 行</option>
+            <option value={2000}>2000 行</option>
+            <option value={5000}>5000 行（上限）</option>
           </select>
         </label>
         <button className="action compact primary" disabled={!mayWrite || busy || !selected.length} onClick={() => void enqueue(selected)}>

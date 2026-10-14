@@ -81,6 +81,15 @@ export type ObjectSourceQuery = {
   rows: ObjectRecord[];
   total: number | null;
   warnings: string[];
+  /**
+   * 这次**实际**向连接器要了多少行（过了所有上限之后的数）。
+   *
+   * 为什么必须回传：连接器有自己的单次读取硬上限（Oracle 那条是 5000，见 `@/lib/datasource/sql` 的
+   * `VIEW_LIMIT_MAX`）。整份物化要是拿"我请求的页大小"去判断"这一页读满了没有"，
+   * 一旦请求值超过连接器的上限，就会把"连接器只给了 5000"误判成"源读完了"，
+   * 然后报一句"只读到 5000 行"（实测踩过）。
+   */
+  limit: number;
 };
 
 /**

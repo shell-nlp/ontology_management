@@ -83,7 +83,8 @@ export type ObjectSearchHit = {
 export type ObjectIndexSyncResult = {
   upserted: number;
   deleted: number;
-  total: number;
+  /** 同步后这个本体存储总共有多少条。传了 `skipTotal` 就不统计（返回 null）—— 流式物化每页都会写，不需要每页数一遍。 */
+  total: number | null;
 };
 
 export type ObjectSearchResult = {
@@ -129,8 +130,8 @@ export type ObjectIndexLink = {
 export type ObjectIndexLinkSyncResult = {
   upserted: number;
   deleted: number;
-  /** 这个本体存储同步后总共有多少条边。 */
-  total: number;
+  /** 这个本体存储同步后总共有多少条边；传了 `skipTotal` 就不统计（返回 null）。 */
+  total: number | null;
 };
 
 export type ObjectLinkSearchQuery = {
@@ -206,8 +207,33 @@ export interface ObjectIndex {
   syncTargetObjects(
     targetId: string,
     entries: ObjectIndexEntry[],
-    options?: { versionId?: string | null; prune?: boolean; origin?: ObjectIndexOrigin; pruneLabel?: string },
+    options?: {
+      versionId?: string | null;
+      prune?: boolean;
+      origin?: ObjectIndexOrigin;
+      pruneLabel?: string;
+      /**
+       * 这一**趟**的**运行号**（毫秒时间戳，整数）：给了就写进 `materialized_run` 列。
+       * 流式物化靠它区分"这次读到的"和"上次剩下的"，收尾清理见 `pruneStaleObjects`。
+       * 刻意用整数而不是时间列 —— 时间列的比较要过时区解析，实测会把 prune 判错（见 clickhouse/index.ts）。
+       */
+      runId?: number;
+      /**
+       * 跳过"同步后一共多少条"那次 COUNT。流式物化**每读一页就写一页**，
+       * 带着 `FINAL` 的全量 count 每页做一次会把时间白烧掉 —— 它只在整份跑完之后才需要总数。
+       */
+      skipTotal?: boolean;
+    },
   ): Promise<ObjectIndexSyncResult>;
+  /**
+   * 删掉这个对象类型里**运行号小于 `runId`** 的索引行 —— 也就是最近一次整份物化**没碰到**的那些
+   * （源里已经没有了）。流式物化每读一页就盖一次运行号，所以收尾清理按它判即可，
+   * 不必再把整批对象键攒在内存里算差集（大表那样会 OOM）。
+   *
+   * **只有"从头读到尾、没截断、没取消"那一趟才允许调**：续跑那趟只读了后半段，
+   * 按版本清会把前半段一起删掉（2026-10-12 真踩过）。返回删掉的行数。
+   */
+  pruneStaleObjects(targetId: string, entityType: string, options: { origin: ObjectIndexOrigin; runId: number }): Promise<number>;
   /**
    * 按对象键读一条原始条目（对象服务按主键定位对象用）。
    * 走唯一键，不经过全文检索，也不受检索行数上限影响。
@@ -242,8 +268,14 @@ export interface ObjectIndex {
       prune?: boolean;
       origin?: ObjectIndexOrigin;
       pruneRelationshipType?: string;
+      /** 同 `syncTargetObjects` 的 `runId`：这一趟所有边共用同一个运行号。 */
+      runId?: number;
+      /** 同 `syncTargetObjects` 的 `skipTotal`。 */
+      skipTotal?: boolean;
     },
   ): Promise<ObjectIndexLinkSyncResult>;
+  /** 边版本的 `pruneStaleObjects`：清掉这个关系类型里运行号比 `runId` 小的边，返回删掉的行数。 */
+  pruneStaleLinks(targetId: string, relationshipType: string, options: { origin: ObjectIndexOrigin; runId: number }): Promise<number>;
   /** 读边：按关系类型 + 对象键（任一端）查。图谱与多跳遍历用它。 */
   searchLinks(query: ObjectLinkSearchQuery): Promise<ObjectLinkSearchResult>;
   /** 只删某个关系类型的边（可按来源收窄），返回删除条数。 */

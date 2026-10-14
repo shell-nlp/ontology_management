@@ -3,6 +3,7 @@ import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/framework/object-index";
 import { cancelMaterializeJob, enqueueMaterializeJob, jobCursor, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
+import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { withPermission } from "@/lib/platform/route-guard";
 
@@ -13,8 +14,11 @@ const materializeInput = z.object({
   /** 对象类型名或关系类型名（由 `kind` 决定怎么解释）。 */
   entityType: z.string().trim().min(1).max(200),
   versionId: z.string().uuid().optional(),
-  /** 每页读多少行（源侧分页大小）。 */
-  pageSize: z.number().int().min(1).max(500).optional(),
+  /**
+   * 每页读多少行（源侧分页大小）。上限由 `materialize-limits` 统一给 ——
+   * 读一页写一页之后页可以开大（大页 = 少几次往返、更快），但单次查询在业务库那侧也越重。
+   */
+  pageSize: z.number().int().min(1).max(MAX_MATERIALIZE_PAGE_SIZE).optional(),
   /** 这次最多读多少行；撞到它就停下并如实回 truncated=true。 */
   maxRows: z.number().int().min(1).max(200000).optional(),
   /** 断点续跑：传上一轮任务的 id，从它已读到的位置接着读（取它的 scanned 当起点）。 */
@@ -62,7 +66,7 @@ export const POST = withPermission("instance.write", async (request: NextRequest
         kind: job.kind,
         entityType: input.entityType,
         jobId: job.id,
-        pageSize: input.pageSize ?? 500,
+        pageSize: input.pageSize ?? DEFAULT_MATERIALIZE_PAGE_SIZE,
         maxRows: input.maxRows ?? null,
         resumedFrom: input.resumeFromJobId ?? null,
         startOffset,

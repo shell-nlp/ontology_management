@@ -1,4 +1,5 @@
 import { materializeObjectType, materializeRelationshipType, resolveObjectContext } from "@/lib/instance/object-service";
+import { DEFAULT_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { MaterializationJobEntity, platformRepo } from "@/lib/platform/db";
 
 /**
@@ -256,7 +257,7 @@ export function enqueueMaterializeJob(input: {
     startedAt: null,
     finishedAt: null,
     versionId: input.versionId ?? null,
-    pageSize: input.pageSize ?? 500,
+    pageSize: input.pageSize ?? DEFAULT_MATERIALIZE_PAGE_SIZE,
     maxRows: typeof input.maxRows === "number" && input.maxRows > 0 ? input.maxRows : null,
     startOffset,
     cancelRequested: false,

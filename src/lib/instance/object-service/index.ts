@@ -1,4 +1,5 @@
 import { getObjectIndex } from "@/lib/framework/object-index";
+import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE, MIN_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
 import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
@@ -210,7 +211,7 @@ export async function syncObjectsToIndex(
   context: ObjectContext,
   entityTypeName: string,
   options: { keys?: ObjectPrimaryKey[]; limit?: number } = {},
-): Promise<{ upserted: number; total: number; warnings: string[] }> {
+): Promise<{ upserted: number; total: number | null; warnings: string[] }> {
   const source = getObjectSource();
   const warnings: string[] = [];
   const entries: ObjectIndexEntry[] = [];
@@ -303,7 +304,14 @@ export async function materializeObjectType(
 ): Promise<MaterializeTypeResult> {
   const started = Date.now();
   const source = getObjectSource();
-  const pageSize = clamp(options.pageSize, 1, 500, 500);
+  // 页大小：默认 2000。读一页写一页之后，内存只跟页大小成正比，所以页可以开大 —— 往返次数直接降下来。
+  let pageSize = clamp(options.pageSize, 1, MAX_MATERIALIZE_PAGE_SIZE, DEFAULT_MATERIALIZE_PAGE_SIZE);
+  /**
+   * 这一趟的**运行号**（毫秒时间戳，整数）：这一趟写进去的每一行都盖它，收尾时凭它清掉"这次没读到的旧行"。
+   * 用整数而不是时间列，是因为时间列的比较要过时区解析 —— 实测 CH 服务器是 Asia/Shanghai、
+   * 写入是 UTC，prune 会差 8 小时、一条都删不掉。
+   */
+  const runId = Date.now();
   // **默认不限制**（2026-10-12 用户口径）：不传 maxRows 就是"读到源读完"。
   // 传了正数才是硬上限（撞上就 truncated=true 且不 prune，如实报数）。
   const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
@@ -331,11 +339,18 @@ export async function materializeObjectType(
   }
   /**
    * 跑一整趟读取。`useCursor=false` 时走 OFFSET，专门给"主键不唯一导致游标漏行"做兜底重读。
-   * 返回完整结果再交给调用方决定写不写索引；中途失败绝不写半份。
+   *
+   * **读一页、写一页**（2026-10-14）：以前是"整份读完再写"，内存跟行数成正比，千万行必 OOM；
+   * 现在内存只跟页大小成正比。代价是中途停下时索引里会短暂出现"本次新读的 + 上一次剩下的"混合
+   * （每个对象键仍然只有一行，不会重复也不会丢），所以每行都盖这一趟的版本戳、收尾按版本清旧行，
+   * 没跑完就在告警里如实说 —— 半份必须显形，不能让人以为数据就这么多。
    */
   const readPages = async (input: { startOffset: number; useCursor: boolean; reportProgress: boolean }) => {
-    const readEntries: ObjectIndexEntry[] = [];
     const readWarnings: string[] = [];
+    /** 这一趟写进索引的条数（兜底重读时以最后一趟为准）。 */
+    let written = 0;
+    /** 内存护栏只量一次（拿第一页的重量估），量完就不再反复调页大小。 */
+    let memoryChecked = false;
     let offset = input.startOffset;
     let pages = 0;
     let scanned = input.startOffset;
@@ -363,20 +378,58 @@ export async function materializeObjectType(
         paging: true,
         ...(useCursor ? { cursor: useCursor } : {}),
       });
-      if (input.reportProgress) {
-        options.onProgress?.({ scanned: scanned + result.rows.length, rows: readEntries.length + result.rows.length, pages: pages + 1 });
-      }
       readWarnings.push(...result.warnings);
       if (total === null && Number.isFinite(result.total)) total = result.total;
       pages += 1;
       scanned += result.rows.length;
+
+      const pageEntries: ObjectIndexEntry[] = [];
       for (const record of result.rows) {
         if (record.objectId) {
-          readEntries.push(buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties }));
+          pageEntries.push(buildIndexEntry(context.definition, { id: record.objectId, labels: [entityTypeName], properties: record.properties }));
         }
       }
-      // 这一页没读满 = 源读完了；读满就继续下一页。
-      if (result.rows.length < limit) break;
+      // **读一页写一页**：写完这一页就把它放掉，下一轮只留下一页。
+      if (pageEntries.length) {
+        const pageSynced = await getObjectIndex().syncTargetObjects(context.targetId, pageEntries, {
+          versionId: context.versionId,
+          origin: "MATERIALIZED",
+          runId,
+          // 每页都写，别每页再数一遍总数（带 FINAL 的全量 count，每页一次等于白烧时间）。
+          skipTotal: true,
+          // 逐页写绝不能 prune：这一页之外的行不该在这一页被删掉（收尾统一清，见 pruneStaleObjects）。
+          prune: false,
+        });
+        written += pageSynced.upserted;
+      }
+      /*
+       * 内存护栏：拿第一页量一下"一条多大"。宽表（属性多、检索文本长）一页两万行能吃几百 MB，
+       * 宁可多跑几次往返也不能把进程撑爆 —— 超预算就把页大小降到预算之内。
+       */
+      if (!memoryChecked) {
+        memoryChecked = true;
+        const bytesPerEntry = averageEntryBytes(pageEntries);
+        if (bytesPerEntry > 0 && bytesPerEntry * pageSize > PAGE_MEMORY_BUDGET_BYTES) {
+          const next = Math.max(MIN_MATERIALIZE_PAGE_SIZE, Math.floor(PAGE_MEMORY_BUDGET_BYTES / bytesPerEntry));
+          readWarnings.push(
+            `索引条目平均约 ${Math.round(bytesPerEntry / 1024)} KB，${pageSize} 行一页要约 ${Math.round((bytesPerEntry * pageSize) / 1024 / 1024)} MB：` +
+              `已把每页降到 ${next} 行，避免把内存撑爆（大表宁可多几次往返）。`,
+          );
+          pageSize = Math.min(pageSize, next);
+        }
+      }
+      if (input.reportProgress) {
+        options.onProgress?.({ scanned, rows: written, pages });
+      }
+      /*
+       * "这一页没读满 = 源读完了"里的"满"，要用**连接器实际给的上限**（result.limit），
+       * 而不是我们请求的页大小：请求 20000 而连接器只给 5000 时，拿 20000 判会把
+       * "连接器给了 5000" 误判成"源读完了"，然后报一句"只读到 5000 行"（实测踩过）。
+       * 顺手把页大小降到连接器认的上限，后面几页就别再白问一次了。
+       */
+      const effectiveLimit = result.limit > 0 ? result.limit : limit;
+      if (pageSize > effectiveLimit) pageSize = effectiveLimit;
+      if (result.rows.length < effectiveLimit) break;
       /*
        * **翻页没前进就停**（绝不空转）：源侧分页一旦不生效（offset 被丢、或 Oracle 的 ROWNUM
        * 深翻页到了上限），每页都会"读满"，循环就会永远跑下去、scanned 越报越大，而索引里其实
@@ -410,7 +463,7 @@ export async function materializeObjectType(
         "请先把数据来源的分页 / 深翻页上限修好，再重新整份物化。",
       );
     }
-    return { entries: readEntries, warnings: readWarnings, pages, scanned, total, truncated, cancelled, stalled };
+    return { written, warnings: readWarnings, pages, scanned, total, truncated, cancelled, stalled };
   };
 
   const cursorAttempted = startOffset === 0 && cursorColumns.length > 0;
@@ -451,7 +504,7 @@ export async function materializeObjectType(
           "请改用取数口径（先去重），或者把主键换成真正唯一的键。",
       );
     }
-    options.onProgress?.({ scanned: read.scanned, rows: read.entries.length, pages: read.pages });
+    options.onProgress?.({ scanned: read.scanned, rows: read.written, pages: read.pages });
     if (
       !read.truncated &&
       !read.cancelled &&
@@ -466,18 +519,35 @@ export async function materializeObjectType(
     }
   }
 
-  const { entries, warnings, pages, scanned, total, truncated, cancelled, stalled } = read;
-  const synced = await getObjectIndex().syncTargetObjects(context.targetId, entries, {
-    versionId: context.versionId,
-    origin: "MATERIALIZED",
-    /*
-     * 只有"从头读到尾、没取消、没截断、没卡住"才允许 prune：
-     * 断点续跑的那一趟内存里只有后半段的条目，prune 会把前半段的索引行删掉（真踩过）。
-     */
-    prune: !truncated && !cancelled && !stalled && startOffset === 0,
-    // prune 只在这个对象类型里生效：否则物化 A 会把 B 的物化数据一起删掉（见 pruneLabel 的说明）。
-    pruneLabel: entityTypeName,
-  });
+  const { written, warnings, pages, scanned, total, truncated, cancelled, stalled } = read;
+
+  /*
+   * 收尾：把这一趟**没读到**的旧行清掉（源里已经没有了）。判据是版本 —— 每一页写进去的行都盖了
+   * 这一趟的版本戳，比它旧的就是上一次留下的。
+   *
+   * **只有"从头跑到尾、没截断、没取消、没卡住"那一趟才清**：续跑那趟只写了后半段，
+   * 按版本清会把前半段一起删掉（2026-10-12 真踩过）。清失败不影响这次写进去的数据，如实报出来。
+   */
+  let pruned = 0;
+  if (!truncated && !cancelled && !stalled && startOffset === 0) {
+    try {
+      pruned = await getObjectIndex().pruneStaleObjects(context.targetId, entityTypeName, { origin: "MATERIALIZED", runId });
+    } catch (error) {
+      warnings.push(
+        `旧行没清掉（这次写进去的数据不受影响）：${error instanceof Error ? error.message : "未知错误"}。重跑一次会再清一遍。`,
+      );
+    }
+  }
+  /*
+   * 没读到源尾就得说清楚索引现在是什么状态：流式之后"半份"是真实存在的中间态，
+   * 不说的话用户会以为这个类型就这么多对象（每条仍然只有一行，不会重复也不会丢）。
+   */
+  if (truncated || cancelled || stalled || startOffset > 0) {
+    warnings.push(
+      "这一趟没读到源尾：索引里现在是「本次新读的 + 上一次剩下的」混合（每个对象键仍然只有一行）。" +
+        "从断点继续、或者重跑一次整份物化，旧行就会被清掉。",
+    );
+  }
   /*
    * **主键重复必须报数**（2026-10-13）：源里读了多少行、实际落下几个对象，差出来的就是被折叠掉的行数。
    * 只有「从头读完、没截断、没取消、没卡住」那一次才算得准 —— prune 之后索引里就是这个类型这一趟的全部对象。
@@ -514,7 +584,7 @@ export async function materializeObjectType(
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
     entityType: entityTypeName,
-    rows: synced.upserted,
+    rows: written,
     sourceRows: total ?? scanned,
     scanned,
     folded,
@@ -525,7 +595,7 @@ export async function materializeObjectType(
   return {
     entityType: entityTypeName,
     // rows 是"这一次写进去的条数"；断点续跑时它只是后半段。
-    rows: synced.upserted,
+    rows: written,
     scanned,
     folded,
     truncated: truncated || cancelled || stalled,
@@ -534,6 +604,25 @@ export async function materializeObjectType(
     tookMs: Date.now() - started,
     warnings,
   };
+}
+
+/**
+ * 单页条目的内存预算。超过就把页大小降到预算之内 ——
+ * 宽表（属性多、检索文本长）一页两万行也能吃掉几百 MB，宁可多几次往返也不能把进程撑爆。
+ */
+const PAGE_MEMORY_BUDGET_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 估一页条目平均占多少字节（字符数按 UTF-8 粗算 1.5 倍）—— 只用来做内存护栏，不求精确。
+ * 空页返回 0，调用方按"量不出来"处理。
+ */
+function averageEntryBytes(entries: readonly ObjectIndexEntry[]): number {
+  if (!entries.length) return 0;
+  let chars = 0;
+  for (const entry of entries) {
+    chars += (entry.searchText?.length ?? 0) + (entry.title?.length ?? 0) + (entry.properties ? JSON.stringify(entry.properties).length : 0);
+  }
+  return Math.ceil((chars / entries.length) * 1.5);
 }
 
 /** 行里的列名大小写由库决定（Oracle 折成大写）：按小写找，取**原始值**（游标要用原值绑回去）。 */
@@ -575,7 +664,10 @@ export async function materializeRelationshipType(
   const plan = planLinkSource(definition, relation);
   if (!plan.ok) throw new Error(plan.reason);
 
-  const pageSize = clamp(options.pageSize, 1, 500, 500);
+  // 与对象侧同一套口径：页默认 2000、上限跟连接器对齐（读一页写一页，内存只跟页走）。
+  let pageSize = clamp(options.pageSize, 1, MAX_MATERIALIZE_PAGE_SIZE, DEFAULT_MATERIALIZE_PAGE_SIZE);
+  /** 这一趟的运行号（整数）：收尾按它清"这次没读到的旧边"。 */
+  const runId = Date.now();
   const maxRows = typeof options.maxRows === "number" && options.maxRows > 0 ? Math.floor(options.maxRows) : Number.POSITIVE_INFINITY;
   const startOffset = Math.max(0, Math.floor(options.startOffset ?? 0));
   const columns = linkReadColumns(relation, plan);
@@ -592,8 +684,8 @@ export async function materializeRelationshipType(
   let stalled = false;
   let previousPageKey: string | null = null;
   const warnings: string[] = [];
-  const links: ObjectIndexLink[] = [];
-  const seen = new Set<string>();
+  /** 这一趟写进索引的边数。 */
+  let written = 0;
   const connector = (await connectorFor(plan.dataSourceId)).connector;
 
   while (scanned < maxRows) {
@@ -616,11 +708,18 @@ export async function materializeRelationshipType(
       } catch { total = null; }
     }
     const decoded = linksFromRows(relation, plan, result.rows);
+    /*
+     * 边也**读一页写一页**。以前那个 `seen` 是整趟的去重集合，会跟着数据量一起涨（千万条边就是 GB 级）；
+     * 现在只按页去重（连接表在同一页里扇出成多条边是最常见的情况），跨页重复的边交给索引自己收敛 ——
+     * 边表的唯一键是 (关系类型, 起点键, 终点键)，ReplacingMergeTree 会把同一条边只留一行。
+     */
+    const pageSeen = new Set<string>();
+    const pageLinks: ObjectIndexLink[] = [];
     for (const link of decoded.links) {
       const key = `${link.relationshipTypeId}|${link.source.objectId}|${link.target.objectId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      links.push({
+      if (pageSeen.has(key)) continue;
+      pageSeen.add(key);
+      pageLinks.push({
         relationshipType: link.relationshipType,
         relationshipTypeId: link.relationshipTypeId,
         source: { entityType: link.source.entityType, objectKey: objectKeyOf(link.source.entityType, link.source.primaryKey), objectId: link.source.objectId },
@@ -628,13 +727,27 @@ export async function materializeRelationshipType(
         properties: link.properties,
       });
     }
+    if (pageLinks.length) {
+      const pageSynced = await getObjectIndex().syncTargetLinks(context.targetId, pageLinks, {
+        versionId: context.versionId,
+        origin: "MATERIALIZED",
+        runId,
+        skipTotal: true,
+        // 逐页写不 prune：这一页之外的边不该在这一页被删掉（收尾统一清）。
+        prune: false,
+      });
+      written += pageSynced.upserted;
+    }
     if (decoded.skipped) {
       warnings.push(`关系类型「${relation.name}」有 ${decoded.skipped} 行的键不全（连接列是空值），这些行没有取成边。`);
     }
-    options.onProgress?.({ scanned: scanned + result.rows.length, rows: links.length, pages: pages + 1 });
     pages += 1;
     scanned += result.rows.length;
-    if (result.rows.length < limit) break;
+    options.onProgress?.({ scanned, rows: written, pages });
+    // 同上：用连接器**实际**给的上限判断读没读完（它自己还有一层硬上限，Oracle 那条是 5000）。
+    const effectiveLimit = result.rowLimit > 0 ? result.rowLimit : limit;
+    if (pageSize > effectiveLimit) pageSize = effectiveLimit;
+    if (result.rows.length < effectiveLimit) break;
     const pageKey = JSON.stringify(result.rows.map((row) => orderColumns.map((column) => rawColumn(row, column)).join("\u0001")));
     if (pageKey === previousPageKey) { stalled = true; break; }
     previousPageKey = pageKey;
@@ -657,17 +770,27 @@ export async function materializeRelationshipType(
       "请先把连接表的分页 / 排序键修好，再重新整份物化。",
     );
   }
-  const synced = await getObjectIndex().syncTargetLinks(context.targetId, links, {
-    versionId: context.versionId,
-    origin: "MATERIALIZED",
-    // 只有「从头读到尾、没取消、没截断、没卡住」才允许 prune；且只在这个关系类型里。
-    prune: !truncated && !cancelled && !stalled && startOffset === 0,
-    pruneRelationshipType: relation.name,
-  });
+  /*
+   * 收尾：清掉这个关系类型里**版本早于本趟**、也就是这次没读到的旧边。
+   * 同样只在"从头跑到尾、没截断没取消"那一趟清（续跑那趟只写了后半段，按版本清会误删前半段）。
+   */
+  if (!truncated && !cancelled && !stalled && startOffset === 0) {
+    try {
+      await getObjectIndex().pruneStaleLinks(context.targetId, relation.name, { origin: "MATERIALIZED", runId });
+    } catch (error) {
+      warnings.push(`旧边没清掉（这次写进去的边不受影响）：${error instanceof Error ? error.message : "未知错误"}。重跑一次会再清一遍。`);
+    }
+  }
+  if (truncated || cancelled || stalled || startOffset > 0) {
+    warnings.push(
+      "这一趟没读到源尾：索引里现在是「本次新读的 + 上一次剩下的」混合（同一条边仍然只留一行）。" +
+        "从断点继续、或者重跑一次整份物化，旧边就会被清掉。",
+    );
+  }
   await getObjectIndex().saveMaterialization({
     targetId: context.targetId,
     entityType: relation.name,
-    rows: synced.upserted,
+    rows: written,
     sourceRows: total ?? scanned,
     scanned,
     // 边没有「主键重复折叠」这回事：同一条边的重复行本来就该合成一条。
@@ -678,7 +801,7 @@ export async function materializeRelationshipType(
   });
   return {
     entityType: relation.name,
-    rows: synced.upserted,
+    rows: written,
     scanned,
     folded: 0,
     truncated: truncated || cancelled || stalled,

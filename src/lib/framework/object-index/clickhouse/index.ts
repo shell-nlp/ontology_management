@@ -34,6 +34,9 @@ import type {
  * 2. **读一律带 `FINAL`**：表引擎是 `ReplacingMergeTree(version)`，同一对象键多次写入靠
  *    "版本更大的赢"去重，而 CH 的合并是后台异步的 —— 不加 `FINAL` 就会读到旧行或重复行。
  *    `version` 由列默认值 `now64(9)` 生成，纳秒级，连续两次同步不会撞上同一个版本。
+ *    **整份物化另有 `materialized_run`**（整数运行号）：流式读一页写一页之后内存里没有全集，
+ *    收尾就凭这个运行号清掉"这次没读到的旧行"（`pruneStaleObjects`）。
+ *    刻意不用时间列做这个判据 —— 时区解析会把比较结果整体挪偏（见建表处的说明）。
  * 3. **内容列存 JSON 文本**：`properties` / `primary_key` 存 JSON 字符串，过滤走 `JSONExtract*`。
  *    这样对象类型的属性是"数据"而不是"表结构"—— 加一个属性不需要改 DDL（PG 那版用 jsonb 同理）。
  */
@@ -143,6 +146,16 @@ async function ensureSchemaOnce(): Promise<void> {
   // 老表补列（folded 是加"主键折叠必须报数"时加的：1000 行折成 800 个对象要看得见）。
   await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS folded UInt64 DEFAULT 0`);
   await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS source_rows UInt64 DEFAULT 0`);
+  /*
+   * 整份物化的"运行号"：流式物化每页都盖一个标记，收尾凭它清掉"这次没读到的旧行"。
+   *
+   * **刻意用整数（毫秒时间戳）而不是时间列**：DateTime64 的参数比较要过时区解析 ——
+   * 实测 CH 服务器是 `Asia/Shanghai`，而写入用的是 UTC 文本，两边差了 8 小时，
+   * prune 一条都没删掉（真踩过）。整数比较没有时区这回事。
+   * 默认 0 = 这次改造之前写进去的行，所以第一次整份物化就会把它们清掉。
+   */
+  await clickHouseExecute(`ALTER TABLE ${tableName(database)} ADD COLUMN IF NOT EXISTS materialized_run UInt64 DEFAULT 0`);
+  await clickHouseExecute(`ALTER TABLE ${linksTable(database)} ADD COLUMN IF NOT EXISTS materialized_run UInt64 DEFAULT 0`);
 }
 
 export function ensureClickHouseObjectIndexSchema(): Promise<void> {
@@ -200,7 +213,13 @@ function linkKeyOf(link: { relationshipType: string; source: { objectKey: string
   return JSON.stringify([link.relationshipType, source, target]);
 }
 
-function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null, origin: ObjectIndexOrigin) {
+function insertLines(
+  targetId: string,
+  entries: readonly ObjectIndexEntry[],
+  versionId: string | null,
+  origin: ObjectIndexOrigin,
+  runId: number | null,
+) {
   return entries
     .map((entry) =>
       JSON.stringify({
@@ -216,26 +235,40 @@ function insertLines(targetId: string, entries: readonly ObjectIndexEntry[], ver
         embedding: entry.embedding ?? [],
         version_id: versionId,
         origin,
+        // 同一趟共用一个运行号；不传就走列默认 0（发布 / 单行同步那条路不需要它）。
+        ...(runId ? { materialized_run: runId } : {}),
       }),
     )
     .join("\n");
 }
 
-async function insertEntries(targetId: string, entries: readonly ObjectIndexEntry[], versionId: string | null, origin: ObjectIndexOrigin) {
+async function insertEntries(
+  targetId: string,
+  entries: readonly ObjectIndexEntry[],
+  versionId: string | null,
+  origin: ObjectIndexOrigin,
+  runId: number | null = null,
+) {
   if (!entries.length) return 0;
   const { database } = clickHouseConfig();
   for (const chunk of chunked(entries, INSERT_CHUNK)) {
     await clickHouseExecute(
       `INSERT INTO ${tableName(database)}
-        (target_id, object_key, object_id, entity_type, labels, title, properties, primary_key, search_text, embedding, version_id, origin)
+        (target_id, object_key, object_id, entity_type, labels, title, properties, primary_key, search_text, embedding, version_id, origin, materialized_run)
        FORMAT JSONEachRow
-       ${insertLines(targetId, chunk, versionId, origin)}`,
+       ${insertLines(targetId, chunk, versionId, origin, runId)}`,
     );
   }
   return entries.length;
 }
 
-function linkInsertLines(targetId: string, links: readonly ObjectIndexLink[], versionId: string | null, origin: ObjectIndexOrigin) {
+function linkInsertLines(
+  targetId: string,
+  links: readonly ObjectIndexLink[],
+  versionId: string | null,
+  origin: ObjectIndexOrigin,
+  runId: number | null,
+) {
   return links
     .map((link) =>
       JSON.stringify({
@@ -252,20 +285,27 @@ function linkInsertLines(targetId: string, links: readonly ObjectIndexLink[], ve
         properties: JSON.stringify(link.properties ?? {}),
         version_id: versionId,
         origin,
+        ...(runId ? { materialized_run: runId } : {}),
       }),
     )
     .join("\n");
 }
 
-async function insertLinks(targetId: string, links: readonly ObjectIndexLink[], versionId: string | null, origin: ObjectIndexOrigin) {
+async function insertLinks(
+  targetId: string,
+  links: readonly ObjectIndexLink[],
+  versionId: string | null,
+  origin: ObjectIndexOrigin,
+  runId: number | null = null,
+) {
   if (!links.length) return 0;
   const { database } = clickHouseConfig();
   for (const chunk of chunked(links, INSERT_CHUNK)) {
     await clickHouseExecute(
       `INSERT INTO ${linksTable(database)}
-        (target_id, link_key, relationship_type, relationship_type_id, source_key, target_key, source_entity_type, target_entity_type, source_object_id, target_object_id, properties, version_id, origin)
+        (target_id, link_key, relationship_type, relationship_type_id, source_key, target_key, source_entity_type, target_entity_type, source_object_id, target_object_id, properties, version_id, origin, materialized_run)
        FORMAT JSONEachRow
-       ${linkInsertLines(targetId, chunk, versionId, origin)}`,
+       ${linkInsertLines(targetId, chunk, versionId, origin, runId)}`,
     );
   }
   return links.length;
@@ -295,6 +335,17 @@ async function countOrigin(targetId: string, origin: ObjectIndexOrigin) {
   const rows = await clickHouseQuery<{ n: number }>(
     `SELECT count() AS n FROM ${tableName(database)} FINAL WHERE target_id = {target:String} AND origin = {origin:String}`,
     { params: { target: targetId, origin } },
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** 只数某个关系类型 + 某一来源的边（按关系类型收尾清理时用）。 */
+async function countLinkTypeOrigin(targetId: string, relationshipType: string, origin: ObjectIndexOrigin) {
+  const { database } = clickHouseConfig();
+  const rows = await clickHouseQuery<{ n: number }>(
+    `SELECT count() AS n FROM ${linksTable(database)} FINAL
+      WHERE target_id = {target:String} AND relationship_type = {rel:String} AND origin = {origin:String}`,
+    { params: { target: targetId, rel: relationshipType, origin } },
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -527,7 +578,7 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       await ensureClickHouseObjectIndexSchema();
       const versionId = options?.versionId ?? null;
       const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
-      const upserted = await insertEntries(targetId, entries, versionId, origin);
+      const upserted = await insertEntries(targetId, entries, versionId, origin, options?.runId ?? null);
       let deleted = 0;
       if (options?.prune) {
         /*
@@ -545,7 +596,33 @@ export function createClickHouseObjectIndex(): ObjectIndex {
           deleted = await pruneNotIn(targetId, keys, origin, label);
         }
       }
-      return { upserted, deleted, total: await countTarget(targetId) };
+      // skipTotal：流式物化每页都会调一次，带 FINAL 的全量 COUNT 每页做一次等于白烧时间。
+      return { upserted, deleted, total: options?.skipTotal ? null : await countTarget(targetId) };
+    },
+    /**
+     * 收尾清理：把这个对象类型里**版本早于本次运行**的行删掉 —— 那些是上一次物化留下的、
+     * 这一趟没读到的（源里已经没有了）。
+     *
+     * 为什么不再用"内存里的键差集"：流式物化读一页写一页，内存里没有全集；
+     * 而且整份物化的每一行都盖了同一个时间戳，用版本判就够了、还不用把几千万个键读回来比对。
+     * **只允许在"从头跑到尾、没截断没取消"时调用**（续跑那趟只写了后半段，按版本清会误删前半段）。
+     */
+    async pruneStaleObjects(targetId, entityType, options): Promise<number> {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const before = await countTypeOrigin(targetId, entityType, options.origin);
+      await clickHouseExecute(
+        `DELETE FROM ${tableName(database)}
+          WHERE target_id = {target:String} AND entity_type = {type:String} AND origin = {origin:String}
+            AND materialized_run < {run:UInt64}`,
+        {
+          params: { target: targetId, type: entityType, origin: options.origin, run: String(options.runId) },
+          // 删完再返回：紧接着的统计与页面会立刻读索引，异步删会读到旧行。
+          settings: { mutations_sync: "1" },
+        },
+      );
+      const after = await countTypeOrigin(targetId, entityType, options.origin);
+      return Math.max(0, before - after);
     },
     /**
      * 增量写入边。`pruneRelationshipType` 把 prune 收窄到一个关系类型 —— 整份物化是
@@ -556,7 +633,7 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       const { database } = clickHouseConfig();
       const versionId = options?.versionId ?? null;
       const origin: ObjectIndexOrigin = options?.origin ?? "SNAPSHOT";
-      const upserted = await insertLinks(targetId, links, versionId, origin);
+      const upserted = await insertLinks(targetId, links, versionId, origin, options?.runId ?? null);
       let deleted = 0;
       if (options?.prune) {
         const rel = options.pruneRelationshipType;
@@ -578,7 +655,24 @@ export function createClickHouseObjectIndex(): ObjectIndex {
         }
         deleted = doomed.length;
       }
-      return { upserted, deleted, total: await countTargetLinks(targetId) };
+      return { upserted, deleted, total: options?.skipTotal ? null : await countTargetLinks(targetId) };
+    },
+    /** 边版本的收尾清理：清掉这个关系类型里版本早于本次运行、以及这次没读到的边。 */
+    async pruneStaleLinks(targetId, relationshipType, options): Promise<number> {
+      await ensureClickHouseObjectIndexSchema();
+      const { database } = clickHouseConfig();
+      const before = await countLinkTypeOrigin(targetId, relationshipType, options.origin);
+      await clickHouseExecute(
+        `DELETE FROM ${linksTable(database)}
+          WHERE target_id = {target:String} AND relationship_type = {rel:String} AND origin = {origin:String}
+            AND materialized_run < {run:UInt64}`,
+        {
+          params: { target: targetId, rel: relationshipType, origin: options.origin, run: String(options.runId) },
+          settings: { mutations_sync: "1" },
+        },
+      );
+      const after = await countLinkTypeOrigin(targetId, relationshipType, options.origin);
+      return Math.max(0, before - after);
     },
     searchLinks,
     async deleteRelationshipLinks(targetId, relationshipType, options) {

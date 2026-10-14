@@ -4,6 +4,7 @@ import type { ObjectPrimaryKey } from "@/lib/instance/object-identity";
 import { objectIdOf, objectRefOf, primaryKeyColumns, primaryKeyFromProperties, propertyForColumn } from "@/lib/instance/object-identity";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 import type { ObjectQuery, ObjectRecord, ObjectSource, ObjectSourceQuery, ObjectSourceRead } from "@/lib/instance/object-service/types";
+import { MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 
 /**
  * 「数据资源」这个对象来源的实现（S2 的默认实现）。
@@ -17,8 +18,14 @@ import type { ObjectQuery, ObjectRecord, ObjectSource, ObjectSourceQuery, Object
  * 只要另写一个 `ObjectSource`，本文件不动，对象服务与界面也不用改。
  */
 
-/** 单次回源最多取多少行：对象服务是交互式读取，不做批量导出。 */
-export const MAX_SOURCE_ROWS = 500;
+/**
+ * 单次回源最多取多少行。
+ *
+ * 交互式读取默认只要几十行（`DEFAULT_SOURCE_ROWS`），但**整份物化**会按页大小来要
+ * （默认 2000、上限 20000，见 `materialize-limits`）—— 这个上限必须跟它对齐，
+ * 否则物化要 2000 行、这里只给 500 行，读循环会以为"源读完了"，反而报"只读到 500 行"。
+ */
+export const MAX_SOURCE_ROWS = MAX_MATERIALIZE_PAGE_SIZE;
 const DEFAULT_SOURCE_ROWS = 50;
 /** 文本检索最多铺几列，避免一条语句里出现上百个 LIKE。 */
 const MAX_SEARCH_COLUMNS = 20;
@@ -195,10 +202,10 @@ export function createDataSourceObjectSource(): ObjectSource {
 
     async query(definition, entityTypeName, query): Promise<ObjectSourceQuery> {
       const entityType = findEntityType(definition, entityTypeName);
-      if (!entityType) return { rows: [], total: null, warnings: [`本体里没有对象类型「${entityTypeName}」。`] };
+      if (!entityType) return { rows: [], total: null, warnings: [`本体里没有对象类型「${entityTypeName}」。`], limit: 0 };
       const sources = sourcesOf(entityType);
       if (!sources.length) {
-        return { rows: [], total: null, warnings: [`对象类型「${entityTypeName}」没有绑定数据资源，无法回源取数。`] };
+        return { rows: [], total: null, warnings: [`对象类型「${entityTypeName}」没有绑定数据资源，无法回源取数。`], limit: 0 };
       }
       const main = sources[0];
       const warnings: string[] = [];
@@ -237,6 +244,8 @@ export function createDataSourceObjectSource(): ObjectSource {
         warnings,
       );
       const records = rows.rows.map((row) => recordOf(entityTypeName, entityType, rowProperties(entityType, row), warnings));
+      // 连接器那边还夹了一层自己的硬上限（Oracle 那条是 5000），回传给调用方：它拿这个数判断"这一页读满了没有"。
+      const effectiveLimit = rows.rowLimit ?? limit;
 
       let total: number | null = null;
       /*
@@ -258,7 +267,7 @@ export function createDataSourceObjectSource(): ObjectSource {
           warnings.push(`总数统计失败：${error instanceof Error ? error.message : "未知错误"}`);
         }
       }
-      return { rows: records, total, warnings };
+      return { rows: records, total, warnings, limit: effectiveLimit };
     },
   };
 }
