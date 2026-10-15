@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AUTH_EXPIRED_MESSAGE, PUBLIC_API_PREFIXES } from "@/lib/platform/public-routes";
 
 /**
+ * 文件名是 `proxy.ts`（不是 `middleware.ts`）：Next 16 把 middleware 这个约定改名成 proxy，
+ * 行为完全一样，只是名字 —— 看到 "proxy" 别以为是反向代理配置。
+ *
  * 粗筛：**只判"有没有带凭据"，一个权限点都不判**（2026-10-14）。
  *
  * 分工（对齐 PDP / PEP）：
@@ -15,7 +18,7 @@ import { AUTH_EXPIRED_MESSAGE, PUBLIC_API_PREFIXES } from "@/lib/platform/public
  * 公开路径与那句提示语都来自 `@/lib/platform/public-routes`（Edge 安全的纯数据），
  * 覆盖测试会核对它没漏掉任何一个 `withPublic` / `withOwnAuth` 的路由。
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (!pathname.startsWith("/api")) return NextResponse.next();
   // CORS 预检**不带 Authorization**（浏览器规范如此），必须放行，否则跨源客户端一个都连不上。

@@ -139,18 +139,18 @@ describe("授权覆盖", () => {
   });
 
   /*
-   * 中间件（src/middleware.ts）只做"有没有带令牌"的粗筛，它按 PUBLIC_API_PREFIXES 放行。
+   * 粗筛层（src/proxy.ts）只做"有没有带令牌"的粗筛，它按 PUBLIC_API_PREFIXES 放行。
    * 那份名单**漏一个**的后果是"公开接口被挡成 401"（真正的故障），所以这里逐个公开方法核对
    * —— 名单与代码不许漂移，这也是"一份名单两处用"能成立的前提。
    */
-  it("middleware 的公开名单覆盖了每一个免鉴权路由", () => {
+  it("proxy 的公开名单覆盖了每一个免鉴权路由", () => {
     const apiPathOf = (file: string) => {
       const rel = file.replace(/^src\/app/, "").replace(/\/route\.ts$/, "");
       return `/${rel.split("/").filter((seg) => seg && !seg.startsWith("[")).join("/")}`;
     };
     const missing = [...new Set(PUBLIC_METHODS.map((entry) => apiPathOf(entry.split(" ")[0])))]
       .filter((apiPath) => !PUBLIC_API_PREFIXES.some((prefix) => apiPath === prefix || apiPath.startsWith(`${prefix}/`)));
-    expect(missing, `这些公开路由不在 middleware 的放行名单里，会被挡成 401：\n${missing.join("\n")}`).toEqual([]);
+    expect(missing, `这些公开路由不在 proxy 的放行名单里，会被挡成 401：\n${missing.join("\n")}`).toEqual([]);
   });
 
   it("版本删除使用独立权限点", () => {

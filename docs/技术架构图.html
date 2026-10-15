@@ -138,7 +138,7 @@
       <div class="meta-chip">栈 <b>Next.js 16 · React 19 · TypeScript</b></div>
       <div class="meta-chip">平台库 <b>PostgreSQL</b></div>
       <div class="meta-chip">对象索引 <b>ClickHouse</b></div>
-      <div class="meta-chip">鉴权 <b>middleware 粗筛 + 路由守卫</b></div>
+      <div class="meta-chip">鉴权 <b>proxy 粗筛 + 路由守卫</b></div>
     </div>
   </div>
 
@@ -167,9 +167,9 @@
       <div class="flow"><span>统一入口：会话 JWT（<code>AUTH_SECRET</code>，浏览器）或 OAuth 访问令牌（<code>aud=ontology-mcp</code>）</span></div>
 
       <div class="band b-blue">
-        <div class="band-tag"><strong>鉴权粗筛</strong><span>Middleware</span><b>src/middleware.ts</b></div>
+        <div class="band-tag"><strong>鉴权粗筛</strong><span>Proxy</span><b>src/proxy.ts</b></div>
         <div class="nodes">
-          <div class="node blue"><strong>只判「有没有凭据」</strong><span>没带 <code>Authorization: Bearer</code> 的 <code>/api/**</code> 直接 401；<b>一个权限点都不判</b> —— 拿不到本体 / 资源，也拿不到 handler 的声明</span><em>PEP 的最外层 · src/middleware.ts</em></div>
+          <div class="node blue"><strong>只判「有没有凭据」</strong><span>没带 <code>Authorization: Bearer</code> 的 <code>/api/**</code> 直接 401；<b>一个权限点都不判</b> —— 拿不到本体 / 资源，也拿不到 handler 的声明</span><em>PEP 的最外层 · src/proxy.ts</em></div>
           <div class="node blue"><strong>公开前缀名单</strong><span>登录 / 登出 / 会话探测 / 首次初始化 / OAuth 两个匿名端点 / 技能 MCP / MCP 端点（自带鉴权）；<code>OPTIONS</code> 预检一律放行 —— 浏览器预检不带 Authorization</span><em>lib/platform/public-routes.ts</em></div>
           <div class="node blue"><strong>这一层挡住了什么</strong><span>无凭据的请求在这里就结束：不必进路由、不必查一次会话。名单多一个只是少一层提前拒绝（fail-safe 的方向是故意选的）</span><em>不判权限点 = 不产生第二个真相</em></div>
         </div>
@@ -252,7 +252,7 @@
       <div class="card cross">
         <div class="label">横切关注点 · 分两层，不是"每个页面各判一遍"</div>
         <ul>
-          <li><b>鉴权分两层</b>：middleware 粗筛（有没有凭据）+ 路由守卫细判（要哪个权限点）；<b>权限点只在导出处声明一次</b>，执行只在一处</li>
+          <li><b>鉴权分两层</b>：proxy 粗筛（有没有凭据）+ 路由守卫细判（要哪个权限点）；<b>权限点只在导出处声明一次</b>，执行只在一处</li>
           <li><b>PDP / PEP 分得清</b>：决策内核是 <code>can()</code>（纯函数）；中间件与守卫都只是 PEP。将来做数据级授权（行 / 列）时判断落在领域层 —— 那时把 <code>can()</code> 升级成 <code>authorize(user, action, resource)</code>，别再新起一套</li>
           <li><b>权限点</b>：RBAC 角色 → 权限点；界面按钮可见性与服务端校验共用同一份决策内核</li>
           <li><b>审计</b>：发布、删除、数据资源变更、工具开关、动作决策、问答运行全部留痕</li>
@@ -323,7 +323,7 @@
         <div class="who">CHAIN 04 · 鉴权</div>
         <h3>一个请求怎么被放行</h3>
         <ol>
-          <li><i>1</i><span><b>middleware 粗筛</b>：不是公开前缀、又没带 Bearer → 直接 401（<code>OPTIONS</code> 放行）</span></li>
+          <li><i>1</i><span><b>proxy 粗筛</b>：不是公开前缀、又没带 Bearer → 直接 401（<code>OPTIONS</code> 放行）</span></li>
           <li><i>2</i><span>进到路由：导出时那句 <code>withPermission("...")</code> 已经声明了这个接口要什么</span></li>
           <li><i>3</i><span><b>守卫执行</b>：取当前账号的权限集 → 过 <code>can()</code> 决策</span></li>
           <li><i>4</i><span>没登录 <b>401</b>、登录了但没权限 <b>403</b>、通过则把用户注入 handler</span></li>
