@@ -439,10 +439,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   /** 点开看的原图；null 就是没开。 */
   const [preview, setPreview] = useState<ReasoningAttachment | null>(null);
   const [status, setStatus] = useState<{ configured: boolean; model: string | null } | null>(null);
-  const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(loadHistoryOpen);
   // 「问答配置」里的那几个数：默认是空的 = 不限制，存在本机。
   const [settings, setSettings] = useState<ReasoningSettings>(loadReasoningSettings);
+  /**
+   * 思考开关和「问答配置」共用同一份本机设置（`settings.thinking`，读写都在 reasoning/settings）。
+   * 默认开；显式关掉的人切页 / 刷新之后还是关着的，不会悄悄变回默认。
+   */
+  const thinkingEnabled = settings.thinking !== false;
   const [configOpen, setConfigOpen] = useState(false);
   /**
    * 列表跟着本体走：`targetId` 记的是"这份 items 是给哪个本体读的"。
@@ -704,6 +708,14 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     });
   }, []);
 
+  /**
+   * 思考开关写进「问答配置」那一份本机设置（`settings.thinking`），和那几个数一个口径：
+   * 关掉存 `false`，开回来就把这一项删掉（= 回到默认开）。
+   */
+  const toggleThinking = useCallback(() => {
+    setSettings((current) => ({ ...current, thinking: current.thinking === false ? undefined : false }));
+  }, []);
+
   /** 开一段新对话：只清界面这一侧，原来的记录仍然留在历史里。 */
   const startNewConversation = useCallback(() => {
     // 正在跑的那一轮不受影响：它归运行登记处，这里只是把画面换到一段新对话上。
@@ -833,7 +845,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
             type="button"
             className={`qa-toggle${thinkingEnabled ? " on" : ""}`}
             disabled={busy}
-            onClick={() => setThinkingEnabled((current) => !current)}
+            onClick={toggleThinking}
             title={thinkingEnabled ? "模型先思考再回答，更慢但更稳" : "跳过思考，直接回答，更快"}
           >
             <Brain size={13} />

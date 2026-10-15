@@ -10,6 +10,8 @@
  * 除了这几个数，还有一段**系统提示词**（`systemPrompt`）：留空 = 用 `prompt.ts` 里的默认提示词，
  * 抽屉里会把默认那段原文显示出来，改了就按改的走。本体概念清单由服务端自动接在后面，不用手写。
  *
+ * 页头那个「思考」开关（`thinking`）也存在这里：跟这几项一样只放本机，默认开。
+ *
  * 这里刻意只有这几个旋钮：能改的都是"影响结论完不完整 / 口味"的部分，
  * 真正保护数据库的那几条（只读事务、语句超时）不在其中，也不该被关掉。
  */
@@ -34,6 +36,12 @@ export type ReasoningSettings = {
    * 上限 20000 字，和服务端校验一致。
    */
   systemPrompt?: string;
+
+  /**
+   * 模型是否先思考。**省略 = 开**（默认），显式 `false` 才是关 —— 关掉更快，
+   * 但看不到"怎么想出来的"那一段。和其它几项一样只存在本机，也不进请求体。
+   */
+  thinking?: boolean;
 };
 
 /** 提示词长度上限：和服务端 `z.string().max(20000)` 对齐。 */
@@ -107,6 +115,8 @@ export function loadReasoningSettings(): ReasoningSettings {
       historyTurns: clampField("historyTurns", input.historyTurns),
       // 没改过的提示词不存：省得本机存一大段和默认一样的文本，"恢复默认"也就等于清空这一项。
       systemPrompt: isCustomSystemPrompt(prompt) ? prompt : undefined,
+      // 开是默认值，不存：只有显式关过才落一个 false（"恢复默认"就把它清回开）。
+      thinking: input.thinking === false ? false : undefined,
     };
   } catch {
     return {};
