@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
+import { MCP_TOOL_GROUPS, mcpToolCatalog } from "@/lib/reasoning/mcp";
+import { hasToolTitle, toolTitle } from "@/lib/reasoning/tool-labels";
 import { dataSourcesForTable, enabledReasoningToolNames, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import { profileTableKey, type ColumnValueIndex } from "@/lib/datasource/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
@@ -119,6 +120,15 @@ describe("工具范围", () => {
     expect(REASONING_TOOLS.filter((tool) => tool.disabled).map((tool) => tool.name)).toEqual([]);
     // 2026-10-10：分组上的 disabled 曾漏改 —— 工具已开放，MCP 调试页却还把整组写成「暂不使用」。
     expect(MCP_TOOL_GROUPS.filter((group) => group.disabled).map((group) => group.key)).toEqual([]);
+  });
+
+  it("每个工具都有面向用户的中文名，新增工具漏配直接失败", () => {
+    const missing = mcpToolCatalog().filter((tool) => !hasToolTitle(tool.name)).map((tool) => tool.name);
+    expect(missing).toEqual([]);
+    for (const tool of mcpToolCatalog()) {
+      expect(tool.title).toBe(toolTitle(tool.name));
+      expect(tool.title).not.toBe(tool.name);
+    }
   });
 
   it("每个工具的 JSON Schema 都能被 AI SDK 的 jsonSchema() 收下（数组/枚举参数拼错只会在这里炸）", () => {

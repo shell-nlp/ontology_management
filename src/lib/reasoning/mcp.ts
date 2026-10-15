@@ -4,6 +4,7 @@ import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
 import { getOntology, listOntologies } from "@/lib/platform/ontologies";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
+import { toolTitle } from "@/lib/reasoning/tool-labels";
 import type { ToolOutcome } from "@/lib/reasoning/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
@@ -31,10 +32,10 @@ export type McpToolGroup = { key: string; label: string; description: string; di
  * `disabled` 这套机制保留，作为将来"平台级停用、连开关都不给"的口子。
  */
 export const MCP_TOOL_GROUPS: McpToolGroup[] = [
-  { key: "discovery", label: "本体与 Schema", description: "本体列表与它落在哪个存储上" },
-  { key: "model", label: "本体模型检索", description: "语义检索、对象类型、关系类型、动作定义" },
-  { key: "data", label: "数据来源（只读）", description: "对象类型绑定的表：表结构与只读查询" },
-  { key: "query", label: "对象实例与关系子图查询", description: "按类型取对象、取子图" },
+  { key: "discovery", label: "本体与存储", description: "本体清单与它落在哪个存储上" },
+  { key: "model", label: "本体模型", description: "概念检索、对象类型、关系类型、动作与指标" },
+  { key: "data", label: "数据与查询（只读）", description: "表结构、只读 SQL 与本体 SQL 查询" },
+  { key: "query", label: "对象与关系查询", description: "按类型取对象、取关系子图" },
 ];
 
 const TOOL_GROUP: Record<string, string> = {
@@ -51,23 +52,6 @@ const TOOL_GROUP: Record<string, string> = {
   run_query: "data",
   query_object_instance: "query",
   query_instance_subgraph: "query",
-};
-
-const TOOL_TITLES: Record<string, string> = {
-  list_ontologies: "本体列表",
-  search_schema: "语义检索",
-  get_object_type: "对象类型详情",
-  list_concept_groups: "概念分组",
-  list_interfaces: "接口",
-  traverse_object_types: "对象类型多跳查询",
-  list_actions: "动作定义",
-  list_metrics: "指标定义",
-  // 不叫「建表语句」：视图走的是视图定义，还原那条也不是库里的原始 CREATE，叫表结构才名实相符。
-  get_table_ddl: "表结构",
-  run_sql: "只读查询",
-  run_query: "本体 SQL 查询",
-  query_object_instance: "对象实例查询",
-  query_instance_subgraph: "关系子图查询",
 };
 
 export type McpTool = {
@@ -90,7 +74,7 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
   const parameters = tool.parameters as { properties?: Record<string, unknown>; required?: string[] };
   return {
     name: tool.name,
-    title: TOOL_TITLES[tool.name] ?? tool.name,
+    title: toolTitle(tool.name),
     group: TOOL_GROUP[tool.name] ?? "model",
     description: tool.description,
     disabled: tool.disabled,
@@ -113,7 +97,7 @@ function withOntology(tool: (typeof REASONING_TOOLS)[number]): McpTool {
 export const MCP_ONLY_TOOLS: McpTool[] = [
   {
     name: "list_ontologies",
-    title: TOOL_TITLES.list_ontologies,
+    title: toolTitle("list_ontologies"),
     group: "discovery",
     description: "列出平台上登记的本体：id、名称、标识、落在哪个存储、版本状态与对象数量。查其它工具前先用它拿 ontology_id。",
     inputSchema: { type: "object", properties: {} },

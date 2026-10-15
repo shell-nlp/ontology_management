@@ -21,6 +21,7 @@ import {
 } from "@/lib/reasoning/settings";
 import { IMAGE_ONLY_QUESTION, mediaTypeOf } from "@/lib/reasoning/attachments";
 import { historyLabel } from "@/lib/reasoning/history";
+import { toolTitle } from "@/lib/reasoning/tool-labels";
 import type { ReasoningAttachment, ReasoningContext, ReasoningRun, ReasoningStep } from "@/lib/reasoning/types";
 import { attachLiveRun, attachRunsForConversation, cancelLiveRun, detachRunsForView, dropFinishedLiveRuns, forgetLastSeenConversation, lastSeenConversation, rememberConversation, startLiveRun, syncLiveRuns, useLiveRuns, type LiveRun } from "@/lib/reasoning/live-runs";
 import "./qa-studio.css";
@@ -34,14 +35,6 @@ import "./qa-studio.css";
  *
  * 全程走 SSE：思考、每一步、正文都是边跑边长出来的，所以轨迹在推理过程中就是活的。
  */
-
-const TOOL_LABELS: Record<string, string> = {
-  search_schema: "检索本体",
-  get_object_type: "读取对象类型",
-  query_object_instance: "查询对象",
-  query_instance_subgraph: "查询子图",
-  list_actions: "列出动作",
-};
 
 const EXAMPLES = [
   "这个本体里有哪些对象类型？它们各自有哪些属性？",
@@ -182,8 +175,7 @@ function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: bo
             <li key={step.index} className={`qa-trail-step${step.ok ? "" : " failed"}`}>
               <button type="button" onClick={() => setOpenStep(openStep === step.index ? null : step.index)} aria-expanded={openStep === step.index}>
                 <span className="qa-trail-node">{step.index}</span>
-                <b>{TOOL_LABELS[step.tool] ?? step.tool}</b>
-                <code>{step.tool}</code>
+                <b>{toolTitle(step.tool)}</b>
                 <span className="qa-trail-args">{argumentSummary(step.arguments)}</span>
                 <span className="qa-trail-facts">
                   {step.ok ? step.summary ?? "已返回" : "出错"}
