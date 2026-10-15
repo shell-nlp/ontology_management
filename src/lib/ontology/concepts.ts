@@ -132,14 +132,17 @@ export function conceptsOfDefinition(definition: OntologyDefinition): OntologyCo
   }
 
   for (const metric of definition.metrics ?? []) {
-    const scope = typeNameById.get(metric.entityTypeId) ?? "";
-    push("METRIC", metric.name, scope, [
+    const related = (metric.entityTypeIds ?? []).map((id) => typeNameById.get(id) ?? "").filter(Boolean);
+    const calculation = metric.calculation ?? null;
+    const calcType = calculation?.entityTypeId ? typeNameById.get(calculation.entityTypeId) ?? "" : "";
+    push("METRIC", metric.name, related.join("、"), [
       metric.description,
-      `${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"}`,
-      scope ? `作用 ${scope}` : "",
+      calculation ? `${calculation.aggregation}${calculation.property ? `(${calculation.property})` : "（行数）"}` : "只描述、不算数（不能出数）",
+      related.length ? `关联 ${related.join("、")}` : "",
+      calcType ? `算在 ${calcType}` : "",
       metric.unit ? `单位 ${metric.unit}` : "",
-      (metric.dimensions ?? []).length ? `维度 ${metric.dimensions.join("、")}` : "",
-      (metric.filters ?? []).length ? `口径 ${metric.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
+      (calculation?.dimensions ?? []).length ? `维度 ${calculation?.dimensions.join("、")}` : "",
+      (calculation?.filters ?? []).length ? `口径 ${calculation?.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
       (metric.tags ?? []).length ? `标签 ${metric.tags.join("、")}` : "",
       (metric.status ?? "draft") === "verified" ? "已验收" : "未验收",
     ]);

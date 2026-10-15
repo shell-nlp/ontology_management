@@ -206,7 +206,8 @@
       <div class="band b-green">
         <div class="band-tag"><strong>领域服务层</strong><span>Domain</span><b>src/lib</b></div>
         <div class="nodes">
-          <div class="node green"><strong>本体定义</strong><span>对象类型 · 属性（含主键标记）· 关系类型 · 接口 · 指标 · 概念分组</span><em>lib/ontology/</em></div>
+          <div class="node green"><strong>本体定义</strong><span>对象类型 · 属性（含主键标记）· 关系类型 · 接口 · 概念分组</span><em>lib/ontology/</em></div>
+          <div class="node green"><strong>指标（业务口径）</strong><span>一条指标 = <b>关联多个对象类型</b>（它出现在哪些类型的上下文里）+ <b>怎么算</b>（可留空）。<b>只描述、没配计算口径 → 不能出数</b>（查询报 <code>METRIC_NOT_CALCULABLE</code>）；算在哪一类由「计算落点」决定，且必须是关联类型之一（时间维度自动算一个可用维度）</span><em>lib/ontology/metrics.ts · entityTypeIds + calculation</em></div>
           <div class="node green"><strong>版本与发布</strong><span>草稿 → 校验 → 快照 → 发布 → 历史激活；发布前查主键重复、必填、端点契约</span><em>lib/versioning/（snapshot · publication）</em></div>
           <div class="node green"><strong>实例与对象服务</strong><span>对象身份 =（对象类型，主键）；索引优先、没物化回源；整份物化与对账</span><em>lib/instance/object-service/</em></div>
           <div class="node green"><strong>动作引擎</strong><span>平台唯一的业务写入口：先干跑计划、再写回，写前按键回读</span><em>lib/instance/action-engine · lib/ontology/action-writeback</em></div>
@@ -312,7 +313,7 @@
         <ol>
           <li><i>1</i><span>先按本体的<b>工具开关</b>算出这一轮能用哪些工具</span></li>
           <li><i>2</i><span>系统提示词按开关生成「本轮可用工具」，工具循环开始（步数上限可配）</span></li>
-          <li><i>3</i><span>先<b>定位概念</b>再取数：<code>run_query</code>（本体 SQL）优先</span></li>
+          <li><i>3</i><span>先<b>定位概念</b>（对象类型 / 指标）再取数：<code>run_query</code>（本体 SQL）优先 —— 指标可以只描述，那种<b>不能出数</b>；能不能算看它的 <code>calculable</code></span></li>
           <li><i>4</i><span>执行路由：涉及的<b>类型全部物化</b> → 查 ClickHouse；否则回源业务库</span></li>
           <li><i>5</i><span>结果回灌 → 出结论 + 证据；整轮写审计与对话历史</span></li>
         </ol>

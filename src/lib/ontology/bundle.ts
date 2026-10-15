@@ -225,7 +225,7 @@ function collectDefinitionIds(definition: OntologyDefinition) {
   for (const group of definition.groups) if (group.id) ids.add(group.id);
   for (const metric of definition.metrics) {
     if (metric.id) ids.add(metric.id);
-    if (metric.entityTypeId) ids.add(metric.entityTypeId);
+    for (const typeId of metric.entityTypeIds ?? []) if (typeId) ids.add(typeId);
   }
   for (const type of definition.entityTypes) {
     if (type.id) ids.add(type.id);
@@ -274,7 +274,8 @@ export function relinkDefinitionIds(
     metrics: definition.metrics.map((metric) => ({
       ...metric,
       id: id(metric.id),
-      entityTypeId: id(metric.entityTypeId),
+      entityTypeIds: (metric.entityTypeIds ?? []).map(id),
+      calculation: metric.calculation ? { ...metric.calculation, entityTypeId: id(metric.calculation.entityTypeId) } : null,
     })),
     entityTypes: definition.entityTypes.map((type) => ({
       ...type,

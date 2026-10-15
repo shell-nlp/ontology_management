@@ -185,30 +185,38 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
    * 现成的口径定义比让模型从列注释里反推可靠得多。
    */
   for (const metric of definition.metrics ?? []) {
-    const scopeType = definition.entityTypes.find((item) => item.id === metric.entityTypeId) ?? null;
-    const scope = scopeType?.name ?? "";
-    const source = scopeType ? entitySources(scopeType)[0] : undefined;
-    const column = scopeType?.properties.find((item) => item.name === metric.property)?.sourceField ?? "";
+    // 一条指标可以**关联多个对象类型**（references 决定 search_schema 的 object_type 过滤能命中哪些）。
+    const relatedTypes = (metric.entityTypeIds ?? [])
+      .map((id) => definition.entityTypes.find((item) => item.id === id) ?? null)
+      .filter((item): item is OntologyDefinition["entityTypes"][number] => Boolean(item));
+    const relatedNames = relatedTypes.map((item) => item.name);
+    // 计算落点只有一个（可能没配）：它才决定"拿哪张表、按哪一列去过滤取值"。
+    const calculation = metric.calculation ?? null;
+    const calcType = calculation?.entityTypeId ? definition.entityTypes.find((item) => item.id === calculation.entityTypeId) ?? null : null;
+    const source = calcType ? entitySources(calcType)[0] : relatedTypes.length ? entitySources(relatedTypes[0])[0] : undefined;
+    const column = calcType?.properties.find((item) => item.name === calculation?.property)?.sourceField ?? "";
     concepts.push({
       kind: "METRIC",
       name: metric.name,
       haystack: normalize([
         metric.name,
         describeBriefly(metric.description, 200),
-        scope,
-        metric.property,
-        metric.aggregation,
-        ...metric.dimensions,
-        ...metric.filters.map((filter) => `${filter.property} ${filter.value}`),
-        metric.timeProperty,
+        ...relatedNames,
+        calculation?.property ?? "",
+        calculation?.aggregation ?? "",
+        ...(calculation?.dimensions ?? []),
+        ...(calculation?.filters ?? []).map((filter) => `${filter.property} ${filter.value}`),
+        calculation?.timeProperty ?? "",
         ...metric.tags,
       ].join(" ")),
       values: normalize(columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", column).join(" ")),
       detail: [
-        `${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"}`,
-        scope ? `作用 ${scope}` : "还没选作用的对象类型",
-        metric.filters.length ? `口径 ${metric.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
-        metric.dimensions.length ? `维度 ${metric.dimensions.join("、")}` : "",
+        calculation ? `${calculation.aggregation}${calculation.property ? `(${calculation.property})` : "（行数）"}` : "只描述、没有计算口径（不能出数）",
+        relatedNames.length ? `关联 ${relatedNames.join("、")}` : "还没关联对象类型",
+        calcType ? `算在 ${calcType.name}` : "",
+        (calculation?.filters ?? []).length ? `口径 ${calculation?.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`).join("、")}` : "",
+        (calculation?.dimensions ?? []).length ? `维度 ${calculation?.dimensions.join("、")}` : "",
+        calculation?.timeProperty ? `时间维度 ${calculation.timeProperty}` : "",
         metric.unit ? `单位 ${metric.unit}` : "",
         // 状态位进检索结果的说明：模型一眼能分辨「已验收」和「还没定稿」。
         (metric.status ?? "draft") === "verified" ? "已验收" : "未验收（draft）",
@@ -218,7 +226,7 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : "",
       dataSource: resourceNameOf(source),
       sourceColumn: column,
-      references: scope ? [scope] : [],
+      references: relatedNames,
     });
   }
 
@@ -344,7 +352,8 @@ export function toMatch(item: ScoredConcept, forced?: SchemaMatch["matched"]): S
     ...(item.concept.boundTable ? { bound_table: item.concept.boundTable } : {}),
     ...(item.concept.dataSource ? { data_source: item.concept.dataSource } : {}),
     ...(item.concept.sourceColumn ? { source_column: item.concept.sourceColumn } : {}),
-    ...(item.concept.kind === "PROPERTY" || item.concept.kind === "METRIC" ? { object_type: item.concept.references?.[0] ?? "" } : {}),
+      // 指标可能关联多个对象类型：这里是"挂在哪些类型上"的完整名单（属性只有一个）。
+      ...(item.concept.kind === "PROPERTY" || item.concept.kind === "METRIC" ? { object_type: (item.concept.references ?? []).join("、") } : {}),
   };
 }
 

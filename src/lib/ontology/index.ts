@@ -198,12 +198,14 @@ export const conceptGroupSchema = z.object({
  * 属性注释里反推（`ZX_COUNT` 要 SUM 还是 COUNT、欠费要不要含红冲）——口径读一次就定下来，
  * 比每次重新推一遍靠谱。
  */
-export const metricSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().trim().min(1).max(100),
-  /** 这条指标量的是什么、口径边界是什么。 */
-  description: z.string().max(500).default(""),
-  /** 作用的对象类型（Palantir 的 metric scope）；空串表示还没选。 */
+/**
+ * 指标「怎么算」的那一半。**可以为空** —— 空 = 只描述、不出数（见 metricSchema）。
+ *
+ * 过滤 / 维度 / 时间维度都挂在这里而不是挂在指标上：它们都是"计算的一部分"，
+ * 没有计算口径时它们不存在，这样"填了维度却没选计算落点"这类半截状态在结构上就不可能。
+ */
+export const metricCalculationSchema = z.object({
+  /** 计算落在哪个对象类型上；**必须是这条指标关联的类型之一**（发布前校验会拦不一致的）。 */
   entityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),
   /** 聚合方式。COUNT 且 property 为空 = 数行数。 */
   aggregation: z.enum(["SUM", "COUNT", "COUNT_DISTINCT", "AVG", "MIN", "MAX"]).default("COUNT"),
@@ -220,8 +222,27 @@ export const metricSchema = z.object({
   })).default([]),
   /** 可以按哪些属性分组看（地市、产品、月份……）。 */
   dimensions: z.array(z.string().trim().max(120)).max(20).default([]),
-  /** 时间维度：按哪个属性看趋势；留空表示不是时序指标。 */
+  /** 时间维度：按哪个属性看趋势；留空表示不是时序指标。**它同时算一个可用维度**（不用再重复勾一次）。 */
   timeProperty: z.string().trim().max(120).default(""),
+});
+
+/** 指标的正文形状：**关联（多个对象类型）+ 计算（可空）**。 */
+const metricBodySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  /** 这条指标量的是什么、口径边界是什么。 */
+  description: z.string().max(500).default(""),
+  /**
+   * **关联**的对象类型（多个）：「这个指标和谁有关」。
+   * 关联决定它出现在哪些类型的上下文里（检索、对象类型详情、list_metrics 的过滤），
+   * **不等于能算** —— 能不能出数只看 `calculation`。
+   */
+  entityTypeIds: z.array(z.string().uuid()).max(50).default([]),
+  /**
+   * **怎么算**；`null` = 只描述、不出数（合法形态：模型能讲清这个口径是什么，但不能拿它出数）。
+   * 要用它出数就必须配上计算口径，且落点必须是上面关联的类型之一。
+   */
+  calculation: metricCalculationSchema.nullable().default(null),
   /** 单位类型与单位，原样保留外部定义（bkn 的 unit_type / unit）。 */
   unitType: z.string().trim().max(32).default(""),
   unit: z.string().trim().max(32).default(""),
@@ -234,6 +255,23 @@ export const metricSchema = z.object({
   owner: z.string().trim().max(120).default(""),
   tags: z.array(z.string().trim().max(32)).max(12).default([]),
 });
+
+/**
+ * 指标。**关联（多类型）与计算（可空）是两件事**，老快照里它们被挤在一个 `entityTypeId` 字段上，
+ * 这里按"原始输入里有没有新字段"判断新老，老形状折成新形状 —— 老快照不用迁移（和 `unique → primaryKey` 同一手法）。
+ */
+export const metricSchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const value = raw as Record<string, unknown>;
+  const { entityTypeId: legacyScope, aggregation, property, filters, dimensions, timeProperty, ...rest } = value;
+  if ("entityTypeIds" in value || "calculation" in value) return rest;
+  const scope = typeof legacyScope === "string" ? legacyScope.trim() : "";
+  return {
+    ...rest,
+    entityTypeIds: scope ? [scope] : [],
+    calculation: scope ? { entityTypeId: scope, aggregation, property, filters, dimensions, timeProperty } : null,
+  };
+}, metricBodySchema);
 
 /**
  * 关系类型的键映射：这条关系类型靠哪些属性（列）接到某一个对象类型上。

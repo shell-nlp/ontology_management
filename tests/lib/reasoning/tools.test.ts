@@ -648,12 +648,16 @@ function profiledDefinition(): OntologyDefinition {
         id: 指标id,
         name: "互联网专线条数",
         description: "状态正常的互联网专线条数",
-        entityTypeId: 线路类,
-        aggregation: "SUM",
-        property: "条数",
-        filters: [{ property: "专线类型", operator: "EQ", value: "2" }],
-        dimensions: ["地市"],
-        timeProperty: "",
+        // 关联了两个对象类型，但只在「专业线产品用户」上配了计算口径 —— 这正是"关联 ≠ 能算"。
+        entityTypeIds: [线路类, 用户类],
+        calculation: {
+          entityTypeId: 线路类,
+          aggregation: "SUM",
+          property: "条数",
+          filters: [{ property: "专线类型", operator: "EQ", value: "2" }],
+          dimensions: ["地市"],
+          timeProperty: "",
+        },
         unitType: "",
         unit: "条",
         status: "verified",
@@ -725,13 +729,40 @@ describe("search_schema v2：落点字段、取值命中与配额", () => {
     expect(ranked[0]).toMatchObject({ kind: "METRIC", name: "互联网专线条数", matched: "name" });
 
     const detail = await runReasoningTool("get_object_type", { type_name: "专业线产品用户" }, { store: {} as never, definition: def, runtimeTypes });
-    expect((detail.payload as { metrics: { name: string }[] }).metrics.map((item) => item.name)).toEqual(["互联网专线条数"]);
+    const listed = (detail.payload as { metrics: Record<string, unknown>[] }).metrics;
+    expect(listed.map((item) => item.name)).toEqual(["互联网专线条数"]);
+    // 计算就落在这个类型上 → 能出数，并且把关联的多个类型一起交代清楚
+    expect(listed[0]).toMatchObject({ calculated_on: "专业线产品用户", calculable: true, entity_types: ["专业线产品用户", "用户"] });
+
+    // 只关联、没配计算口径的那一侧：照样列出来，但 calculable=false —— 模型不能在这里拿它出数
+    const related = await runReasoningTool("get_object_type", { type_name: "用户" }, { store: {} as never, definition: def, runtimeTypes });
+    expect((related.payload as { metrics: Record<string, unknown>[] }).metrics[0]).toMatchObject({ name: "互联网专线条数", calculable: false, calculated_on: "专业线产品用户" });
 
     const outcome = await runReasoningTool("list_metrics", {}, { store: {} as never, definition: def, runtimeTypes });
-    const payload = outcome.payload as { metrics: { name: string; aggregation: string; property: string; unit: string; scope_object_type: string; filters: { property: string; value: string }[] }[] };
-    expect(payload.metrics[0]).toMatchObject({ name: "互联网专线条数", aggregation: "SUM", property: "条数", unit: "条", scope_object_type: "专业线产品用户" });
+    const payload = outcome.payload as { metrics: { name: string; aggregation: string; property: string; unit: string; calculated_on: string; calculable: boolean; entity_types: string[]; filters: { property: string; value: string }[] }[] };
+    expect(payload.metrics[0]).toMatchObject({ name: "互联网专线条数", aggregation: "SUM", property: "条数", unit: "条", calculated_on: "专业线产品用户", calculable: true });
     expect(payload.metrics[0].filters[0]).toMatchObject({ property: "专线类型", value: "2" });
     expect(outcome.evidence.map((item) => item.kind)).toEqual(["METRIC"]);
+  });
+
+  it("只描述的指标（没配计算口径）：能被检索与列出，但 calculable=false —— 模型不能拿它出数", async () => {
+    const def = profiledDefinition();
+    def.metrics.push({
+      ...def.metrics[0],
+      id: "77777777-7777-4777-8777-777777777777",
+      name: "客户流失风险",
+      description: "具备流失风险的客户规模（口径还没定）",
+      calculation: null,
+    } as never);
+    const listed = (await runReasoningTool("list_metrics", {}, { store: {} as never, definition: def, runtimeTypes })).payload as { metrics: Record<string, unknown>[] };
+    const only = listed.metrics.find((item) => item.name === "客户流失风险")!;
+    expect(only).toMatchObject({ calculable: false, calculated_on: "" });
+    // 没有计算口径时不该硬塞一个聚合方式给模型
+    expect(only.aggregation).toBeUndefined();
+
+    // type_name 按**关联**命中：这条指标关联了哪两个类型，就在哪两个类型下都出现
+    const byType = (await runReasoningTool("list_metrics", { type_name: "用户" }, { store: {} as never, definition: def, runtimeTypes })).payload as { metrics: { name: string }[] };
+    expect(byType.metrics.map((item) => item.name)).toEqual(["互联网专线条数", "客户流失风险"]);
   });
 
   it("list_metrics 带 status / owner，并能按 status 过滤：模型据此分辨哪条口径可信", async () => {

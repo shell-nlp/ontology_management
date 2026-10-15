@@ -258,11 +258,12 @@ function metricFilterValue(op: CompareOperator, value: string): ResolvedValue | 
 function resolveMetricFilters(
   entities: Map<string, ResolvedEntity>,
   entityAlias: string,
-  metric: OntologyDefinition["metrics"][number],
+  metricName: string,
+  filters: readonly { property: string; operator: string; value: string }[],
 ): ResolvedFilter[] {
-  return metric.filters.map((item) => {
+  return filters.map((item) => {
     const op = METRIC_OPERATOR[item.operator];
-    if (!op) throw new QueryDslError("INVALID_QUERY", `指标「${metric.name}」使用了暂不支持的过滤操作符「${item.operator}」。`);
+    if (!op) throw new QueryDslError("INVALID_QUERY", `指标「${metricName}」使用了暂不支持的过滤操作符「${item.operator}」。`);
     const value = metricFilterValue(op, item.value);
     return {
       kind: "condition",
@@ -286,32 +287,54 @@ function resolveMetric(
   if (!metric) {
     throw new QueryDslError("UNKNOWN_METRIC", `本体里没有指标「${name}」。`, "先用 list_metrics 确认指标名。");
   }
-  if (metric.entityTypeId !== entity.entityTypeId) {
-    const scope = definition.entityTypes.find((item) => item.id === metric.entityTypeId)?.name ?? "未指定";
+  const relatedNames = (metric.entityTypeIds ?? [])
+    .map((id) => definition.entityTypes.find((item) => item.id === id)?.name ?? "")
+    .filter(Boolean)
+    .join("、");
+  const calculation = metric.calculation ?? null;
+  /*
+   * 关联 ≠ 能算：只描述、没有计算口径的指标是**合法**的，但**不能出数** ——
+   * 让它出数等于放模型去猜口径，那正是指标要消灭的东西。错误里给两条出路。
+   */
+  if (!calculation || !calculation.entityTypeId) {
     throw new QueryDslError(
-      "METRIC_SCOPE_MISMATCH",
-      `指标「${metric.name}」作用在对象类型「${scope}」上，不能用在「${entity.entityTypeName}」上。`,
+      "METRIC_NOT_CALCULABLE",
+      `指标「${metric.name}」只有描述、没有配置怎么算，不能直接出数。`,
+      `它和「${relatedNames || "（还没关联对象类型）"}」相关。要用它出数：① 到「本体建模 → 指标」给它配上计算口径（从关联类型里挑一个 + 选聚合方式）；或 ② 不用这条指标、自己写聚合 —— 那样结果里会提醒"未引用已定义指标"。`,
     );
   }
-  const dimensions = metric.dimensions.map((property) => resolveField(entities, { alias: entityAlias, property }));
+  if (calculation.entityTypeId !== entity.entityTypeId) {
+    const scope = definition.entityTypes.find((item) => item.id === calculation.entityTypeId)?.name ?? "未指定";
+    throw new QueryDslError(
+      "METRIC_NOT_CALCULABLE_HERE",
+      `指标「${metric.name}」的计算口径配在对象类型「${scope}」上，不能在「${entity.entityTypeName}」上出数。`,
+      `这条指标和「${relatedNames || scope}」相关，但只在「${scope}」上定义了怎么算 —— 改成 \`SELECT ${metric.name} FROM ${scope}\`；或者到指标页给这个类型也补一份计算口径。`,
+    );
+  }
+  /*
+   * 可用维度 = 显式勾的那些 + 时间维度。
+   * 时间维度**自动算一个维度**：它是为"看趋势"填的，按它分组还被拒就说不通了（2026-10-15 修）。
+   */
+  const dimensionNames = [...new Set([...calculation.dimensions, ...(calculation.timeProperty ? [calculation.timeProperty] : [])])];
+  const dimensions = dimensionNames.map((property) => resolveField(entities, { alias: entityAlias, property }));
   for (const field of groupBy) {
     if (!dimensions.some((dimension) => dimension.alias === field.alias && dimension.name === field.name)) {
       throw new QueryDslError(
         "METRIC_DIMENSION_MISMATCH",
         `指标「${metric.name}」不允许按「${field.alias}.${field.name}」分组。`,
-        `可用维度：${metric.dimensions.join("、") || "无"}。`,
+        `可用维度：${dimensionNames.join("、") || "无"}（要么到指标页把「${field.name}」勾进可用维度，要么不用这条指标、自己写聚合）。`,
       );
     }
   }
-  const property = metric.property ? resolveField(entities, { alias: entityAlias, property: metric.property }) : undefined;
-  assertAggregationCompatible(metric.aggregation, property);
+  const property = calculation.property ? resolveField(entities, { alias: entityAlias, property: calculation.property }) : undefined;
+  assertAggregationCompatible(calculation.aggregation, property);
   return {
     id: metric.id,
     name: metric.name,
     description: metric.description,
-    aggregation: metric.aggregation,
+    aggregation: calculation.aggregation,
     ...(property ? { property } : {}),
-    filters: resolveMetricFilters(entities, entityAlias, metric),
+    filters: resolveMetricFilters(entities, entityAlias, metric.name, calculation.filters),
     dimensions,
     status: metric.status,
     unit: metric.unit,

@@ -1,55 +1,113 @@
-/* 「本体建模 → 指标」标签：左栏指标清单，右栏口径表单。
-   与概念分组同一套骨架（.manager-grid + split-pane + .panel），只是右栏是表单而不是色卡。 */
+/* 「本体建模 → 指标」标签：左栏指标清单，右栏三步（关联 → 怎么算 → 结论）。
+   颜色取自应用自身（globals.css 的暖白纸 / 深青 / 薄荷绿 / 珊瑚），不再自带一套蓝色。 */
 
 .manager-grid.metric-grid { grid-template-columns: var(--manager-split-left, 320px) 12px minmax(0, 1fr); gap: 0; align-items: stretch; height: clamp(560px, calc(100vh - 400px), 840px); }
 .metric-grid > .mm-rail, .metric-grid > .mm-sheet { min-width: 0; }
 .metric-grid > .mm-rail { display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding: 18px 16px; }
-.metric-grid > .mm-sheet { display: flex; flex-direction: column; gap: 16px; overflow: auto; padding: 20px 22px; }
+/* 面板内固定底栏：主体自己滚，结论条永远贴在面板底部 —— 不会盖住表单最后一行。 */
+.metric-grid > .mm-sheet { display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 0; }
+.mm-sheet-body { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 14px; align-content: start; padding: 18px 20px 20px; }
+/* 底部渐隐：内容还长的时候给一个"下面还有"的暗示，免得被结论条切断的那一行看着像坏了 */
+.mm-sheet-body::after { content: ""; position: sticky; bottom: -20px; display: block; height: 26px; margin: -26px -20px -20px; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,.96)); pointer-events: none; }
 
 .mm-rail h2 { margin: 2px 0 4px; }
-.mm-rail-note { margin: 0; color: #7085a4; font-size: 11px; line-height: 1.6; }
-.mm-rail-actions { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid #e6edf7; }
-.mm-rail-actions p { margin: 0; color: #8296b0; font-size: 10.5px; line-height: 1.5; }
+.mm-rail-note { margin: 0; color: var(--muted, #667277); font-size: 11px; line-height: 1.6; }
+.mm-rail-actions { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid var(--line, #d9dfdc); }
+.mm-rail-actions p { margin: 0; color: var(--muted, #667277); font-size: 10.5px; line-height: 1.5; }
 .mm-rows { display: grid; flex: 1; align-content: start; gap: 3px; min-height: 0; overflow: auto; }
 
-.mm-row { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #4b6b93; text-align: left; }
-.mm-row:hover { background: #f6f9ff; }
-.mm-row.selected { border-color: #bcd2f2; background: #f1f6ff; color: #1d4ed8; }
-.mm-row span { min-width: 0; flex: 1; }
-.mm-row b { display: block; color: #22384f; font-size: 12.5px; }
-.mm-row small { display: block; margin-top: 3px; overflow: hidden; color: #7085a4; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-row { display: grid; grid-template-columns: 9px minmax(0, 1fr); align-items: start; gap: 9px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; text-align: left; }
+.mm-row:hover { background: #f7faf8; }
+.mm-row.selected { border-color: #bcd9cb; background: #eef6f1; }
+.mm-row > span:last-child { min-width: 0; }
+.mm-row b { display: block; color: #243638; font-size: 12.5px; font-weight: 600; }
+.mm-row small { display: block; margin-top: 3px; overflow: hidden; color: #4d605f; font: 500 10.5px/1.5 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.mm-row em { display: block; margin-top: 3px; color: #7c8b8a; font-size: 10.5px; font-style: normal; }
 .mm-empty { margin: 0; color: #8296b0; font-size: 11px; line-height: 1.7; }
 
-.mm-sheet-head { display: grid; gap: 7px; }
-.mm-title-row { display: flex; align-items: center; gap: 9px; }
-.mm-title-row input { flex: 1; min-width: 0; min-height: 37px; padding: 0 11px; border: 1px solid #d7e2f0; border-radius: 4px; color: #1b2f45; font-size: 15px; font-weight: 650; }
-.mm-title-row input:focus { border-color: #7ea7e8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); outline: 0; }
-.mm-title-row em { flex: none; padding: 3px 9px; border: 1px solid #f0d3a8; border-radius: 99px; background: #fff8ec; color: #a2620f; font-size: 10px; font-style: normal; font-weight: 700; }
-.mm-hint { margin: 0; color: #8296b0; font-size: 10.5px; line-height: 1.6; }
+/* 色点只表达一件事：能不能出数 */
+.mm-lamp { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--mint, #85b99f); box-shadow: 0 0 0 2px rgba(133,185,159,.18); }
+.mm-lamp.hold { background: var(--coral, #df836d); box-shadow: 0 0 0 2px rgba(223,131,109,.16); }
 
-.mm-block { display: grid; gap: 9px; }
-.mm-block-label { color: #57739b; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
-.mm-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.mm-sheet-head { display: grid; gap: 8px; }
+.mm-title-row { display: flex; align-items: center; gap: 9px; }
+.mm-title-row input { flex: 1; min-width: 0; min-height: 37px; padding: 0 11px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; color: #1b282c; font-family: Georgia, "Noto Serif SC", serif; font-size: 15px; font-weight: 600; }
+.mm-title-row input:focus, .mm-desc:focus, .mm-field input:focus, .mm-field select:focus, .mm-filter-row input:focus, .mm-filter-row select:focus { border-color: var(--mint, #85b99f); box-shadow: 0 0 0 3px rgba(133,185,159,.16); outline: 0; }
+.mm-pill { flex: none; padding: 4px 9px; border-radius: 99px; font: 700 10px/1 ui-monospace, monospace; font-style: normal; }
+.mm-pill.draft { border: 1px solid #eccfa0; background: #fdf4e3; color: #9a6a10; }
+.mm-pill.verified { border: 1px solid #a8d7c3; background: #e7f2ec; color: #22644a; }
+.mm-pill.dirty { border: 1px dashed #cfd8d3; background: #fbfcfb; color: #7c8b8a; }
+.mm-desc { width: 100%; min-height: 54px; padding: 8px 10px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; color: #2b3c3e; font-size: 12px; line-height: 1.7; resize: vertical; font-family: inherit; }
+
+.mm-step { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--line, #d9dfdc); }
+.mm-step-head { display: flex; align-items: baseline; gap: 9px; }
+.mm-step-no { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 3px; background: var(--ink); color: #fff; font: 700 10.5px/1 ui-monospace, monospace; }
+.mm-step-head b { font-size: 12.5px; }
+.mm-step-head span { color: var(--muted, #667277); font-size: 11px; }
+.mm-step-head em { margin-left: auto; color: var(--muted, #667277); font: 600 10.5px/1 ui-monospace, monospace; font-style: normal; }
+
+.mm-roster { display: grid; gap: 6px; }
+.mm-rel { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #edf1ee; border-radius: 4px; background: #fbfcfb; }
+.mm-rel b { flex: 1; font-size: 12.5px; font-weight: 600; }
+.mm-rel s { color: var(--muted, #667277); font: 400 10.5px/1 ui-monospace, monospace; text-decoration: none; }
+.mm-rel.is-calc { border-color: #bcd9cb; background: #eef6f1; }
+.mm-tag { padding: 3px 7px; border: 1px solid #bcd9cb; border-radius: 99px; background: #fff; color: #1f4f42; font: 700 9.5px/1 ui-monospace, monospace; }
+.mm-x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 3px; background: transparent; color: #9aa8a6; }
+.mm-x:hover { color: var(--coral, #df836d); background: #fbeeea; }
+.mm-add-rel { justify-self: start; min-height: 30px; padding: 0 10px; border: 1px dashed #c9d5d0; border-radius: 4px; background: #fbfcfb; color: #4c6465; font-size: 11.5px; }
+
+.mm-pick { display: flex; flex-wrap: wrap; gap: 7px; }
+.mm-opt { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; background: #fff; color: #2b3c3e; font-size: 12px; }
+.mm-opt:hover:not(:disabled) { border-color: var(--mint, #85b99f); }
+.mm-opt.on { border-color: #245e60; background: #f3f9f6; font-weight: 650; }
+.mm-opt i { width: 13px; height: 13px; border: 1.5px solid #b9c7c2; border-radius: 50%; }
+.mm-opt.on i { border: 4px solid #245e60; background: #fff; }
+.mm-warn { margin: 0; padding: 8px 10px; border-left: 3px solid var(--coral, #df836d); background: #fbeeea; color: #8c4a37; font-size: 11px; line-height: 1.6; }
+
+.mm-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px 12px; }
 .mm-field { display: grid; gap: 5px; min-width: 0; }
-.mm-field > span { color: #5c7699; font-size: 10.5px; font-weight: 650; }
-.mm-field input, .mm-field select, .mm-field textarea { width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid #d7e2f0; border-radius: 4px; background: #fff; color: #26405f; font-size: 11.5px; font-family: inherit; }
-.mm-field textarea { resize: vertical; line-height: 1.6; }
-.mm-field input:focus, .mm-field select:focus, .mm-field textarea:focus { border-color: #7ea7e8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); outline: 0; }
-.mm-span-2 { grid-column: 1 / -1; }
+.mm-field > span { color: #5c6e6c; font-size: 10.5px; font-weight: 650; }
+.mm-field input, .mm-field select { width: 100%; min-height: 32px; padding: 6px 9px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; background: #fff; color: #2b3c3e; font-size: 11.5px; font-family: inherit; }
+.mm-field select { font-family: ui-monospace, monospace; }
+
+.mm-hint { margin: 0; color: #7c8b8a; font-size: 10.5px; line-height: 1.65; }
+.mm-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; padding: 8px; border: 1px solid #edf1ee; border-radius: 4px; background: #fbfcfb; }
+.mm-chip { min-height: 25px; padding: 0 9px; border: 1px solid #dbe5e0; border-radius: 99px; background: #fff; color: #4b5f5d; font-size: 11px; }
+.mm-chip:hover:not(:disabled) { border-color: var(--mint, #85b99f); }
+.mm-chip.on { border-color: #9cc7b0; background: #e7f2ec; color: #1f4f42; font-weight: 650; }
+.mm-chip:disabled { cursor: default; opacity: 1; border-style: dashed; }
 
 .mm-filters { display: grid; gap: 7px; }
 .mm-filter-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) 28px; gap: 7px; align-items: center; }
-.mm-filter-row select, .mm-filter-row input { min-height: 31px; padding: 0 9px; border: 1px solid #d7e2f0; border-radius: 4px; background: #fff; color: #26405f; font-size: 11.5px; }
-.mm-filter-row select:focus, .mm-filter-row input:focus { border-color: #7ea7e8; outline: 0; }
-.mm-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid #e2e9f4; border-radius: 4px; background: #fff; color: #7c8fab; }
+.mm-filter-row select, .mm-filter-row input { min-height: 31px; padding: 0 9px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; background: #fff; color: #2b3c3e; font-size: 11.5px; }
+.mm-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid #e2e9e4; border-radius: 4px; background: #fff; color: #7c8fab; }
 .mm-icon:hover { border-color: #f0b9b9; color: #b91c1c; }
 
-.mm-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 10px; border: 1px solid #e4ecf7; border-radius: 4px; background: #fbfdff; }
-.mm-chip { min-height: 26px; padding: 0 10px; border: 1px solid #dbe5f2; border-radius: 99px; background: #fff; color: #3f5b7d; font-size: 11px; }
-.mm-chip:hover { border-color: #a9c5ef; background: #f4f8ff; }
-.mm-chip.checked { border-color: #a9c5ef; background: #eaf2ff; color: #1d4ed8; font-weight: 650; }
+/*
+ * 结论条：这一页唯一"响亮"的地方 —— 把「能不能出数」和算式摆在眼前。
+ * 底色用 `--ink`：应用的有效配色里它才是那个深色（`globals.css` 有第二个 :root 把 `--dark` 覆盖成了白色，别用它）。
+ */
+.mm-readout { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 20px; background: var(--ink); color: #eef2f9; border-top: 3px solid var(--mint); }
+.mm-readout.hold { border-top-color: var(--coral); }
+.mm-readout-state { display: flex; align-items: center; gap: 9px; }
+.mm-readout .mm-lamp { margin: 0; }
+.mm-readout-state b { font-size: 12.5px; }
+.mm-readout-state span { color: #a9b8d0; font-size: 11px; }
+.mm-expr { margin-top: 7px; color: #fff; font: 600 13px/1.5 ui-monospace, monospace; word-break: break-word; }
+.mm-expr.hold { color: #f3c2ba; font-weight: 500; }
+.mm-readout-acts { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+/* 深色条上的按钮：默认的浅色 .action 在这里对比不够 */
+.mm-readout .action { border-color: #3d5477; background: #1b2a44; color: #dbe6f5; }
+.mm-readout .action:hover { border-color: var(--mint); background: #24365a; }
+.mm-readout .action.primary { border-color: var(--mint); background: var(--mint); color: #fff; }
+.mm-readout .action.primary:hover { background: #1d4fd8; }
+.mm-readout .action.danger { border-color: #7d4351; background: #2a1b28; color: #f3b9c1; }
+.mm-readout .action.danger:hover { border-color: var(--coral); background: #3a2130; color: #ffd9d3; }
 
-.mm-sheet-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 14px; border-top: 1px solid #e6edf7; }
 .mm-blank { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #8296b0; text-align: center; }
 .mm-blank b { color: #3f5b7d; font-size: 13px; }
 .mm-blank span { max-width: 340px; font-size: 11px; line-height: 1.7; }
+
+@media (max-width: 1100px) { .mm-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .mm-form { grid-template-columns: 1fr; } .mm-readout { grid-template-columns: 1fr; } .mm-readout-acts { align-items: stretch; } }
+@media (prefers-reduced-motion: reduce) { .metric-grid * { transition: none !important; animation: none !important; } }

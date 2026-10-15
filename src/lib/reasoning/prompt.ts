@@ -124,9 +124,13 @@ export function schemaBrief(context: ToolContext, enabledTools?: readonly string
    * 一行一个 `名称（聚合(属性) · 作用对象类型）`，完整口径（过滤 / 维度 / 单位）用 list_metrics 取。
    */
   const metrics = (context.definition.metrics ?? []).map((item) => {
-    const scope = context.definition.entityTypes.find((type) => type.id === item.entityTypeId)?.name;
-    const calc = `${item.aggregation}${item.property ? `(${item.property})` : "（行数）"}`;
-    return `${item.name}（${calc}${scope ? ` · ${scope}` : ""}）`;
+    const related = (item.entityTypeIds ?? [])
+      .map((id) => context.definition.entityTypes.find((type) => type.id === id)?.name ?? "")
+      .filter(Boolean);
+    const calculation = item.calculation ?? null;
+    // 「只描述、不算数」要写进概念清单：模型据此知道这条**不能出数**，别拿它去出数。
+    const calc = calculation ? `${calculation.aggregation}${calculation.property ? `(${calculation.property})` : "（行数）"}` : "只描述、不算数";
+    return `${item.name}（${calc}${related.length ? ` · 关联 ${related.join("、")}` : ""}）`;
   });
   // 数据资源名要带上：要读源表的工具（列画像 / 只读查数）都用这里的名字当 data_source，模型猜不出来。
   const sources = (context.dataSources ?? []).map((item) => `${item.name}（${item.kind}${item.schema_name ? ` · ${item.schema_name}` : ""}）`);

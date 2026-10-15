@@ -55,7 +55,8 @@ function modelingSearchHits(definition: Definition, raw: string): ModelingSearch
     if (contains(item.name, item.description, item.properties.map((property) => property.name).join(" "))) hits.push({ id: item.id, mode: "interfaces", kind: "接口", name: item.name, description: item.description ?? "", meta: `${item.properties.length} 属性` });
   }
   for (const metric of definition.metrics) {
-    if (contains(metric.name, metric.description, metric.property, metric.tags.join(" "))) hits.push({ id: metric.id, mode: "metrics", kind: "指标", name: metric.name, description: metric.description ?? "", meta: `${metric.aggregation}${metric.property ? `(${metric.property})` : ""}` });
+        const calculation = metric.calculation ?? null;
+        if (contains(metric.name, metric.description, calculation?.property ?? "", metric.tags.join(" "))) hits.push({ id: metric.id, mode: "metrics", kind: "指标", name: metric.name, description: metric.description ?? "", meta: calculation ? `${calculation.aggregation}${calculation.property ? `(${calculation.property})` : ""}` : "只描述、不算数" });
   }
   for (const action of definition.actionTypes) {
     if (contains(action.name, action.code, action.description)) hits.push({ id: action.id, mode: "actions", kind: "动作", name: action.name || action.code || "（未命名动作）", description: action.description ?? "", meta: action.code || "no-code" });

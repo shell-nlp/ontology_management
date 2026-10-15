@@ -208,13 +208,14 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
   let metricsWithoutName = 0;
   let metricsWithoutScope = 0;
   let metricsUnknownAggregation = 0;
+  let metricsWithoutFormula = 0;
   let metricsDroppedCondition = 0;
   let metricsUnknownOperator = 0;
-  const AGGREGATIONS: Record<string, OntologyDefinition["metrics"][number]["aggregation"]> = {
+  const AGGREGATIONS: Record<string, NonNullable<OntologyDefinition["metrics"][number]["calculation"]>["aggregation"]> = {
     sum: "SUM", count: "COUNT", count_distinct: "COUNT_DISTINCT", distinct_count: "COUNT_DISTINCT", distinct: "COUNT_DISTINCT",
     avg: "AVG", average: "AVG", mean: "AVG", max: "MAX", min: "MIN",
   };
-  const OPERATORS: Record<string, OntologyDefinition["metrics"][number]["filters"][number]["operator"]> = {
+  const OPERATORS: Record<string, NonNullable<OntologyDefinition["metrics"][number]["calculation"]>["filters"][number]["operator"]> = {
     "=": "EQ", "==": "EQ", eq: "EQ", "!=": "NE", "<>": "NE", ne: "NE",
     ">": "GT", gt: "GT", ">=": "GTE", gte: "GTE", "<": "LT", lt: "LT", "<=": "LTE", lte: "LTE",
     in: "IN", "not in": "NOT_IN", not_in: "NOT_IN", like: "CONTAINS", contains: "CONTAINS",
@@ -223,13 +224,20 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
   for (const metric of rawMetrics) {
     const name = text(metric.name);
     if (!name) { metricsWithoutName += 1; continue; }
-    const formula = (metric.calculation_formula ?? {}) as Unknown;
+    const rawFormula = metric.calculation_formula;
+    /*
+     * 文件里没给算法 = 这条指标**只描述**（新模型允许：能讲清口径、但出不了数）。
+     * 以前这里会默认成 COUNT(行数) —— 那等于替业务编了一个口径，比"没有"更危险，所以不再兜底。
+     */
+    const hasFormula = Boolean(rawFormula && typeof rawFormula === "object" && !Array.isArray(rawFormula));
+    if (!hasFormula) metricsWithoutFormula += 1;
+    const formula = (hasFormula ? rawFormula : {}) as Unknown;
     const aggregationNode = (formula.aggregation ?? {}) as Unknown;
     const aggregation = AGGREGATIONS[text(aggregationNode.aggr).toLowerCase()] ?? "";
     if (!aggregation) metricsUnknownAggregation += 1;
     const entityTypeId = idMap.get(text(metric.scope_ref)) ?? "";
     if (!entityTypeId) metricsWithoutScope += 1;
-    const filters: OntologyDefinition["metrics"][number]["filters"] = [];
+    const filters: NonNullable<OntologyDefinition["metrics"][number]["calculation"]>["filters"] = [];
     const condition = (formula.condition ?? null) as Unknown | null;
     if (condition) {
       const operation = text(condition.operation).toLowerCase();
@@ -248,12 +256,19 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
       id: crypto.randomUUID(),
       name,
       description: text(metric.comment),
-      entityTypeId,
-      aggregation: aggregation || "COUNT",
-      property: text(aggregationNode.property),
-      filters,
-      dimensions: [],
-      timeProperty: text(((metric.time_dimension ?? {}) as Unknown).property),
+      entityTypeIds: entityTypeId ? [entityTypeId] : [],
+      /*
+       * 算法照原文留下来（类型没对上时落点为空，校验里给一条 WARN，不丢内容）；
+       * 文件里根本没给算法就是 null —— 只描述、不算数。
+       */
+      calculation: hasFormula ? {
+        entityTypeId,
+        aggregation: aggregation || "COUNT",
+        property: text(aggregationNode.property),
+        filters,
+        dimensions: [],
+        timeProperty: text(((metric.time_dimension ?? {}) as Unknown).property),
+      } : null,
       unitType: text(metric.unit_type),
       unit: /^none$/i.test(unit) ? "" : unit,
       // 外部导入的口径一律先落 draft：没在本平台核对过，不该被模型当已验收口径引用。
@@ -265,6 +280,7 @@ export function fromBknKnowledgeNetwork(raw: unknown): BknConversion {
   if (metrics.length) warnings.push(`已导入 ${metrics.length} 条指标（业务口径），可在「本体建模 → 指标」里核对与修改。`);
   if (metricsWithoutName) warnings.push(`有 ${metricsWithoutName} 条指标没有名字，已跳过。`);
   if (metricsWithoutScope) warnings.push(`有 ${metricsWithoutScope} 条指标的对象类型在本文件里找不到，指标先保留、没有挂类型，导入后在「指标」里补一次。`);
+  if (metricsWithoutFormula) warnings.push(`有 ${metricsWithoutFormula} 条指标在文件里没有给算法，按「只描述」导入：模型能讲清这个口径是什么，但**不能用它出数**，要用就在「指标」里补上计算口径。`);
   if (metricsUnknownAggregation) warnings.push(`有 ${metricsUnknownAggregation} 条指标的聚合方式平台不认识，已按 COUNT 处理，导入后请核对。`);
   if (metricsDroppedCondition) warnings.push(`有 ${metricsDroppedCondition} 条指标用的是 OR 组合条件，平台的指标口径只表达「条件全部满足」，这一组条件没有导入。`);
   if (metricsUnknownOperator) warnings.push(`有 ${metricsUnknownOperator} 个比较符平台不认识，已按相等处理，导入后请核对。`);

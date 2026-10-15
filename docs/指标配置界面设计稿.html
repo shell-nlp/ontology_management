@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>指标配置 · 设计稿（关联多类型 + 计算可选）</title>
+<style>
+  :root{
+    /* 颜色：全部取自应用自身（globals.css），不另起一套 */
+    --paper:#f6f7f3; --panel:#fff; --ink:#1b282c; --muted:#667277; --line:#d9dfdc; --line-soft:#edf1ee;
+    --mint:#85b99f; --mint-soft:#e7f2ec; --teal:#245e60; --coral:#df836d; --coral-soft:#fbeeea;
+    --dark:#142426; --hold:#9a6a10; --hold-soft:#fdf4e3;
+    --sans:"IBM Plex Sans","Noto Sans SC","Microsoft YaHei",sans-serif;
+    --serif:Georgia,"Noto Serif SC",serif;
+    --mono:ui-monospace,"Cascadia Code",SFMono-Regular,Menlo,monospace;
+    --shadow:0 10px 25px rgba(31,49,47,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px}
+  button,input,textarea,select{font:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+
+  .app{display:flex;min-height:100vh}
+  /* 左侧导航：与应用一致 */
+  .nav{width:214px;flex:none;background:var(--dark);color:#e5eeee;padding:20px 12px 14px;display:flex;flex-direction:column;gap:2px}
+  .brand{display:flex;align-items:center;gap:9px;padding:0 8px 18px;border-bottom:1px solid #2d4749}
+  .brand i{width:30px;height:30px;display:grid;place-items:center;background:var(--mint);color:#133336;border-radius:5px;font:700 15px/1 var(--serif);font-style:normal}
+  .brand b{display:block;font:600 15px/1.1 var(--serif);letter-spacing:1.4px}
+  .brand s{display:block;margin-top:2px;color:#91a5a4;font:400 8px/1 var(--sans);letter-spacing:1.1px;text-decoration:none}
+  .nav p{margin:16px 10px 6px;color:#8fa3a2;font-size:10px;letter-spacing:1px}
+  .nav a{display:flex;align-items:center;gap:9px;padding:8px 10px;color:#b9c7c6;font-size:12.5px;text-decoration:none;border-radius:4px}
+  .nav a:hover{background:#203638;color:#fff}
+  .nav a.on{background:#315557;color:#fff;box-shadow:inset 2px 0 0 var(--mint)}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{display:flex;align-items:center;gap:12px;padding:16px 22px 14px;border-bottom:1px solid var(--line);background:var(--paper)}
+  .topbar h1{margin:0;font:600 17px/1.2 var(--serif)}
+  .crumb{color:var(--muted);font-size:11px}
+  .spacer{flex:1}
+  .chip{padding:5px 9px;border:1px solid var(--line);border-radius:99px;background:var(--panel);color:var(--muted);font:600 10.5px/1 var(--mono)}
+  .chip.live{border-color:#a8d7c3;color:#2f6b4d;background:var(--mint-soft)}
+  .btn{min-height:32px;padding:0 12px;border:1px solid #cdd9d4;border-radius:4px;background:#fff;color:#3d5557;font-size:12px;font-weight:650}
+  .btn:hover{border-color:#6f9d8e;background:#f5fbf7}
+  .btn.primary{border-color:var(--teal);background:var(--teal);color:#fff}
+  .btn.primary:hover{background:#174c4e}
+  .btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+
+  .tabs{display:flex;align-items:center;gap:4px;padding:10px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .tabs button{padding:7px 11px;border:1px solid transparent;border-radius:4px;background:transparent;color:#5b6b6c;font-size:12px}
+  .tabs button:hover{background:#f4f8f5}
+  .tabs button.on{border-color:#bcd9cb;background:var(--mint-soft);color:#1f4f42;font-weight:700}
+  .tabs button b{margin-left:5px;color:var(--muted);font:600 10.5px/1 var(--mono)}
+  .tabs .search{margin-left:auto;min-width:240px;min-height:31px;padding:0 10px;border:1px solid var(--line);border-radius:4px;background:#fbfcfb;color:#7a8a89;font-size:11.5px}
+
+  .board{flex:1;min-height:0;display:grid;grid-template-columns:312px minmax(0,1fr);gap:18px;padding:18px 22px 22px}
+  .panel{border:1px solid var(--line);border-radius:5px;background:var(--panel);box-shadow:var(--shadow)}
+
+  /* 左栏：指标清单 */
+  .rail{display:flex;flex-direction:column;overflow:hidden}
+  .rail header{padding:15px 16px 12px;border-bottom:1px solid var(--line-soft)}
+  .rail header b{font:600 14px/1.2 var(--serif)}
+  .rail header p{margin:6px 0 0;color:var(--muted);font-size:11px;line-height:1.6}
+  .rail .add{margin:12px 14px 8px;justify-content:center}
+  .rows{flex:1;min-height:0;overflow:auto;padding:0 8px 12px}
+  .row{width:100%;display:grid;grid-template-columns:8px minmax(0,1fr);gap:9px;align-items:start;padding:10px 10px;border:1px solid transparent;border-radius:4px;background:transparent;text-align:left}
+  .row:hover{background:#f7faf8}
+  .row.on{border-color:#bcd9cb;background:var(--mint-soft)}
+  .dot{width:7px;height:7px;margin-top:5px;border-radius:50%;background:var(--mint)}
+  .dot.hold{background:var(--coral)}
+  .row b{display:block;color:#243638;font-size:12.5px;font-weight:600}
+  .row small{display:block;margin-top:3px;color:var(--muted);font:400 10.5px/1.5 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row em{display:block;margin-top:4px;color:#7c8b8a;font-size:10.5px;font-style:normal}
+
+  /* 右栏：编辑器 */
+  .sheet{display:flex;flex-direction:column;overflow:auto}
+  .sheet-head{padding:16px 20px 14px;border-bottom:1px solid var(--line-soft);display:grid;gap:10px}
+  .title-row{display:flex;align-items:center;gap:10px}
+  .title-row input{flex:1;min-width:0;min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink);font:600 16px/1 var(--serif)}
+  .title-row input:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(133,185,159,.18);outline:0}
+  .pill{flex:none;padding:4px 9px;border-radius:99px;font:700 10px/1 var(--mono);letter-spacing:.02em}
+  .pill.draft{border:1px solid #eccfa0;background:var(--hold-soft);color:var(--hold)}
+  .pill.verified{border:1px solid #a8d7c3;background:var(--mint-soft);color:#22644a}
+  .pill.dirty{border:1px dashed #cfd8d3;background:#fbfcfb;color:#7c8b8a}
+  .desc{width:100%;min-height:56px;padding:9px 11px;border:1px solid var(--line);border-radius:4px;background:#fff;color:#2b3c3e;font-size:12px;line-height:1.7;resize:vertical}
+  .desc:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(133,185,159,.16);outline:0}
+
+  .step{padding:16px 20px 18px;border-bottom:1px solid var(--line-soft);display:grid;gap:11px}
+  .step-head{display:flex;align-items:baseline;gap:9px}
+  .step-no{width:20px;height:20px;flex:none;display:grid;place-items:center;border-radius:3px;background:var(--dark);color:#fff;font:700 10.5px/1 var(--mono)}
+  .step-head b{font-size:12.5px}
+  .step-head span{color:var(--muted);font-size:11px}
+  .step-head em{margin-left:auto;color:var(--muted);font:600 10.5px/1 var(--mono)}
+
+  /* ① 关联名单：不用 chips —— 关联 3~8 个类型时要能一眼看完 */
+  .roster{display:grid;gap:6px}
+  .rel{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--line-soft);border-radius:4px;background:#fbfcfb}
+  .rel b{flex:1;font-size:12.5px;font-weight:600}
+  .rel s{color:var(--muted);font:400 10.5px/1 var(--mono);text-decoration:none}
+  .rel .rm{border:0;background:transparent;color:#9aa8a6;font-size:14px;padding:0 2px}
+  .rel .rm:hover{color:var(--coral)}
+  .rel.is-calc{border-color:#bcd9cb;background:var(--mint-soft)}
+  .rel .tag{padding:3px 7px;border:1px solid #bcd9cb;border-radius:99px;background:#fff;color:#1f4f42;font:700 9.5px/1 var(--mono)}
+  .add-rel{justify-self:start;border:1px dashed #c9d5d0;background:#fbfcfb;color:#4c6465;border-radius:4px;min-height:30px;padding:0 11px;font-size:11.5px}
+  .add-rel:hover{border-color:var(--mint);color:var(--teal)}
+
+  /* ② 计算：从关联名单里挑一个落点 */
+  .pick{display:flex;flex-wrap:wrap;gap:7px}
+  .opt{display:flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:12px}
+  .opt:hover{border-color:var(--mint)}
+  .opt.on{border-color:var(--teal);background:#f3f9f6;font-weight:650}
+  .opt i{width:13px;height:13px;border:1.5px solid #b9c7c2;border-radius:50%;font-style:normal}
+  .opt.on i{border:4px solid var(--teal);background:#fff}
+
+  .form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px 12px}
+  .f{display:grid;gap:5px;min-width:0}
+  .f > span{color:#5c6e6c;font-size:10.5px;font-weight:650}
+  .f input,.f select,.f textarea{min-height:32px;padding:6px 9px;border:1px solid var(--line);border-radius:4px;background:#fff;color:#2b3c3e;font-size:11.5px}
+  .f select{font-family:var(--mono)}
+  .f input:focus,.f select:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(133,185,159,.16);outline:0}
+  .f.wide{grid-column:1/-1}
+  .hint{margin:0;color:#7c8b8a;font-size:10.5px;line-height:1.65}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:38px;padding:8px;border:1px solid var(--line-soft);border-radius:4px;background:#fbfcfb}
+  .chip-t{min-height:25px;padding:0 9px;border:1px solid #dbe5e0;border-radius:99px;background:#fff;color:#4b5f5d;font-size:11px}
+  .chip-t:hover{border-color:var(--mint)}
+  .chip-t.on{border-color:#9cc7b0;background:var(--mint-soft);color:#1f4f42;font-weight:650}
+  .chip-t.time{border-style:dashed}
+
+  /* ③ 仪表条：这一页唯一的"响亮"处 */
+  .readout{position:sticky;bottom:0;margin-top:auto;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:14px 20px;background:var(--dark);color:#e9f1ee;border-top:3px solid var(--mint)}
+  .readout.hold{border-top-color:var(--coral)}
+  .readout .state{display:flex;align-items:center;gap:9px}
+  .lamp{width:9px;height:9px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 3px rgba(133,185,159,.18)}
+  .readout.hold .lamp{background:var(--coral);box-shadow:0 0 0 3px rgba(223,131,109,.18)}
+  .readout .state b{font-size:12.5px}
+  .readout .state span{color:#9fb3b0;font-size:11px}
+  .expr{margin-top:7px;font:600 13px/1.5 var(--mono);color:#fff;word-break:break-word}
+  .expr.hold{color:#f0c3b6;font-weight:500}
+  .readout .acts{display:flex;flex-direction:column;gap:7px;align-items:flex-end}
+  .readout .btn{border-color:#3c5b5c;background:#1d3436;color:#dcece7}
+  .readout .btn:hover{background:#254446;border-color:var(--mint)}
+  .readout .btn.primary{background:var(--mint);border-color:var(--mint);color:#10312f}
+  .readout .btn.primary:hover{background:#9ccbb0}
+
+  .foot-note{padding:10px 22px 16px;color:#8b9998;font-size:10.5px}
+  @media (max-width:1080px){
+    .board{grid-template-columns:1fr}
+    .rail{max-height:260px}
+    .form{grid-template-columns:1fr 1fr}
+  }
+  @media (max-width:700px){.nav{display:none}.form{grid-template-columns:1fr}.readout{grid-template-columns:1fr}}
+  @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="nav">
+    <div class="brand"><i>O</i><span><b>ONTOLOGY</b><s>GRAPH GOVERNANCE</s></span></div>
+    <p>本体模型</p>
+    <a class="on" href="#">本体建模</a>
+    <a href="#">本体技能</a>
+    <p>本体实例</p>
+    <a href="#">实例图谱</a>
+    <a href="#">对象</a>
+    <a href="#">关系</a>
+    <p>能力验证</p>
+    <a href="#">智能问答</a>
+    <a href="#">MCP 调试</a>
+    <p>平台</p>
+    <a href="#">数据资源</a>
+    <a href="#">设置</a>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="crumb">本体治理 / 本体建模</div>
+        <h1>（V5 千万 不要动）中国移动客户账务订购业务网络</h1>
+      </div>
+      <div class="spacer"></div>
+      <span class="chip live">当前版本 v1</span>
+      <span class="chip">草稿 v2</span>
+      <button class="btn">版本记录</button>
+      <button class="btn primary">发布</button>
+    </div>
+
+    <div class="tabs">
+      <button>可视化建模</button>
+      <button>概念分组 <b>8</b></button>
+      <button>对象类型 <b>51</b></button>
+      <button>关系类型 <b>50</b></button>
+      <button>接口 <b>0</b></button>
+      <button class="on">指标 <b>5</b></button>
+      <button>动作 <b>0</b></button>
+      <button>规则 <b>0</b></button>
+      <input class="search" placeholder="搜索对象类型、关系类型、接口、指标、动作、规则…">
+    </div>
+
+    <div class="board">
+      <section class="panel rail">
+        <header>
+          <b>5 个指标</b>
+          <p>指标是业务口径。它先说清「和谁有关」，再说「怎么算」——<b>怎么算可以留空</b>，那就只描述、不出数。</p>
+        </header>
+        <button class="btn add">＋ 新建指标</button>
+        <div class="rows" id="rows"></div>
+      </section>
+
+      <section class="panel sheet">
+        <div class="sheet-head">
+          <div class="title-row">
+            <input id="m-name" value="">
+            <span class="pill draft" id="m-status">草稿</span>
+            <span class="pill dirty">未保存</span>
+          </div>
+          <textarea class="desc" id="m-desc" rows="2"></textarea>
+        </div>
+
+        <div class="step">
+          <div class="step-head">
+            <span class="step-no">1</span>
+            <b>关联的对象类型</b>
+            <span>这个指标和谁有关（可以多个）</span>
+            <em id="rel-count"></em>
+          </div>
+          <div class="roster" id="roster"></div>
+          <button class="add-rel">＋ 关联一个对象类型</button>
+          <p class="hint">关联决定「这条指标会出现在哪些类型的上下文里」——问答、检索、对象类型详情页都按它归类。<b>关联不等于能算</b>：能不能出数看第 2 步。</p>
+        </div>
+
+        <div class="step">
+          <div class="step-head">
+            <span class="step-no">2</span>
+            <b>怎么算</b>
+            <span>挑一个关联类型作为计算口径的落点；不挑就是「只描述、不算数」</span>
+            <em id="calc-count"></em>
+          </div>
+          <div class="pick" id="pick"></div>
+          <div id="calc-fields">
+            <div class="form" style="margin-top:11px">
+              <label class="f"><span>聚合方式</span><select id="f-agg"></select></label>
+              <label class="f"><span>聚合属性</span><select id="f-prop"></select></label>
+              <label class="f"><span>时间维度（按它看趋势）</span><select id="f-time"></select></label>
+              <label class="f"><span>单位</span><input value="条"></label>
+              <label class="f"><span>状态</span><select><option>草稿（还没验收）</option><option>已验收（模型可直接引用）</option></select></label>
+              <label class="f"><span>负责人</span><input value="市场部数据组"></label>
+            </div>
+            <p class="hint" style="margin-top:10px">可用维度（模型能按这些属性分组看；<b>勾了时间维度就自动算一个维度</b>）</p>
+            <div class="chips" id="dims" style="margin-top:6px"></div>
+            <p class="hint" style="margin-top:10px">口径过滤（这个数只算满足这些条件的行）</p>
+            <div class="chips" style="margin-top:6px"><button class="chip-t">＋ 加一条过滤</button><span class="hint" style="align-self:center">没加过滤 = 全部行都算</span></div>
+          </div>
+          <p class="hint" id="calc-empty">这条指标现在只有描述，<b>模型能讲清「它是什么」，但拿不到数</b>。要用它出数，就在上面挑一个类型并选好聚合方式。</p>
+        </div>
+
+        <div class="readout" id="readout">
+          <div>
+            <div class="state"><span class="lamp"></span><b id="ro-state">能出数</b><span id="ro-note">—</span></div>
+            <div class="expr" id="ro-expr">—</div>
+          </div>
+          <div class="acts">
+            <button class="btn">复制本体 SQL</button>
+            <button class="btn primary">保存指标</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="foot-note">设计稿 · 只示意结构与交互，不连后端。这是落地前的设计探索（配色按暖白 / 深青 / 薄荷绿那一版画的）；实际实现对齐了应用当前的有效配色（蓝白系），见「本体建模 → 指标」。</div>
+  </main>
+</div>
+
+<script>
+const METRICS = [
+  { id:"m1", name:"专线条数", status:"draft",
+    desc:"专线用户数量。口径：SUM(ZX_COUNT)，一个用户下多条专线时按 ZX_COUNT 记真实条数。",
+    types:[{n:"专线产品用户",calc:true},{n:"集团客户",calc:false}],
+    agg:"SUM", prop:"ZX_COUNT", time:"", dims:["STATIS_DATE","AREA_CODE"], on:true },
+  { id:"m2", name:"云电脑硬终端发展量", status:"draft",
+    desc:"云电脑产品订购实例里，按用户去重后的发展量。用于看趋势。",
+    types:[{n:"云电脑产品订购实例",calc:true}],
+    agg:"COUNT_DISTINCT", prop:"USER_ID", time:"STATIS_DATE", dims:[], on:true },
+  { id:"m3", name:"地市字典记录数（配置示例）", status:"draft",
+    desc:"地市编码字典里的记录条数，用于核对字典完整性。这是配置示例，不是正式口径。",
+    types:[{n:"地市编码字典",calc:true}],
+    agg:"COUNT", prop:"AREA_CODE", time:"", dims:["AREA_CODE"], on:true },
+  { id:"m4", name:"客户流失风险", status:"draft",
+    desc:"具备流失风险的客户规模。口径边界还没定（谁算风险客户、观察窗口多长），先在建模阶段把概念固化下来，暂不出数。",
+    types:[{n:"客户",calc:false},{n:"账户",calc:false},{n:"专线产品用户",calc:false}],
+    agg:"", prop:"", time:"", dims:[], on:false },
+  { id:"m5", name:"专线条数--test", status:"draft",
+    desc:"测试口径：只统计 2026 年之后的订购记录（ORDER_DATE ≥ 2026）。",
+    types:[{n:"专线产品用户",calc:true}],
+    agg:"COUNT", prop:"CUST_ID", time:"", dims:["STATIS_DATE"], on:true },
+];
+
+const AGGS = [["COUNT","行数 / 计数"],["COUNT_DISTINCT","去重计数"],["SUM","求和"],["AVG","平均"],["MIN","最小"],["MAX","最大"]];
+const PROPS = { "专线产品用户":["ZX_COUNT","USER_ID","CUST_ID","STATIS_DATE","AREA_CODE","STATS"],
+                "集团客户":["CUST_ID","CUST_NAME","AREA_CODE"], "云电脑产品订购实例":["USER_ID","STATIS_DATE"],
+                "地市编码字典":["AREA_CODE","AREA_NAME"], "客户":["CUST_ID"], "账户":["ACCT_ID"] };
+const ALL_DIMS = { "专线产品用户":["STATIS_DATE","AREA_CODE","STATS"], "集团客户":["AREA_CODE"],
+                   "云电脑产品订购实例":["STATIS_DATE"], "地市编码字典":["AREA_CODE"], "客户":[], "账户":[] };
+
+let cur = METRICS[0];
+
+function renderRows(){
+  document.getElementById("rows").innerHTML = METRICS.map((m)=>{
+    const calc = m.on;
+    const expr = calc ? m.agg + "(" + m.prop + ")" : "只描述，不算数";
+    const rel = m.types.length + " 个关联类型";
+    const active = m.id === cur.id ? " on" : "";
+    return '<button class="row'+active+'" data-id="'+m.id+'">'
+      + '<span class="dot'+(calc?"":" hold")+'"></span>'
+      + '<span><b>'+m.name+'</b><small>'+expr+'</small><em>'+rel+(calc?" · 计算在「"+m.types.find(t=>t.calc).n+"」":"")+'</em></span>'
+      + '</button>';
+  }).join("");
+  document.querySelectorAll(".row").forEach((el)=>el.onclick=()=>{cur=METRICS.find(m=>m.id===el.dataset.id);render();});
+}
+
+function render(){
+  const m = cur, calcOn = m.types.find(t=>t.calc);
+  document.getElementById("m-name").value = m.name;
+  document.getElementById("m-desc").value = m.desc;
+  document.getElementById("m-status").className = "pill " + (m.status==="verified"?"verified":"draft");
+  document.getElementById("m-status").textContent = m.status==="verified"?"已验收":"草稿";
+
+  document.getElementById("rel-count").textContent = m.types.length + " 个";
+  document.getElementById("roster").innerHTML = m.types.map((t)=>
+    '<div class="rel'+(t.calc?" is-calc":"")+'"><b>'+t.n+'</b>'
+    + (t.calc?'<span class="tag">计算落点</span>':'<s>仅关联</s>')
+    + '<button class="rm" title="取消关联">×</button></div>').join("");
+
+  document.getElementById("pick").innerHTML = m.types.map((t)=>
+    '<button class="opt'+(t.calc?" on":"")+'"><i></i>'+t.n+'</button>').join("")
+    + '<button class="opt'+(m.on?"":" on")+'"><i></i>只描述、不算数</button>';
+
+  const showCalc = m.on;
+  document.getElementById("calc-fields").style.display = showCalc ? "" : "none";
+  document.getElementById("calc-empty").style.display = showCalc ? "none" : "";
+  document.getElementById("calc-count").textContent = showCalc ? ("在「"+(calcOn?calcOn.n:"—")+"」上算") : "未配置";
+
+  if (showCalc){
+    document.getElementById("f-agg").innerHTML = AGGS.map(([v,l])=>'<option '+(v===m.agg?"selected":"")+'>'+v+' · '+l+'</option>').join("");
+    const props = PROPS[calcOn.n] || [];
+    document.getElementById("f-prop").innerHTML = props.map((p)=>'<option '+(p===m.prop?"selected":"")+'>'+p+'</option>').join("");
+    const times = [""].concat(props.filter((p)=>/DATE|DAY|TIME/.test(p)));
+    document.getElementById("f-time").innerHTML = times.map((p)=>'<option '+(p===m.time?"selected":"")+'>'+(p||"不用时间维度")+'</option>').join("");
+    const dims = ALL_DIMS[calcOn.n] || [];
+    document.getElementById("dims").innerHTML = dims.map((d)=>{
+      const on = m.dims.includes(d) || d === m.time;
+      const isTime = d === m.time;
+      return '<button class="chip-t'+(on?" on":"")+(isTime?" time":"")+'">'+d+(isTime?" · 时间":"")+'</button>';
+    }).join("") || '<span class="hint">这个类型的属性还没有可分组项</span>';
+  }
+
+  const ro = document.getElementById("readout");
+  ro.className = "readout" + (showCalc ? "" : " hold");
+  document.getElementById("ro-state").textContent = showCalc ? "能出数" : "不可出数";
+  document.getElementById("ro-note").textContent = showCalc
+    ? "模型可用 run_query 直接引用：「SELECT " + m.name + " FROM " + calcOn.n + "」"
+    : "只描述口径 —— 模型能讲清它是什么，但要数就得自己写聚合（会提示未引用已定义指标）";
+  document.getElementById("ro-expr").textContent = showCalc
+    ? m.agg + "(" + calcOn.n + "." + m.prop + ")" + (m.time ? "  · 可按 " + m.time + " 看趋势" : "")
+    : "没有计算口径：先选一个关联类型，再挑聚合方式";
+  document.getElementById("ro-expr").className = "expr" + (showCalc ? "" : " hold");
+}
+
+renderRows();
+
+render();
+</script>
+</body>
+</html>

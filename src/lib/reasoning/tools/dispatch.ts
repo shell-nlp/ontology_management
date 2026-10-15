@@ -456,23 +456,36 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         .filter((item) => item.scopeEntityTypeId === type.id)
         .map((item) => ({ name: item.name, code: item.code, params: item.params.map((param) => `${param.name}:${param.dataType}`) }));
       /*
-       * 指标：这个对象类型上定义的业务口径。模型答"这类数怎么算 / 有没有现成口径"时直接引用它，
-       * 不用再从列注释里反推 —— 单位、红冲这些边界就写在 filters / unit 里。
+       * 指标：**和这个对象类型相关**的业务口径（按关联命中，不只是"算在这里"）。
+       * 每条都标出 calculated_on / calculable —— 模型据此知道"这条能不能在这里出数"：
+       * 只描述、没配计算口径的指标**不能出数**（查询会报 METRIC_NOT_CALCULABLE）。
        */
       const metrics = (definition.metrics ?? [])
-        .filter((item) => item.entityTypeId === type.id)
-        .map((item) => ({
-          name: item.name,
-          description: describeBriefly(item.description, 120),
-          aggregation: item.aggregation,
-          property: item.property,
-          filters: item.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`),
-          dimensions: item.dimensions,
-          time_property: item.timeProperty,
-          unit: item.unit,
-          status: item.status ?? "draft",
-          owner: item.owner ?? "",
-        }));
+        .filter((item) => (item.entityTypeIds ?? []).includes(type.id))
+        .map((item) => {
+          const calculation = item.calculation ?? null;
+          const calcTypeId = calculation?.entityTypeId ?? "";
+          return {
+            name: item.name,
+            description: describeBriefly(item.description, 120),
+            /** 这条指标关联了哪些对象类型（它出现在这些类型的上下文里）。 */
+            entity_types: (item.entityTypeIds ?? []).map((id) => typeNameById.get(id) ?? "").filter(Boolean),
+            /** 计算落在哪个类型上；空 = 只描述、没有计算口径。 */
+            calculated_on: calcTypeId ? typeNameById.get(calcTypeId) ?? "" : "",
+            /** 能不能拿它出数：只有配了计算口径、**且算在本对象类型上**才行。 */
+            calculable: Boolean(calculation && calcTypeId === type.id),
+            ...(calculation ? {
+              aggregation: calculation.aggregation,
+              property: calculation.property,
+              filters: calculation.filters.map((filter) => `${filter.property}${filter.operator}${filter.value}`),
+              dimensions: calculation.dimensions,
+              time_property: calculation.timeProperty,
+            } : {}),
+            unit: item.unit,
+            status: item.status ?? "draft",
+            owner: item.owner ?? "",
+          };
+        });
       /*
        * 被提取成接口的对象类型仍然留在定义里（影子），名字和接口**同名**。
        * 不点破这一点，模型会把"对象类型客户"和"接口客户"当成两个不相干的同名概念。
@@ -490,7 +503,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           one_hop: oneHop,
           actions,
           metrics,
-          ...(metrics.length ? { metrics_note: "metrics 是这个对象类型上定义的指标（业务口径）：aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
+          ...(metrics.length ? { metrics_note: "metrics 是**和这个对象类型相关**的指标（业务口径）：entity_types 是它关联的多个类型，calculated_on 是计算落在哪个类型上，calculable=true 才表示**能在本类型上出数**（只描述、没配计算口径的是 false，查询会直接报错）。配了计算口径时 aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
           sources: sources.map((source, index) => {
             const boundName = resourceNameById.get(source.dataSourceId) ?? "";
             const schemaCandidates = boundName ? [] : (resourceNamesBySchema.get((source.schema ?? "").trim().toUpperCase()) ?? []);
@@ -1055,28 +1068,40 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const statusFilter = typeof args.status === "string" && args.status.trim() ? args.status.trim() : null;
       const typeNameById = new Map(definition.entityTypes.map((item) => [item.id, item.name]));
       const metrics = (definition.metrics ?? [])
-        .filter((item) => (!typeName || typeNameById.get(item.entityTypeId) === typeName) && (!metricName || item.name === metricName) && (!statusFilter || (item.status ?? "draft") === statusFilter))
-        .map((item) => ({
-          name: item.name,
-          description: item.description,
-          scope_object_type: typeNameById.get(item.entityTypeId) ?? "",
-          aggregation: item.aggregation,
-          property: item.property,
-          /** 口径边界：一条指标"算哪些行"由它决定（例如只看互联网专线、排除红冲）。 */
-          filters: item.filters.map((filter) => ({ property: filter.property, operator: filter.operator, value: filter.value })),
-          dimensions: item.dimensions,
-          time_property: item.timeProperty,
-          unit: item.unit,
-          /** verified = 已验收可直接引用；draft = 还没定稿（老快照没这个字段，按 draft 算）。 */
-          status: item.status ?? "draft",
-          /** 这条口径的负责人 / 责任团队。 */
-          owner: item.owner ?? "",
-          tags: item.tags,
-        }));
+        // type_name 按**关联**命中：一条指标关联多个类型时，在任何一个类型的上下文里都该被列出来。
+        .filter((item) => (!typeName || (item.entityTypeIds ?? []).some((id) => typeNameById.get(id) === typeName)) && (!metricName || item.name === metricName) && (!statusFilter || (item.status ?? "draft") === statusFilter))
+        .map((item) => {
+          const calculation = item.calculation ?? null;
+          const calcTypeId = calculation?.entityTypeId ?? "";
+          return {
+            name: item.name,
+            description: item.description,
+            /** 关联的对象类型（可能多个）：这条指标和谁有关。 */
+            entity_types: (item.entityTypeIds ?? []).map((id) => typeNameById.get(id) ?? "").filter(Boolean),
+            /** 计算落在哪个类型上；空 = 只描述、没有计算口径。 */
+            calculated_on: calcTypeId ? typeNameById.get(calcTypeId) ?? "" : "",
+            /** false = 不能出数（只描述 / 没配计算口径）。用它出数会直接报 METRIC_NOT_CALCULABLE。 */
+            calculable: Boolean(calculation && calcTypeId),
+            ...(calculation ? {
+              aggregation: calculation.aggregation,
+              property: calculation.property,
+              /** 口径边界：一条指标"算哪些行"由它决定（例如只看互联网专线、排除红冲）。 */
+              filters: calculation.filters.map((filter) => ({ property: filter.property, operator: filter.operator, value: filter.value })),
+              dimensions: calculation.dimensions,
+              time_property: calculation.timeProperty,
+            } : {}),
+            unit: item.unit,
+            /** verified = 已验收可直接引用；draft = 还没定稿（老快照没这个字段，按 draft 算）。 */
+            status: item.status ?? "draft",
+            /** 这条口径的负责人 / 责任团队。 */
+            owner: item.owner ?? "",
+            tags: item.tags,
+          };
+        });
       return {
         payload: {
           metrics,
-          note: `指标只描述业务口径（怎么算），不是某一次查询的结果。要出数就按 aggregation + property + filters 落成只读 SQL${toolEnabled(context, "run_sql") ? "走 run_sql" : ""}；scope_object_type 是它作用的对象类型${toolEnabled(context, "get_object_type") ? "，绑定的表在 get_object_type 里" : ""}。status=verified 才算已验收口径；draft 是还没定稿的（老快照默认也算 draft），引用前先跟用户确认，别把测试残留 / 配置示例当正式口径。`,
+          note: `指标只描述业务口径（怎么算），不是某一次查询的结果。**entity_types 是关联的多个对象类型，calculated_on 是计算落点，calculable=false 的指标不能出数**（只描述、没配计算口径 —— 别拿它出数，也别替它编一个算法）。要出数：用 calculable=true 的指标写本体 SQL（run_query），或按 aggregation + property + filters 自己落成只读 SQL${toolEnabled(context, "run_sql") ? "走 run_sql" : ""}${toolEnabled(context, "get_object_type") ? "；绑定的表在 get_object_type 里" : ""}。status=verified 才算已验收口径；draft 是还没定稿的（老快照默认也算 draft），引用前先跟用户确认，别把测试残留 / 配置示例当正式口径。`,
         },
         evidence: metrics.map((metric) => ({ kind: "METRIC" as const, id: metric.name, label: metric.name })),
       };

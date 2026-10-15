@@ -8,16 +8,18 @@ import type { Definition, Metric } from "@/lib/ontology/draft";
 import "./metric-manager.css";
 
 /**
- * 指标（业务口径）的配置区 —— 「本体建模」页的一级标签之一
- * （可视化建模 · 概念分组 · 对象类型 · 关系类型 · 接口 · **指标**）。
+ * 指标（业务口径）的配置区 —— 「本体建模」页的一级标签之一。
  *
- * 一条指标回答「这个数怎么算」：作用在哪个对象类型上、按哪个属性怎么聚合、
- * 口径过滤是什么（只看互联网专线 / 排除红冲…）、能按哪些维度分组、单位是什么。
- * 它**只描述口径，不是查询结果** —— 出数仍然由模型按这份口径落成只读 SQL。
+ * 一条指标是**两件事**：
+ * 1. **关联**：这个指标和哪些对象类型有关（可以多个）—— 决定它出现在哪些类型的上下文里；
+ * 2. **怎么算**：挑一个关联类型作为计算落点，配上聚合方式 / 过滤 / 维度 —— **可以不配**。
  *
- * 左栏是清单，右栏是编辑表单；改动先落在右栏草稿里，点「保存指标」才写进草稿定义
- * （与概念分组同一套路：一次性覆盖，避免两次写互相盖掉）。
- * 指向不存在的属性 / 对象类型会在发布前被 `@/lib/metrics` 的检查挡住。
+ * 不配计算口径 = 「只描述、不算数」：合法形态，模型能讲清这个口径是什么，
+ * 但**不能拿它出数**（查询会报 METRIC_NOT_CALCULABLE）。让它出数等于放模型去猜口径，
+ * 那正是指标要消灭的东西，所以这一页把"能不能出数"当结论摆在最下面。
+ *
+ * 左栏清单、右栏编辑器；改动先落在右栏草稿，点「保存指标」才写进定义（与概念分组同一套路）。
+ * 指错了（计算落点不在关联里、属性 / 维度不存在）在发布前被 `@/lib/ontology/metrics` 挡住。
  */
 type Props = {
   definition: Definition;
@@ -26,6 +28,8 @@ type Props = {
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
 };
+
+type Calculation = NonNullable<Metric["calculation"]>;
 
 export const AGGREGATION_OPTIONS = [
   { value: "COUNT", label: "行数 / 计数", hint: "COUNT：不选属性就是数行数" },
@@ -54,17 +58,14 @@ function aggregationLabel(value: string) {
   return AGGREGATION_OPTIONS.find((item) => item.value === value)?.label ?? value;
 }
 
-function newMetric(entityTypeId: string): Metric {
+function newMetric(): Metric {
   return {
     id: newId(),
     name: "新指标",
     description: "",
-    entityTypeId,
-    aggregation: "COUNT",
-    property: "",
-    filters: [],
-    dimensions: [],
-    timeProperty: "",
+    // 新指标先"只描述"：先让人把口径写清楚，再决定要不要配算法（也避免默认 COUNT 被当成真口径）。
+    entityTypeIds: [],
+    calculation: null,
     unitType: "",
     unit: "",
     // 新指标一律先落 draft：没验收过的口径不该被模型当成现成口径直接用。
@@ -72,6 +73,24 @@ function newMetric(entityTypeId: string): Metric {
     owner: "",
     tags: [],
   } as Metric;
+}
+
+/** 「这条指标怎么表达」统一在一处算：清单、结论条、算式都读它，避免三处各写一套判断。 */
+function described(definition: Definition, metric: Metric) {
+  const calculation = metric.calculation ?? null;
+  const calcType = calculation?.entityTypeId ? definition.entityTypes.find((item) => item.id === calculation.entityTypeId) ?? null : null;
+  const related = (metric.entityTypeIds ?? [])
+    .map((id) => definition.entityTypes.find((item) => item.id === id) ?? null)
+    .filter((item): item is Definition["entityTypes"][number] => Boolean(item));
+  const computable = Boolean(calculation && calcType);
+  const expression = !calculation
+    ? "只描述，不算数"
+    : !calcType
+      ? `计算落点已失效（${aggregationLabel(calculation.aggregation)}）`
+      : calculation.property
+        ? `${calculation.aggregation}(${calcType.name}.${calculation.property})`
+        : `${calculation.aggregation}(${calcType.name})`;
+  return { calculation, calcType, related, computable, expression };
 }
 
 export function MetricManager({ definition, canEdit, save, notify, fail }: Props) {
@@ -83,9 +102,10 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
   // 选中的指标换了就在渲染期重装草稿：用 effect 会多一次渲染，还可能把用户正在打的字覆盖掉。
   if (selected && draft?.id !== selected.id) setDraft({ ...selected });
   const current = selected && draft?.id === selected.id ? draft : null;
-  const scope = current ? definition.entityTypes.find((item) => item.id === current.entityTypeId) ?? null : null;
-  const propertyOptions = scope?.properties.map((item) => item.name) ?? [];
   const dirty = current && selected ? JSON.stringify(current) !== JSON.stringify(selected) : false;
+  const view = current ? described(definition, current) : null;
+  // 计算落点上的属性才是"可聚合 / 可分组"的那批；没挑落点就没有候选。
+  const calcProperties = view?.calcType?.properties.map((item) => item.name) ?? [];
 
   const { containerRef, containerStyle, handleProps } = useSplitPane({
     storageKey: "metric-split",
@@ -95,6 +115,10 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
     maxLeft: 620,
     label: "拖动调整指标清单宽度，双击恢复默认",
   });
+
+  const patch = (partial: Partial<Metric>) => setDraft((state) => (state ? { ...state, ...partial } : state));
+  const patchCalculation = (partial: Partial<Calculation>) =>
+    setDraft((state) => (state && state.calculation ? { ...state, calculation: { ...state.calculation, ...partial } } : state));
 
   const commit = async (next: Definition, message: string) => {
     setBusy(true);
@@ -108,16 +132,11 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
     }
   };
 
-  const patch = (partial: Partial<Metric>) => setDraft((state) => (state ? { ...state, ...partial } : state));
-
-  /** 换作用对象类型时清掉指向旧类型的选择：留着就是悬空引用，发布前还会被拦一道。 */
-  const changeScope = (entityTypeId: string) => patch({ entityTypeId, property: "", filters: [], dimensions: [], timeProperty: "" });
-
   const addMetric = () => {
     let name = "新指标";
     let index = 2;
     while (metrics.some((item) => item.name.trim().toLowerCase() === name.trim().toLowerCase())) { name = `新指标 ${index}`; index += 1; }
-    const metric = { ...newMetric(definition.entityTypes[0]?.id ?? ""), name };
+    const metric = { ...newMetric(), name };
     setSelectedId(metric.id);
     void commit({ ...definition, metrics: [...metrics, metric] }, "已新建指标，填好口径后保存。");
   };
@@ -140,29 +159,67 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
     void commit({ ...definition, metrics: metrics.filter((item) => item.id !== selected.id) }, "指标已从草稿删除。");
   };
 
-  const toggleDimension = (property: string) => {
+  /** 关联一个对象类型。 */
+  const relate = (id: string) => {
+    if (!current || !id || current.entityTypeIds.includes(id)) return;
+    patch({ entityTypeIds: [...current.entityTypeIds, id] });
+  };
+
+  /**
+   * 取消关联。**如果它正好是计算落点**，只把落点清空、算法留着（不静默删算法）——
+   * 界面据此提示"重新挑一个落点或改成只描述"，发布校验里也只是一条 WARN。
+   */
+  const unrelate = (id: string) => {
     if (!current) return;
-    const has = current.dimensions.includes(property);
-    patch({ dimensions: has ? current.dimensions.filter((item) => item !== property) : [...current.dimensions, property] });
+    const nextIds = current.entityTypeIds.filter((item) => item !== id);
+    const calculation = current.calculation && current.calculation.entityTypeId === id
+      ? { ...current.calculation, entityTypeId: "" }
+      : current.calculation;
+    patch({ entityTypeIds: nextIds, calculation });
+  };
+
+  /** 换计算落点：属性 / 维度 / 过滤都是那个类型上的，跟着重置；聚合方式保留。 */
+  const pickCalcType = (id: string) => {
+    if (!current) return;
+    const existing = current.calculation;
+    if (existing && existing.entityTypeId === id) return;
+    patch({
+      calculation: {
+        entityTypeId: id,
+        aggregation: existing?.aggregation ?? "COUNT",
+        property: "",
+        filters: [],
+        dimensions: [],
+        timeProperty: "",
+      },
+    });
+  };
+
+  const toggleDimension = (property: string) => {
+    if (!current?.calculation) return;
+    const has = current.calculation.dimensions.includes(property);
+    patchCalculation({ dimensions: has ? current.calculation.dimensions.filter((item) => item !== property) : [...current.calculation.dimensions, property] });
   };
 
   return <section className="manager-grid metric-grid" ref={containerRef} style={containerStyle}>
     <div className="panel functional-panel mm-rail">
       <span className="eyebrow">指标</span>
       <h2>{metrics.length} 个指标</h2>
-      <p className="mm-rail-note">指标是业务口径：模型答「这个数怎么算」时按它来，不从列注释里猜。</p>
+      <p className="mm-rail-note">指标是业务口径。先说清<b>和谁有关</b>，再说<b>怎么算</b> —— 怎么算可以留空，那就只描述、不出数。</p>
       <div className="mm-rail-actions">
         <button className="action compact" disabled={!canEdit || busy} onClick={addMetric}><Plus size={14} />新建指标</button>
         <p>只描述怎么算，不产生数据。</p>
       </div>
       <div className="mm-rows">
         {metrics.map((metric) => {
-          const scopeName = definition.entityTypes.find((item) => item.id === metric.entityTypeId)?.name ?? "未选类型";
+          const info = described(definition, metric);
+          const calcName = info.calcType?.name ?? "";
           return <button key={metric.id} className={selectedId === metric.id ? "mm-row selected" : "mm-row"} onClick={() => setSelectedId(metric.id)}>
-            <BarChart3 size={13} />
+            <span className={info.computable ? "mm-lamp" : "mm-lamp hold"} aria-hidden="true" />
             <span>
               <b>{metric.name}</b>
-              <small>{`${metric.aggregation}${metric.property ? `(${metric.property})` : "（行数）"} · ${scopeName} · ${(metric.status ?? "draft") === "verified" ? "已验收" : "草稿"}`}</small>
+              <small>{info.expression}</small>
+              <em>{info.related.length ? `关联 ${info.related.length} 个类型` : "还没关联对象类型"}{info.computable && calcName ? ` · 算在「${calcName}」` : ""}</em>
             </span>
           </button>;
         })}
@@ -171,93 +228,141 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
     </div>
     <div {...handleProps}><span aria-hidden="true" /></div>
     <div className="panel functional-panel mm-sheet">
-      {selected && current ? <>
+      {selected && current && view ? <>
+        <div className="mm-sheet-body">
         <div className="mm-sheet-head">
           <span className="eyebrow">指标定义</span>
           <div className="mm-title-row">
             <input aria-label="指标名称" disabled={!canEdit} placeholder="例如：互联网专线条数" value={current.name} onChange={(event) => patch({ name: event.target.value })} />
-            {dirty && <em>未保存</em>}
+            <em className={current.status === "verified" ? "mm-pill verified" : "mm-pill draft"}>{current.status === "verified" ? "已验收" : "草稿"}</em>
+            {dirty && <em className="mm-pill dirty">未保存</em>}
           </div>
-          <p className="mm-hint">指标只描述口径。真正出数由模型按这份定义落成只读 SQL（对象类型绑定的表）。</p>
+          <textarea className="mm-desc" rows={2} disabled={!canEdit} placeholder="这个指标量的是什么、边界在哪" value={current.description} onChange={(event) => patch({ description: event.target.value })} />
         </div>
 
-        <div className="mm-block">
-          <span className="mm-block-label">口径</span>
-          <div className="mm-form">
-            <label className="mm-field mm-span-2"><span>说明（量的是什么、边界在哪）</span><textarea rows={2} disabled={!canEdit} value={current.description} onChange={(event) => patch({ description: event.target.value })} /></label>
-            <label className="mm-field"><span>作用的对象类型</span>
-              <select disabled={!canEdit} value={current.entityTypeId} onChange={(event) => changeScope(event.target.value)}>
-                <option value="">选择对象类型</option>
-                {definition.entityTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label className="mm-field"><span>聚合方式</span>
-              <select disabled={!canEdit} value={current.aggregation} onChange={(event) => patch({ aggregation: event.target.value as Metric["aggregation"] })}>
-                {AGGREGATION_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <label className="mm-field"><span>聚合属性{current.aggregation === "COUNT" ? "（留空 = 数行数）" : ""}</span>
-              <select disabled={!canEdit || !scope} value={current.property} onChange={(event) => patch({ property: event.target.value })}>
-                <option value="">{current.aggregation === "COUNT" ? "不选（数行数）" : "选择属性"}</option>
-                {propertyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-              </select>
-            </label>
-            <label className="mm-field"><span>单位</span><input disabled={!canEdit} placeholder="条 / 元 / MB / 分" value={current.unit} onChange={(event) => patch({ unit: event.target.value })} /></label>
-            <label className="mm-field"><span>状态</span>
-              <select disabled={!canEdit} value={current.status ?? "draft"} onChange={(event) => patch({ status: event.target.value as Metric["status"] })}>
-                <option value="draft">草稿（还没验收）</option>
-                <option value="verified">已验收（模型可直接引用）</option>
-              </select>
-            </label>
-            <label className="mm-field"><span>负责人（可选）</span><input disabled={!canEdit} placeholder="例如：市场部数据组" value={current.owner ?? ""} onChange={(event) => patch({ owner: event.target.value })} /></label>
-            <label className="mm-field mm-span-2"><span>时间维度（可选，按它看趋势）</span>
-              <select disabled={!canEdit || !scope} value={current.timeProperty} onChange={(event) => patch({ timeProperty: event.target.value })}>
-                <option value="">不用时间维度</option>
-                {propertyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-              </select>
-            </label>
+        <div className="mm-step">
+          <div className="mm-step-head">
+            <span className="mm-step-no">1</span>
+            <b>关联的对象类型</b>
+            <span>这个指标和谁有关（可以多个）</span>
+            <em>{view.related.length} 个</em>
           </div>
+          <div className="mm-roster">
+            {view.related.map((type) => {
+              const isCalc = current.calculation?.entityTypeId === type.id;
+              return <div className={isCalc ? "mm-rel is-calc" : "mm-rel"} key={type.id}>
+                <b>{type.name}</b>
+                {isCalc ? <span className="mm-tag">计算落点</span> : <s>仅关联</s>}
+                <button type="button" className="mm-x" title={`取消关联 ${type.name}`} disabled={!canEdit} onClick={() => unrelate(type.id)}><X size={13} /></button>
+              </div>;
+            })}
+            {!view.related.length && <p className="mm-empty">还没关联任何对象类型 —— 先选一个，才知道这条指标说的是谁。</p>}
+          </div>
+          <select className="mm-add-rel" disabled={!canEdit} value="" onChange={(event) => { relate(event.target.value); event.target.value = ""; }}>
+            <option value="">＋ 关联一个对象类型</option>
+            {definition.entityTypes.filter((type) => !current.entityTypeIds.includes(type.id)).map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
+          </select>
+          <p className="mm-hint">关联决定「这条指标出现在哪些类型的上下文里」（问答、检索、对象类型详情页都按它归类）。<b>关联不等于能算</b> —— 能不能出数看第 2 步。</p>
         </div>
 
-        <div className="mm-block">
-          <span className="mm-block-label">口径过滤（固定条件：这个数只算满足这些条件的行）</span>
-          <div className="mm-filters">
-            {current.filters.map((filter, index) => (
-              <div className="mm-filter-row" key={`${filter.property}-${index}`}>
-                <select disabled={!canEdit} value={filter.property} onChange={(event) => patch({ filters: current.filters.map((item, i) => (i === index ? { ...item, property: event.target.value } : item)) })}>
-                  <option value="">选择属性</option>
-                  {propertyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+        <div className="mm-step">
+          <div className="mm-step-head">
+            <span className="mm-step-no">2</span>
+            <b>怎么算</b>
+            <span>挑一个关联类型作为计算落点；不挑就是「只描述、不算数」</span>
+            <em>{view.computable ? `算在「${view.calcType!.name}」` : current.calculation ? "落点待选" : "未配置"}</em>
+          </div>
+          <div className="mm-pick">
+            {view.related.map((type) => <button type="button" key={type.id} disabled={!canEdit} className={current.calculation?.entityTypeId === type.id ? "mm-opt on" : "mm-opt"} onClick={() => pickCalcType(type.id)}><i />{type.name}</button>)}
+            <button type="button" disabled={!canEdit} className={current.calculation ? "mm-opt" : "mm-opt on"} onClick={() => patch({ calculation: null })}><i />只描述、不算数</button>
+          </div>
+
+          {current.calculation && !view.calcType && <p className="mm-warn">计算落点不在关联里了（可能刚取消了那个类型的关联）—— 在上面重新挑一个，或者改成「只描述、不算数」。算法本身还留着。</p>}
+
+          {current.calculation && view.calcType && <>
+            <div className="mm-form" style={{ marginTop: 11 }}>
+              <label className="mm-field"><span>聚合方式</span>
+                <select disabled={!canEdit} value={current.calculation.aggregation} onChange={(event) => patchCalculation({ aggregation: event.target.value as Calculation["aggregation"] })}>
+                  {AGGREGATION_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
-                <select disabled={!canEdit} value={filter.operator} onChange={(event) => patch({ filters: current.filters.map((item, i) => (i === index ? { ...item, operator: event.target.value as Metric["filters"][number]["operator"] } : item)) })}>
-                  {FILTER_OPERATORS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </label>
+              <label className="mm-field"><span>聚合属性{current.calculation.aggregation === "COUNT" ? "（留空 = 数行数）" : ""}</span>
+                <select disabled={!canEdit} value={current.calculation.property} onChange={(event) => patchCalculation({ property: event.target.value })}>
+                  <option value="">{current.calculation.aggregation === "COUNT" ? "不选（数行数）" : "选择属性"}</option>
+                  {calcProperties.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
-                <input disabled={!canEdit || filter.operator === "IS_NULL" || filter.operator === "NOT_NULL"} placeholder="值（再传一次原值即可）" value={filter.value} onChange={(event) => patch({ filters: current.filters.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)) })} />
-                <button type="button" className="mm-icon" disabled={!canEdit} title="删除这条过滤" onClick={() => patch({ filters: current.filters.filter((_, i) => i !== index) })}><X size={13} /></button>
-              </div>
-            ))}
-            <button type="button" className="action compact" disabled={!canEdit || !scope} onClick={() => patch({ filters: [...current.filters, { property: propertyOptions[0] ?? "", operator: "EQ", value: "" }] })}><Plus size={13} />加一条过滤</button>
-            {!current.filters.length && <p className="mm-hint">没加过滤 = 全部行都算。像「只看互联网专线」「排除红冲」这类边界就写在这里。</p>}
-          </div>
+              </label>
+              <label className="mm-field"><span>时间维度（按它看趋势）</span>
+                <select disabled={!canEdit} value={current.calculation.timeProperty} onChange={(event) => patchCalculation({ timeProperty: event.target.value })}>
+                  <option value="">不用时间维度</option>
+                  {calcProperties.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </label>
+              <label className="mm-field"><span>单位</span><input disabled={!canEdit} placeholder="条 / 元 / MB / 分" value={current.unit ?? ""} onChange={(event) => patch({ unit: event.target.value })} /></label>
+              <label className="mm-field"><span>状态</span>
+                <select disabled={!canEdit} value={current.status ?? "draft"} onChange={(event) => patch({ status: event.target.value as Metric["status"] })}>
+                  <option value="draft">草稿（还没验收）</option>
+                  <option value="verified">已验收（模型可直接引用）</option>
+                </select>
+              </label>
+              <label className="mm-field"><span>负责人（可选）</span><input disabled={!canEdit} placeholder="例如：市场部数据组" value={current.owner ?? ""} onChange={(event) => patch({ owner: event.target.value })} /></label>
+            </div>
+
+            <p className="mm-hint" style={{ marginTop: 10 }}>可用维度（模型能按这些属性分组看；<b>勾了时间维度就自动算一个维度</b>）</p>
+            <div className="mm-chips">
+              {calcProperties.map((name) => {
+                const picked = current.calculation!.dimensions.includes(name);
+                const isTime = current.calculation!.timeProperty === name;
+                return <button key={name} type="button" disabled={!canEdit || isTime} className={picked || isTime ? "mm-chip on" : "mm-chip"} onClick={() => toggleDimension(name)}>{name}{isTime ? " · 时间" : ""}</button>;
+              })}
+              {!calcProperties.length && <p className="mm-empty">这个对象类型还没有属性。</p>}
+            </div>
+
+            <p className="mm-hint" style={{ marginTop: 10 }}>口径过滤（这个数只算满足这些条件的行）</p>
+            <div className="mm-filters">
+              {current.calculation.filters.map((filter, index) => (
+                <div className="mm-filter-row" key={`${filter.property}-${index}`}>
+                  <select disabled={!canEdit} value={filter.property} onChange={(event) => patchCalculation({ filters: current.calculation!.filters.map((item, i) => (i === index ? { ...item, property: event.target.value } : item)) })}>
+                    <option value="">选择属性</option>
+                    {calcProperties.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                  <select disabled={!canEdit} value={filter.operator} onChange={(event) => patchCalculation({ filters: current.calculation!.filters.map((item, i) => (i === index ? { ...item, operator: event.target.value as Calculation["filters"][number]["operator"] } : item)) })}>
+                    {FILTER_OPERATORS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                  <input disabled={!canEdit || filter.operator === "IS_NULL" || filter.operator === "NOT_NULL"} placeholder="值" value={filter.value} onChange={(event) => patchCalculation({ filters: current.calculation!.filters.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)) })} />
+                  <button type="button" className="mm-icon" disabled={!canEdit} title="删除这条过滤" onClick={() => patchCalculation({ filters: current.calculation!.filters.filter((_, i) => i !== index) })}><X size={13} /></button>
+                </div>
+              ))}
+              <button type="button" className="action compact" disabled={!canEdit} onClick={() => patchCalculation({ filters: [...current.calculation!.filters, { property: calcProperties[0] ?? "", operator: "EQ", value: "" }] })}><Plus size={13} />加一条过滤</button>
+              {!current.calculation.filters.length && <p className="mm-hint">没加过滤 = 全部行都算。像「只看互联网专线」「排除红冲」这类边界就写在这里。</p>}
+            </div>
+          </>}
+
+          {!current.calculation && <p className="mm-hint">这条指标现在只有描述，<b>模型能讲清它是什么，但拿不到数</b>。要用它出数，就在上面挑一个类型并选好聚合方式。</p>}
         </div>
 
-        <div className="mm-block">
-          <span className="mm-block-label">可用维度（模型可以按这些属性分组看）</span>
-          <div className="mm-chips">
-            {propertyOptions.map((name) => (
-              <button key={name} type="button" className={current.dimensions.includes(name) ? "mm-chip checked" : "mm-chip"} disabled={!canEdit} onClick={() => toggleDimension(name)}>{name}</button>
-            ))}
-            {!propertyOptions.length && <p className="mm-empty">先在上面选一个作用的对象类型，才有属性可选。</p>}
-          </div>
         </div>
 
-        <div className="mm-sheet-foot">
-          <button className="action danger" disabled={!canEdit || busy} onClick={removeMetric}><Trash2 size={15} />删除指标</button>
-          <button className="action primary" disabled={!canEdit || busy || !dirty} onClick={saveDraft}><Pencil size={15} />{busy ? "保存中…" : "保存指标"}</button>
+        <div className={view.computable ? "mm-readout" : "mm-readout hold"}>
+          <div>
+            <div className="mm-readout-state">
+              <span className="mm-lamp" aria-hidden="true" />
+              <b>{view.computable ? "能出数" : "不可出数"}</b>
+              <span>{view.computable
+                ? `模型可以在「${view.calcType!.name}」上引用它出数`
+                : current.calculation ? "算法在、落点没定 —— 先挑一个关联类型" : "只描述口径：能讲清是什么，但要数就得另写聚合（会提示未引用已定义指标）"}</span>
+            </div>
+            <div className={view.computable ? "mm-expr" : "mm-expr hold"}>{view.expression}</div>
+          </div>
+          <div className="mm-readout-acts">
+            <button className="action danger" disabled={!canEdit || busy} onClick={removeMetric}><Trash2 size={15} />删除指标</button>
+            <button className="action primary" disabled={!canEdit || busy || !dirty} onClick={saveDraft}><Pencil size={15} />{busy ? "保存中…" : "保存指标"}</button>
+          </div>
         </div>
       </> : <div className="mm-blank">
         <BarChart3 size={20} />
         <b>{metrics.length ? "选择一个指标" : "先建一个指标"}</b>
-        <span>{metrics.length ? "左边挑一个指标，这里改它的口径：聚合方式、过滤条件、维度与单位。" : "把常用的业务口径固化下来，模型答统计类问题时就有统一依据。"}</span>
+        <span>{metrics.length ? "左边挑一个指标，这里改它的口径：关联哪些对象类型、算在哪儿、怎么算。" : "把常用的业务口径固化下来，模型答统计类问题时就有统一依据。"}</span>
       </div>}
     </div>
   </section>;

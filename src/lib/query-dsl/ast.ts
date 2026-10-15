@@ -69,7 +69,8 @@ export type ResolvedMetric = {
   id: string;
   name: string;
   description: string;
-  aggregation: OntologyDefinition["metrics"][number]["aggregation"];
+  /** 聚合方式取自指标的**计算口径**（只描述的指标走不到这里 —— resolve 会先报 METRIC_NOT_CALCULABLE）。 */
+  aggregation: NonNullable<OntologyDefinition["metrics"][number]["calculation"]>["aggregation"];
   property?: ResolvedField;
   filters: ResolvedFilter[];
   dimensions: ResolvedField[];
