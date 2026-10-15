@@ -577,7 +577,6 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   )}
                   <small>接口是抽象契约：勾上之后，这个对象类型必须有接口里所有必填的同名属性，以及必填的关系约束；发布前校验会拦住没满足的实现。勾上之后再点一下、或用行尾的「取消实现」，就能取消这个实现。</small>
                 </div>
-                <EntityDictionaryEditor value={dictionaries} properties={properties} dataSources={dataSources} onChange={setDictionaries} />
               </>
             ) : (
               <>
@@ -882,6 +881,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <p className="ted-source-note">对象不单独绑表：一个对象就是主来源里的一行，靠主键认身份；补充来源按主键连过去，只往对象上补属性。</p>
               </section>
             )}
+            {kind === "entity" && <EntityDictionaryEditor value={dictionaries} properties={properties} dataSources={dataSources} onChange={setDictionaries} />}
           </div>
 
           <aside className="ted-preview">
