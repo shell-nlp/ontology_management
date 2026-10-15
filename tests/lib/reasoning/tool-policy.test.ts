@@ -48,6 +48,8 @@ describe("resolveToolPolicy", () => {
     expect(defaultToolPolicy().disabledTools).toContain("run_query");
     expect(defaultToolPolicy().disabledTools).not.toContain("run_sql");
     expect(defaultToolPolicy().disabledTools).not.toContain("list_ontologies");
+    // 2026-10-15 用户口径：指标清单默认打开。
+    expect(defaultToolPolicy().disabledTools).not.toContain("list_metrics");
   });
 
   it("脏数据会被归一化：不认识的工具名进不来，重复的去掉", () => {

@@ -177,6 +177,7 @@
 - `run_query`（查询 DSL）**出厂默认关闭**（2026-10-11 用户口径，实现是 `tool-policy.ts` 的 `DEFAULT_DISABLED_TOOLS`）：
   管理员在「MCP 调试」里打开后，它是结构化问数的优先入口，DSL 能用时优先走 DSL。
 - 后续无论怎么调整 Agent 工具集、提示词或 MCP 暴露，都不能把 `run_sql` 从可用工具里移除。
+- **list_metrics 默认打开**（2026-10-15 用户要求）：它不进 DEFAULT_DISABLED_TOOLS；旧策略里被写进 disabledTools 的存量关闭项由迁移 0013 清理。默认打开不等于永久锁死，管理员仍可按全局或本体重关。
 
 ## OAuth 授权服务器（2026-10-14 落地，口径长期有效）
 

@@ -132,7 +132,7 @@
 | `traverse_object_types` | 对象类型多跳 |
 | `get_table_ddl` | 表结构 + 列画像 + 反向引用 |
 | `run_sql` | 只读 SQL（DSL 兜底与排障） |
-| `list_metrics` | 指标定义 |
+| `list_metrics` | 指标定义；**默认开启** |
 
 ### 出厂默认关闭
 
@@ -143,7 +143,7 @@
 | `query_object_instance` | 按对象类型查真实对象 |
 | `query_instance_subgraph` | 按对象类型与关系类型取子图 |
 
-这些可以在“MCP 调试”里按全局默认或按本体单独打开。关闭后工具在外部客户端眼里等于不存在。
+这些可以在“MCP 调试”里按全局默认或按本体单独打开。关闭后工具在外部客户端眼里等于不存在。`list_metrics` 属于默认开启，不在这份出厂关闭清单里。
 
 ### 平台固定关闭
 
