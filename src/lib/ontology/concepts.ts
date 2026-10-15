@@ -72,6 +72,7 @@ export function conceptsOfDefinition(definition: OntologyDefinition): OntologyCo
       group ? `分组 ${group}` : "",
       implemented.length ? `实现接口 ${implemented.join("、")}` : "",
       tables.length ? `绑定表 ${tables.join("、")}` : "",
+      ...(entity.dictionaries ?? []).map((dictionary) => `参考字典 ${dictionary.name} ${dictionary.description} ${[dictionary.schema, dictionary.view].filter(Boolean).join(".")} ${dictionary.mappings.map((mapping) => `${mapping.property} ${mapping.codeColumn} ${mapping.labelColumn}`).join(" ")}`),
       entity.properties.length ? `属性 ${entity.properties.map((property) => property.name).join("、")}` : "",
       entity.displayProperty ? `展示属性 ${entity.displayProperty}` : "",
     ]);
@@ -83,6 +84,7 @@ export function conceptsOfDefinition(definition: OntologyDefinition): OntologyCo
         `类型 ${property.dataType}`,
         source?.view ? `取自 ${source.view}.${property.sourceField ?? ""}` : property.sourceField ? `取自 ${property.sourceField}` : "",
         property.required ? "必填" : "",
+        ...(entity.dictionaries ?? []).filter((dictionary) => dictionary.mappings.some((mapping) => mapping.property === property.name)).map((dictionary) => `字典 ${dictionary.name} ${[dictionary.schema, dictionary.view].filter(Boolean).join(".")}`),
         (property.enumValues ?? []).length ? `取值 ${(property.enumValues ?? []).map((item) => `${item.value}${item.label ? `=${item.label}` : ""}`).join("、")}` : "",
       ]);
     }

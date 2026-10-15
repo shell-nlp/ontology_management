@@ -76,6 +76,8 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     const properties = entity.properties;
     const group = groupNameById.get(entity.groupId ?? "") ?? "";
     const sourced = entitySources(entity);
+    const dictionaries = entity.dictionaries ?? [];
+    const dictionaryText = dictionaries.flatMap((item) => [item.name, item.description, item.schema, item.view, ...item.mappings.flatMap((mapping) => [mapping.property, mapping.codeColumn, mapping.labelColumn])]);
     // 绑定的表名也进检索面：问"某类在哪个表里"时，靠表名本身也能命中。
     const tables = sourced.map((source) => [source.schema, source.view].filter(Boolean).join(".")).filter(Boolean);
     const boundTable = tables[0] ?? "";
@@ -96,12 +98,13 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
       name: entity.name,
       // 概念分组也进检索面：问「客户域里有什么」时，该组的成员会被搜出来。
       // 属性说明也进检索面（截 120 字）：业务口径多半写在列的注释里。
-      haystack: normalize([entity.name, describeBriefly(entity.description, 200), group, ...tables, ...properties.map((property) => property.name), ...properties.map((property) => describeBriefly(property.description ?? "", 120)), ...implemented].join(" ")),
+      haystack: normalize([entity.name, describeBriefly(entity.description, 200), group, ...tables, ...properties.map((property) => property.name), ...properties.map((property) => describeBriefly(property.description ?? "", 120)), ...implemented, ...dictionaryText].join(" ")),
       values: normalize(values.join(" ")),
       detail: [
         group ? `分组 ${group}` : "",
         implemented.length ? `实现接口 ${implemented.join("、")}` : "",
         tables.length ? `绑定 ${tables.join("、")}${resources.length ? `（${resources.join("、")}）` : ""}` : "",
+        dictionaries.length ? `参考字典 ${dictionaries.map((item) => `${item.name}（${[item.schema, item.view].filter(Boolean).join(".")}）`).join("、")}` : "",
         properties.length ? `属性 ${properties.map((property) => property.name).join("、")}` : "暂无属性",
       ].filter(Boolean).join("；"),
       weight: objectCount.get(entity.name) ?? 0,
@@ -113,16 +116,17 @@ export function schemaConcepts(definition: OntologyDefinition, runtimeTypes: Run
     for (const property of properties) {
       // 属性的落点就是"哪张表的哪一列"：模型拿到它不用再猜，也不用再调一次 get_object_type。
       const source = sourced.find((item) => !property.sourceId || item.id === property.sourceId) ?? sourced[0];
+      const propertyDictionaries = dictionaries.filter((dictionary) => dictionary.mappings.some((mapping) => mapping.property === property.name));
       concepts.push({
         kind: "PROPERTY",
         name: `${entity.name}.${property.name}`,
-        haystack: normalize([entity.name, property.name, property.dataType, describeBriefly(property.description ?? "", 120)].join(" ")),
+        haystack: normalize([entity.name, property.name, property.dataType, describeBriefly(property.description ?? "", 120), ...propertyDictionaries.flatMap((dictionary) => [dictionary.name, dictionary.description, dictionary.view])].join(" ")),
         // 属性声明的取值枚举（码值 + 中文含义）也进取值面：「全球通」要能命中 U_TYPE，而不是靠描述里碰巧出现。
         values: normalize([
           ...columnValueOf(valueIndex, source?.schema ?? "", source?.view ?? "", property.sourceField ?? ""),
           ...(property.enumValues ?? []).flatMap((item) => [item.value, item.label].filter(Boolean)),
         ].join(" ")),
-        detail: `${property.dataType}${property.required ? "，必填" : ""}${property.sourceField ? `，取自 ${property.sourceField}` : ""}`,
+        detail: `${property.dataType}${property.required ? "，必填" : ""}${property.sourceField ? `，取自 ${property.sourceField}` : ""}${propertyDictionaries.length ? `，字典 ${propertyDictionaries.map((dictionary) => dictionary.name).join("、")}` : ""}`,
         weight: 0,
         description: property.description ?? "",
         boundTable: source ? [source.schema, source.view].filter(Boolean).join(".") : boundTable,

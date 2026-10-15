@@ -76,7 +76,7 @@ export function dataSourcesForTable(definition: OntologyDefinition, dataSources:
   const ids = new Set<string>();
   let mentioned = false;
   for (const entity of definition.entityTypes) {
-    for (const source of entitySources(entity)) {
+    for (const source of [...entitySources(entity), ...(entity.dictionaries ?? [])]) {
       if ((source.view ?? "").trim().toUpperCase() !== wantTable) continue;
       const sourceSchema = (source.schema ?? "").trim().toUpperCase();
       if (wantSchema && sourceSchema && sourceSchema !== wantSchema) continue;
@@ -128,6 +128,13 @@ export function objectTypesBoundTo(definition: OntologyDefinition, dataSourceId:
     });
   }
   return bindings;
+}
+
+/** 字典引用单独列出，不能伪装成对象的主/补充来源。 */
+export function dictionaryReferencesTo(definition: OntologyDefinition, dataSourceId: string, schema: string, table: string) {
+  return definition.entityTypes.flatMap((entity) => (entity.dictionaries ?? [])
+    .filter((dictionary) => sourceTableBinding(dictionary, { dataSourceId, schema, table }) === "bound")
+    .map((dictionary) => ({ object_type: entity.name, dictionary: dictionary.name, description: dictionary.description, mappings: dictionary.mappings })));
 }
 
 export function clamp(value: unknown, fallback: number, max: number) {

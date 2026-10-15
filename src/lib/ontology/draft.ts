@@ -30,6 +30,8 @@ export type EntityType = {
   properties: Property[];
   /** sources[0] 是主来源，决定对象身份与标题；后面的是按主键补充属性的来源。 */
   sources?: EntitySource[];
+  /** 多张码值字典；映射可空，仅登记表时供语义参考，不自动生成关系。 */
+  dictionaries?: import("./dictionaries").EntityDictionary[];
   /** 旧快照的单来源字段，读的时候用 entitySources() 归一，写的时候不再输出。 */
   source?: LegacyEntitySource;
 };

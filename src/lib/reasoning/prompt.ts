@@ -54,7 +54,7 @@ export function toolGuide(enabledTools: readonly string[]): string {
   const has = (name: string) => enabledTools.includes(name);
   const lines = [`本轮可用工具（**只能调用下面这些名字**；清单里没有的工具名一律不要调用、也不要提到）：${enabledTools.join("、") || "（一个都没有）"}`];
   if (has("search_schema")) lines.push("- search_schema：任何问题都先调它，确认业务里到底有哪些概念、叫什么名字。");
-  if (has("get_object_type")) lines.push("- get_object_type：读一个对象类型的定义 —— 属性、实现接口、一跳关系、可用动作、绑定的表。");
+  if (has("get_object_type")) lines.push("- get_object_type：读一个对象类型的定义 —— 属性、实现接口、一跳关系、可用动作、绑定的表与参考字典。字典 mappings 给出属性与码值列/含义列；reference_only 仅供参考，不可猜连接条件。字典引用不代表枚举已加载，具体含义需只读查询验证。");
   if (has("traverse_object_types")) lines.push("- traverse_object_types：问多跳关系、两两之间怎么连。");
   if (has("list_concept_groups")) lines.push("- list_concept_groups：要完整的概念分组清单时用（概念清单里已经写了的就别重复调）。");
   if (has("list_interfaces")) lines.push("- list_interfaces：看接口的属性与关系约束。");

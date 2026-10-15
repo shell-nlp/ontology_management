@@ -5,6 +5,7 @@ import { jsonSchema, tool } from "ai";
 import { checkImplementations, effectiveInterfaceLinkConstraints, effectiveInterfaceActionConstraints, effectiveInterfaceProperties, implementsIdsOf, implementersOf, interfaceAncestorsOf } from "@/lib/ontology/interfaces";
 import { type DataSourceRecord } from "@/lib/datasource/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology/sources";
+import { dictionaryReferencesTo } from "./projection";
 import { cardinalityLabel, cardinalityPhrase } from "@/lib/ontology/relationship-cardinality";
 import { readOnlyPolicyNote } from "@/lib/datasource/sql-guard";
 import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
@@ -501,6 +502,19 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
           implements: (type.implements ?? []).map((id) => interfaceNameById.get(id) ?? "").filter(Boolean),
           properties,
           one_hop: oneHop,
+          ...((type.dictionaries ?? []).length ? {
+            dictionaries: type.dictionaries!.map((dictionary) => ({
+              name: dictionary.name,
+              description: dictionary.description,
+              data_source: resourceNameById.get(dictionary.dataSourceId) ?? "",
+              binding: resourceNameById.has(dictionary.dataSourceId) ? "bound" : "unbound",
+              schema: dictionary.schema,
+              view: dictionary.view,
+              mappings: dictionary.mappings.map((mapping) => ({ property: mapping.property, code_column: mapping.codeColumn, label_column: mapping.labelColumn })),
+              usage: dictionary.mappings.length ? "property_mapping" : "reference_only",
+            })),
+            dictionaries_note: "字典用于解释码值，不是对象的数据来源或关系类型。mappings 明确了对象属性与字典码值列、含义列的对应；没有映射的字典仅供参考，不能猜连接条件。具体含义需只读查字典验证，不能把表引用当作已加载的枚举，也不能据此认定码值唯一或 join 不会放大行数。",
+          } : {}),
           actions,
           metrics,
           ...(metrics.length ? { metrics_note: "metrics 是**和这个对象类型相关**的指标（业务口径）：entity_types 是它关联的多个类型，calculated_on 是计算落在哪个类型上，calculable=true 才表示**能在本类型上出数**（只描述、没配计算口径的是 false，查询会直接报错）。配了计算口径时 aggregation + property 是怎么算，filters 是口径边界，dimensions 是能按哪些属性分组，unit 是单位。引用口径时以它为准，不要自己从列注释里另立一套。" } : {}),
@@ -752,6 +766,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
        */
       const objectKind = ddl.schema || record.schema_name;
       const boundObjectTypes = objectTypesBoundTo(definition, record.id, objectKind, ddl.name, knownSourceIds);
+      const dictionaryReferences = dictionaryReferencesTo(definition, record.id, objectKind, ddl.name);
       return {
         payload: {
           data_source: record.name,
@@ -772,11 +787,13 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
            * 表身份是靠「模式.表」兜底认出来的 —— 要给用户指这条路，别把它当成"表不存在"。
            */
           bound_object_types: boundObjectTypes.map((item) => [item.object_type, item.mapped_columns, item.source_role, item.primary_key, item.mapped_column_count, item.binding === "bound" ? "" : "未绑定数据资源"]),
+          ...(dictionaryReferences.length ? { dictionary_references: dictionaryReferences } : {}),
           ...(boundObjectTypes.some((item) => item.binding !== "bound")
             ? { bound_object_types_binding_note: "上面标了「未绑定数据资源」的来源，dataSourceId 还没绑到本机资源（导入后没补齐绑定）：表身份是靠「模式.表」兜底认出来的。要跑数先到「对象 / 本体」页点「补齐数据资源绑定」。" }
             : {}),
           bound_object_types_note: boundObjectTypes.length
             ? "这张表被上面这些对象类型绑定：object_type 是对象类型名，mapped_columns 是它映射到这张表的列，source_role 说明它是主来源还是补充来源。primary_key 是**本体建模声明的对象主键**，不是数据库唯一约束 —— 数据到底唯不唯一看 column_profile 的 distinct 与 sample_size。要字段细节与关系用 get_object_type。"
+            : dictionaryReferences.length ? "这张表作为码值字典被对象类型引用，见 dictionary_references；它不是这些对象类型的实例来源。未配 mappings 的引用仅供参考，不能猜连接条件。"
             : "没有任何对象类型绑定这张表。本平台里表只能通过对象类型到达：先确认表名（模式.表）有没有写错，再用 search_schema / get_object_type 反查正确的那张表；别把这张表当成「本体里的对象」。",
           ...(ddl.truncatedAt ? { truncated_at: ddl.truncatedAt, truncated_note: `原始语句超过 ${ddl.truncatedAt} 字符，上面是截断后的。` } : {}),
           ...(profile?.profile

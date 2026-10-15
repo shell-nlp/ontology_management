@@ -24,6 +24,7 @@ export function searchOntologyDefinition(definition: Definition, query: string):
   for (const entity of definition.entityTypes) {
     add("entity", entity.id, entity.name, [
       ["对象类型", entity.name],
+      ...(entity.dictionaries ?? []).flatMap((item): [string, string][] => [["字典", item.name], ["字典表", [item.schema, item.view].filter(Boolean).join(".")]]),
       ...entity.properties.flatMap((property): [string, string | undefined][] => [["属性", property.name], ["属性", property.displayName]]),
     ]);
   }

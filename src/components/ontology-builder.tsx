@@ -21,7 +21,7 @@ import "./ontology-builder.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 
-export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; properties: EntityType["properties"]; sources?: EntityType["sources"] };
+export type EntityPayload = { name: string; description: string; displayProperty: string; groupName?: string; implements?: string[]; indexPolicy?: EntityType["indexPolicy"]; properties: EntityType["properties"]; sources?: EntityType["sources"]; dictionaries?: EntityType["dictionaries"] };
 /** 关系类型：一条定义、两个端点；它是双向的，不用再建反向的那一条。 */
 export type RelationPayload = { name: string; description?: string; sourceEntityTypeId: string; targetEntityTypeId: string; /** 数量关系（起点 → 终点）；空串 = 未标注。它不影响「关系类型双向」。 */ cardinality?: RelationType["cardinality"]; sourceKeyMappings?: RelationType["sourceKeyMappings"]; targetKeyMappings?: RelationType["targetKeyMappings"]; linkSource?: RelationType["linkSource"]; properties: RelationType["properties"] };
 
@@ -494,7 +494,7 @@ export function OntologyBuilder({ definition, targetId, canEdit, hasSnapshot, on
           interfaces={definition.interfaces}
           onClose={() => setDialog(null)}
           onSave={async (payload) => {
-            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, implements: payload.implements, properties: payload.properties, sources: payload.sources };
+            const body: EntityPayload = { name: payload.name, description: payload.description ?? "", displayProperty: payload.displayProperty ?? "", groupName: payload.groupName, implements: payload.implements, indexPolicy: payload.indexPolicy, properties: payload.properties, sources: payload.sources, dictionaries: payload.dictionaries };
             if (dialog.mode === "create") { await onCreateEntity(dialog.id, body); setSelected({ kind: "entity", id: dialog.id }); }
             else await onUpdateEntity(dialog.id, body);
           }}

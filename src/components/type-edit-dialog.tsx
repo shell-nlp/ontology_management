@@ -12,6 +12,8 @@ import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/dat
 import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
 import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
 import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
+import { dictionaryIssues, type EntityDictionary } from "@/lib/ontology/dictionaries";
+import { EntityDictionaryEditor } from "./entity-dictionary-editor";
 import {
   emptyEntitySource,
   entitySources,
@@ -52,6 +54,7 @@ export type TypeEditPayload = {
   properties: Property[];
   /** 类的数据来源清单，第 0 份是主来源；关系类型不带这一项。 */
   sources?: EntitySource[];
+  dictionaries?: EntityDictionary[];
 };
 
 type Props = {
@@ -139,6 +142,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [busy, setBusy] = useState(false);
   // 数据来源：只有对象类型有这一块。第 0 份是主来源，其余是按主键补充属性的来源。
   const [dataSources, setDataSources] = useState<PublicDataSource[]>([]);
+  const [dictionaries, setDictionaries] = useState<EntityDictionary[]>(() => kind === "entity" ? entity?.dictionaries ?? [] : []);
   const [sourceDrafts, setSourceDrafts] = useState<EntitySource[]>(() => (kind === "entity" ? entitySources(entity) : []));
   const [fieldsBySource, setFieldsBySource] = useState<Record<string, { key: string; fields: DataViewField[] }>>({});
   const reportedFields = useRef<Record<string, { key: string; fields: DataViewField[] }>>({});
@@ -453,10 +457,12 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
     }
     const blockers = sourceIssues.filter((issue) => issue.severity !== "WARN");
     if (blockers.length) { setLocalError(blockers.map((issue) => issue.message).join("；")); return; }
+    const invalidDictionaries = kind === "entity" ? dictionaryIssues(dictionaries, properties) : [];
+    if (invalidDictionaries.length) { setLocalError(invalidDictionaries.join("；")); return; }
     setBusy(true);
     try {
       await onSave(kind === "entity"
-        ? { name, description, displayProperty, groupName, implements: implementsList, indexPolicy, properties, sources: normalizedSources }
+        ? { name, description, displayProperty, groupName, implements: implementsList, indexPolicy, properties, sources: normalizedSources, dictionaries }
         : { name, description, sourceEntityTypeId: source, targetEntityTypeId: target, cardinality, properties, sourceKeyMappings: keyMappingRows(sourceKeys), targetKeyMappings: keyMappingRows(targetKeys), linkSource });
       onClose();
     } finally {
@@ -471,7 +477,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <form
-        className="ted-dialog"
+        className={kind === "entity" ? "ted-dialog ted-entity-dialog" : "ted-dialog"}
         onSubmit={submit}
         onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void submit(); } }}
       >
@@ -571,6 +577,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                   )}
                   <small>接口是抽象契约：勾上之后，这个对象类型必须有接口里所有必填的同名属性，以及必填的关系约束；发布前校验会拦住没满足的实现。勾上之后再点一下、或用行尾的「取消实现」，就能取消这个实现。</small>
                 </div>
+                <EntityDictionaryEditor value={dictionaries} properties={properties} dataSources={dataSources} onChange={setDictionaries} />
               </>
             ) : (
               <>
@@ -915,6 +922,10 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 ))}
               </div>
             )}
+            {kind === "entity" && dictionaries.length > 0 && <div className="dictionary-preview">
+              <b>字典引用 <span>{dictionaries.length}</span></b>
+              {dictionaries.map((dictionary) => <div key={dictionary.id}><strong>{dictionary.name || "未命名字典"}</strong><code>{[dictionary.schema, dictionary.view].filter(Boolean).join(".") || "待选择字典表"}</code><small>{dictionary.mappings.length ? dictionary.mappings.map((mapping) => `${mapping.property || "待选属性"} → ${mapping.codeColumn || "?"} / ${mapping.labelColumn || "?"}`).join("；") : "仅供参考 · 未配属性映射"}</small></div>)}
+            </div>}
             <div className="ted-preview-props">
               {kind === "entity" && (
                 <span><em>显示属性</em><code>{displayProperty || "自动"}</code></span>

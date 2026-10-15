@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LEGACY_PRIMARY_SOURCE_ID } from "@/lib/ontology/sources";
+import { entityDictionarySchema, dictionaryIssues } from "./dictionaries";
 
 /**
  * 本体定义（类 / 关系类型 / 属性规则 / 动作 / 规则）。
@@ -473,6 +474,7 @@ export const ontologyDefinitionSchema = z.object({
     })).default([]),
     properties: z.array(propertySchema).default([]),
     sources: entitySourcesSchema,
+    dictionaries: z.array(entityDictionarySchema).optional(),
     /**
      * 这个对象类型的**默认读法**（2026-10-12 用户要求，对齐 S4）：
      * - `AUTO`（默认）：索引里有这个类型就用索引，没有就回源业务库 —— 老快照读出来就是它，不需要迁移；
@@ -482,6 +484,10 @@ export const ontologyDefinitionSchema = z.object({
     indexPolicy: z.enum(["AUTO", "INDEXED", "FEDERATED"]).default("AUTO"),
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
     source: legacyEntitySourceSchema.optional(),
+  }).superRefine((entity, context) => {
+    for (const message of dictionaryIssues(entity.dictionaries ?? [], entity.properties)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["dictionaries"], message });
+    }
   }).transform(({ source, ...entity }) => {
     if (entity.sources.length || !source) return entity;
     const bound = Boolean(source.dataSourceId || source.view || source.primaryKey.length || source.titleField);
