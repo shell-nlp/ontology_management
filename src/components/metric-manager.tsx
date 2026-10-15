@@ -238,6 +238,21 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
             {dirty && <em className="mm-pill dirty">未保存</em>}
           </div>
           <textarea className="mm-desc" rows={2} disabled={!canEdit} placeholder="这个指标量的是什么、边界在哪" value={current.description} onChange={(event) => patch({ description: event.target.value })} />
+          {/* 口径元信息：与「怎么算」无关，所以常驻在这里 —— 只描述、不算数的指标也要能改它。 */}
+          <div className="mm-meta">
+            <div className="mm-meta-head"><b>口径元信息</b><span>和「怎么算」无关，有没有配计算口径都能改</span></div>
+            <div className="mm-form">
+              <label className="mm-field"><span>单位</span><input disabled={!canEdit} placeholder="条 / 元 / MB / 分" value={current.unit ?? ""} onChange={(event) => patch({ unit: event.target.value })} /></label>
+              <label className="mm-field"><span>状态</span>
+                <select disabled={!canEdit} value={current.status ?? "draft"} onChange={(event) => patch({ status: event.target.value as Metric["status"] })}>
+                  <option value="draft">草稿（还没验收）</option>
+                  <option value="verified">已验收（模型可直接引用）</option>
+                </select>
+              </label>
+              <label className="mm-field"><span>负责人（可选）</span><input disabled={!canEdit} placeholder="例如：市场部数据组" value={current.owner ?? ""} onChange={(event) => patch({ owner: event.target.value })} /></label>
+            </div>
+            <p className="mm-hint">状态管的是「这条口径验收没有」：<b>草稿照样能出数</b>，模型引用它出数时会附一句「尚未验收」；标成已验收表示可以当成可信口径直接用。</p>
+          </div>
         </div>
 
         <div className="mm-step">
@@ -298,14 +313,6 @@ export function MetricManager({ definition, canEdit, save, notify, fail }: Props
                   {calcProperties.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
               </label>
-              <label className="mm-field"><span>单位</span><input disabled={!canEdit} placeholder="条 / 元 / MB / 分" value={current.unit ?? ""} onChange={(event) => patch({ unit: event.target.value })} /></label>
-              <label className="mm-field"><span>状态</span>
-                <select disabled={!canEdit} value={current.status ?? "draft"} onChange={(event) => patch({ status: event.target.value as Metric["status"] })}>
-                  <option value="draft">草稿（还没验收）</option>
-                  <option value="verified">已验收（模型可直接引用）</option>
-                </select>
-              </label>
-              <label className="mm-field"><span>负责人（可选）</span><input disabled={!canEdit} placeholder="例如：市场部数据组" value={current.owner ?? ""} onChange={(event) => patch({ owner: event.target.value })} /></label>
             </div>
 
             <p className="mm-hint" style={{ marginTop: 10 }}>可用维度（模型能按这些属性分组看；<b>勾了时间维度就自动算一个维度</b>）</p>

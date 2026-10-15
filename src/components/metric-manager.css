@@ -39,6 +39,12 @@
 .mm-pill.dirty { border: 1px dashed #cfd8d3; background: #fbfcfb; color: #7c8b8a; }
 .mm-desc { width: 100%; min-height: 54px; padding: 8px 10px; border: 1px solid var(--line, #d9dfdc); border-radius: 4px; color: #2b3c3e; font-size: 12px; line-height: 1.7; resize: vertical; font-family: inherit; }
 
+/* 口径元信息：与「怎么算」无关，所以在上面常驻一块，只描述型的指标也能改。 */
+.mm-meta { display: grid; gap: 9px; padding-top: 11px; border-top: 1px solid var(--line, #dfe7f1); }
+.mm-meta-head { display: flex; align-items: baseline; gap: 9px; }
+.mm-meta-head b { font-size: 12.5px; }
+.mm-meta-head span { color: var(--muted, #667277); font-size: 11px; }
+
 .mm-step { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--line, #d9dfdc); }
 .mm-step-head { display: flex; align-items: baseline; gap: 9px; }
 .mm-step-no { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 3px; background: var(--ink); color: #fff; font: 700 10.5px/1 ui-monospace, monospace; }
@@ -84,25 +90,21 @@
 .mm-icon:hover { border-color: #f0b9b9; color: #b91c1c; }
 
 /*
- * 结论条：这一页唯一"响亮"的地方 —— 把「能不能出数」和算式摆在眼前。
- * 底色用 `--ink`：应用的有效配色里它才是那个深色（`globals.css` 有第二个 :root 把 `--dark` 覆盖成了白色，别用它）。
+ * 结论条：这一页唯一该"响亮"的地方 —— 把「能不能出数」和算式摆在眼前。
+ * 底色跟整页一样走浅色（淡蓝 / 淡珊瑚 + 一条彩色顶边）：整块深色压在下半屏，和蓝白界面不搭。
  */
-.mm-readout { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 20px; background: var(--ink); color: #eef2f9; border-top: 3px solid var(--mint); }
-.mm-readout.hold { border-top-color: var(--coral); }
+.mm-readout { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 20px; background: #f2f7ff; border-top: 3px solid var(--mint); }
+.mm-readout.hold { background: #fff7f5; border-top-color: var(--coral); }
 .mm-readout-state { display: flex; align-items: center; gap: 9px; }
 .mm-readout .mm-lamp { margin: 0; }
-.mm-readout-state b { font-size: 12.5px; }
-.mm-readout-state span { color: #a9b8d0; font-size: 11px; }
-.mm-expr { margin-top: 7px; color: #fff; font: 600 13px/1.5 ui-monospace, monospace; word-break: break-word; }
-.mm-expr.hold { color: #f3c2ba; font-weight: 500; }
+.mm-readout-state b { color: #102a56; font-size: 12.5px; }
+.mm-readout-state span { color: var(--muted, #64748b); font-size: 11px; }
+.mm-expr { margin-top: 7px; color: #102a56; font: 600 13px/1.5 ui-monospace, monospace; word-break: break-word; }
+.mm-expr.hold { color: #b23b2e; font-weight: 500; }
 .mm-readout-acts { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
-/* 深色条上的按钮：默认的浅色 .action 在这里对比不够 */
-.mm-readout .action { border-color: #3d5477; background: #1b2a44; color: #dbe6f5; }
-.mm-readout .action:hover { border-color: var(--mint); background: #24365a; }
-.mm-readout .action.primary { border-color: var(--mint); background: var(--mint); color: #fff; }
-.mm-readout .action.primary:hover { background: #1d4fd8; }
-.mm-readout .action.danger { border-color: #7d4351; background: #2a1b28; color: #f3b9c1; }
-.mm-readout .action.danger:hover { border-color: var(--coral); background: #3a2130; color: #ffd9d3; }
+/* 按钮沿用全局 .action 的浅色样式；只给"删除"补上全局那套 danger 配色，免得依赖别的页面先加载。 */
+.mm-readout .action.danger { color: #b04f3d; border-color: #e0bdb4; }
+.mm-readout .action.danger:hover { background: #fff1ed; }
 
 .mm-blank { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #8296b0; text-align: center; }
 .mm-blank b { color: #3f5b7d; font-size: 13px; }
