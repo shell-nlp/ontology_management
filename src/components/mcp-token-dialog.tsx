@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, KeyRound, Plus, X } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
 import { copyText } from "@/lib/shared/client/clipboard";
+import { DialogShell } from "@/components/dialog-shell";
 import "./mcp-token-dialog.css";
 
 /**
@@ -92,12 +93,6 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
   const [copied, setCopied] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const copyTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
 
   // 焦点落在"给新令牌起名"上：开窗后最常见的下一步就是发一条新的。
   useEffect(() => { nameRef.current?.focus(); }, []);
@@ -194,12 +189,7 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
   };
 
   return (
-    <div
-      className="dialog-backdrop mcp-key-backdrop"
-      role="presentation"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
-    >
-      <div className="mcp-key-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-key-title">
+    <DialogShell backdropClassName="dialog-backdrop mcp-key-backdrop" className="mcp-key-dialog" label="访问令牌" onClose={onClose}>
         <header className="mcp-key-head">
           <span className="mcp-key-mark"><KeyRound size={19} /></span>
           <div className="mcp-key-title">
@@ -326,7 +316,6 @@ export function McpTokenDialog({ canManage, initialTokens, initialWarning = null
           <span>{canManage ? "关掉这个窗口不会影响已经配好的客户端。" : "只有管理员能生成 / 查看 / 撤销令牌。"}</span>
           <button type="button" className="mcp-key-btn" onClick={onClose}>完成</button>
         </footer>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

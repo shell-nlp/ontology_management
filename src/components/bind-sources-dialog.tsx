@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Database, TriangleAlert, X } from "lucide-react";
-import { api } from "@/lib/shared/client/api-client";
+import { dataSourcesApi, type SourceBindingResponse } from "@/lib/datasource/client-api";
 import { bindingKey, type PendingSource } from "@/lib/datasource/source-binding";
+import { DialogShell } from "@/components/dialog-shell";
 import "./ontology-studio.css";
 
 type BindableSource = { id: string; name: string; kind: string };
-type Response = { versionId: string; versionStatus: string; pendingSources: PendingSource[]; dataSources: BindableSource[] };
+type Response = SourceBindingResponse & { dataSources: Array<Pick<BindableSource, "id" | "name" | "kind">> };
 
 /**
  * 补齐数据资源绑定。
@@ -24,7 +25,7 @@ export function BindSourcesDialog({ ontologyId, onClose, onSaved, fail }: { onto
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void api<Response>(`/api/ontologies/${ontologyId}/bind-sources`)
+    void dataSourcesApi.bindings(ontologyId)
       .then((result) => {
         setData(result);
         // 默认选中唯一候选：能自动判定的已经在服务端绑掉了，剩下的多选一默认"表名命中"的那条。
@@ -34,19 +35,13 @@ export function BindSourcesDialog({ ontologyId, onClose, onSaved, fail }: { onto
       .catch((reason) => { setError(reason instanceof Error ? reason.message : "读取待补绑定失败。"); fail(reason); });
   }, [ontologyId, fail]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   const save = async () => {
     if (!data) return;
     const chosen = Object.fromEntries(Object.entries(choices).filter(([, dataSourceId]) => dataSourceId));
     if (!Object.keys(chosen).length) { setError("至少要给一条来源选数据资源。"); return; }
     try {
       setBusy(true);
-      await api(`/api/ontologies/${ontologyId}/bind-sources`, { method: "POST", body: JSON.stringify({ versionId: data.versionId, bindings: chosen }) });
+      await dataSourcesApi.saveBindings(ontologyId, data.versionId, chosen);
       onSaved(Object.keys(chosen).length);
     } catch (reason) { fail(reason); setBusy(false); }
   };
@@ -55,8 +50,7 @@ export function BindSourcesDialog({ ontologyId, onClose, onSaved, fail }: { onto
   const all = data?.dataSources ?? [];
 
   return (
-    <div className="dialog-backdrop" role="presentation" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-label="补齐数据资源绑定" onClick={(event) => event.stopPropagation()}>
+    <DialogShell label="补齐数据资源绑定" onClose={onClose}>
         <header className="dialog-head"><div><span className="eyebrow">数据资源</span><h2><Database size={16} />补齐数据资源绑定</h2></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={16} /></button></header>
         {!data && <p className="subtle">{error || "正在读取…"}</p>}
         {data && pending.length === 0 && <p className="subtle">这个版本的对象类型来源都已经绑好了，不需要补。</p>}
@@ -82,7 +76,6 @@ export function BindSourcesDialog({ ontologyId, onClose, onSaved, fail }: { onto
           <button type="button" className="quiet-button" onClick={onClose}>取消</button>
           <button type="button" className="primary-button" disabled={busy || !data || pending.length === 0} onClick={() => void save()}>{busy ? "保存中…" : "保存绑定"}</button>
         </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

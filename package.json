@@ -11,6 +11,7 @@
     "docs:system-manual": "node scripts/build-system-manual.mjs",
     "oauth:demo": "node scripts/oauth-demo.mjs",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:object-index": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/object-index/clickhouse.contract.test.ts",
     "test:version-store": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/version-records.contract.test.ts",
     "test:schema-comments": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/platform-schema-comments.contract.test.ts",

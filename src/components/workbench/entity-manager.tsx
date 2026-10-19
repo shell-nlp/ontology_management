@@ -8,6 +8,8 @@ import { IndexStatusDialog, type IndexTypeRow } from "@/components/workbench/ind
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { PropertyEditor } from "@/components/property-editor";
 import { api } from "@/lib/shared/client/api-client";
+import { dataSourcesApi } from "@/lib/datasource/client-api";
+import { instancesApi } from "@/lib/shared/client/instances-api";
 import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { type Definition } from "@/lib/ontology/draft";
 import { brokenSourcesOf } from "@/lib/datasource/source-binding";
@@ -130,7 +132,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
 
   useEffect(() => {
     // 读不到就保持"还不知道"：宁可少提示一次，也不要报一条"全都绑飞了"的假警。
-    void api<{ id: string }[]>("/api/data-sources").then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds(null));
+    void dataSourcesApi.list().then((sources) => setSourceIds(sources.map((source) => source.id))).catch(() => setSourceIds(null));
   }, [version?.id]);
 
   /**
@@ -240,7 +242,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
         // 草稿快照只在选了类型时对一次（不带类型就取不出草稿里那一类的对象）。
         if (versionId && nextLabel) {
           const query = new URLSearchParams({ targetId: target.id, versionId, label: nextLabel, limit: String(entityLimit) });
-          const local = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${query.toString()}`).catch(() => ({ rows: [] as EntityRow[] }));
+          const local = await instancesApi.listEntities(query).catch(() => ({ rows: [] as EntityRow[] }));
           for (const row of local.rows) localIds.add(row.id);
         }
         setOriginById(Object.fromEntries(data.rows.map((row) => [row.objectId, localIds.has(row.objectId) ? "index" : row.origin])));
@@ -252,7 +254,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
       if (nextLabel) params.set("label", nextLabel);
       if (nextSearch) params.set("search", nextSearch);
       params.set("limit", String(entityLimit));
-      const rows = await api<{ rows: EntityRow[] }>(`/api/instances/entities?${params.toString()}`).then((data) => data.rows);
+      const rows = await instancesApi.listEntities(params).then((data) => data.rows);
       setRows(rows);
       setTotal(null);
       setKeyById({});
@@ -303,13 +305,13 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
 
   const save = async () => {
     if (!target || !selected) return;
-    try { setBusy(true); const current = await ensureDraft(); const updated = await api<EntityRow>(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "PATCH", body: JSON.stringify({ properties: draftProps }) }); setRows((rows) => rows.map((row) => row.id === updated.id ? updated : row)); await onSnapshotChange(); notify(`对象属性已保存到草稿快照，发布前不会影响 ${graphNoun(target)}。`); } catch (reason) { fail(reason); } finally { setBusy(false); }
+    try { setBusy(true); const current = await ensureDraft(); const query = new URLSearchParams({ targetId: target.id, versionId: current.id }); const updated = await instancesApi.updateEntity(selected.id, query, draftProps); setRows((rows) => rows.map((row) => row.id === updated.id ? updated : row)); await onSnapshotChange(); notify(`对象属性已保存到草稿快照，发布前不会影响 ${graphNoun(target)}。`); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
   const remove = async () => {
     if (!target || !selected) return;
     if (!window.confirm("删除该节点及其所有关系？")) return;
-    try { setBusy(true); const current = await ensureDraft(); await api(`/api/instances/entities/${encodeURIComponent(selected.id)}?targetId=${target.id}&versionId=${current.id}`, { method: "DELETE" }); setSelectedId(null); await onSnapshotChange(); notify("对象及其关联关系已从草稿快照删除。"); await load(label, search, current.id); } catch (reason) { fail(reason); } finally { setBusy(false); }
+    try { setBusy(true); const current = await ensureDraft(); const query = new URLSearchParams({ targetId: target.id, versionId: current.id }); await instancesApi.deleteEntity(selected.id, query); setSelectedId(null); await onSnapshotChange(); notify("对象及其关联关系已从草稿快照删除。"); await load(label, search, current.id); } catch (reason) { fail(reason); } finally { setBusy(false); }
   };
 
   /**

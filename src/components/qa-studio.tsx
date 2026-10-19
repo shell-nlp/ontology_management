@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Brain, ChevronDown, CircleDot, History, ImagePlus, Link2, Loader2, Plus, Send, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { MarkdownView } from "@/components/markdown-view";
+import { Evidence } from "@/components/qa/evidence";
+import { HISTORY_OPEN_KEY, HistoryRail, fetchConversations, loadHistoryOpen, type RailItem } from "@/components/qa/history-rail";
+import { MAX_ATTACHMENTS, formatBytes, prepareImage } from "@/components/qa/attachments";
+import { ProofTrail, ThinkingBlock } from "@/components/qa/proof-trail";
 import { api } from "@/lib/shared/client/api-client";
+import { reasoningApi } from "@/lib/shared/client/reasoning-api";
 import { formatCount, formatDuration } from "@/lib/shared/common/format-units";
-import { authHeaders } from "@/lib/shared/client/session-token";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationDetail, type ConversationMessage, type ConversationSummary } from "@/lib/reasoning/conversation-view";
 import { DEFAULT_SYSTEM_PROMPT, isCustomSystemPrompt } from "@/lib/reasoning/prompt";
 import {
@@ -119,306 +123,7 @@ type Props = {
 
 
 /** 入参里单个值的写法：字符串带引号（区分「郑州」和郑州这段文本本身），数组展开成 []。 */
-function formatArgument(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => formatArgument(item)).join(", ")}]`;
-  if (value === null || value === undefined) return String(value);
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-/**
- * 一行放得下的入参摘要，形如 `type_name="专线产品用户"  limit=20`。
- *
- * 同一轮里模型常连着调好几次同一个工具（比如连着好几次 search_schema），
- * 只看工具名根本分不出哪一步查了什么 —— 所以入参要在行上就能看见，点开再看完整 JSON。
- */
-function argumentSummary(args: Record<string, unknown> | undefined): string {
-  const entries = Object.entries(args ?? {});
-  if (!entries.length) return "无入参";
-  return entries.map(([key, value]) => `${key}=${formatArgument(value)}`).join("  ");
-}
-
-/**
- * 求证轨迹：这一页的签名元素。
- * 横向一串节点，每个是「第几步 · 调了什么 · 传了什么参数 · 拿到了什么 · 耗时」，
- * 点开看这一步的完整入参与原始返回。推理进行中也是活的：步骤一完成就出现在这里。
- *
- * 行上的「拿到了什么」用 `step.summary`（服务端按工具如实生成），**不用证据条数**：
- * get_table_ddl / run_sql 按设计不产出证据，用证据数会显示成"无命中"，
- * 明明返回了 6 行却像什么都没查到（2026-09-14 用户报的）。
- */
-function ProofTrail({ steps, live, totalMs }: { steps: ReasoningStep[]; live: boolean; totalMs: number }) {
-  // 默认收起；推理中自动展开，让过程可见（用户手动收起来后就尊重用户的选择）。
-  const [manual, setManual] = useState<boolean | null>(null);
-  const [openStep, setOpenStep] = useState<number | null>(null);
-  const open = manual ?? live;
-  const summary = useMemo(() => {
-    if (!steps.length) return live ? "正在检索本体…" : "没有调用工具";
-    const hits = steps.reduce((sum, step) => sum + step.evidence.length, 0);
-    // 证据数为 0 时不写"证据 0 项"：这一轮本来就可能是纯查数据（不产生证据）。
-    // 单位随量级变（ms / s / 分秒 / 小时）：10 步跑两分钟时写 111.5s 没人读得出量级。
-    return [`已调用工具 ${steps.length} 次`, hits ? `证据 ${hits} 项` : "", formatDuration(totalMs || 0)].filter(Boolean).join(" · ");
-  }, [steps, live, totalMs]);
-
-  return (
-    <div className={`qa-trail${open ? " open" : ""}`}>
-      <button type="button" className="qa-trail-summary" onClick={() => setManual(!open)} aria-expanded={open}>
-        <span className="qa-trail-badge">求证轨迹</span>
-        <span className="qa-trail-text">{summary}</span>
-        {live && <Loader2 size={13} className="qa-spin" />}
-        <ChevronDown size={15} className={open ? "is-open" : ""} />
-      </button>
-      {open && (
-        <ol className="qa-trail-steps">
-          {steps.map((step) => (
-            <li key={step.index} className={`qa-trail-step${step.ok ? "" : " failed"}`}>
-              <button type="button" onClick={() => setOpenStep(openStep === step.index ? null : step.index)} aria-expanded={openStep === step.index}>
-                <span className="qa-trail-node">{step.index}</span>
-                <b>{toolTitle(step.tool)}</b>
-                <span className="qa-trail-args">{argumentSummary(step.arguments)}</span>
-                <span className="qa-trail-facts">
-                  {step.ok ? step.summary ?? "已返回" : "出错"}
-                  <i>{formatDuration(step.elapsedMs)}</i>
-                </span>
-              </button>
-              {openStep === step.index && (
-                <div className="qa-step-detail">
-                  <div className="qa-step-part">
-                    <span className="qa-step-part-label">入参</span>
-                    <pre className="qa-step-args">{JSON.stringify(step.arguments ?? {}, null, 2)}</pre>
-                  </div>
-                  <div className="qa-step-part">
-                    <span className="qa-step-part-label">返回</span>
-                    <pre className="qa-step-result">{step.result}</pre>
-                  </div>
-                </div>
-              )}
-            </li>
-          ))}
-          {live && <li className="qa-trail-empty"><Loader2 size={12} className="qa-spin" /> 继续查证…</li>}
-          {!steps.length && !live && <li className="qa-trail-empty">模型直接给出了结论，没有查询图库。</li>}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-/**
- * 思考过程。默认跟随推理状态：跑的时候展开，跑完自动收起（用户手动开过就一直展开）。
- */
-function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
-  const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? live;
-  if (!text.trim() && !live) return null;
-  return (
-    <div className={`qa-thinking${open ? " open" : ""}`}>
-      <button type="button" className="qa-thinking-head" onClick={() => setManual(!open)} aria-expanded={open}>
-        <Brain size={13} />
-        <span>思考过程</span>
-        {live ? <em><Loader2 size={11} className="qa-spin" />进行中</em> : <em>{text.length} 字</em>}
-        <ChevronDown size={14} className={open ? "is-open" : ""} />
-      </button>
-      {open && <pre className="qa-thinking-body">{text || "…"}</pre>}
-    </div>
-  );
-}
-
 /** 一轮最多带几张图、缩到多大：和 lib/reasoning/attachments.ts 的上限配套。 */
-const MAX_ATTACHMENTS = 4;
-const MAX_IMAGE_EDGE = 1600;
-/** 单张 data URL 的字符上限，比服务端那道（3.2M）留一点余量。 */
-const MAX_IMAGE_CHARS = 2_800_000;
-
-/** 读成可画的图：优先 createImageBitmap（快、不占 DOM），老浏览器退回 <img> + object URL。 */
-async function loadDrawable(file: File) {
-  if (typeof createImageBitmap === "function") {
-    const bitmap = await createImageBitmap(file);
-    return { source: bitmap as CanvasImageSource, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
-  }
-  const url = URL.createObjectURL(file);
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image();
-      element.onload = () => resolve(element);
-      element.onerror = () => reject(new Error(`「${file.name}」读不出来，换一张图试试。`));
-      element.src = url;
-    });
-    return { source: image as CanvasImageSource, width: image.naturalWidth, height: image.naturalHeight, release: () => URL.revokeObjectURL(url) };
-  } catch (reason) {
-    URL.revokeObjectURL(url);
-    throw reason;
-  }
-}
-
-/**
- * 图片进 state 之前先在浏览器里过一遍画布：长边超过 MAX_IMAGE_EDGE 就等比缩小，
- * 编码后仍然过大就换 JPEG 再压两次。
- *
- * 非缩不可的原因：模型看 1600px 已经够清楚，而原图直接 base64 进请求体与对话历史是几 MB 起，
- * 一次粘贴三张截图就能把一轮问答拖成几十秒。
- * 截图类图片保持原格式（PNG 的文字比 JPEG 清楚），照片才用 JPEG。
- */
-async function prepareImage(file: File): Promise<ReasoningAttachment> {
-  if (!file.type.startsWith("image/")) throw new Error(`「${file.name}」不是图片。`);
-  const drawable = await loadDrawable(file);
-  try {
-    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(drawable.width, drawable.height, 1));
-    const width = Math.max(1, Math.round(drawable.width * scale));
-    const height = Math.max(1, Math.round(drawable.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("这个浏览器画不了图（拿不到 canvas 上下文），换一个浏览器再试。");
-    context.drawImage(drawable.source, 0, 0, width, height);
-    const keep = ["image/png", "image/jpeg", "image/webp"].includes(file.type) ? file.type : "image/png";
-    let dataUrl = canvas.toDataURL(keep, keep === "image/png" ? undefined : 0.86);
-    if (dataUrl.length > MAX_IMAGE_CHARS) dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-    if (dataUrl.length > MAX_IMAGE_CHARS) dataUrl = canvas.toDataURL("image/jpeg", 0.6);
-    if (dataUrl.length > MAX_IMAGE_CHARS) throw new Error(`「${file.name}」压缩完还是太大，换一张小一点的图。`);
-    return {
-      name: file.name || "粘贴的图片",
-      // 压缩时可能换了格式，所以媒体类型看编码结果，不看原文件类型。
-      mediaType: mediaTypeOf(dataUrl, keep),
-      dataUrl,
-      width,
-      height,
-      bytes: Math.round(((dataUrl.length - dataUrl.indexOf(",") - 1) * 3) / 4),
-    };
-  } finally {
-    drawable.release();
-  }
-}
-
-/** 字节数给人看的样子。 */
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** 历史侧栏开没开记在本地：习惯开着的人，下次进来还是开着的。 */
-const HISTORY_OPEN_KEY = "ontology.qa.history";
-
-function loadHistoryOpen() {
-  if (typeof window === "undefined") return false;
-  try { return window.localStorage.getItem(HISTORY_OPEN_KEY) === "1"; } catch { return false; }
-}
-
-/** 读一个本体的历史列表。列表接口只回摘要，点开某一条才会取完整内容。 */
-function fetchConversations(targetId: string) {
-  return api<{ conversations: ConversationSummary[] }>(`/api/reasoning/conversations?targetId=${encodeURIComponent(targetId)}`)
-    .then((data) => data.conversations);
-}
-
-/**
- * 对话历史侧栏。
- *
- * 它和主区的关系是"记录"与"当前这一页"：点一条就把那次的完整过程（求证轨迹 / 结论 / 依据）
- * 铺回主区，和当时看到的一模一样。删除走就地二次确认 —— 历史是随手可删的东西，
- * 但也不该点一下就没了。
- */
-/**
- * 侧栏的一行。**运行中的那一轮也在里面** —— 还没落库的新对话没有 ConversationSummary，
- * 就用它的运行 id 占一个位置，用户才看得到"后台还在跑"。
- */
-type RailItem = {
-  id: string;
-  title: string;
-  turns: number;
-  updatedAt: string;
-  running: boolean;
-  /** 还没落库的那一轮：点不进去，也没有"删除"（历史里还没有它）。 */
-  pending?: boolean;
-};
-
-function HistoryRail({ items, loading, activeId, loadingId, confirmingId, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
-  items: RailItem[];
-  /** 列表正在读：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
-  loading: boolean;
-  /** 当前画面正对着哪段对话；新开的一轮在服务端定下 id 之前是 null。 */
-  activeId: string | null;
-  loadingId: string | null;
-  confirmingId: string | null;
-  onOpen: (id: string) => void;
-  onAskDelete: (id: string) => void;
-  onCancelDelete: () => void;
-  onConfirmDelete: (id: string) => void;
-}) {
-  const groups = useMemo(() => groupConversationsByDay(items), [items]);
-  return (
-    <aside className="qa-history" aria-label="对话历史">
-      <header className="qa-history-head">
-        <History size={14} />
-        <span>对话历史</span>
-        {items.length > 0 && <em>{items.length}</em>}
-      </header>
-
-      {!items.length ? (
-        <p className="qa-history-empty">
-          {loading
-            ? "正在读取对话历史…"
-            : "还没有历史对话。跑完一轮问答它就会留在这里 —— 只有跑出结论的才记，失败的不会占位置。"}
-        </p>
-      ) : (
-        <div className="qa-history-body">
-          {groups.map((group) => (
-            <section className="qa-history-group" key={group.day}>
-              <p className="qa-history-day">{group.day}</p>
-              <ul>
-                {group.items.map((item) => (
-                  <li key={item.id} className={`qa-history-item${item.id === activeId ? " active" : ""}`}>
-                    {confirmingId === item.id ? (
-                      <div className="qa-history-confirm">
-                        <span>删除这段对话？</span>
-                        <div>
-                          <button type="button" className="danger" onClick={() => onConfirmDelete(item.id)}>删除</button>
-                          <button type="button" onClick={onCancelDelete}>取消</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {/* 运行中的那一行也要能点开（用户口径 2026-10-14）：点它就切到这一轮看进度。 */}
-                        <button
-                          type="button"
-                          className="qa-history-open"
-                          onClick={() => onOpen(item.id)}
-                          title={item.pending ? `${item.title || "未命名对话"}（后台运行中，点开看这一轮）` : item.title}
-                        >
-                          <b>{item.title || "未命名对话"}</b>
-                          <span className="qa-history-meta">
-                            {loadingId === item.id && <Loader2 size={11} className="qa-spin" />}
-                            {/* 后台还在跑的那些：列表上直接写"运行中"，不用点进去才知道。 */}
-                            {item.running && <Loader2 size={11} className="qa-spin" />}
-                            {item.turns > 0 && `${item.turns} 轮 · `}
-                            {item.running ? "运行中" : conversationTimeLabel(item.updatedAt)}
-                          </span>
-                        </button>
-                        {!item.pending && (
-                          <button
-                            type="button"
-                            className="qa-history-remove"
-                            onClick={() => onAskDelete(item.id)}
-                            title="删除这段对话"
-                            aria-label={`删除对话：${item.title || "未命名对话"}`}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
-    </aside>
-  );
-}
-
 export function QaStudio({ targetId, ontologyName, published, onOpenObject, notify, fail }: Props) {
   // 会话和它所属的本体绑在一起：换了本体就当新会话，直接派生，不用 effect 去清空。
   // conversationId 也放这里，因为"现在在跟哪段历史对话"同样是随本体走的。
@@ -517,7 +222,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   }, [fail, targetId]);
 
   useEffect(() => {
-    void fetch("/api/reasoning/status", { headers: authHeaders() }).then((res) => res.json()).then(setStatus).catch(() => setStatus(null));
+    void reasoningApi.status().then(setStatus).catch(() => setStatus(null));
   }, []);
 
   // 参数随手改随手存：抽屉里没有"保存"按钮 —— 这几个数没有"改到一半"的中间态。
@@ -588,8 +293,13 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const savedId = viewRuns.find((run) => run.savedConversationId && run.savedConversationId !== conversationId)?.savedConversationId ?? null;
   useEffect(() => {
     if (!savedId) return;
-    setSession((current) => (current.targetId === targetId && current.conversationId === null ? { ...current, conversationId: savedId } : current));
-    void refreshConversations();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setSession((current) => (current.targetId === targetId && current.conversationId === null ? { ...current, conversationId: savedId } : current));
+      void refreshConversations();
+    });
+    return () => { cancelled = true; };
   }, [refreshConversations, savedId, targetId]);
 
   /**
@@ -730,7 +440,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
     setLoadingConversation(id);
     setConfirmingDelete(null);
     try {
-      const conversation = await api<ConversationDetail>(`/api/reasoning/conversations/${id}?targetId=${encodeURIComponent(targetId)}`);
+      const conversation = await reasoningApi.conversation<ConversationDetail>(targetId, id);
       /*
        * 这一段里**已经跑完**的那几轮从本机登记处摘掉：它们已经落进历史、下面这批 messages 里就有，
        * 留着会在画面上重一遍。还在跑的不能摘 —— 它的内容只在登记处里。
@@ -799,7 +509,7 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const removeConversation = useCallback(async (id: string) => {
     setConfirmingDelete(null);
     try {
-      await api(`/api/reasoning/conversations/${id}?targetId=${encodeURIComponent(targetId)}`, { method: "DELETE" });
+      await reasoningApi.deleteConversation(targetId, id);
       setHistory((current) => ({ targetId, items: current.items.filter((item) => item.id !== id) }));
       // 删掉的正是眼前这段：画面也得跟着空掉，否则会以为没删掉。
       if (conversationId === id) setSession({ targetId, conversationId: null, turns: [] });
@@ -1138,26 +848,5 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         </div>
       )}
     </section>
-  );
-}
-
-function Evidence({ run, onOpenObject }: { run: ReasoningRun; onOpenObject: (id: string) => void }) {
-  const concepts = run.evidence.filter((item) => item.kind === "OBJECT_TYPE" || item.kind === "RELATION_TYPE" || item.kind === "ACTION" || item.kind === "INTERFACE" || item.kind === "METRIC");
-  const objects = run.evidence.filter((item) => item.kind === "OBJECT");
-  const relationships = run.evidence.filter((item) => item.kind === "RELATIONSHIP");
-  if (!concepts.length && !objects.length && !relationships.length) return null;
-  return (
-    <div className="qa-evidence">
-      <span className="qa-evidence-label">依据</span>
-      <div className="qa-chips">
-        {concepts.map((item) => <span className="qa-chip concept" key={`${item.kind}-${item.id}`}><Boxes size={11} />{item.label}</span>)}
-        {objects.map((item) => (
-          <button className="qa-chip object" key={item.id} onClick={() => onOpenObject(item.id)} title={item.id}>
-            <CircleDot size={11} />{item.label}
-          </button>
-        ))}
-        {relationships.map((item) => <span className="qa-chip concept" key={item.id}><Link2 size={11} />{item.label}</span>)}
-      </div>
-    </div>
   );
 }

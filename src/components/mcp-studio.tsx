@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, ShieldCheck, Terminal, Wand2 } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
+import { dataSourcesApi } from "@/lib/datasource/client-api";
 import { copyText } from "@/lib/shared/client/clipboard";
 import { stripOntologyId } from "@/lib/mcp/schema";
 import { authHeaders } from "@/lib/shared/client/session-token";
@@ -281,7 +282,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
 
   // 数据资源名要填进示例参数里（名字猜不出来），开机就先拿一份 —— 列表接口只回公开字段，没有密文。
   useEffect(() => {
-    void api<{ name: string }[]>("/api/data-sources")
+    void dataSourcesApi.list()
       .then((sources) => setDataSourceNames(sources.map((item) => item.name)))
       .catch(() => setDataSourceNames([]));
   }, []);

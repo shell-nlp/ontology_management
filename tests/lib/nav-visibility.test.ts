@@ -15,12 +15,12 @@ import { ALL_PERMISSIONS } from "@/lib/platform/permissions";
  * 和 `authz-coverage.test.ts` 一个路子：扫源码，不做 AST。
  */
 /**
- * 2026-10-10：工作台按模块拆了文件 —— `type View` 搬去了 `workbench/shared.tsx`，
+ * 2026-10-10：工作台按模块拆了文件 —— `type View` 在 `workbench/types.ts`，
  * `NAV_SECTIONS` 留在 `functional-workbench.tsx`。两份拼起来一起扫，测试的口径不变。
  */
 const SOURCES = [
   path.join(process.cwd(), "src", "components", "functional-workbench.tsx"),
-  path.join(process.cwd(), "src", "components", "workbench", "shared.tsx"),
+  path.join(process.cwd(), "src", "components", "workbench", "types.ts"),
 ];
 
 function sourceText() {

@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
+import { dataSourcesApi } from "@/lib/datasource/client-api";
 import {
   DATA_SOURCE_KINDS,
   PLANNED_DATA_SOURCES,
@@ -235,7 +236,7 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
 
   const load = useCallback(async (focusId?: string) => {
     try {
-      const rows = await api<PublicDataSource[]>("/api/data-sources");
+      const rows = await dataSourcesApi.list();
       sessionCache.sources = rows;
       setSources(rows);
       setActiveId((current) => {
@@ -375,7 +376,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       const query = new URLSearchParams({ limit: "5000" });
       if (scope === "all") query.set("schema", "*");
       if (options.refresh) query.set("refresh", "1");
-      const data = await api<{ views: DataViewSummary[]; fetched_at?: string; from_cache?: boolean }>(`/api/data-sources/${source.id}/views?${query.toString()}`);
+      const data = await dataSourcesApi.listViews(source.id, { limit: Number(query.get("limit") ?? 5000), schema: query.get("schema") ?? undefined, refresh: query.get("refresh") === "1" });
       if (run !== catalogRun.current) return;
       rememberCatalog(key, data.views);
       setViews(data.views);
@@ -418,7 +419,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
        */
       const refresh = detailRefreshRef.current ? "&refresh=1" : "";
       detailRefreshRef.current = false;
-      void api<{ fields: DataViewField[]; preview: DataViewPreview; fetched_at?: string; from_cache?: boolean }>(`/api/data-sources/${source.id}/views/${encodeURIComponent(selectedName)}?limit=${rows}${refresh}`)
+      void dataSourcesApi.describeView(source.id, selectedName, { limit: rows, refresh: refresh === "&refresh=1" })
         .then((data) => {
           if (cancelled) return;
           rememberDetail(key, { fields: data.fields, preview: data.preview });
@@ -448,7 +449,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   const probe = async () => {
     try {
       setProbing(true);
-      const result = await api<DataSourceHealth>(`/api/data-sources/${source.id}/test`, { method: "POST" });
+      const result = await dataSourcesApi.test(source.id);
       setHealth(result);
       setProbedAt(new Date());
       notify(`连接成功：${result.agent}，读取范围 ${result.container}。`);
@@ -463,7 +464,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
 
   const toggleEnabled = async (enabled: boolean) => {
     try {
-      await api(`/api/data-sources/${source.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+      await dataSourcesApi.update(source.id, { enabled });
       notify(enabled ? "数据资源已启用。" : "数据资源已停用。");
       await onChanged();
     } catch (reason) {
@@ -475,7 +476,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
     if (!window.confirm(`删除数据资源“${source.name}”？引用它的对象类型绑定会失去来源，但库里的数据不会被动。`)) return;
     try {
       setBusy("delete");
-      await api(`/api/data-sources/${source.id}`, { method: "DELETE" });
+      await dataSourcesApi.remove(source.id);
       await onDeleted();
     } catch (reason) {
       fail(reason);
@@ -662,7 +663,7 @@ function DataSourceDialog({ source, onClose, onSaved, fail }: {
     try {
       setProbing(true);
       setProbe(null);
-      const health = await api<DataSourceHealth>("/api/data-sources/test", { method: "POST", body: JSON.stringify({ ...payload(), name: form.name.trim() || "连接测试" }) });
+      const health = await dataSourcesApi.testDraft({ ...payload(), name: form.name.trim() || "连接测试" });
       setProbe({ ok: true, text: `连上了：${health.agent}，读取范围 ${health.container}。` });
     } catch (reason) {
       setProbe({ ok: false, text: errorText(reason) });
@@ -677,8 +678,8 @@ function DataSourceDialog({ source, onClose, onSaved, fail }: {
     try {
       setBusy(true);
       const saved = source
-        ? await api<PublicDataSource>(`/api/data-sources/${source.id}`, { method: "PATCH", body: JSON.stringify(payload()) })
-        : await api<PublicDataSource>("/api/data-sources", { method: "POST", body: JSON.stringify(payload()) });
+        ? await dataSourcesApi.update(source.id, payload())
+        : await dataSourcesApi.create(payload());
       await onSaved(saved);
     } catch (reason) {
       fail(reason);

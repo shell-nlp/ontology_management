@@ -1,31 +1,38 @@
 "use client";
 
-import { EntityManager } from "@/components/workbench/entity-manager";
-import { GraphManager } from "@/components/workbench/graph-manager";
 import { Login } from "@/components/workbench/login-screen";
-import { OntologyManager } from "@/components/workbench/ontology-manager";
 import { Overview } from "@/components/workbench/overview";
-import { RelationshipManager } from "@/components/workbench/relationship-manager";
-import { SettingsManager } from "@/components/workbench/settings-manager";
 import { type User, may, type Target, type Version, type View, targetFromStorage, graphNoun, Toast, useDisplaySettings } from "@/components/workbench/shared";
-import { TargetManager, NewTargetDialog } from "@/components/workbench/target-manager";
 import { VersionBar } from "@/components/workbench/version-bar";
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { Activity, BookOpen, CircleDot, GitBranch, Link2, LogOut, Network, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Sparkles, Table2, Terminal, UserRound, type LucideIcon } from "lucide-react";
 
-import { AuditLog } from "@/components/audit-log";
 import { type EntitySearchResult } from "@/components/entity-search-picker";
-import { UserRoleManager } from "@/components/user-role-manager";
-import { OntologyStudio, type OntologySummary } from "@/components/ontology-studio";
-import { QaStudio } from "@/components/qa-studio";
-import { SkillStudio } from "@/components/skill-studio";
-import { McpStudio } from "@/components/mcp-studio";
-import { DataResourceStudio } from "@/components/data-resource-studio";
+import type { OntologySummary } from "@/components/ontology-studio";
 import { api } from "@/lib/shared/client/api-client";
+import { ontologyApi } from "@/lib/shared/client/ontology-api";
 import { type Permission } from "@/lib/platform/permissions";
 import { clearSessionToken } from "@/lib/shared/client/session-token";
 import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { propertyTypeOptions, type Definition } from "@/lib/ontology/draft";
+
+const ViewLoading = () => <section className="panel"><p className="subtle">正在加载视图…</p></section>;
+
+const EntityManager = dynamic(() => import("@/components/workbench/entity-manager").then((module) => module.EntityManager), { loading: ViewLoading });
+const GraphManager = dynamic(() => import("@/components/workbench/graph-manager").then((module) => module.GraphManager), { loading: ViewLoading });
+const OntologyManager = dynamic(() => import("@/components/workbench/ontology-manager").then((module) => module.OntologyManager), { loading: ViewLoading });
+const RelationshipManager = dynamic(() => import("@/components/workbench/relationship-manager").then((module) => module.RelationshipManager), { loading: ViewLoading });
+const SettingsManager = dynamic(() => import("@/components/workbench/settings-manager").then((module) => module.SettingsManager), { loading: ViewLoading });
+const TargetManager = dynamic(() => import("@/components/workbench/target-manager").then((module) => module.TargetManager), { loading: ViewLoading });
+const NewTargetDialog = dynamic(() => import("@/components/workbench/target-manager").then((module) => module.NewTargetDialog));
+const AuditLog = dynamic(() => import("@/components/audit-log").then((module) => module.AuditLog), { loading: ViewLoading });
+const UserRoleManager = dynamic(() => import("@/components/user-role-manager").then((module) => module.UserRoleManager), { loading: ViewLoading });
+const OntologyStudio = dynamic(() => import("@/components/ontology-studio").then((module) => module.OntologyStudio), { loading: ViewLoading });
+const QaStudio = dynamic(() => import("@/components/qa-studio").then((module) => module.QaStudio), { loading: ViewLoading });
+const SkillStudio = dynamic(() => import("@/components/skill-studio").then((module) => module.SkillStudio), { loading: ViewLoading });
+const McpStudio = dynamic(() => import("@/components/mcp-studio").then((module) => module.McpStudio), { loading: ViewLoading });
+const DataResourceStudio = dynamic(() => import("@/components/data-resource-studio").then((module) => module.DataResourceStudio), { loading: ViewLoading });
 
 
 
@@ -132,7 +139,7 @@ export function FunctionalWorkbench() {
   const dismiss = () => { setMessage(null); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
 
   const loadOntologies = async () => {
-    const data = await api<OntologySummary[]>("/api/ontologies");
+    const data = await ontologyApi.list();
     setOntologies(data);
     // 本体列表变了（新建 / 删除）时，「当前本体」与落点一起收敛，别停在已被删掉的存储上。
     const nextId = ontologyId && data.some((item) => item.id === ontologyId) ? ontologyId : (data[0]?.id ?? "");
@@ -150,7 +157,7 @@ export function FunctionalWorkbench() {
      */
     const canReadTargets = Boolean(viewer) && may(viewer as User, "target.read");
     const [ontologyList, data] = await Promise.all([
-      api<OntologySummary[]>("/api/ontologies"),
+      ontologyApi.list(),
       canReadTargets ? api<Target[]>("/api/targets") : Promise.resolve([] as Target[]),
     ]);
     setTargets(data);
@@ -201,21 +208,14 @@ export function FunctionalWorkbench() {
       if (data.user) { await loadTargets(data.user); return; }
       clearSessionToken();
     }).catch(() => setUser(null));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 开机只执行一次；loadTargets 只使用稳定 setter。
 
-  /*
-   * 权限变了（改角色 / 换账号）或当前视图没权限：落到第一个能进的视图。
-   * 不留「停在空白页」或「点了导航没反应」的状态。
-   */
-  useEffect(() => {
-    if (user && !mayEnterView(user, view)) setView(firstEnterableView(user));
-  }, [user, view]);
 
   useEffect(() => {
     if (!targetId) return;
     const handle = window.setTimeout(() => { void loadVersions(targetId).catch(fail); }, 0);
     return () => window.clearTimeout(handle);
-  }, [targetId]);
+  }, [targetId]); // eslint-disable-line react-hooks/exhaustive-deps -- loadVersions 只依赖 targetId 参数。
 
   const refreshRuntimeTypes = () => { if (!targetId || !workspaceVersion) return; void api<RuntimeTypeSet>(`/api/instances/types?targetId=${encodeURIComponent(targetId)}&versionId=${workspaceVersion.id}`).then(setRuntimeTypes).catch(() => setRuntimeTypes(null)); };
 
@@ -268,16 +268,18 @@ export function FunctionalWorkbench() {
 
   const userProp = user;
 
+  const effectiveView = user && !mayEnterView(user, view) ? firstEnterableView(user) : view;
+
   return <main className="functional-shell">
-    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section, sectionIndex) => { const items = section.items.filter(([, , , code]) => code === null || may(user, code)); if (!items.length) return null; return <div className="nav-section" key={section.label || `root-${sectionIndex}`}>{section.label && <p className="nav-section-label">{section.label}</p>}{items.map(([id, label, Icon]) => <button key={id} className={view === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>; })}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
-    <section className="functional-content"><header><div><p>本体治理 / {navLabel(view)}</p><h1>{view === "data" ? "数据资源" : view === "settings" ? "设置" : view === "qa" ? "智能问答" : view === "mcp" ? "MCP 调试" : view === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} onDelete={deleteVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Toast message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
-      {view === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
-      {view === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
+    <aside className="functional-sidebar"><div className="functional-brand"><GitBranch size={23} /><span><b>ONTOLOGY</b><small>GRAPH GOVERNANCE</small></span></div><label className="target-picker"><span>当前本体</span><select value={ontologyId} title={selectedOntology?.name ?? "选择本体"} onChange={(event) => { const next = ontologies.find((item) => item.id === event.target.value); const nextTargetId = next?.storage?.id ?? ""; setOntologyId(event.target.value); if (nextTargetId !== targetId) { setTargetId(nextTargetId); setVersionTargetId(""); } }}><option value="">选择本体</option>{ontologies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><nav>{NAV_SECTIONS.map((section, sectionIndex) => { const items = section.items.filter(([, , , code]) => code === null || may(user, code)); if (!items.length) return null; return <div className="nav-section" key={section.label || `root-${sectionIndex}`}>{section.label && <p className="nav-section-label">{section.label}</p>}{items.map(([id, label, Icon]) => <button key={id} className={effectiveView === id ? "functional-nav selected" : "functional-nav"} onClick={() => { setPendingRun(null); if (id === "settings") setSettingsTab("general"); setView(id); }}><Icon size={17} />{label}</button>)}</div>; })}</nav><div className="functional-user"><UserRound size={17} /><span><b>{user.email}</b><small>{user.roleName}</small></span><button title="退出登录" onClick={() => { clearSessionToken(); setUser(null); }}><LogOut size={16} /></button></div></aside>
+    <section className="functional-content"><header><div><p>本体治理 / {navLabel(effectiveView)}</p><h1>{effectiveView === "data" ? "数据资源" : effectiveView === "settings" ? "设置" : effectiveView === "qa" ? "智能问答" : effectiveView === "mcp" ? "MCP 调试" : effectiveView === "skills" ? "本体技能" : selectedOntology?.name ?? "总览"}</h1></div>{selectedTarget ? <VersionBar versions={versions} draft={draft} published={published} user={userProp} onCreate={() => ensureDraft()} onActivate={activateVersion} onDelete={deleteVersion} fail={fail} /> : <div className="header-state">请选择或新建本体</div>}</header><Toast message={error ?? message} error={Boolean(error)} onDismiss={dismiss} />
+      {effectiveView === "overview" && <section className="stack">{selectedTarget && <Overview target={selectedTarget} draft={draft} published={published} runtimeTypes={runtimeTypes} canViewGraph={may(userProp, "instance.read")} onNavigate={setView} onOpenStorage={openStorageSettings} />}<OntologyStudio ontologies={ontologies} targets={targets} selectedId={ontologyId} canEdit={may(userProp, "ontology.write")} refresh={loadOntologies} onOpen={openOntology} notify={notify} fail={fail} /></section>}
+      {effectiveView === "data" && <DataResourceStudio canEdit={may(userProp, "datasource.write")} notify={notify} fail={fail} />}
       {newTargetOpen && <NewTargetDialog onClose={() => setNewTargetOpen(false)} onCreated={async (target) => { await loadTargets(user); selectTarget(target.id); openStorageSettings(); setNewTargetOpen(false); }} notify={notify} fail={fail} />}
-      {view === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} initialRun={pendingRun} openDynamics={openDynamics} onDynamicsOpened={() => setOpenDynamics(null)} onRan={async () => { await loadVersions(targetId); setPendingRun(null); }} fail={fail} />}
-      {view === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
-      {view === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
-      {view === "qa" && <QaStudio
+      {effectiveView === "ontology" && <OntologyManager definition={definition} draft={draft} targetId={selectedTarget?.id} user={userProp} runtimeTypes={runtimeTypes} refreshRuntimeTypes={refreshRuntimeTypes} save={saveDefinition} validate={validate} publish={publish} notify={notify} initialRun={pendingRun} openDynamics={openDynamics} onDynamicsOpened={() => setOpenDynamics(null)} onRan={async () => { await loadVersions(targetId); setPendingRun(null); }} fail={fail} />}
+      {effectiveView === "graph" && <GraphManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} />}
+      {effectiveView === "relations" && <RelationshipManager target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} fail={fail} relationshipLimit={displaySettings.relationshipLimit} />}
+      {effectiveView === "qa" && <QaStudio
         targetId={targetId}
         ontologyName={selectedOntology?.name ?? "未选择本体"}
         published={versionsReady && published !== null}
@@ -285,10 +287,10 @@ export function FunctionalWorkbench() {
         notify={notify}
         fail={fail}
       />}
-      {view === "mcp" && <McpStudio ontologies={ontologies} ontologyId={selectedOntology?.id ?? ""} notify={notify} fail={fail} />}
-      {view === "skills" && <SkillStudio notify={notify} fail={fail} />}
-      {view === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setOpenDynamics("actions"); setView("ontology"); }} saveDefinition={saveDefinition} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
-      {view === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button>{may(user, "target.read") && <button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>}{may(user, "audit.read") && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}{may(user, "users.manage") && <button type="button" className={settingsTab === "users" ? "active" : ""} aria-pressed={settingsTab === "users"} onClick={() => setSettingsTab("users")}>用户与角色</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} canWrite={may(user, "target.write")} notify={notify} fail={fail} /> : settingsTab === "audit" ? <AuditLog fail={fail} /> : <UserRoleManager me={{ id: user.id, email: user.email }} notify={notify} fail={fail} />}</section>}
+      {effectiveView === "mcp" && <McpStudio ontologies={ontologies} ontologyId={selectedOntology?.id ?? ""} notify={notify} fail={fail} />}
+      {effectiveView === "skills" && <SkillStudio notify={notify} fail={fail} />}
+      {effectiveView === "entities" && <EntityManager ontologyId={ontologyId} target={selectedTarget} user={userProp} version={workspaceVersion} draft={draft} runtimeTypes={runtimeTypes} ensureDraft={ensureDraft} onSnapshotChange={() => loadVersions(targetId)} notify={notify} onRunAction={(actionId, subject) => { setPendingRun({ actionId, subject: { id: subject.id, labels: subject.labels, properties: subject.properties, matched: [], rank: 0, objectRef: subject.objectRef } }); setOpenDynamics("actions"); setView("ontology"); }} saveDefinition={saveDefinition} fail={fail} entityLimit={displaySettings.entityLimit} focusEntityId={focusEntityId} onFocusHandled={() => setFocusEntityId(null)} />}
+      {effectiveView === "settings" && <section className="stack"><div className="view-switcher" aria-label="设置类别"><button type="button" className={settingsTab === "general" ? "active" : ""} aria-pressed={settingsTab === "general"} onClick={() => setSettingsTab("general")}>常规设置</button>{may(user, "target.read") && <button type="button" className={settingsTab === "storage" ? "active" : ""} aria-pressed={settingsTab === "storage"} onClick={() => setSettingsTab("storage")}>图引擎配置</button>}{may(user, "audit.read") && <button type="button" className={settingsTab === "audit" ? "active" : ""} aria-pressed={settingsTab === "audit"} onClick={() => setSettingsTab("audit")}>审计记录</button>}{may(user, "users.manage") && <button type="button" className={settingsTab === "users" ? "active" : ""} aria-pressed={settingsTab === "users"} onClick={() => setSettingsTab("users")}>用户与角色</button>}</div>{settingsTab === "general" ? <SettingsManager target={selectedTarget} user={userProp} versions={versions} displaySettings={displaySettings} onSaveDisplaySettings={updateDisplaySettings} onResetDisplaySettings={resetDisplaySettings} onReset={resetVersions} notify={notify} fail={fail} /> : settingsTab === "storage" ? <TargetManager targets={targets.filter((target) => !ontologies.some((item) => item.storage?.managed && item.storage.id === target.id))} refresh={loadTargets} selectedId={targetId} onSelect={(id) => { selectTarget(id); setView("overview"); }} onNew={() => setNewTargetOpen(true)} canWrite={may(user, "target.write")} notify={notify} fail={fail} /> : settingsTab === "audit" ? <AuditLog fail={fail} /> : <UserRoleManager me={{ id: user.id, email: user.email }} notify={notify} fail={fail} />}</section>}
     </section>
   </main>;
 }
