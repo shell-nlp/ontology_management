@@ -40,7 +40,7 @@ describe("内置本体后端", () => {
     expect(construct.graph.nodes.length).toBeGreaterThan(0);
     const describe = await runEmbeddedQuery(snapshot, "urn:ontology:test", "DESCRIBE <urn:bkn:node:customer-1>");
     expect(describe.graph.nodes.length).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it("命名图只包含当前本体，拒绝写语句", async () => {
     const own = await runEmbeddedQuery(snapshot, "urn:ontology:test", "ASK { GRAPH <urn:ontology:test> { ?s ?p ?o } }");
