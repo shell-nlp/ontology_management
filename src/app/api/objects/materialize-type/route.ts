@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
-import { getObjectIndex } from "@/lib/framework/object-index";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { cancelMaterializeJob, enqueueMaterializeJob, jobResumePoint, listMaterializeJobs } from "@/lib/instance/object-service/materialize-jobs";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import type { MaterializeCursor } from "@/lib/instance/object-service/types";

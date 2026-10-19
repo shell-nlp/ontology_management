@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Search, X } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import type { Definition } from "@/lib/ontology/draft";
 
 export type EntitySearchResult = {

@@ -10,7 +10,7 @@ import { DataSource, type DataSourceOptions, type QueryRunner } from "typeorm";
 import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, derivedCountStatement, derivedRowsStatement, escapeLikePattern, SQL_ROWS_CEILING, statementTimeoutStatements, takeRows } from "@/lib/datasource/sql-guard";
 import { candidateOwners, pickNamedObject, qualifiedName, quoteIdentifier, quoteLiteral, splitObjectName } from "@/lib/datasource/object-name";
 import { ddlFromColumns, typeWithSize } from "@/lib/datasource/ddl";
-import { wallClockText } from "@/lib/framework/datetime";
+import { wallClockText } from "@/lib/shared/common/datetime";
 import {
   dataSourceKindInfo,
   type DataSourceConnector,

@@ -21,10 +21,10 @@ import { QaStudio } from "@/components/qa-studio";
 import { SkillStudio } from "@/components/skill-studio";
 import { McpStudio } from "@/components/mcp-studio";
 import { DataResourceStudio } from "@/components/data-resource-studio";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import { type Permission } from "@/lib/platform/permissions";
-import { clearSessionToken } from "@/lib/framework/session-token";
-import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { clearSessionToken } from "@/lib/shared/client/session-token";
+import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { propertyTypeOptions, type Definition } from "@/lib/ontology/draft";
 
 

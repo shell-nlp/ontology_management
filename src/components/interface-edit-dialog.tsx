@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Boxes, CornerDownRight, Diamond, Plus, Trash2, X } from "lucide-react";
-import { newId } from "@/lib/framework/ids";
+import { newId } from "@/lib/shared/common/ids";
 import { resolveInterfaceActionMappings, resolveInterfacePropertyMappings } from "@/lib/ontology/interfaces";
 import { propertyTypeOptions, type Definition, type InterfaceLinkConstraint, type InterfaceType, type Property, type PropertyDataType } from "@/lib/ontology/draft";
 import "./type-edit-dialog.css";

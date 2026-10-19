@@ -3,10 +3,10 @@ import {
   clickHouseExecute,
   clickHouseQuery,
   type ClickHouseParams,
-} from "@/lib/framework/object-index/clickhouse/client";
-import { clickHouseConfig, CLICKHOUSE_EMBEDDING_DIM } from "@/lib/framework/object-index/clickhouse/config";
-import { planClickHouseSearch, tableName } from "@/lib/framework/object-index/clickhouse/plan";
-import { chunked } from "@/lib/framework/object-index/query";
+} from "@/lib/infrastructure/object-index/clickhouse/client";
+import { clickHouseConfig, CLICKHOUSE_EMBEDDING_DIM } from "@/lib/infrastructure/object-index/clickhouse/config";
+import { planClickHouseSearch, tableName } from "@/lib/infrastructure/object-index/clickhouse/plan";
+import { chunked } from "@/lib/infrastructure/object-index/query";
 import type {
   ObjectIndex,
   ObjectIndexCapabilities,
@@ -22,7 +22,7 @@ import type {
   ObjectSearchHit,
   ObjectSearchQuery,
   ObjectSearchResult,
-} from "@/lib/framework/object-index/types";
+} from "@/lib/infrastructure/object-index/types";
 
 /**
  * 对象检索索引的 ClickHouse 实现（列存）。

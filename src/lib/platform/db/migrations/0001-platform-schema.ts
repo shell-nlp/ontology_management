@@ -1,6 +1,6 @@
 import type { QueryRunner } from "typeorm";
 import { DATA_SOURCE_KINDS } from "@/lib/datasource/types";
-import { GRAPH_TARGET_KINDS } from "@/lib/framework/graph/types";
+import { GRAPH_TARGET_KINDS } from "@/lib/infrastructure/graph/types";
 
 /**
  * 平台库基线结构（把原先写在 `ensurePlatformSchemaOnce` 里的 DDL 原样搬过来）。

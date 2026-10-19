@@ -1,7 +1,7 @@
-import { getObjectIndex } from "@/lib/framework/object-index";
-import { clickHouseQuery } from "@/lib/framework/object-index/clickhouse/client";
-import { clickHouseConfig } from "@/lib/framework/object-index/clickhouse/config";
-import { compileLogicalQueryForClickHouse } from "@/lib/framework/object-index/clickhouse/query-dsl";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
+import { clickHouseQuery } from "@/lib/infrastructure/object-index/clickhouse/client";
+import { clickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
+import { compileLogicalQueryForClickHouse } from "@/lib/infrastructure/object-index/clickhouse/query-dsl";
 import type { LogicalPlan } from "./ast";
 import type { QueryDslExecutionResult } from "./execute";
 

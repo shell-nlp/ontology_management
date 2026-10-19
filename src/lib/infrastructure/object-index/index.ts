@@ -1,7 +1,7 @@
-import { createClickHouseObjectIndex } from "@/lib/framework/object-index/clickhouse";
-import type { ObjectIndex, ObjectIndexKind } from "@/lib/framework/object-index/types";
+import { createClickHouseObjectIndex } from "@/lib/infrastructure/object-index/clickhouse";
+import type { ObjectIndex, ObjectIndexKind } from "@/lib/infrastructure/object-index/types";
 
-export * from "@/lib/framework/object-index/types";
+export * from "@/lib/infrastructure/object-index/types";
 
 /**
  * **对象索引的中间层**：契约（`./types`）+ 归一化（`./query`）+ 后端注册表（本文件）+ 各存储实现（`./clickhouse`）。
@@ -10,7 +10,7 @@ export * from "@/lib/framework/object-index/types";
  * - **本体侧只认 `ObjectIndex` 契约**：发布、对象服务、`/api/object-search`、AI 工具、MCP 都只调
  *   `getObjectIndex()`，永远不 import 某个具体存储（`clickhouse/client` 这种）。
  * - **换存储 = 加一个适配器目录 + 在这里登记一行**：域代码、API、界面、AI 工具一行都不用改。
- *   这和 `framework/graph` 是同一套做法（那边也是「契约 + 注册表 + jena/ / embedded/」）。
+   *   这和 `infrastructure/graph` 是同一套做法（那边也是「契约 + 注册表 + jena/ / embedded/」）。
  * - **做法不是"抽象掉数据库"，而是"只让一个地方知道数据库长什么样"**：SQL 文本、参数格式、
  *   引擎能力这些只允许出现在 `clickhouse/` 里；出了这个目录就只剩契约里的名词。
  *
@@ -30,13 +30,13 @@ const instances = (() => {
 
 /**
  * 对象索引的入口。**只能服务端使用**（实现里会发 HTTP 到 ClickHouse）；
- * 客户端组件要类型就引用 `@/lib/framework/object-index/types` 里的纯类型。
+ * 客户端组件要类型就引用 `@/lib/infrastructure/object-index/types` 里的纯类型。
  */
 export function getObjectIndex(kind: ObjectIndexKind = "CLICKHOUSE"): ObjectIndex {
   const cached = instances.get(kind);
   if (cached) return cached;
   const factory = factories.get(kind);
-  if (!factory) throw new Error(`还没有 ${kind} 的对象索引实现：实现 ObjectIndex 之后在 @/lib/framework/object-index 的 factories 里登记。`);
+  if (!factory) throw new Error(`还没有 ${kind} 的对象索引实现：实现 ObjectIndex 之后在 @/lib/infrastructure/object-index 的 factories 里登记。`);
   const created = factory();
   instances.set(kind, created);
   return created;

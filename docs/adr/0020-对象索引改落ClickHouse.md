@@ -11,7 +11,7 @@
 ## 决定
 
 1. 对象索引的唯一实现落在 **ClickHouse**（列存表 `<库>.object_entries`，默认库 `ontology_index`）：`ReplacingMergeTree(version)` 按对象键幂等 upsert，读一律带 `FINAL`（同一对象键取最新，发布与增量同步共用一套语义）。
-2. 契约与注册表搬到 `src/lib/framework/object-index/`（与 `framework/graph` 同构：契约 + 注册表 + 按后端分目录的适配器）；领域侧只留“快照节点 → 索引条目”的映射（`src/lib/instance/object-index/entries.ts`）。
+2. 契约与注册表搬到 `src/lib/infrastructure/object-index/`（与 `infrastructure/graph` 同构：契约 + 注册表 + 按后端分目录的适配器）；领域侧只留“快照节点 → 索引条目”的映射（`src/lib/instance/object-index/entries.ts`）。
 3. 删掉 PostgreSQL 实现与 `ontology_platform.object_entries`（迁移 `0007-drop-object-entries` 负责 `DROP`），并摘掉对应的 TypeORM 实体与表/字段注释。
 4. 上层只认 `ObjectIndex` 契约：换后端 = 新增适配器目录 + 注册表登记一行，域代码 / API / 界面 / AI 工具不动。
 
@@ -29,6 +29,6 @@
 
 ## 影响范围
 
-- 新增：`src/lib/framework/object-index/{types,query,index}.ts`、`src/lib/framework/object-index/clickhouse/{config,client,plan,index}.ts`、`tests/lib/object-index/clickhouse.contract.test.ts`、迁移 `0007-drop-object-entries`。
+- 新增：`src/lib/infrastructure/object-index/{types,query,index}.ts`、`src/lib/infrastructure/object-index/clickhouse/{config,client,plan,index}.ts`、`tests/lib/object-index/clickhouse.contract.test.ts`、迁移 `0007-drop-object-entries`。
 - 移除：`src/lib/instance/object-index/{postgres,sql}.ts`、`ObjectEntryEntity`、`object_entries` 的表 / 列注释、PG 契约测试。
 - 环境与部署：`CLICKHOUSE_URL` / `CLICKHOUSE_DATABASE` / `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD`；`docker-compose.yml` 新增 `clickhouse` 服务（`clickhouse:26.9.8.3`，默认 `admin/admin`）。

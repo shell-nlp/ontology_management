@@ -5,7 +5,7 @@ import { resolveMcpToken } from "@/lib/mcp/token";
 import type { PlatformUserView } from "@/lib/platform/platform-db";
 import { oauthProvider } from "@/lib/oauth/provider";
 import { unauthorizedHeader } from "@/lib/oauth/metadata";
-import { publicOrigin } from "@/lib/framework/public-origin";
+import { publicOrigin } from "@/lib/shared/server/public-origin";
 import { stripOntologyId } from "@/lib/mcp/schema";
 import { getOntology } from "@/lib/platform/ontologies";
 import { callMcpTool, findMcpTool, mcpTools, MCP_PROTOCOL_VERSION, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "@/lib/reasoning/mcp";

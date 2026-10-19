@@ -1,7 +1,7 @@
 import { BKN_NODE_PREFIX, SparqlTerm, SparqlEndpoints, NtTerm } from "./vocabulary";
-import { decryptSecret } from "@/lib/framework/crypto";
-import { escapeSparqlStringLiteral, valueFromSparqlLiteral } from "@/lib/framework/graph/schema-inference";
-import { type GraphTarget } from "@/lib/framework/graph/types";
+import { decryptSecret } from "@/lib/shared/server/crypto";
+import { escapeSparqlStringLiteral, valueFromSparqlLiteral } from "@/lib/infrastructure/graph/schema-inference";
+import { type GraphTarget } from "@/lib/infrastructure/graph/types";
 
 export function optionText(target: GraphTarget, key: string) {
   const value = target.options?.[key];

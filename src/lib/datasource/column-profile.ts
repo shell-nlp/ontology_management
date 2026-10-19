@@ -1,5 +1,5 @@
 import { entitySources } from "@/lib/ontology/sources";
-import { dateOnlyText, wallClockText } from "@/lib/framework/datetime";
+import { dateOnlyText, wallClockText } from "@/lib/shared/common/datetime";
 import { ColumnProfileEntity, jsonValue, platformRepo } from "@/lib/platform/db";
 import type { DataSourceRecord } from "@/lib/datasource/types";
 import type { OntologyDefinition } from "@/lib/ontology";

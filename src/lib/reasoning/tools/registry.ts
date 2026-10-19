@@ -1,5 +1,5 @@
 import { type DataSourceRecord } from "@/lib/datasource/types";
-import { type GraphStore, type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { type GraphStore, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { type ToolSpec } from "@/lib/reasoning/types";
 

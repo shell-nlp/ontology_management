@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/framework/graph";
+import { getGraphStore } from "@/lib/infrastructure/graph";
 import { getTarget } from "@/lib/platform/targets";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";

@@ -2,8 +2,8 @@
 
 import { useEffect, useId, useState } from "react";
 import { BookOpen, Plus, Trash2 } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
-import { newId } from "@/lib/framework/ids";
+import { api } from "@/lib/shared/client/api-client";
+import { newId } from "@/lib/shared/common/ids";
 import type { EntityDictionary } from "@/lib/ontology/dictionaries";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import "./entity-dictionary-editor.css";

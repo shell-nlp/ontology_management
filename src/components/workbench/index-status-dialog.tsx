@@ -2,8 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Database, Layers, RefreshCw, RotateCcw, X } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
-import { copyText } from "@/lib/framework/clipboard";
+import { api } from "@/lib/shared/client/api-client";
+import { copyText } from "@/lib/shared/client/clipboard";
 import type { DataSourceKind, DataViewField, PublicDataSource } from "@/lib/datasource/types";
 import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";

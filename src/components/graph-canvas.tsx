@@ -6,12 +6,12 @@ import { CircleDot, Eye, EyeOff, Link2, LocateFixed, Network, Pencil, Plus, Sear
 import { PropertyEditor } from "@/components/property-editor";
 import { LayoutSwitcher, useLayoutMode } from "@/components/layout-switcher";
 import { buildGroupFrames, circleLayout, groupedLayoutPositions } from "@/lib/ontology/concept-groups";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import type { SigmaEdge, SigmaNode } from "@/components/sigma-graph";
 import type { PropertyDefinition } from "@/lib/instance/instance-property-editor";
-import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/framework/graph/types";
-import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
-import { readStoredPositions, writeStoredPositions, type NodePositions } from "@/lib/framework/local-layout";
+import type { GraphData, GraphNode, GraphRelationship, RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
+import { compactGraphLabel, graphColor } from "@/lib/shared/common/graph-palette";
+import { readStoredPositions, writeStoredPositions, type NodePositions } from "@/lib/shared/client/local-layout";
 import "./graph-canvas.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });

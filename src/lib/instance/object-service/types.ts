@@ -1,6 +1,6 @@
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ObjectPrimaryKey } from "@/lib/instance/object-identity";
-import type { ObjectSearchFilter } from "@/lib/framework/object-index/types";
+import type { ObjectSearchFilter } from "@/lib/infrastructure/object-index/types";
 
 /**
  * 对象服务的公共契约（S2）。

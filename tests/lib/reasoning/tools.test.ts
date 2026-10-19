@@ -4,7 +4,7 @@ import { hasToolTitle, toolTitle } from "@/lib/reasoning/tool-labels";
 import { dataSourcesForTable, enabledReasoningToolNames, longestCommonSubstring, objectTypesBoundTo, parseTraverseDirection, queryTokens, rankSchemaConcepts, reasoningToolSet, REASONING_TOOLS, runReasoningTool, schemaConcepts, traverseTypeGraph } from "@/lib/reasoning/tools";
 import { profileTableKey, type ColumnValueIndex } from "@/lib/datasource/column-profile";
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { RuntimeTypeSet } from "@/lib/framework/graph/types";
+import type { RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 
 const 用户类 = "11111111-1111-4111-8111-111111111111";
 const 专线类 = "22222222-2222-4222-8222-222222222222";

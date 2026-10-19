@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 import { buildIndexEntries, resolveObjectTitle } from "@/lib/instance/object-index/entries";
-import { normalizeSearchQuery } from "@/lib/framework/object-index/query";
-import { planClickHouseSearch } from "@/lib/framework/object-index/clickhouse/plan";
+import { normalizeSearchQuery } from "@/lib/infrastructure/object-index/query";
+import { planClickHouseSearch } from "@/lib/infrastructure/object-index/clickhouse/plan";
 
 const USER_CLASS_ID = "11111111-1111-4111-8111-111111111111";
 const ORDER_CLASS_ID = "22222222-2222-4222-8222-222222222222";

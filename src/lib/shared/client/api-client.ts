@@ -1,4 +1,4 @@
-import { authHeaders } from "@/lib/framework/session-token";
+import { authHeaders } from "@/lib/shared/client/session-token";
 
 /** 会话失效时统一给用户看的一句话；原始错误码（UNAUTHORIZED）不该出现在界面上。 */
 export const AUTH_EXPIRED_MESSAGE = "登录已过期，请刷新页面重新登录。";

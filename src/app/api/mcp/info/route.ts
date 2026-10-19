@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { can } from "@/lib/platform/permissions";
 import { listMcpTokens } from "@/lib/mcp/token";
-import { publicOrigin } from "@/lib/framework/public-origin";
+import { publicOrigin } from "@/lib/shared/server/public-origin";
 import { mcpToolCatalog, MCP_PROTOCOL_VERSION, MCP_TOOL_GROUPS } from "@/lib/reasoning/mcp";
 import { loadResolvedToolPolicy } from "@/lib/reasoning/tool-policy";
 import { withPermission } from "@/lib/platform/route-guard";

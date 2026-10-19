@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "crypto";
-import { decryptSecret, encryptSecret } from "@/lib/framework/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/shared/server/crypto";
 import {
   findSessionUser,
   listUserIdentities,

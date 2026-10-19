@@ -4,9 +4,9 @@ import { Children, type ReactNode, useCallback, useState } from "react";
 import { AlertCircle, CheckCircle2, X } from "lucide-react";
 import { useSplitPane } from "@/components/split-pane";
 import { type OntologySummary } from "@/components/ontology-studio";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import { can, type Permission } from "@/lib/platform/permissions";
-import { graphTargetKindInfo, type GraphTargetKind } from "@/lib/framework/graph/types";
+import { graphTargetKindInfo, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
 import { entitySources, sourceName, type Definition, type EntityType, type Property } from "@/lib/ontology/draft";
 
 

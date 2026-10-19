@@ -13,7 +13,7 @@ vi.mock("@/lib/instance/object-service/data-source", async (importOriginal) => {
   return { ...actual, createDataSourceObjectSource: () => ({ query: mocks.sourceQuery }) };
 });
 
-vi.mock("@/lib/framework/object-index", () => ({
+vi.mock("@/lib/infrastructure/object-index", () => ({
   getObjectIndex: () => ({
     syncTargetObjects: mocks.syncTargetObjects,
     countTypeObjects: mocks.countTypeObjects,

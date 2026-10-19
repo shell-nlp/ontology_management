@@ -1,5 +1,5 @@
 import { platformRepo, GraphTargetEntity } from "@/lib/platform/db";
-import { BUILTIN_EMBEDDED_TARGET_ID, graphTargetKindInfo, isGraphTargetKind, type GraphTarget, type GraphTargetKind } from "@/lib/framework/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID, graphTargetKindInfo, isGraphTargetKind, type GraphTarget, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
 
 /** 实体 -> 领域记录（本体存储沿用 snake_case 口径）。 */
 export function targetFromRow(row: GraphTargetEntity): GraphTarget {

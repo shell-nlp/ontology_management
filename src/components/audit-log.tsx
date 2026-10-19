@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, RefreshCcw } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import { AUDIT_ACTIONS, AUDIT_SCOPE_OPTIONS, auditActionLabel, auditActionsForScope, isAuditFailure, type AuditScope } from "@/lib/platform/audit";
 
 /**

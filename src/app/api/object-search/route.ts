@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isUnauthorized } from "@/lib/platform/auth";
-import { getObjectIndex } from "@/lib/framework/object-index";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
 

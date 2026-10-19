@@ -4,7 +4,7 @@ import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { z } from "zod";
-import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/framework/graph";
+import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/infrastructure/graph";
 import { withAdvisoryLock } from "@/lib/platform/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology/sources";
@@ -28,7 +28,7 @@ import {
 import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/instance/action-engine";
 import { parsePropertyValues } from "@/lib/instance/instance-property-editor";
 import { objectIdOf, primaryKeyConflicts, resolveObjectIdentity } from "@/lib/instance/object-identity";
-import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/framework/graph/types";
+import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 
 export type { VersionRecord, VersionStatus } from "@/lib/platform/version-records";
 

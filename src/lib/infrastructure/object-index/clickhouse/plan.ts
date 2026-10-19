@@ -1,6 +1,6 @@
-import { normalizeSearchQuery, type NormalizedSearchQuery } from "@/lib/framework/object-index/query";
-import type { ObjectSearchQuery, ObjectSearchResult } from "@/lib/framework/object-index/types";
-import { clickHouseArrayParam, type ClickHouseParams } from "@/lib/framework/object-index/clickhouse/client";
+import { normalizeSearchQuery, type NormalizedSearchQuery } from "@/lib/infrastructure/object-index/query";
+import type { ObjectSearchQuery, ObjectSearchResult } from "@/lib/infrastructure/object-index/types";
+import { clickHouseArrayParam, type ClickHouseParams } from "@/lib/infrastructure/object-index/clickhouse/client";
 
 /**
  * 检索请求 -> ClickHouse SQL 的**纯函数**规划器（不连库，便于单测）。

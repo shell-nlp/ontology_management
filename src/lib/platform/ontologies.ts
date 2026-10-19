@@ -11,8 +11,8 @@ import {
   jsonValue,
   platformRepo,
 } from "@/lib/platform/db";
-import { getObjectIndex } from "@/lib/framework/object-index";
-import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/framework/graph/types";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
+import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/infrastructure/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/platform/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { BarChart3, Pencil, Plus, Trash2, X } from "lucide-react";
-import { newId } from "@/lib/framework/ids";
+import { newId } from "@/lib/shared/common/ids";
 import { useSplitPane } from "@/components/split-pane";
 import type { Definition, Metric } from "@/lib/ontology/draft";
 import "./metric-manager.css";

@@ -19,7 +19,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import {
   DATA_SOURCE_KINDS,
   PLANNED_DATA_SOURCES,

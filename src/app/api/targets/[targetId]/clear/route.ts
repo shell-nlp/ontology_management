@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/framework/graph";
-import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/framework/graph/types";
-import { getObjectIndex } from "@/lib/framework/object-index";
+import { getGraphStore } from "@/lib/infrastructure/graph";
+import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetError, getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";

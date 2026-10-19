@@ -1,4 +1,4 @@
-import type { ObjectSearchQuery } from "@/lib/framework/object-index/types";
+import type { ObjectSearchQuery } from "@/lib/infrastructure/object-index/types";
 
 /**
  * 检索请求的**后端无关**归一化。

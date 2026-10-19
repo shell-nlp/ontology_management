@@ -225,8 +225,8 @@
       <div class="band b-purple">
         <div class="band-tag"><strong>契约与适配器</strong><span>Adapters</span><b>可替换</b></div>
         <div class="nodes">
-          <div class="node purple"><strong>GraphStore</strong><span>类型图契约；实现按 <code>target.kind</code> 分派</span><em>lib/framework/graph/ → jena/ · embedded</em></div>
-          <div class="node purple"><strong>ObjectIndex</strong><span>对象与边的索引契约，实现按后端分目录</span><em>lib/framework/object-index/clickhouse/</em></div>
+          <div class="node purple"><strong>GraphStore</strong><span>类型图契约；实现按 <code>target.kind</code> 分派</span><em>lib/infrastructure/graph/ → jena/ · embedded</em></div>
+          <div class="node purple"><strong>ObjectIndex</strong><span>对象与边的索引契约，实现按后端分目录</span><em>lib/infrastructure/object-index/clickhouse/</em></div>
           <div class="node purple"><strong>数据资源连接器</strong><span>结构读取与只读取数</span><em>lib/datasource/sql.ts（pg · mysql2 · oracledb）</em></div>
           <div class="node purple"><strong>模型客户端</strong><span>OpenAI 兼容端点，工具循环由 AI SDK 驱动</span><em>lib/reasoning/provider.ts（AI SDK）</em></div>
           <div class="node purple"><strong>OAuthProvider</strong><span>「去哪儿授权 + 怎么验令牌」的唯一替换点</span><em>lib/oauth/provider.ts</em></div>
@@ -339,8 +339,8 @@
       <div class="label">扩展点：现在用什么 · 换实现要动哪里</div>
       <table class="ext-table">
         <tr><th>要换的东西</th><th>现在用的是什么</th><th>动这里</th><th>上层要不要改</th></tr>
-        <tr><td>图数据库</td><td>内置类型图（<code>EMBEDDED</code>）· Apache Jena / Fuseki（<code>JENA</code>）</td><td><code>lib/framework/graph/</code> 加一个实现 + 注册表登记</td><td>不改（接口 / 发布流程 / 界面都不动）</td></tr>
-        <tr><td>对象索引后端</td><td>ClickHouse（目前唯一实现）</td><td><code>lib/framework/object-index/</code> 下加目录</td><td>不改（对象服务认契约）</td></tr>
+        <tr><td>图数据库</td><td>内置类型图（<code>EMBEDDED</code>）· Apache Jena / Fuseki（<code>JENA</code>）</td><td><code>lib/infrastructure/graph/</code> 加一个实现 + 注册表登记</td><td>不改（接口 / 发布流程 / 界面都不动）</td></tr>
+        <tr><td>对象索引后端</td><td>ClickHouse（目前唯一实现）</td><td><code>lib/infrastructure/object-index/</code> 下加目录</td><td>不改（对象服务认契约）</td></tr>
         <tr><td>业务库类型</td><td>PostgreSQL · MySQL · Oracle（<code>pg</code> · <code>mysql2</code> · <code>oracledb</code>）</td><td><code>lib/datasource/sql.ts</code> 的方言分支</td><td>不改（SQL 只在适配器里）</td></tr>
         <tr><td>模型提供方</td><td>OpenAI 兼容 HTTP 端点（当前配 DeepSeek-V4.1-Flash）</td><td><code>lib/reasoning/provider.ts</code>（OpenAI 兼容即可）</td><td>不改（工具循环与提示词不动）</td></tr>
         <tr><td>授权服务器</td><td>平台自带的 OAuth 2.1 授权服务器（授权码 + PKCE + 动态注册）</td><td><code>lib/oauth/provider.ts</code> 再写一个实现（如 Keycloak）</td><td>不改（元数据路由与 MCP 端点一行不动）</td></tr>

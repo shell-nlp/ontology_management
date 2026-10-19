@@ -3,8 +3,8 @@ import { resolveSparqlEndpoints, scopedQueryUrl, authorizationHeader, termForId,
 import { snapshotStatements } from "./statements";
 import { pushProperty, replaceSingleRequestLimit, clearGraphUpdate, planReplaceRequests } from "./replace";
 import { buildRuntimeProperties, displayNameOf, extractTripleRows, graphFromTriples } from "./read";
-import { graphTargetKindInfo, type ConnectionInfo, type EntityRecord, type EntitySearchHit, type GraphData, type GraphDefinitionLike, type GraphExport, type GraphNode, type GraphRelationship, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type ListEntitiesOptions, type ListRelationshipsOptions, type QueryResult, type ReadGraphOptions, type RelationshipRecord, type RuntimeTypeSet, type SearchEntitiesOptions } from "@/lib/framework/graph/types";
-import { valueFromSparqlLiteral } from "@/lib/framework/graph/schema-inference";
+import { graphTargetKindInfo, type ConnectionInfo, type EntityRecord, type EntitySearchHit, type GraphData, type GraphDefinitionLike, type GraphExport, type GraphNode, type GraphRelationship, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type ListEntitiesOptions, type ListRelationshipsOptions, type QueryResult, type ReadGraphOptions, type RelationshipRecord, type RuntimeTypeSet, type SearchEntitiesOptions } from "@/lib/infrastructure/graph/types";
+import { valueFromSparqlLiteral } from "@/lib/infrastructure/graph/schema-inference";
 
 export function createJenaStore(target: GraphTarget): GraphStore {
   const endpoints = resolveSparqlEndpoints(target);

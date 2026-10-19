@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateOnlyText, wallClockText } from "@/lib/framework/datetime";
+import { dateOnlyText, wallClockText } from "@/lib/shared/common/datetime";
 
 /**
  * 日期渲染统一口径（2026-10-10 用户报）：

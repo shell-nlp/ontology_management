@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { encryptSecret } from "@/lib/framework/crypto";
+import { encryptSecret } from "@/lib/shared/server/crypto";
 import { dataSourcePatch, resolvePort } from "@/lib/datasource/input";
 import { getDataSource, normalizeDataSourceKind, parseDataSourceOptions, publicDataSource } from "@/lib/datasource/sources";
 import { clearStructureCache } from "@/lib/datasource/structure-cache";

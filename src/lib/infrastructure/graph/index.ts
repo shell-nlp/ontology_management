@@ -1,8 +1,8 @@
-import { createJenaStore } from "@/lib/framework/graph/jena";
-import { createEmbeddedStore } from "@/lib/framework/graph/embedded";
-import { isGraphTargetKind, type GraphStore, type GraphTarget } from "@/lib/framework/graph/types";
+import { createJenaStore } from "@/lib/infrastructure/graph/jena";
+import { createEmbeddedStore } from "@/lib/infrastructure/graph/embedded";
+import { isGraphTargetKind, type GraphStore, type GraphTarget } from "@/lib/infrastructure/graph/types";
 
-export * from "@/lib/framework/graph/types";
+export * from "@/lib/infrastructure/graph/types";
 
 /**
  * 本体存储后端注册表。

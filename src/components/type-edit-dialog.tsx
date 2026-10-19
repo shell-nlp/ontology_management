@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, Boxes, Check, CircleDot, CornerDownRight, Database, KeyRound, Link2, Pencil, Plus, Table2, Trash2, X, Layers } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import { effectiveInterfaceProperties } from "@/lib/ontology/interfaces";
 import { inferForeignKeySide, keyMappingRows, primaryKeyPropertyNames, relationKeyMappings, type KeyMapping } from "@/lib/ontology/relationship-keys";
 import { CARDINALITY_OPTIONS } from "@/lib/ontology/relationship-cardinality";
 import { planLinkSource } from "@/lib/ontology/link-source";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
-import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
+import { compactGraphLabel, graphColor } from "@/lib/shared/common/graph-palette";
 import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
 import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import { dictionaryIssues, type EntityDictionary } from "@/lib/ontology/dictionaries";

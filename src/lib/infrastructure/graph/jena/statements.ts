@@ -1,7 +1,7 @@
 import { RDF, RDF_TYPE, RDFS_SUBCLASS, RDFS_DOMAIN, RDFS_RANGE, OWL_CLASS, OWL_OBJECT_PROPERTY, BKN_IMPLEMENTS, BKN_RELATIONSHIP, BKN_REL_TYPE, BKN_SOURCE, BKN_TARGET, BKN_NODE_PREFIX, BKN_CLASS_PREFIX, BKN_PROPERTY_PREFIX, BKN_RELATIONSHIP_PREFIX, BKN_REL_TYPE_PREFIX, BKN_CLASS_META, BKN_INTERFACE_META, BKN_PROPERTY_META } from "./vocabulary";
 import { iriSegment, sparqlString } from "./protocol";
-import { sparqlLiteral } from "@/lib/framework/graph/schema-inference";
-import { type GraphDefinitionLike, type GraphWriteSnapshot } from "@/lib/framework/graph/types";
+import { sparqlLiteral } from "@/lib/infrastructure/graph/schema-inference";
+import { type GraphDefinitionLike, type GraphWriteSnapshot } from "@/lib/infrastructure/graph/types";
 
 /**
  * 把本体定义里的类层级与端点契约翻成 RDF 三元组，随发布一起写进图库。

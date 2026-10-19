@@ -526,12 +526,12 @@
 
 用户口径：「对形如 CLICKHOUSE 这类的操作，建议不要直链，而是需要一个中间层，这样本体的操作不用管数据库是什么样的，后面我想换其它的也不影响，可以单独做一个模块来干这个事情」；「这个原则是个最佳实践，也要记录下来」。
 
-- **每个外部存储 / 中间件都先有契约层**：对象索引、图存储、关系库、搜索、向量、缓存……一律如此。业务代码只 import **契约 + 注册表**，**禁止 import 具体实现的内部文件**（例如 framework/object-index/clickhouse/client）。
+- **每个外部存储 / 中间件都先有契约层**：对象索引、图存储、关系库、搜索、向量、缓存……一律如此。业务代码只 import **契约 + 注册表**，**禁止 import 具体实现的内部文件**（例如 infrastructure/object-index/clickhouse/client）。
 - **换存储 = 新增一个适配器目录 + 在注册表登记一行**；域代码、API、界面、AI 工具、MCP 一行都不改。已经按这条落地过一次：对象索引从 PostgreSQL 换到 ClickHouse，只动了适配器目录与注册表那一行。
 - **契约里的名词必须与后端无关**：契约里不许出现 SQL、表名、驱动名、参数格式、索引类型 —— 这些只允许出现在适配器目录里。一句话：**不是“抽象掉数据库”，而是“只让一个地方知道数据库长什么样”**。
-- **参照实现**：`src/lib/framework/graph/`（契约 + 注册表 + `jena/` + `embedded/`）与 `src/lib/framework/object-index/`（契约 + 注册表 + `clickhouse/`）。领域侧只留映射逻辑（如 `src/lib/instance/object-index/entries.ts`：快照节点 → 索引条目）。
+- **参照实现**：`src/lib/infrastructure/graph/`（契约 + 注册表 + `jena/` + `embedded/`）与 `src/lib/infrastructure/object-index/`（契约 + 注册表 + `clickhouse/`）。领域侧只留映射逻辑（如 `src/lib/instance/object-index/entries.ts`：快照节点 → 索引条目）。
 - **验收口径**：新后端必须跑通共享契约用例（`tests/lib/object-index/contract.ts`，跑法见 `tests/lib/object-index/clickhouse.contract.test.ts`，需要真服务、默认跳过）；能力对不上的地方要在 `capabilities()` 里如实上报，**不许静默降级**。
-- 这条与「领域目录不许碰持久化」是同一条线：域层只依赖框架层的契约，持久化与副作用留在适配器 / `platform` 层。
+- 这条与「领域目录不许碰持久化」是同一条线：域层只依赖基础设施层的契约，持久化与副作用留在适配器 / `platform` 层。
 
 
 ## 工具输出：只砍"重复"，不砍"信息"，也不轻易改"读法"（2026-10-08）
@@ -577,10 +577,10 @@
 
 ## 代码与测试目录（2026-09-18）
 
-- 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如 `src/lib/framework/graph/embedded/index.ts`
+- 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如 `src/lib/infrastructure/graph/embedded/index.ts`
   对应 `tests/lib/graph/embedded.test.ts`）。`vitest.config.mts` 只收集 `tests/**/*.test.ts`，
   **不要再在源码目录新增测试文件**。
-- 本体存储各实现用自己的目录：`src/lib/framework/graph/jena/`、`src/lib/framework/graph/embedded/`；
+- 本体存储各实现用自己的目录：`src/lib/infrastructure/graph/jena/`、`src/lib/infrastructure/graph/embedded/`；
   `graph/` 根目录只放公共接口、注册表与跨实现共享模块。新增多文件后端也按此结构隔离，
   不把不同后端的实现平铺在 `graph/` 根目录。
 
@@ -620,7 +620,7 @@
 
 ## 耗时单位分级 + token 要分两个数（2026-10-10）
 
-- 时间与条数的展示走 `src/lib/framework/format-units.ts`（**唯一出口**，纯函数，有单测）：
+- 时间与条数的展示走 `src/lib/shared/common/format-units.ts`（**唯一出口**，纯函数，有单测）：
   `formatDuration(ms)`（`812ms` → `4.9s` → `1分52秒` → `1小时05分` → `2天03小时`，10 秒内留一位小数、再往上取整）；
   `formatCount(n)`（`950` → `5.7k` → `833.9k` → `1.2M`）。**别再写 `{x}ms` / `{x/1000}s`。**
 - **token 要分两个数**：`ReasoningUsage.lastInputTokens` / `lastOutputTokens` = **最后一步这次调用**的用量
@@ -822,7 +822,7 @@
   面板顶部给一条汇总；`configured` 的含义是"现在**真的有一条能用**"，不是"曾经有过"。
 - 存储：`platform_settings` 一行 `mcp.apiTokens`，值是
   `{ tokens: [{ id, name, ciphertext, createdAt, createdBy, ownerUserId }] }`（老的没 `ownerUserId` 的条目读得出来，但判定为不可用）。
-  密文用 `@/lib/framework/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
+  密文用 `@/lib/shared/server/crypto` 的 AES-256-GCM（**和数据资源凭据同一把 `TARGET_ENCRYPTION_KEY`**，不引第二套密钥管理）。
   实现在 `src/lib/mcp/token.ts`：`listMcpTokens` / `revealMcpToken` / `createMcpToken` / `revokeMcpToken` / `resolveMcpToken`。
 - **`.env.local` 的 `MCP_API_TOKEN` 还认**，作为清单里一条**只读**的兜底（`id: "env"`，撤销按钮禁掉），
   但**必须**再配 `MCP_API_TOKEN_USER=<账号邮箱>` 指明它代表谁，否则它不可用。
@@ -897,7 +897,7 @@
 `Authorization: Bearer` 是调 API 的默认姿势。
 
 **这是一次拿安全性换便利的改动，不是纯重构**：cookie 的 httpOnly 是唯一能把凭据从 JS 里藏起来的手段，
-换成请求头之后令牌必须由前端自己存（`src/lib/framework/session-token.ts`，localStorage），XSS 能读走它。
+换成请求头之后令牌必须由前端自己存（`src/lib/shared/client/session-token.ts`，localStorage），XSS 能读走它。
 取舍已经跟用户确认过；两条缓解手段不许拆：
 
 - 令牌仍是**8 小时过期**的 JWT（`createSession` 的 `setExpirationTime("8h")`）；
@@ -906,7 +906,7 @@
 落点：
 
 - **签发**：`POST /api/auth/login` 在**响应体**里回 `token`（不再 `Set-Cookie`）。
-- **携带**：`src/lib/framework/session-token.ts` 的 `authHeaders()` / `withAuth()`。所有请求都要带 ——
+- **携带**：`src/lib/shared/client/session-token.ts` 的 `authHeaders()` / `withAuth()`。所有请求都要带 ——
   `api-client.ts` 与 `graph-canvas` 的 `api()`、流式问答（`qa-studio`）、MCP 调试页、`downloadResponse`。
   **下载那条最容易忘**：它以前靠浏览器自动带 cookie，现在必须显式带头。
 - **校验**：`src/lib/platform/auth.ts` 的 `currentUser()` 只读 `Authorization`（`bearerToken()` 解析、
@@ -927,7 +927,7 @@
 一点「本体草稿」整页变成 `This page couldn't load`（控制台是 `crypto.randomUUID is not a function`）——
 `crypto.randomUUID` 只在 https 或 localhost 下存在，IP 访问时是 `undefined`，异常被 Next 的错误边界接住。
 
-- `crypto.randomUUID` → 用 `@/lib/framework/ids` 的 `newId()`（优先原生，其次 `getRandomValues` 自己拼 v4，
+- `crypto.randomUUID` → 用 `@/lib/shared/common/ids` 的 `newId()`（优先原生，其次 `getRandomValues` 自己拼 v4，
   最差退回时间戳 + 随机数）。`resolveGroup` / `planBundleImport` 这类可注入生成器的函数，默认值也用它。
 - `navigator.clipboard` → 用 `mcp-studio.tsx` 里那种"先 Clipboard API、失败退隐藏 textarea + execCommand"的写法。
 - 同类还有 `crypto.subtle`、`navigator.geolocation`、`Notification`、Service Worker：都需要安全上下文。
@@ -1041,7 +1041,7 @@
   `readOntologyBundle` → `planBundleImport` → `validateVersionSnapshot`，要求**零违规**（连 WARN 都不能有），
   并断言 `bundle-format.md` 里出现关键字段名与枚举。**改 `ontology.ts` 的 schema 就要同步改文档与示例**，
   否则测试直接红 —— 这是防止"技能教的格式平台不认"的唯一机制。
-- 服务端 `src/lib/skills/index.ts`：目录扫描、front-matter 解析（借 `@/lib/framework/markdown`）、
+- 服务端 `src/lib/skills/index.ts`：目录扫描、front-matter 解析（借 `@/lib/shared/common/markdown`）、
   `resolveSkillFile` 防目录穿越（`..` / 绝对路径 / 越界一律 null）。接口只有两个：
   `GET /api/skills`（清单 + 文件表）与 `GET /api/skills/archive`（**全部技能**打成一个 zip）。
   `SKILL_CATALOG` 只放界面文案（编号 / 场景 / 产物 / 图标），**正文一律读盘**，别抄进代码。
@@ -1049,7 +1049,7 @@
   `GET /api/skills/:id`（正文全文）、`GET /api/skills/:id/file`（单文件）、`GET /api/skills/:id/archive`（单套 zip）
   都没了，`src/lib/skills/index.ts` 里也只剩 `readSkillsArchive()` 一个打包入口。
   要正文就下整包 —— 别再为"按套下载 / 预览原文"把这些口子加回来。
-- 打包用 `src/lib/framework/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
+- 打包用 `src/lib/shared/server/zip.ts`：自己实现的 store + deflate 子集（UTF-8 文件名、无 zip64）。
   验证方式是实测：单测比对 CRC32 与 zip 结构，端到端用 `Expand-Archive` 解一次（2026-09-16 验过）。
 - 界面 `src/components/skill-studio.tsx`（侧栏「语义模型 → 本体技能」）：**只给清单，正文不进页面**
   （2026-09-17 用户要求"太不简洁了…不需要看到细节，想看整体下载下来看就行"）。
@@ -1061,10 +1061,10 @@
 - **Dockerfile 的 runner 必须 `COPY --from=builder /app/skills ./skills`**（2026-09-16 已加）：
   技能是运行时读盘的数据，不拷进镜像这一页就是空的；`.dockerignore` 也别把 `skills` 挡掉。
 - 顺带抽出来的共用件（别再各写一份）：
-  - `src/lib/framework/markdown.ts`：front-matter 解析 / 剥离（纯函数，客户端也要用）。
+  - `src/lib/shared/common/markdown.ts`：front-matter 解析 / 剥离（纯函数，客户端也要用）。
   - `src/components/markdown-view.tsx`：Markdown 渲染器，问答页（`qa-markdown`）与技能页共用，
     支持围栏代码块与 `- [ ]` 清单；自研而非引库（只渲染我们自己产出的文本）。
-  - `src/lib/framework/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
+  - `src/lib/shared/client/clipboard.ts`：`copyText`（Clipboard API + execCommand 兜底）与 `downloadResponse`
     （Blob 下载、读 `Content-Disposition` 文件名）—— MCP 页复制、本体导出、技能下载共用同一份。
 
 ### 技能同时发布为 MCP（免令牌，2026-09-18）
@@ -1123,7 +1123,7 @@
   **再加页面就用 `.view-switcher`，别抄第三份。**
 - **MCP 地址必须跟着前端 URL 变**（2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
   两端各一层，缺一层就会在某种部署形态下露出 localhost：
-  1. **服务端**：`@/lib/framework/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
+  1. **服务端**：`@/lib/shared/server/public-origin` 的 `publicOrigin(request)` —— 认 `x-forwarded-host` / `host`
      （只看第一段），协议认 `x-forwarded-proto` / 请求自己的协议，口径与 `sessionCookieSecure` 一致。
      **别用 `request.nextUrl.origin`**：它在 dev 与容器里会落回服务端自己认的 `localhost:port`。
   2. **界面**：拿到数据后再用 `window.location.origin` **覆盖** `absoluteUrl`。端口转发 / 反代会把 Host
@@ -1170,7 +1170,7 @@
 用户确认：类型图只包含对象类型、关系类型、接口等定义，不把将来海量对象放入内存图；
 先新增 JS/TS 内置后端，**保留 Jena/Fuseki 与旧数据**。充分验证后再讨论清理，不得提前删掉 Jena。
 
-- `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/framework/graph/index.ts` 分发。
+- `GraphStore` 仍是统一抽象：`JENA` 和 `EMBEDDED` 两个实现由 `src/lib/infrastructure/graph/index.ts` 分发。
   内置存储入口由代码虚拟提供，不在 `graph_targets` 创建根记录；新建本体默认选它，并为该本体持久化独立的受管目标。入口不能手工创建、编辑、删除、清空或重置，
   但本体仍必须由用户显式新建或导入。`ensureDefaultOntologies` 旧逻辑已移除，不能把资源自动变成本体。
   外部 Jena 连接仍可按需新建；现有目标**不能靠修改 kind 原地切换**（那会把旧目标指向一份空存储）。
@@ -1625,7 +1625,7 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
   没有监听者就是未捕获的 error 事件（进程可能直接退出，日志还会打出整个连接对象）。
 - **Jena 端点主机名由 `GRAPH_ENDPOINT_HOST_ALIAS` 改写**：平台库里若登记的是宿主机地址
   `http://localhost:3030/ds`，容器里默认用 `localhost=host.docker.internal` 保持可达。
-  远端 Jena 直接登记真实地址或显式覆盖别名；实现位于 `src/lib/framework/graph/jena/index.ts` 的
+  远端 Jena 直接登记真实地址或显式覆盖别名；实现位于 `src/lib/infrastructure/graph/jena/index.ts` 的
   `resolveSparqlEndpoints`（`applyEndpointHostAlias` 有单测），不要绕过唯一出口。
 - **现存 Fuseki 数据不清理**：旧 `ontology-fuseki` 容器可能在更新 Compose 后成为孤儿，本次只改编排，
   不自动停止或删除容器，也不删 `.data/fuseki`。旧 `.env.docker` 的 `FUSEKI_*` 不再配置服务，
@@ -1656,7 +1656,7 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 已按这条规则登记的条目：
 
 - **`B-SEC-01`（对象级 / 属性级权限：行级 + 列级）**：2026-10-11 用户口径「先不做，后面有需要了再做」—— 只记录、不实施；细节（Palantir 两层权限口径、我们的现状与缺口、最小设计）见 `docs/待办事项.md` 的 B-SEC-01。
-- **对象索引已换 ClickHouse（`B-OBJ-IDX-01`，第一版 2026-10-11 落地）**：适配器在 `src/lib/framework/object-index/clickhouse/`，契约与注册表在 `src/lib/framework/object-index/`，PostgreSQL 的 `object_entries` 已由迁移 0007 删除。后续加后端按本节「存储必须走中间层」的口径办，不要再把存储细节写回域代码；未完成项（真实数据对拍、按类型选策略、编辑层）见 `docs/待办事项.md` 的 B-OBJ-IDX-01。
+- **对象索引已换 ClickHouse（`B-OBJ-IDX-01`，第一版 2026-10-11 落地）**：适配器在 `src/lib/infrastructure/object-index/clickhouse/`，契约与注册表在 `src/lib/infrastructure/object-index/`，PostgreSQL 的 `object_entries` 已由迁移 0007 删除。后续加后端按本节「存储必须走中间层」的口径办，不要再把存储细节写回域代码；未完成项（真实数据对拍、按类型选策略、编辑层）见 `docs/待办事项.md` 的 B-OBJ-IDX-01。
 
 ## 左侧导航的权限可见性（2026-10-10）
 
@@ -1734,26 +1734,28 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 
 | 目录 | 放什么 | 代表文件 |
 | --- | --- | --- |
-| `src/lib/framework/` | **与本平台业务无关的通用件**：能不能整包搬去别的项目，是这里的准入门槛 | `crypto` `zip` `ids` `datetime` `format-units` `markdown` `clipboard` `api-client` `public-origin` `session-token` `local-layout` `graph-palette`；`graph/` 是图存储抽象（`types.ts` 接口 + `index.ts` 注册表 + `jena/` `embedded/` 两个实现 + `schema-inference.ts`） |
+| `src/lib/infrastructure/` | **外部技术实现的适配层**：只在这里出现具体数据库、驱动、协议与查询语言 | `graph/`（`GraphStore` 契约、注册表、`jena/`、`embedded/`）、`object-index/`（`ObjectIndex` 契约、注册表、`clickhouse/`） |
+| `src/lib/shared/` | **与平台业务无关的通用件**：能不能整包搬去别的项目，是这里的准入门槛 | `common/`（`ids` `datetime` `format-units` `markdown` `graph-palette`）、`client/`（`api-client` `session-token` `clipboard` `local-layout`）、`server/`（`crypto` `public-origin` `zip`） |
 | `src/lib/platform/` | **平台自身**：账号、权限、审计、平台库 | `auth` `users` `permissions` `audit` `targets`（图引擎连接登记）、`platform-db`（平台表仓储）、`db/`（连接、实体、迁移） |
-| `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型：定义、草稿、画布、接口、指标、分组、体检、bkn 导入、关系键/基数）、`versioning/`（快照与发布）、`instance/`（对象服务与索引）、`datasource/`（数据资源与 SQL）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`skills/`（本体技能） |
+| `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型：定义、草稿、画布、接口、指标、分组、体检、bkn 导入、关系键/基数）、`versioning/`（快照与发布）、`instance/`（对象服务与对象索引编排）、`datasource/`（数据资源与 SQL）、`query-dsl/`（查询语义与编译）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`oauth/`（授权服务器）、`skills/`（本体技能） |
 
 两条硬规矩：
 
-1. **新代码先问「它跟本体业务有关吗」**：无关 → `framework/`；是平台自己的账号/权限/审计/平台库 → `platform/`；
-   是本体业务 → 对应的业务模块目录。**不要再往 `src/lib/` 根下加文件**（根下只剩目录）。
+1. **新代码先问「它跟本体业务有关吗」**：无关的纯工具 → `shared/`；具体外部系统适配 → `infrastructure/`；
+   是平台自己的账号/权限/审计/平台库 → `platform/`；是本体业务 → 对应的业务模块目录。
+   **不要再往 `src/lib/` 根下加文件**（根下只剩目录）。
 2. **外部一律 import 目录**（`@/lib/ontology`、`@/lib/reasoning/tools`），目录里用 `index.ts` 做 barrel（`export * from "./xxx"`）。
    换文件位置只改 barrel，不动调用方。
 
 ## 领域目录不许碰持久化（2026-10-10）
 
 **规矩**：按依赖方向，`src/lib/<业务模块>/` 只许依赖两类东西 ——
-`framework/` 里的纯工具（`ids` / `format-units` / `graph-palette` 这种），以及同层模块的**纯函数**；
+`shared/` 里的纯工具（`ids` / `format-units` / `graph-palette` 这种），以及同层模块的**纯函数**；
 **不许出现** `platform/db`、`platform/*`（仓储与配置）、`versioning/snapshot`（写文件）这类持久化/副作用调用。
 需要落库的，把那段编排放到 `src/app/api/**/route.ts` 或 `src/lib/platform/`。
 
 现存的最后一处跨模块依赖是 `ontology/link-source.ts` → `instance/object-identity`（借实例层的列识别规则），
-两边都是纯函数，暂不算破例；真要收紧，把那两个纯函数提到 `framework/` 共用。
+两边都是纯函数，暂不算破例；真要收紧，把那两个纯函数提到 `shared/common/` 共用。
 
 ## 独立任务拆给子智能体并行做（2026-10-10 用户要求）
 

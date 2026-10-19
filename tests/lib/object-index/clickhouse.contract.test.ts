@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, it } from "vitest";
-import { createClickHouseObjectIndex } from "@/lib/framework/object-index/clickhouse";
+import { createClickHouseObjectIndex } from "@/lib/infrastructure/object-index/clickhouse";
 import { runObjectIndexContract } from "./contract";
 
 /**

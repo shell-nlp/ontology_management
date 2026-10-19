@@ -1,4 +1,4 @@
-import { clickHouseConfig, type ClickHouseConfig } from "@/lib/framework/object-index/clickhouse/config";
+import { clickHouseConfig, type ClickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
 
 /**
  * ClickHouse HTTP 客户端。

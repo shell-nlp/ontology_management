@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { readSkillsArchive } from "@/lib/skills/index";
-import { createZip } from "@/lib/framework/zip";
+import { createZip } from "@/lib/shared/server/zip";
 import { withPermission } from "@/lib/platform/route-guard";
 
 /**

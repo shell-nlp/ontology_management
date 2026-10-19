@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { And, In, LessThanOrEqual, MoreThanOrEqual, type FindOptionsWhere } from "typeorm";
 import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/platform/db";
-import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/framework/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/infrastructure/graph/types";
 import { effectivePermissions, type Permission } from "@/lib/platform/permissions";
 import { RoleEntity } from "@/lib/platform/db/entities";
 

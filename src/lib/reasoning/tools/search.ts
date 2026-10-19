@@ -5,7 +5,7 @@ import { type DataSourceRecord } from "@/lib/datasource/types";
 import { entitySources } from "@/lib/ontology/sources";
 import { cardinalityLabel } from "@/lib/ontology/relationship-cardinality";
 import { columnValueOf, type ColumnValueIndex } from "@/lib/datasource/column-profile";
-import { type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { type OntologyDefinition } from "@/lib/ontology";
 
 export function normalize(text: string) {

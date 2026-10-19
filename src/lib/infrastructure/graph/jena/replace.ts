@@ -1,7 +1,7 @@
 import { BKN } from "./vocabulary";
 import { chunk } from "./protocol";
 import { randomUUID } from "node:crypto";
-import { type GraphTarget } from "@/lib/framework/graph/types";
+import { type GraphTarget } from "@/lib/infrastructure/graph/types";
 
 export function pushProperty(properties: Record<string, unknown>, key: string, value: unknown) {
   const existing = properties[key];

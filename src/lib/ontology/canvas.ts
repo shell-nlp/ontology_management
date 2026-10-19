@@ -1,5 +1,5 @@
 import { buildGroupFrames, circleLayout, groupedLayoutPositions, type LayoutMode } from "@/lib/ontology/concept-groups";
-import { compactGraphLabel, graphColor } from "@/lib/framework/graph-palette";
+import { compactGraphLabel, graphColor } from "@/lib/shared/common/graph-palette";
 import type { Definition, EntityType, RelationType } from "@/lib/ontology/draft";
 
 /**

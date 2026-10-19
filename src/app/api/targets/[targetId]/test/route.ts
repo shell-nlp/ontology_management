@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isUnauthorized } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/framework/graph";
-import type { GraphTargetKind } from "@/lib/framework/graph/types";
+import { getGraphStore } from "@/lib/infrastructure/graph";
+import type { GraphTargetKind } from "@/lib/infrastructure/graph/types";
 import { describeTargetError, getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
 

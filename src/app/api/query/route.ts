@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/framework/graph";
+import { getGraphStore } from "@/lib/infrastructure/graph";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { withPermission } from "@/lib/platform/route-guard";

@@ -521,7 +521,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
   </nav>
   <div class="sidebar-foot">
     <b>19 篇 · 单文件阅读版</b><br>
-    生成于 2026/10/15 23:56<br>
+    生成于 2026/10/19 19:48<br>
     源码目录：docs/系统说明书
   </div>
 </aside>
@@ -1845,7 +1845,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
       <span>01-系统概览.md</span>
       <span>5,522 字</span>
       <span>9 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -3569,7 +3569,7 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
       <span>06-本体实例与对象检索.md</span>
       <span>10,138 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/15 09:23</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -5392,7 +5392,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
       <span>02-安装部署与初始化.md</span>
       <span>5,693 字</span>
       <span>9 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-02-安装部署与初始化--2-1-部署前要知道的三件事"><span>2.1 部署前要知道的三件事</span><a class="heading-anchor" href="#doc-02-安装部署与初始化--2-1-部署前要知道的三件事" aria-label="复制本节链接">#</a></h2>
@@ -5783,7 +5783,7 @@ docker compose --env-file .env.docker logs --tail=200 app</code></pre><p>排查�
       <span>03-账号权限与平台设置.md</span>
       <span>5,171 字</span>
       <span>7 个主节</span>
-      <span>更新 2026/10/15 22:58</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-03-账号权限与平台设置--3-1-登录与会话"><span>3.1 登录与会话</span><a class="heading-anchor" href="#doc-03-账号权限与平台设置--3-1-登录与会话" aria-label="复制本节链接">#</a></h2>
@@ -6945,9 +6945,9 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
     <p class="chapter-lede">内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。</p>
     <div class="chapter-meta">
       <span>12-图存储与架构.md</span>
-      <span>4,498 字</span>
+      <span>4,503 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/19 19:45</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -7291,7 +7291,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 </ol>
 <p>API 路由、版本发布流程和界面组件无需改动。未来的候选后端（如 NetworkX、Elasticsearch 等）保持同一模式；文档里把“规划中”与“已支持”分开写。</p>
 <p><strong>同一个原则适用于平台上所有外部存储</strong>（对象索引、关系库、搜索、向量、缓存）：先有契约层，业务代码只认契约与注册表，不直链某个实现。换存储 = 新增一个适配器目录 + 注册表登记一行，域代码 / API / 界面 / AI 工具都不动。</p>
-<p>对象索引就是这么做的：契约与注册表在 <code>src/lib/framework/object-index/</code>，实现按后端分目录（现在只有 <code>clickhouse/</code>），领域侧的“快照节点 → 索引条目”映射留在 <code>src/lib/instance/object-index/entries.ts</code>。判断标准很简单：<strong>SQL、表名、参数格式这些只允许出现在适配器目录里</strong>；出了那个目录就只剩契约里的名词。</p>
+<p>对象索引就是这么做的：契约与注册表在 <code>src/lib/infrastructure/object-index/</code>，实现按后端分目录（现在只有 <code>clickhouse/</code>），领域侧的“快照节点 → 索引条目”映射留在 <code>src/lib/instance/object-index/entries.ts</code>。判断标准很简单：<strong>SQL、表名、参数格式这些只允许出现在适配器目录里</strong>；出了那个目录就只剩契约里的名词。</p>
 <h2 id="doc-12-图存储与架构--12-9-迁移与切换后端"><span>12.9 迁移与切换后端</span><a class="heading-anchor" href="#doc-12-图存储与架构--12-9-迁移与切换后端" aria-label="复制本节链接">#</a></h2>
 <p>图后端是投影，切换后端的原则是“从平台版本重新发布”：</p>
 <ol>
@@ -7335,7 +7335,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
       <span>13-接口与集成参考.md</span>
       <span>8,236 字</span>
       <span>15 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-13-接口与集成参考--13-1-接口总则"><span>13.1 接口总则</span><a class="heading-anchor" href="#doc-13-接口与集成参考--13-1-接口总则" aria-label="复制本节链接">#</a></h2>
@@ -8643,7 +8643,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
       <span>查询DSL.md</span>
       <span>10,957 字</span>
       <span>14 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/19 19:34</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -9595,7 +9595,7 @@ src/lib/reasoning/tool-summary.ts      步骤摘要</code></pre><h2 id="doc-查�
   <div class="search-hint">输入关键词，结果会定位到章节。支持 Ctrl/⌘ + K。</div>
   <div class="search-results" id="search-results"></div>
 </dialog>
-<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/15 23:56","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3398,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5000,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":6195,"updatedAt":"2026/10/15 23:41"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5522,"updatedAt":"2026/10/14 17:25"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":10639,"updatedAt":"2026/10/15 23:56"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5890,"updatedAt":"2026/10/14 17:25"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":10138,"updatedAt":"2026/10/15 09:23"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":4440,"updatedAt":"2026/10/14 17:25"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":4521,"updatedAt":"2026/10/13 23:13"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6795,"updatedAt":"2026/10/15 18:59"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5693,"updatedAt":"2026/10/14 17:25"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":5171,"updatedAt":"2026/10/15 22:58"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":5890,"updatedAt":"2026/10/15 18:59"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":4498,"updatedAt":"2026/10/14 17:25"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":8236,"updatedAt":"2026/10/14 17:25"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/14 17:25"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":10957,"updatedAt":"2026/10/14 17:25"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3021,"updatedAt":"2026/10/14 17:25"}]}</script><script>
+<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/19 19:48","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3398,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5000,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":6195,"updatedAt":"2026/10/15 23:41"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5522,"updatedAt":"2026/10/19 19:34"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":10639,"updatedAt":"2026/10/15 23:56"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5890,"updatedAt":"2026/10/14 17:25"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":10138,"updatedAt":"2026/10/19 19:34"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":4440,"updatedAt":"2026/10/14 17:25"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":4521,"updatedAt":"2026/10/13 23:13"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6795,"updatedAt":"2026/10/15 18:59"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5693,"updatedAt":"2026/10/19 19:34"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":5171,"updatedAt":"2026/10/19 19:34"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":5890,"updatedAt":"2026/10/15 18:59"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":4503,"updatedAt":"2026/10/19 19:45"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":8236,"updatedAt":"2026/10/19 19:34"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/14 17:25"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":10957,"updatedAt":"2026/10/19 19:34"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3021,"updatedAt":"2026/10/14 17:25"}]}</script><script>
 (() => {
   "use strict";
   const manifest = JSON.parse(document.getElementById("manual-manifest").textContent);

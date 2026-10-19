@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { parseFrontMatter } from "@/lib/framework/markdown";
+import { parseFrontMatter } from "@/lib/shared/common/markdown";
 
 /**
  * 本体构建技能：**平台里带着的一套建模方法**（Markdown），不是代码。

@@ -7,7 +7,7 @@ import {
   type DataSourceRecord,
   type PublicDataSource,
 } from "@/lib/datasource/types";
-import { decryptSecret } from "@/lib/framework/crypto";
+import { decryptSecret } from "@/lib/shared/server/crypto";
 import { platformRepo, DataSourceEntity } from "@/lib/platform/db";
 
 /** 实体 -> 领域记录：字段名按数据资源自己的口径（snake_case）。 */

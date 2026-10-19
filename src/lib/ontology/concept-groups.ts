@@ -1,6 +1,6 @@
 import type { ConceptGroup } from "@/lib/ontology";
 // 别名导入：下面 resolveGroup 的参数也叫 newId（调用方可以注入自己的生成器），不能撞名。
-import { newId as createId } from "@/lib/framework/ids";
+import { newId as createId } from "@/lib/shared/common/ids";
 
 /**
  * 概念分组（业务域）的展示逻辑：取色、算成员、按组排布。

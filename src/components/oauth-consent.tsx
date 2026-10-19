@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { GitBranch, ShieldCheck } from "lucide-react";
-import { api } from "@/lib/framework/api-client";
+import { api } from "@/lib/shared/client/api-client";
 import { Login } from "@/components/workbench/login-screen";
 import { type User } from "@/components/workbench/shared";
 import "./oauth-consent.css";

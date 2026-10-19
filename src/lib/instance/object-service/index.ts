@@ -1,13 +1,13 @@
-import { getObjectIndex } from "@/lib/framework/object-index";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE, MIN_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
-import type { ObjectIndexEntry } from "@/lib/framework/object-index/types";
+import type { ObjectIndexEntry } from "@/lib/infrastructure/object-index/types";
 import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
 import { connectorFor, createDataSourceObjectSource, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
 import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
 import type { MaterializeCursor, ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
-import type { ObjectIndexLink } from "@/lib/framework/object-index/types";
+import type { ObjectIndexLink } from "@/lib/infrastructure/object-index/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
 

@@ -1,4 +1,4 @@
-import { authHeaders } from "@/lib/framework/session-token";
+import { authHeaders } from "@/lib/shared/client/session-token";
 
 /**
  * 复制到剪贴板。

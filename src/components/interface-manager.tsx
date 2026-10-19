@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Check, Link2, Plus, Save, ShieldAlert, Trash2, X, Zap } from "lucide-react";
-import { newId } from "@/lib/framework/ids";
+import { newId } from "@/lib/shared/common/ids";
 import {
   checkImplementations,
   effectiveInterfaceLinkConstraints,

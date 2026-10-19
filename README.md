@@ -109,7 +109,7 @@
 | **本体模型**（对象类型 / 关系类型 / 接口 / 指标 / 分组的定义，以及草稿→校验→发布→激活） | `src/lib/ontology/` · `src/lib/versioning/` | `/api/ontology/*` |
 | **本体实例**（对象 / 关系 / 实例图谱） | `src/lib/instance/` | `/api/instances/*` · `/api/objects/*` |
 | **数据资源**（外部业务库的只读连接与结构） | `src/lib/datasource/` | `/api/data-sources/*` |
-| **图引擎配置**（内置图 / Jena 连接） | `src/lib/platform/targets.ts` · `src/lib/framework/graph/` | `/api/targets/*` |
+| **图引擎配置**（内置图 / Jena 连接） | `src/lib/platform/targets.ts` · `src/lib/infrastructure/graph/` | `/api/targets/*` |
 | **能力验证**（智能问答 / MCP） | `src/lib/reasoning/` · `src/lib/mcp/` | `/api/reasoning/*` · `/api/mcp` |
 | **本体技能**（建模技能与整包下载） | `src/lib/skills/` · `skills/` | `/api/skills/*` |
 | **平台**（账号 / 角色 / 权限 / 审计） | `src/lib/platform/` | `/api/users` · `/api/roles` · `/api/audit` |
@@ -395,7 +395,7 @@ flowchart TB
     SNAP["versioning/snapshot.ts<br/>版本 · 定义 · 实例快照 · 内容哈希"]
     PUB["versioning/published-ontology.ts<br/>只取 status = PUBLISHED，工具侧读定义的唯一入口"]
     SRCT["platform/targets · datasource/sources<br/>图引擎连接 · 数据资源登记 · 结构缓存 / 列画像"]
-    GRAPHS["framework/graph · instance/object-service<br/>图库读写（Jena / 内置图）· 对象索引与回源取数"]
+    GRAPHS["infrastructure/graph · instance/object-service<br/>图库读写（Jena / 内置图）· 对象索引与回源取数"]
     PURE["ontology/*（纯函数）<br/>接口约束 · 关系键 · 数量关系 · 指标口径"]
   end
 
@@ -665,7 +665,7 @@ flowchart TB
 
 ## 图存储抽象
 
-`src/lib/framework/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
+`src/lib/infrastructure/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
 
 | 文件 | 职责 |
 | --- | --- |
@@ -802,7 +802,7 @@ flowchart TB
     MS["mcp/ · skills/：协议与令牌 · 技能与打包"]
     PLAT["platform/：auth · users · permissions · audit · ontologies · targets"]
     DBM["platform/db/：连接 · 实体 · 迁移"]
-    FW["framework/：graph（jena / embedded）· crypto · zip · ids · format-units"]
+    INFRA["infrastructure/：graph（jena / embedded）· object-index（clickhouse）<br/>shared/：common · client · server 通用件"]
   end
 
   subgraph L_STORE["存储"]
@@ -826,8 +826,8 @@ flowchart TB
   DS --> BIZ
   PLAT --> DBM
   DBM --> PG
-  FW --> GRAPH
-  FW --> PG
+  INFRA --> GRAPH
+  INFRA --> PG
   REA --> MS
 ```
 
@@ -839,15 +839,17 @@ ontology_management/
 │   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
 │   ├── components/       # 界面组件；workbench/ 下按页面一个文件（本体建模 / 图谱 / 对象 / 关系 / 设置 …）
 │   └── lib/              # 领域与平台代码（根目录只有目录，没有散文件）
-│       ├── framework/    # 通用件：graph/（图存储抽象 + jena/embedded）· object-index/（对象索引中间层 + clickhouse 适配器）· crypto · zip · ids · format-units …
-
+│       ├── infrastructure/ # 外部技术适配：graph/（GraphStore + jena/embedded）· object-index/（ObjectIndex + clickhouse）
+│       ├── shared/       # 无业务依赖的通用件：common/ · client/ · server/
 │       ├── platform/     # 平台自身：auth · users · permissions · audit · ontologies · targets · platform-db · db/（实体与迁移）
 │       ├── ontology/     # 本体模型：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检 · bkn 导入 · 关系键与数量关系
 │       ├── versioning/   # 版本：快照（定义 + 实例）· 发布 · 已发布定义
 │       ├── instance/     # 本体实例：对象服务 · 对象索引 · 动作引擎
 │       ├── datasource/   # 数据资源：连接器 · DDL · 只读 SQL 与护栏 · 列画像 · 来源绑定
+│       ├── query-dsl/    # 查询语义：SQL 表层解析 · 绑定 · 编译 · 对象索引执行
 │       ├── reasoning/    # 智能问答：工具循环 · tools/（工具实现）· 提示词 · 历史 · MCP 服务端
 │       ├── mcp/          # MCP 对外契约：协议版本 · 工具 schema · 访问令牌
+│       ├── oauth/        # OAuth 2.1：授权码 + PKCE · 客户端 · 刷新令牌
 │       └── skills/       # 本体技能清单与打包
 ├── skills/               # 随平台下发的建模技能（Markdown + 出包脚本）
 ├── docs/                 # 设计文档与架构决策记录

@@ -4,7 +4,7 @@ import { type DataSourceRecord } from "@/lib/datasource/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology/sources";
 import { keyMappingLabel, keyMappingRows, type KeyMapping } from "@/lib/ontology/relationship-keys";
 import { sourceTableBinding, type SourceTableBinding } from "@/lib/datasource/column-profile";
-import { type EntityRecord } from "@/lib/framework/graph/types";
+import { type EntityRecord } from "@/lib/infrastructure/graph/types";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { type ObjectContext, type ObjectRecord } from "@/lib/instance/object-service/types";
 

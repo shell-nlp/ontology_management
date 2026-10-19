@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Boxes, Clock3, Database, Download, FileJson, Layers, Pencil, Plus, Search, Tag, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { bindingKey, type PendingSource } from "@/lib/datasource/source-binding";
-import { api } from "@/lib/framework/api-client";
-import { downloadResponse } from "@/lib/framework/clipboard";
-import { graphColor } from "@/lib/framework/graph-palette";
-import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/framework/graph/types";
+import { api } from "@/lib/shared/client/api-client";
+import { downloadResponse } from "@/lib/shared/client/clipboard";
+import { graphColor } from "@/lib/shared/common/graph-palette";
+import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
 /** 存储资源选项：只用到这几项，调用方传完整的 Target 也能满足。 */
 type StorageOption = { id: string; name: string; kind: string; kindLabel: string };
 import "./ontology-studio.css";

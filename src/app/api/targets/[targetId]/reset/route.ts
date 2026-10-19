@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/framework/graph/types";
+import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/infrastructure/graph/types";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { deleteTargetVersions } from "@/lib/versioning/snapshot";

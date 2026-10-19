@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorMessage, apiErrorStatus } from "@/lib/platform/auth";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
-import { publicOrigin } from "@/lib/framework/public-origin";
+import { publicOrigin } from "@/lib/shared/server/public-origin";
 import { listSkills } from "@/lib/skills/index";
 import { SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
 import { withPermission } from "@/lib/platform/route-guard";

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { encryptSecret } from "@/lib/framework/crypto";
+import { encryptSecret } from "@/lib/shared/server/crypto";
 import { GraphTargetEntity, jsonValue, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
-import { graphTargetKindInfo, type GraphTarget } from "@/lib/framework/graph/types";
+import { graphTargetKindInfo, type GraphTarget } from "@/lib/infrastructure/graph/types";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const targetInput = z.object({

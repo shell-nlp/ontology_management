@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isUnauthorized } from "@/lib/platform/auth";
-import { decryptSecret, encryptSecret } from "@/lib/framework/crypto";
-import { getGraphStore } from "@/lib/framework/graph";
-import type { GraphTarget, GraphTargetKind } from "@/lib/framework/graph/types";
+import { decryptSecret, encryptSecret } from "@/lib/shared/server/crypto";
+import { getGraphStore } from "@/lib/infrastructure/graph";
+import type { GraphTarget, GraphTargetKind } from "@/lib/infrastructure/graph/types";
 import { describeTargetError, getTarget, parseTargetOptions } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
 

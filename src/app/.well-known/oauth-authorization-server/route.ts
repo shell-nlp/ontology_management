@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { publicOrigin } from "@/lib/framework/public-origin";
+import { publicOrigin } from "@/lib/shared/server/public-origin";
 import { authorizationServerMetadata } from "@/lib/oauth/metadata";
 
 /**

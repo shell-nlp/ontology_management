@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { resolveQueryDsl } from "@/lib/query-dsl/resolve";
 import { toQueryDsl } from "@/lib/query-dsl/sql-surface";
-import { compileLogicalQueryForClickHouse } from "@/lib/framework/object-index/clickhouse/query-dsl";
+import { compileLogicalQueryForClickHouse } from "@/lib/infrastructure/object-index/clickhouse/query-dsl";
 
 const 专线类 = "22222222-2222-4222-8222-222222222222";
 const 地市类 = "33333333-3333-4333-8333-333333333333";

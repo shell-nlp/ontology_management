@@ -1,6 +1,6 @@
 import { z } from "zod";
 // 别名导入：下面 planBundleImport 的参数也叫 newId（调用方可注入生成器），不能撞名。
-import { newId as createId } from "@/lib/framework/ids";
+import { newId as createId } from "@/lib/shared/common/ids";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 
 /**

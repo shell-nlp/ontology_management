@@ -2,9 +2,9 @@ import Graph from "graphology";
 import { QueryEngine } from "@comunica/query-sparql";
 import { DataFactory, Parser, Store } from "n3";
 import { EmbeddedGraphEntity, ensurePlatformSchema, jsonValue, platformRepo } from "@/lib/platform/db";
-import { valueFromSparqlLiteral } from "@/lib/framework/graph/schema-inference";
-import { bindSparqlParameters, containsWriteSparql, graphFromTriples, snapshotStatements, sparqlQueryForm } from "@/lib/framework/graph/jena";
-import { graphTargetKindInfo, type GraphData, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type QueryResult, type RelationshipRecord, type RuntimeTypeSet } from "@/lib/framework/graph/types";
+import { valueFromSparqlLiteral } from "@/lib/infrastructure/graph/schema-inference";
+import { bindSparqlParameters, containsWriteSparql, graphFromTriples, snapshotStatements, sparqlQueryForm } from "@/lib/infrastructure/graph/jena";
+import { graphTargetKindInfo, type GraphData, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type QueryResult, type RelationshipRecord, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 
 const NODE_PREFIX = "urn:bkn:node:";
 const EMPTY: GraphWriteSnapshot = { definition: { entityTypes: [], relationshipTypes: [], interfaces: [] }, nodes: [], relationships: [] };

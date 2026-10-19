@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
-import { getObjectIndex } from "@/lib/framework/object-index";
+import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { objectKeyOf } from "@/lib/instance/object-identity";
 import { resolveObjectContext, syncObjectsToIndex } from "@/lib/instance/object-service";
 import { writeAuditEntry } from "@/lib/platform/platform-db";

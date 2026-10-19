@@ -1,8 +1,8 @@
 import { RDF, RDF_TYPE, BKN_RELATIONSHIP, STRUCTURAL_PREDICATES, SparqlTerm } from "./vocabulary";
 import { nodeIdFromTerm, localName, termValue, termIsResource, nodeLabelFromTerm } from "./protocol";
 import { pushProperty } from "./replace";
-import { dataTypeFromSparqlDatatype, isAutoUniqueCandidate } from "@/lib/framework/graph/schema-inference";
-import { type EntityRecord, type GraphNode, type GraphRelationship, type RuntimeProperty } from "@/lib/framework/graph/types";
+import { dataTypeFromSparqlDatatype, isAutoUniqueCandidate } from "@/lib/infrastructure/graph/schema-inference";
+import { type EntityRecord, type GraphNode, type GraphRelationship, type RuntimeProperty } from "@/lib/infrastructure/graph/types";
 
 export function buildRuntimeProperties(rows: { name: string; key: string; count: number; distinctCount: number; maxLength: number; datatype: string | null }[]) {
   const result = new Map<string, RuntimeProperty[]>();
