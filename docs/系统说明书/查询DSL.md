@@ -100,6 +100,8 @@ SQL 编译器
 - 任意一处没物化、只物化了一部分或清单已清掉 → 沿用原来的业务库 SQL 执行链；
 - 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse 对象索引` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把“到底查了哪边”藏起来。
 
+`query-dsl` 本身不 import ClickHouse：它只定义 `MaterializedQueryExecutor` 端口，具体适配器由对象索引层实现、由工具入口注入。因此增加另一个对象索引后端时，不需要修改 DSL 的解析、校验或编译逻辑。
+
 `run_query` 工具**只收本体 SQL**（`sql` + `parameters`）：一个工具只留一种表层，模型才不用在两套语法之间挑。
 JSON DSL 仍在代码里（`executeQueryDsl`，程序化构造与影子对拍用），只是不出现在工具入参上。
 

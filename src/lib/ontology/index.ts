@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LEGACY_PRIMARY_SOURCE_ID } from "@/lib/ontology/sources";
+import { MODEL_DATA_TYPES } from "@/lib/shared/common/model-data-type";
 import { entityDictionarySchema, dictionaryIssues } from "./dictionaries";
 
 /**
@@ -13,7 +14,7 @@ import { entityDictionarySchema, dictionaryIssues } from "./dictionaries";
  * 一个动作可以跨多个类写入，规则挂在动作上拦截写入。
  * 具体执行语义见 @/lib/action-engine。
  */
-export const propertyDataTypeSchema = z.enum(["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"]);
+export const propertyDataTypeSchema = z.enum(MODEL_DATA_TYPES);
 
 const propertySchema = z.object({
   /** 机器名：写入图库、接口与数据列映射都用它，改它会牵动多处，所以单独放。 */

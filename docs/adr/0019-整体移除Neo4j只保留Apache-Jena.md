@@ -49,6 +49,6 @@
 0017 的抽象层结论仍然成立，且正是这次移除能干净落地的前提：适配器契约（`GraphStore`）、
 连接表单元数据（`GRAPH_TARGET_KINDS`）、发布流程的原子替换契约都没有因为移除而改动，
 只是"两个实现"变成"一个实现"。将来接入别的后端（NetworkX、Elasticsearch 等）仍然是在
-`GRAPH_TARGET_KINDS` 登记 + 写一个适配器 + 在 `getGraphStore` 注册三步。
+`GRAPH_TARGET_KINDS` 登记 + 写一个适配器 + 在 `createGraphStore` 注册三步，平台组合入口负责注入该后端所需的仓储或连接。
 
 0017 里描述 Neo4j 的段落（适配器实现、Cypher 工作台、`neo4j-instance.ps1`）以本文为准。

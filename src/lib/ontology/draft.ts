@@ -1,12 +1,13 @@
 import type { ConceptGroup as ConceptGroupDefinition, EntitySource as EntitySourceDefinition, InterfaceType as InterfaceTypeDefinition, OntologyDefinition } from "@/lib/ontology";
 import type { LegacyEntitySource } from "@/lib/ontology/sources";
 import type { KeyMapping } from "@/lib/ontology/relationship-keys";
+import { MODEL_DATA_TYPES, type DataType } from "@/lib/shared/common/model-data-type";
 
 /**
  * 草稿定义在前端的形态：与 `@/lib/ontology` 的 zod 结果结构一致，
  * 但 `displayProperty` 允许缺省——新建类型时前端先不写这一项。
  */
-export type PropertyDataType = OntologyDefinition["entityTypes"][number]["properties"][number]["dataType"];
+export type PropertyDataType = DataType;
 /** 属性的界面形态：`name` 是机器名，`displayName` / `description` 是给人看的（导入外部本体时会带上原文）。 */
 export type Property = { name: string; displayName?: string; description?: string; dataType: PropertyDataType; required: boolean; primaryKey: boolean; indexed: boolean; /** 取值枚举（码值 + 含义）：把「1=全球通」这种口径搬到定义层，见 @/lib/ontology 的 propertySchema。 */ enumValues?: { value: string; label: string }[]; sourceField?: string; sourceId?: string };
 
@@ -77,7 +78,7 @@ export type Metric = OntologyDefinition["metrics"][number];
 export type InterfaceLinkConstraint = InterfaceTypeDefinition["linkConstraints"][number];
 export type Definition = { groups: ConceptGroup[]; interfaces: InterfaceType[]; metrics: Metric[]; entityTypes: EntityType[]; relationshipTypes: RelationType[]; actionTypes: ActionType[]; rules: OntologyRule[] };
 
-export const propertyTypeOptions: PropertyDataType[] = ["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"];
+export const propertyTypeOptions: PropertyDataType[] = [...MODEL_DATA_TYPES];
 
 /** 规则条件的可选操作符，界面按这个顺序展示。 */
 export const ruleOperatorOptions: { value: RuleOperator; label: string }[] = [

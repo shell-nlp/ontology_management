@@ -14,6 +14,7 @@ import { queryObjects } from "@/lib/instance/object-service";
 import { columnValuesHint, executeOntologySql, QueryDslError, type QueryDslValueLookup } from "@/lib/query-dsl";
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
+import { getMaterializedQueryExecutor } from "@/lib/infrastructure/object-index";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
 
 export function describeBriefly(text: string, limit = 80) {
@@ -895,7 +896,11 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       /*
        * 错误里的"怎么修"（hint）与"这一列有哪些值"（lookup）统一在这里接上再往外抛。
        */
-      const result = await executeOntologySql(definition, sql, { parameters, targetId: context.store.target.id })
+      const result = await executeOntologySql(definition, sql, {
+        parameters,
+        targetId: context.store.target.id,
+        materializedQuery: getMaterializedQueryExecutor(),
+      })
         .catch(async (error: unknown) => { throw await enrichQueryError(error, definition); });
       return {
         payload: result,

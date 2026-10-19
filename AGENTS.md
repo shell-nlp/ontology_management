@@ -529,7 +529,9 @@
 - **每个外部存储 / 中间件都先有契约层**：对象索引、图存储、关系库、搜索、向量、缓存……一律如此。业务代码只 import **契约 + 注册表**，**禁止 import 具体实现的内部文件**（例如 infrastructure/object-index/clickhouse/client）。
 - **换存储 = 新增一个适配器目录 + 在注册表登记一行**；域代码、API、界面、AI 工具、MCP 一行都不改。已经按这条落地过一次：对象索引从 PostgreSQL 换到 ClickHouse，只动了适配器目录与注册表那一行。
 - **契约里的名词必须与后端无关**：契约里不许出现 SQL、表名、驱动名、参数格式、索引类型 —— 这些只允许出现在适配器目录里。一句话：**不是“抽象掉数据库”，而是“只让一个地方知道数据库长什么样”**。
-- **参照实现**：`src/lib/infrastructure/graph/`（契约 + 注册表 + `jena/` + `embedded/`）与 `src/lib/infrastructure/object-index/`（契约 + 注册表 + `clickhouse/`）。领域侧只留映射逻辑（如 `src/lib/instance/object-index/entries.ts`：快照节点 → 索引条目）。
+- **参照实现**：`src/lib/infrastructure/graph/`（契约 + `jena/` + `embedded/`）与 `src/lib/infrastructure/object-index/`（契约 + `clickhouse/`）。领域侧只留映射逻辑（如 `src/lib/instance/object-index/entries.ts`：快照节点 → 索引条目）。
+- **适配器不反向依赖上层**：图适配器不认识平台数据库，内置图通过 `EmbeddedGraphRepository` 注入持久化；查询层不认识 ClickHouse，完整物化查询通过 `MaterializedQueryExecutor` 注入。组合发生在 `platform/graph-store.ts` 与 reasoning 工具入口。
+- **公共数据类型只有一份**：`DataType` 的唯一来源是 `src/lib/shared/common/model-data-type.ts`；不要在图适配器、属性编辑器或本体 schema 各写一份联合类型。
 - **验收口径**：新后端必须跑通共享契约用例（`tests/lib/object-index/contract.ts`，跑法见 `tests/lib/object-index/clickhouse.contract.test.ts`，需要真服务、默认跳过）；能力对不上的地方要在 `capabilities()` 里如实上报，**不许静默降级**。
 - 这条与「领域目录不许碰持久化」是同一条线：域层只依赖基础设施层的契约，持久化与副作用留在适配器 / `platform` 层。
 
@@ -580,6 +582,7 @@
 - 源码放 `src/`，测试统一放 `tests/`，按源码相同的子路径组织（例如 `src/lib/infrastructure/graph/embedded/index.ts`
   对应 `tests/lib/graph/embedded.test.ts`）。`vitest.config.mts` 只收集 `tests/**/*.test.ts`，
   **不要再在源码目录新增测试文件**。
+- `tests/lib/architecture.test.ts` 固定 `src/lib` 的依赖方向：`shared` 不依赖业务模块、`query-dsl` 不依赖具体索引实现、`infrastructure` 不反向依赖 `instance` / `platform`。新增模块或调整目录后必须跑它。
 - 本体存储各实现用自己的目录：`src/lib/infrastructure/graph/jena/`、`src/lib/infrastructure/graph/embedded/`；
   `graph/` 根目录只放公共接口、注册表与跨实现共享模块。新增多文件后端也按此结构隔离，
   不把不同后端的实现平铺在 `graph/` 根目录。
@@ -1744,8 +1747,8 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 1. **新代码先问「它跟本体业务有关吗」**：无关的纯工具 → `shared/`；具体外部系统适配 → `infrastructure/`；
    是平台自己的账号/权限/审计/平台库 → `platform/`；是本体业务 → 对应的业务模块目录。
    **不要再往 `src/lib/` 根下加文件**（根下只剩目录）。
-2. **外部一律 import 目录**（`@/lib/ontology`、`@/lib/reasoning/tools`），目录里用 `index.ts` 做 barrel（`export * from "./xxx"`）。
-   换文件位置只改 barrel，不动调用方。
+2. **纯类型和浏览器安全模块允许深层 import**（例如 `@/lib/infrastructure/graph/types`）；服务端运行时优先从模块公开入口引用。
+   **禁止跨模块 import 具体后端内部文件**（`clickhouse/client`、`jena/store` 等）。不要为了“统一”给所有目录加 barrel —— 有些 barrel 会把 Node.js 或数据库驱动带进客户端包。
 
 ## 领域目录不许碰持久化（2026-10-10）
 

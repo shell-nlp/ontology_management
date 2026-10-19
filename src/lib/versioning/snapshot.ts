@@ -4,7 +4,7 @@ import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { z } from "zod";
-import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/infrastructure/graph";
+import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/platform/graph-store";
 import { withAdvisoryLock } from "@/lib/platform/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { validateEntitySources } from "@/lib/ontology/sources";

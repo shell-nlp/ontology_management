@@ -1,5 +1,5 @@
 import { listDataSources } from "@/lib/datasource/sources";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
 import { getOntology, listOntologies } from "@/lib/platform/ontologies";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";

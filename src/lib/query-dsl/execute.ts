@@ -6,8 +6,10 @@ import { parseQueryDsl } from "./schema";
 import type { QueryDsl } from "./schema";
 import { compileQuerySql } from "./compile/sql";
 import { QueryDslError } from "./errors";
-import { tryExecuteMaterializedQuery } from "./materialized";
+import type { MaterializedQueryExecutor, QueryDslExecutionResult } from "./contract";
 import { toQueryDsl } from "./sql-surface";
+
+export type { QueryDslExecutionResult } from "./contract";
 
 export type QueryDslExecutionDeps = {
   /** 当前本体存储；有它才会判断“完整物化优先”。 */
@@ -16,21 +18,11 @@ export type QueryDslExecutionDeps = {
   openConnector?: (record: DataSourceRecord) => Promise<DataSourceConnector>;
   /** 只在定义里有没绑资源的来源时才会被调（见 bindings.ts）。 */
   listDataSources?: () => Promise<readonly DataSourceRecord[]>;
-};
-
-export type QueryDslExecutionResult = {
-  data_source: string;
-  /** 源库类型，或对象索引的 ClickHouse。 */
-  data_source_kind: DataSourceRecord["kind"] | "CLICKHOUSE";
-  columns: string[];
-  rows: unknown[][];
-  returned: number;
-  row_limit: number;
-  truncated: boolean;
-  elapsed_ms: number;
-  warnings: string[];
-  /** 真正发到源库的语句：本体 SQL 的"我写的那句"和"实际执行的这句"是两回事，排障要能对上。 */
-  statement: string;
+  /**
+   * 可选的对象索引执行器。传入且相关类型都已完整物化时优先走索引；否则回源业务库。
+   * 这里是依赖注入点，查询层不 import 任何具体后端。
+   */
+  materializedQuery?: MaterializedQueryExecutor;
 };
 
 async function defaultDataSource(sourceId: string): Promise<DataSourceRecord | null> {
@@ -83,7 +75,9 @@ async function runQuery(
    */
   const bound = await withInferredDataSources(definition, deps.listDataSources ?? defaultListDataSources);
   const plan = resolveQueryDsl(bound.definition, query);
-  const materialized = await tryExecuteMaterializedQuery(plan, deps.targetId);
+  const materialized = deps.targetId && deps.materializedQuery
+    ? await deps.materializedQuery.executeLogicalQuery(plan, deps.targetId)
+    : null;
   if (materialized) return materialized;
   const record = await (deps.getDataSource ?? defaultDataSource)(plan.root.dataSourceId);
   if (!record) {

@@ -1,4 +1,4 @@
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";

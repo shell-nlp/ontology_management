@@ -21,7 +21,7 @@
 - `types.ts` 定义公共契约：`GraphTargetKind`、`GraphTarget`、`GraphData`、`QueryResult`、
   `RuntimeTypeSet`、`GraphStore`，以及各后端的连接表单元数据 `GRAPH_TARGET_KINDS`。
 - 每个后端一个适配器实现 `GraphStore`：`neo4j.ts`（Cypher）与 `jena.ts`（SPARQL 1.1）。
-- `index.ts` 的 `getGraphStore(target)` 按 `target.kind` 分派。
+- `index.ts` 的 `createGraphStore(target, embeddedRepository)` 按 `target.kind` 分派；平台组合入口 `@/lib/platform/graph-store` 提供 `getGraphStore(target)`。
 
 上层（API 路由、`version-snapshot`、`version-publication`、React 组件）只调用 `GraphStore` 的
 语义化方法，不再出现 Cypher 字符串，也不知道底层是属性图还是 RDF。
@@ -89,7 +89,7 @@ Jena 的落地方式经过实测后确定（Fuseki 5.1 / TDB2）：
 ## 影响
 
 - 接入新后端只需：登记 `GraphTargetKind`、补 `GRAPH_TARGET_KINDS` 元数据、新增适配器并在
-  `getGraphStore` 注册；API 与界面无需改动。
+  `createGraphStore` 注册，并在平台组合入口提供 `getGraphStore`；API 与界面无需改动。
 - 前端「本体存储」按数据库类型分组，连接表单字段由 `GRAPH_TARGET_KINDS` 驱动。
 - 查询工作台按本体存储后端切换 Cypher / SPARQL，写入仍然一律禁止，必须走草稿快照 + 发布。
 - 本体存储记录写入 PostgreSQL 时统一使用 `graph_targets`，`kind` 列带 `CHECK` 约束。

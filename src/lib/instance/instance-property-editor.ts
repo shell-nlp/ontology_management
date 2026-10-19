@@ -1,4 +1,6 @@
-export type DataType = "TEXT" | "INTEGER" | "DECIMAL" | "BOOLEAN" | "DATE" | "DATETIME" | "TEXT_ARRAY" | "JSON";
+import type { DataType } from "@/lib/shared/common/model-data-type";
+
+export type { DataType } from "@/lib/shared/common/model-data-type";
 
 export type PropertyDefinition = {
   name: string;

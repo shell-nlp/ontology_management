@@ -1,7 +1,7 @@
 import Graph from "graphology";
 import { QueryEngine } from "@comunica/query-sparql";
 import { DataFactory, Parser, Store } from "n3";
-import { EmbeddedGraphEntity, ensurePlatformSchema, jsonValue, platformRepo } from "@/lib/platform/db";
+import type { EmbeddedGraphRepository } from "@/lib/infrastructure/graph/embedded/repository";
 import { valueFromSparqlLiteral } from "@/lib/infrastructure/graph/schema-inference";
 import { bindSparqlParameters, containsWriteSparql, graphFromTriples, snapshotStatements, sparqlQueryForm } from "@/lib/infrastructure/graph/jena";
 import { graphTargetKindInfo, type GraphData, type GraphStore, type GraphTarget, type GraphViolation, type GraphWriteSnapshot, type QueryResult, type RelationshipRecord, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
@@ -10,10 +10,8 @@ const NODE_PREFIX = "urn:bkn:node:";
 const EMPTY: GraphWriteSnapshot = { definition: { entityTypes: [], relationshipTypes: [], interfaces: [] }, nodes: [], relationships: [] };
 
 /** PG 是唯一的已发布状态；内存图只在查询期间由当前版本构建，不依赖单个 Node 进程的寿命。 */
-async function activeSnapshot(targetId: string): Promise<GraphWriteSnapshot> {
-  const repo = await platformRepo(EmbeddedGraphEntity);
-  const row = await repo.findOne({ where: { targetId } });
-  return (row?.snapshot as GraphWriteSnapshot | undefined) ?? EMPTY;
+async function activeSnapshot(repository: EmbeddedGraphRepository, targetId: string): Promise<GraphWriteSnapshot> {
+  return (await repository.load(targetId)) ?? EMPTY;
 }
 
 function typeGraph(snapshot: GraphWriteSnapshot) {
@@ -121,29 +119,29 @@ export async function runEmbeddedQuery(snapshot: GraphWriteSnapshot, namedGraph:
       return { keys: [...keys], records, graph: resultGraph(snapshot, triples), summary: text };
 }
 
-export function createEmbeddedStore(target: GraphTarget): GraphStore {
+export function createEmbeddedStore(target: GraphTarget, repository: EmbeddedGraphRepository): GraphStore {
   const namedGraph = typeof target.options.namedGraph === "string" ? target.options.namedGraph : "";
   return {
     kind: "EMBEDDED", target, info: graphTargetKindInfo("EMBEDDED"),
     async testConnection() {
-      await ensurePlatformSchema();
+      await repository.ensureReady();
       return { connected: true, kind: "EMBEDDED", address: "embedded://platform", agent: "内置类型图（PostgreSQL + Graphology + N3.js）", protocolVersion: "SPARQL 1.1", detail: { namedGraph } };
     },
     containsWriteStatement: containsWriteSparql,
     async execute(query, parameters = {}, options = {}) {
       if (options.readOnly && containsWriteSparql(query)) throw new Error("只读模式下不允许执行 SPARQL 更新语句。");
-      return runEmbeddedQuery(await activeSnapshot(target.id), namedGraph, query, parameters);
+      return runEmbeddedQuery(await activeSnapshot(repository, target.id), namedGraph, query, parameters);
     },
     queryTemplate: () => ({ defaultQuery: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", placeholder: "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100", visualizationHint: "以 ?s / ?p / ?o 返回三元组，或用 CONSTRUCT 构造子图。" }),
-    async readSchemaGraph() { return { keys: [], records: [], graph: embeddedSchemaGraph(await activeSnapshot(target.id)), summary: "内置类型图" }; },
+    async readSchemaGraph() { return { keys: [], records: [], graph: embeddedSchemaGraph(await activeSnapshot(repository, target.id)), summary: "内置类型图" }; },
     async readMeta() {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       return { labels: snapshot.definition.entityTypes.map((item) => item.name), relationshipTypes: snapshot.definition.relationshipTypes.map((item) => item.name),
         propertyKeys: [...new Set([...snapshot.definition.entityTypes, ...snapshot.definition.relationshipTypes]
           .flatMap((item) => item.properties.map((property) => property.name)))] };
     },
     async readRuntimeTypes(): Promise<RuntimeTypeSet> {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       const endpoints = new Map(snapshot.definition.entityTypes.map((item) => [item.id, item.name]));
       const relationshipEndpoints: NonNullable<RuntimeTypeSet["relationshipEndpoints"]> = {};
       for (const item of snapshot.definition.relationshipTypes) relationshipEndpoints[item.name] = { source: endpoints.get(item.sourceEntityTypeId ?? "") ?? "", target: endpoints.get(item.targetEntityTypeId ?? "") ?? "" };
@@ -151,42 +149,41 @@ export function createEmbeddedStore(target: GraphTarget): GraphStore {
         relationshipTypes: snapshot.definition.relationshipTypes.map((item) => ({ name: item.name, count: snapshot.relationships.filter((rel) => rel.type === item.name).length, properties: item.properties })),
         entityCount: snapshot.nodes.length, relationshipCount: snapshot.relationships.length, relationshipEndpoints };
     },
-    async readGraph(options = {}) { return instanceGraph(await activeSnapshot(target.id), { labels: options.labels?.length ? options.labels : options.label ? [options.label] : [], relationshipTypes: options.relationshipTypes, search: options.search, limit: options.nodeLimit }); },
+    async readGraph(options = {}) { return instanceGraph(await activeSnapshot(repository, target.id), { labels: options.labels?.length ? options.labels : options.label ? [options.label] : [], relationshipTypes: options.relationshipTypes, search: options.search, limit: options.nodeLimit }); },
     async readNeighborhood(id, limit) {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       const relations = snapshot.relationships.filter((rel) => rel.sourceId === id || rel.targetId === id).slice(0, limit);
       const ids = new Set([id, ...relations.flatMap((rel) => [rel.sourceId, rel.targetId])]);
       return { nodes: snapshot.nodes.filter((node) => ids.has(node.id)), relationships: relations.map((rel) => ({ id: rel.id, type: rel.type, source: rel.sourceId, target: rel.targetId, properties: rel.properties })) };
     },
     async listEntities(options = {}) {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       const labels = options.labels?.length ? options.labels : options.label ? [options.label] : [];
       const text = options.search?.toLocaleLowerCase();
       return snapshot.nodes.filter((node) => (!labels.length || node.labels.some((label) => labels.includes(label))) && (!text || JSON.stringify(node.properties).toLocaleLowerCase().includes(text))).slice(0, options.limit ?? 200);
     },
-    async readEntity(id) { return (await activeSnapshot(target.id)).nodes.find((node) => node.id === id) ?? null; },
+    async readEntity(id) { return (await activeSnapshot(repository, target.id)).nodes.find((node) => node.id === id) ?? null; },
     async searchEntities(options) {
       const text = options.search.toLocaleLowerCase();
       const nodes = await this.listEntities({ labels: options.labels, search: text, limit: options.limit });
       return nodes.map((node) => ({ ...node, rank: 1, matched: Object.keys(node.properties).filter((key) => String(node.properties[key]).toLocaleLowerCase().includes(text)) }));
     },
     async listRelationships(options = {}) {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       const text = options.search?.toLocaleLowerCase();
       return snapshot.relationships.filter((rel) => (!options.type || rel.type === options.type) && (!text || JSON.stringify([rel.type, rel.properties]).toLocaleLowerCase().includes(text))).slice(0, options.limit ?? 200).map((rel) => relationshipRecord(snapshot, rel));
     },
     async exportGraph() {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       return { nodes: snapshot.nodes.map((node) => ({ ...node })), relationships: snapshot.relationships.map((rel) => ({ ...rel })) };
     },
     async replaceGraph(snapshot) {
-      // 单行 upsert 是数据库层面的原子操作；查询只见到旧图或新图，不见半成品。
-      const repo = await platformRepo(EmbeddedGraphEntity);
-      await repo.upsert({ targetId: target.id, snapshot: jsonValue(snapshot), updatedAt: new Date() }, ["targetId"]);
+      // 单行替换由仓储保证原子性；查询只见到旧图或新图，不见半成品。
+      await repository.replace(target.id, snapshot);
     },
-    async clearGraph() { const repo = await platformRepo(EmbeddedGraphEntity); await repo.delete({ targetId: target.id }); },
+    async clearGraph() { await repository.clear(target.id); },
     async validateDefinition(definition): Promise<GraphViolation[]> {
-      const snapshot = await activeSnapshot(target.id);
+      const snapshot = await activeSnapshot(repository, target.id);
       const violations: GraphViolation[] = [];
       for (const item of definition.entityTypes) for (const property of item.properties.filter((prop) => prop.required)) {
         const count = snapshot.nodes.filter((node) => node.labels.includes(item.name) && (node.properties[property.name] === undefined || node.properties[property.name] === null)).length;

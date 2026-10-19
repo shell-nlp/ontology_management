@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { entitySources } from "@/lib/ontology/sources";
-import { compileQuerySql, executeQueryDsl, parseQueryDsl, resolveQueryDsl } from "@/lib/query-dsl";
+import { compileQuerySql, executeQueryDsl, executeOntologySql, parseQueryDsl, resolveQueryDsl } from "@/lib/query-dsl";
 
 const 专线类 = "22222222-2222-4222-8222-222222222222";
 const 数据资源 = "99999999-9999-4999-8999-999999999999";
@@ -236,6 +236,32 @@ describe("compileQuerySql aggregate", () => {
   });
 });
 describe("executeQueryDsl", () => {
+  it("完整物化执行器由调用方注入，查询层不依赖具体索引后端", async () => {
+    const executeLogicalQuery = vi.fn(async () => ({
+      data_source: "测试对象索引",
+      data_source_kind: "CLICKHOUSE" as const,
+      columns: ["条数"],
+      rows: [[7]],
+      returned: 1,
+      row_limit: 100,
+      truncated: false,
+      elapsed_ms: 3,
+      warnings: ["走索引"],
+      statement: "SELECT 7",
+    }));
+    const result = await executeOntologySql(定义(), "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
+      targetId: 数据资源,
+      materializedQuery: { executeLogicalQuery },
+      getDataSource: async () => {
+        throw new Error("完整物化时不应回源");
+      },
+    });
+
+    expect(executeLogicalQuery).toHaveBeenCalledOnce();
+    expect(result.data_source).toBe("测试对象索引");
+    expect(result.rows).toEqual([[7]]);
+  });
+
   it("通过连接器只读执行参数化 SQL，并返回列序稳定的结果", async () => {
     const calls: { sql: string; options?: { limit?: number; parameters?: Record<string, unknown> } }[] = [];
     const result = await executeQueryDsl(定义(), {

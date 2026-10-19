@@ -1,5 +1,5 @@
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
-import type { GraphData } from "@/lib/infrastructure/graph";
+import type { GraphData } from "@/lib/infrastructure/graph/types";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
 
 /**

@@ -1,4 +1,4 @@
-import type { DataType } from "@/lib/instance/instance-property-editor";
+import type { DataType } from "@/lib/shared/common/model-data-type";
 
 /**
  * 图数据库抽象层的公共契约。

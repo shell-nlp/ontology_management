@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { writeAuditEntry } from "@/lib/platform/platform-db";

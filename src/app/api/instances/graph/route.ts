@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { ensureVersionSnapshot, graphFromSnapshot } from "@/lib/versioning/snapshot";
 import { resolveObjectContext } from "@/lib/instance/object-service";
 import { readInstanceGraph } from "@/lib/instance/object-service/instance-graph";

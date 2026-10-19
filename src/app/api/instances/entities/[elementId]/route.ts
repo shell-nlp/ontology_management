@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";

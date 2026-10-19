@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { embeddedSchemaGraph, runEmbeddedQuery } from "@/lib/infrastructure/graph/embedded";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import type { GraphWriteSnapshot } from "@/lib/infrastructure/graph/types";
 
 const snapshot: GraphWriteSnapshot = {

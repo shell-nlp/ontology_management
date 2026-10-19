@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { listDataSources } from "@/lib/datasource/sources";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";

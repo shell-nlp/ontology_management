@@ -1,5 +1,7 @@
 import { createClickHouseObjectIndex } from "@/lib/infrastructure/object-index/clickhouse";
+import { createClickHouseMaterializedQueryExecutor } from "@/lib/infrastructure/object-index/clickhouse/logical-query";
 import type { ObjectIndex, ObjectIndexKind } from "@/lib/infrastructure/object-index/types";
+import type { MaterializedQueryExecutor } from "@/lib/query-dsl/contract";
 
 export * from "@/lib/infrastructure/object-index/types";
 
@@ -17,6 +19,9 @@ export * from "@/lib/infrastructure/object-index/types";
  * 现在只有 ClickHouse（列存表 `<库>.object_entries`：ReplacingMergeTree + JSONExtract 过滤）。
  */
 const factories = new Map<ObjectIndexKind, () => ObjectIndex>([["CLICKHOUSE", () => createClickHouseObjectIndex()]]);
+const materializedQueryFactories = new Map<ObjectIndexKind, (index: ObjectIndex) => MaterializedQueryExecutor>([
+  ["CLICKHOUSE", createClickHouseMaterializedQueryExecutor],
+]);
 
 /**
  * 实例缓存挂 `globalThis`：dev 下模块会被反复求值，模块级变量会漏掉上一份实例 ——
@@ -40,4 +45,11 @@ export function getObjectIndex(kind: ObjectIndexKind = "CLICKHOUSE"): ObjectInde
   const created = factory();
   instances.set(kind, created);
   return created;
+}
+
+/** 查询层注入用的物化查询执行器；上层只认 `MaterializedQueryExecutor` 契约。 */
+export function getMaterializedQueryExecutor(kind: ObjectIndexKind = "CLICKHOUSE"): MaterializedQueryExecutor {
+  const factory = materializedQueryFactories.get(kind);
+  if (!factory) throw new Error(`还没有 ${kind} 的物化查询执行器：实现 MaterializedQueryExecutor 后在 factories 里登记。`);
+  return factory(getObjectIndex(kind));
 }

@@ -109,7 +109,7 @@
 | **本体模型**（对象类型 / 关系类型 / 接口 / 指标 / 分组的定义，以及草稿→校验→发布→激活） | `src/lib/ontology/` · `src/lib/versioning/` | `/api/ontology/*` |
 | **本体实例**（对象 / 关系 / 实例图谱） | `src/lib/instance/` | `/api/instances/*` · `/api/objects/*` |
 | **数据资源**（外部业务库的只读连接与结构） | `src/lib/datasource/` | `/api/data-sources/*` |
-| **图引擎配置**（内置图 / Jena 连接） | `src/lib/platform/targets.ts` · `src/lib/infrastructure/graph/` | `/api/targets/*` |
+| **图引擎配置**（内置图 / Jena 连接） | `src/lib/platform/targets.ts` · `src/lib/platform/graph-store.ts` · `src/lib/infrastructure/graph/` | `/api/targets/*` |
 | **能力验证**（智能问答 / MCP） | `src/lib/reasoning/` · `src/lib/mcp/` | `/api/reasoning/*` · `/api/mcp` |
 | **本体技能**（建模技能与整包下载） | `src/lib/skills/` · `skills/` | `/api/skills/*` |
 | **平台**（账号 / 角色 / 权限 / 审计） | `src/lib/platform/` | `/api/users` · `/api/roles` · `/api/audit` |
@@ -665,14 +665,15 @@ flowchart TB
 
 ## 图存储抽象
 
-`src/lib/infrastructure/graph` 是统一的本体存储访问入口，测试统一放在 `tests/`，按相同目录层次组织：
+`src/lib/infrastructure/graph` 是图存储契约与适配器，`src/lib/platform/graph-store` 是平台组合入口。业务代码调用 `getGraphStore(target)`，由平台层注入内置图所需的快照仓储：
 
 | 文件 | 职责 |
 | --- | --- |
 | `types.ts` | `GraphTarget`、`GraphData`、`RuntimeTypeSet`、`GraphStore` 契约与连接元数据 |
-| `index.ts` | `getGraphStore(target)` 注册表，按 `target.kind` 分派 |
+| `index.ts` | `createGraphStore(target, embeddedRepository)` 工厂，按 `target.kind` 分派 |
 | `jena/` | Apache Jena / Fuseki 适配器：`store` / `read` / `replace` / `statements` / `protocol` / `vocabulary` 分文件，SPARQL 1.1、RDF ↔ 属性图映射 |
-| `embedded/` | 内置适配器：平台 PG 持久化，Graphology 类型图与 N3.js / Comunica 只读 SPARQL |
+| `embedded/` | 内置适配器：Graphology 类型图与 N3.js / Comunica 只读 SPARQL；快照通过 `EmbeddedGraphRepository` 注入，不直接依赖平台库 |
+| `src/lib/platform/graph-store.ts` | 平台组合入口：创建 `getGraphStore(target)`，注入 PostgreSQL 快照仓储 |
 
 ### 本体存储配置字段
 
@@ -705,7 +706,7 @@ Jena 的隔离单位是**命名图**，不是「多起一套实例」；内置�
 
 1. 在 `GraphTargetKind` 登记类型，并在 `GRAPH_TARGET_KINDS` 补齐连接表单元数据；
 2. 新增实现 `GraphStore` 的适配器；
-3. 在 `getGraphStore` 中注册。
+3. 在 `createGraphStore` 中注册，并由 `platform/graph-store.ts` 提供该后端需要的仓储或连接实现。
 
 API 路由、版本发布流程与界面组件无需改动。
 

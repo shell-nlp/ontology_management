@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
-import { getGraphStore } from "@/lib/infrastructure/graph";
+import { getGraphStore } from "@/lib/platform/graph-store";
 import { ensureVersionSnapshot, runtimeTypesFromSnapshot } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
