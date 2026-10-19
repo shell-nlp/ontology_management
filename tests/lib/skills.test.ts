@@ -9,7 +9,7 @@ import { planBundleImport, readOntologyBundle } from "@/lib/ontology/bundle";
 import { DUPLICATE_NAME_CODES } from "@/lib/ontology/modeling-review";
 import { isSkillId, listSkills, parseSkillFrontMatter, readSkillFile, readSkillsArchive, resolveSkillFile, SKILL_CATALOG } from "@/lib/skills/index";
 import { callSkillMcpTool, findSkillMcpTool, listSkillPrompts, readSkillPrompt, SKILLS_MCP_SERVER_NAME, SKILL_MCP_TOOLS } from "@/lib/skills/mcp";
-import { validateVersionSnapshot } from "@/lib/versioning/snapshot";
+import { validateVersionSnapshot } from "@/lib/instance/version-validation";
 
 const root = process.cwd();
 

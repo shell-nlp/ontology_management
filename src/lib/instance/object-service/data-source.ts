@@ -1,7 +1,7 @@
 import type { DataSourceRowFilter, DataSourceRows } from "@/lib/datasource/types";
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { ObjectPrimaryKey } from "@/lib/instance/object-identity";
-import { objectIdOf, objectRefOf, primaryKeyColumns, primaryKeyFromProperties, propertyForColumn } from "@/lib/instance/object-identity";
+import type { ObjectPrimaryKey } from "@/lib/ontology/object-identity";
+import { objectIdOf, objectRefOf, primaryKeyColumns, primaryKeyFromProperties, propertyForColumn } from "@/lib/ontology/object-identity";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 import type { ObjectQuery, ObjectRecord, ObjectSource, ObjectSourceQuery, ObjectSourceRead } from "@/lib/instance/object-service/types";
 import { MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";

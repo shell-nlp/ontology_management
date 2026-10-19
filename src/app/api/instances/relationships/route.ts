@@ -4,7 +4,8 @@ import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { createSnapshotRelationship, ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/versioning/snapshot";
+import { createSnapshotRelationship } from "@/lib/instance/snapshot-editing";
+import { ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const relationshipCreateInput = z.object({

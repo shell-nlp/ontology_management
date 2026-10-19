@@ -1,4 +1,4 @@
-import type { DataSourceKind } from "@/lib/datasource/types";
+import type { DataSourceKind } from "@/lib/shared/common/data-source-kind";
 
 /**
  * 表 / 视图名字的两种写法之间的转换。

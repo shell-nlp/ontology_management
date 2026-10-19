@@ -4,7 +4,8 @@ import { apiErrorStatus, apiErrorMessage, isUnauthorized } from "@/lib/platform/
 import { getTarget } from "@/lib/platform/targets";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { deleteSnapshotEntity, ensureVersionSnapshot, entityFromSnapshot, updateSnapshotEntity } from "@/lib/versioning/snapshot";
+import { deleteSnapshotEntity, updateSnapshotEntity } from "@/lib/instance/snapshot-editing";
+import { ensureVersionSnapshot, entityFromSnapshot } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, leadingKeyword, SQL_ROWS_CEILING, stripSqlNoise, takeRows } from "@/lib/datasource/sql-guard";
+import { assertReadOnlySql, beginReadOnlyStatement, boundedStatement, leadingKeyword, SQL_ROWS_CEILING, stripSqlNoise, takeRows } from "@/lib/shared/server/sql-guard";
 
 describe("leadingKeyword", () => {
   it("取语句开头的动词", () => {

@@ -1,6 +1,6 @@
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ObjectIndexEntry } from "@/lib/infrastructure/object-index/types";
-import { fallbackObjectKey, objectKeyOf, primaryKeyFromProperties, type IdentityEntityType, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
+import { fallbackObjectKey, objectKeyOf, primaryKeyFromProperties, type IdentityEntityType, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 
 /** 快照节点进索引时只看这三项，正好是 VersionSnapshot 里节点的形状。 */
 export type IndexableNode = { id: string; labels: string[]; properties: Record<string, unknown> };

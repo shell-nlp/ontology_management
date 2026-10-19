@@ -3,7 +3,8 @@ import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { deleteSnapshotRelationship, ensureVersionSnapshot, updateSnapshotRelationship } from "@/lib/versioning/snapshot";
+import { deleteSnapshotRelationship, updateSnapshotRelationship } from "@/lib/instance/snapshot-editing";
+import { ensureVersionSnapshot } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const relationshipPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });

@@ -1,5 +1,5 @@
-import { quoteIdentifier } from "@/lib/datasource/object-name";
-import type { DataSourceKind, DataViewField } from "@/lib/datasource/types";
+import { quoteIdentifier } from "@/lib/shared/server/sql-object-name";
+import type { DataSourceKind } from "@/lib/shared/common/data-source-kind";
 
 /**
  * 「按规则生成取数口径」——**不写 SQL 也能得到一段确定的去重口径**。

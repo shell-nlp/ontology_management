@@ -7,7 +7,7 @@ import { type DataSourceRecord } from "@/lib/datasource/types";
 import { entitySources, sourceRoleLabel } from "@/lib/ontology/sources";
 import { dictionaryReferencesTo } from "./projection";
 import { cardinalityLabel, cardinalityPhrase } from "@/lib/ontology/relationship-cardinality";
-import { readOnlyPolicyNote } from "@/lib/datasource/sql-guard";
+import { readOnlyPolicyNote } from "@/lib/shared/server/sql-guard";
 import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, enumProfileWarnings, sourceTableBinding } from "@/lib/datasource/column-profile";
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";

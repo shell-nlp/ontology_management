@@ -2,7 +2,7 @@ import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE, MIN_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/infrastructure/object-index/types";
-import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
+import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import { connectorFor, createDataSourceObjectSource, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
 import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
@@ -872,7 +872,10 @@ export async function ensureObjectInDraft(
   entityTypeName: string,
   primaryKey: ObjectPrimaryKey,
 ): Promise<{ record: ObjectRecord; created: boolean; warnings: string[] }> {
-  const { createSnapshotEntity, readVersionSnapshot } = await import("@/lib/versioning/snapshot");
+  const [{ createSnapshotEntity }, { readVersionSnapshot }] = await Promise.all([
+    import("@/lib/instance/snapshot-editing"),
+    import("@/lib/versioning/snapshot"),
+  ]);
   // 身份是 (对象类型, 主键) 推出来的确定性 id：草稿里有没有它，比 id 就够了，不必再比一遍属性。
   const objectId = objectIdOf(entityTypeName, primaryKey);
   const snapshot = await readVersionSnapshot(draftVersionId).catch(() => null);

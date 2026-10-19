@@ -10,7 +10,7 @@ import { planLinkSource } from "@/lib/ontology/link-source";
 import type { RelationshipSource } from "@/lib/ontology";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import { compactGraphLabel, graphColor } from "@/lib/shared/common/graph-palette";
-import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
+import { assertReadOnlySql } from "@/lib/shared/server/sql-guard";
 import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import { dictionaryIssues, type EntityDictionary } from "@/lib/ontology/dictionaries";
 import { EntityDictionaryEditor } from "./entity-dictionary-editor";

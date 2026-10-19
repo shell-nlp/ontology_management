@@ -4,14 +4,9 @@ import path from "node:path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { z } from "zod";
-import { getGraphStore, type GraphData, type GraphTarget } from "@/lib/platform/graph-store";
+import { getGraphStore, type GraphTarget } from "@/lib/platform/graph-store";
 import { withAdvisoryLock } from "@/lib/platform/platform-db";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
-import { validateEntitySources } from "@/lib/ontology/sources";
-import { relationshipKeyViolations } from "@/lib/ontology/relationship-keys";
-import { linkSourceViolations } from "@/lib/ontology/link-source";
-import { metricViolations } from "@/lib/ontology/metrics";
-import { validateInterfaceImplementations, validateInterfaces } from "@/lib/ontology/interfaces";
 import {
   deleteTargetVersionRecords,
   deleteVersionRecordRow,
@@ -25,10 +20,9 @@ import {
   type VersionRecordRow,
   type VersionStatus,
 } from "@/lib/platform/version-records";
-import { ActionBlockedError, runAction, validateActionDefinition, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/instance/action-engine";
-import { parsePropertyValues } from "@/lib/instance/instance-property-editor";
-import { objectIdOf, primaryKeyConflicts, resolveObjectIdentity } from "@/lib/instance/object-identity";
-import type { EntityRecord, RelationshipRecord, RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
+import { resolveObjectIdentity } from "@/lib/ontology/object-identity";
+
+export * from "@/lib/versioning/snapshot-projection";
 
 export type { VersionRecord, VersionStatus } from "@/lib/platform/version-records";
 
@@ -48,13 +42,13 @@ const INTERNAL_VERSION_ID = "__ontology_version_id";
 const SNAPSHOT_FORMAT = 1;
 const VERSION_SEGMENT = /^[0-9a-f-]{36}$/i;
 
-const nodeSchema = z.object({
+export const nodeSchema = z.object({
   id: z.string().uuid(),
   labels: z.array(z.string().min(1)).min(1),
   properties: z.record(z.string(), z.unknown()),
 });
 
-const relationshipSchema = z.object({
+export const relationshipSchema = z.object({
   id: z.string().uuid(),
   sourceId: z.string().uuid(),
   targetId: z.string().uuid(),
@@ -549,345 +543,5 @@ export async function updateSnapshotDefinition(versionId: string, definition: On
     }
     snapshot.definition = next;
     return snapshot.definition;
-  });
-}
-
-export function entityFromSnapshot(node: SnapshotNode): EntityRecord {
-  return { id: node.id, labels: node.labels, properties: node.properties };
-}
-
-export function relationshipFromSnapshot(relationship: SnapshotRelationship, nodes: Map<string, SnapshotNode>): RelationshipRecord {
-  const source = nodes.get(relationship.sourceId);
-  const target = nodes.get(relationship.targetId);
-  return {
-    id: relationship.id,
-    type: relationship.type,
-    sourceId: relationship.sourceId,
-    targetId: relationship.targetId,
-    properties: relationship.properties,
-    sourceLabels: source?.labels,
-    sourceProperties: source?.properties,
-    targetLabels: target?.labels,
-    targetProperties: target?.properties,
-  };
-}
-
-function searchable(values: unknown[]) {
-  return values.map((value) => typeof value === "object" ? JSON.stringify(value) : String(value ?? "")).join(" ").toLocaleLowerCase();
-}
-
-export function listSnapshotEntities(snapshot: VersionSnapshot, options: { label?: string | null; search?: string | null; limit?: number } = {}) {
-  const search = options.search?.trim().toLocaleLowerCase();
-  // 按对象类型筛就是字面匹配（类之间不再有父子关系；接口那层传播在图库侧读路径上做）。
-  const labels = options.label ? new Set([options.label]) : null;
-  return snapshot.nodes
-    .filter((node) => !labels || node.labels.some((label) => labels.has(label)))
-    .filter((node) => !search || searchable(Object.values(node.properties)).includes(search))
-    .slice(0, options.limit ?? 200)
-    .map(entityFromSnapshot);
-}
-
-export function listSnapshotRelationships(snapshot: VersionSnapshot, options: { type?: string | null; search?: string | null; limit?: number } = {}) {
-  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
-  const search = options.search?.trim().toLocaleLowerCase();
-  return snapshot.relationships
-    .filter((relationship) => !options.type || relationship.type === options.type)
-    .filter((relationship) => {
-      if (!search) return true;
-      const source = nodes.get(relationship.sourceId);
-      const target = nodes.get(relationship.targetId);
-      return searchable([relationship.type, ...Object.values(relationship.properties), ...Object.values(source?.properties ?? {}), ...Object.values(target?.properties ?? {})]).includes(search);
-    })
-    .slice(0, options.limit ?? 200)
-    .map((relationship) => relationshipFromSnapshot(relationship, nodes));
-}
-
-export function graphFromSnapshot(snapshot: VersionSnapshot, options: { labels?: string[]; relationshipTypes?: string[]; search?: string | null; nodeLimit?: number } = {}): GraphData {
-  const labels = new Set(options.labels ?? []);
-  const relationshipTypes = new Set(options.relationshipTypes ?? []);
-  const search = options.search?.trim().toLocaleLowerCase();
-  let nodes = snapshot.nodes.filter((node) => (!labels.size || node.labels.some((label) => labels.has(label))) && (!search || searchable([...node.labels, ...Object.values(node.properties)]).includes(search)));
-  if (relationshipTypes.size) {
-    const endpointIds = new Set(snapshot.relationships.filter((relationship) => relationshipTypes.has(relationship.type)).flatMap((relationship) => [relationship.sourceId, relationship.targetId]));
-    nodes = nodes.filter((node) => endpointIds.has(node.id));
-  }
-  nodes = nodes.slice(0, options.nodeLimit ?? 300);
-  const nodeIds = new Set(nodes.map((node) => node.id));
-  return {
-    nodes: nodes.map(entityFromSnapshot),
-    relationships: snapshot.relationships
-      .filter((relationship) => nodeIds.has(relationship.sourceId) && nodeIds.has(relationship.targetId) && (!relationshipTypes.size || relationshipTypes.has(relationship.type)))
-      .map((relationship) => ({ id: relationship.id, type: relationship.type, source: relationship.sourceId, target: relationship.targetId, properties: relationship.properties })),
-  };
-}
-
-/** 一个类的属性。**不再有继承**：这一份就是类自己定义的属性（写实例 / 表单 / 唯一值校验共用）。 */
-export function classProperties(definition: OntologyDefinition, typeName: string) {
-  const type = definition.entityTypes.find((item) => item.name === typeName);
-  return type ? type.properties : undefined;
-}
-
-export function runtimeTypesFromSnapshot(snapshot: VersionSnapshot): RuntimeTypeSet {
-  const labelCounts = new Map(snapshot.definition.entityTypes.map((type) => [type.name, 0]));
-  const relationshipCounts = new Map(snapshot.definition.relationshipTypes.map((type) => [type.name, 0]));
-  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
-  const relationshipEndpoints: Record<string, { source: string; target: string }> = {};
-  const entityTypesById = new Map(snapshot.definition.entityTypes.map((type) => [type.id, type]));
-  for (const relationship of snapshot.definition.relationshipTypes) {
-    const source = entityTypesById.get(relationship.sourceEntityTypeId)?.name;
-    const target = entityTypesById.get(relationship.targetEntityTypeId)?.name;
-    if (source && target) relationshipEndpoints[relationship.name] = { source, target };
-  }
-  for (const node of snapshot.nodes) for (const label of node.labels) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
-  for (const relationship of snapshot.relationships) {
-    relationshipCounts.set(relationship.type, (relationshipCounts.get(relationship.type) ?? 0) + 1);
-    const source = nodes.get(relationship.sourceId)?.labels[0];
-    const target = nodes.get(relationship.targetId)?.labels[0];
-    if (source && target && !relationshipEndpoints[relationship.type]) relationshipEndpoints[relationship.type] = { source, target };
-  }
-  return {
-    labels: [...labelCounts].map(([name, count]) => ({ name, count, properties: classProperties(snapshot.definition, name) })),
-    relationshipTypes: [...relationshipCounts].map(([name, count]) => ({ name, count, properties: snapshot.definition.relationshipTypes.find((type) => type.name === name)?.properties })),
-    entityCount: snapshot.nodes.length,
-    relationshipCount: snapshot.relationships.length,
-    relationshipEndpoints,
-  };
-}
-
-const MAX_INDEXED_VALUE_BYTES = 8191;
-
-/** 发布前检查的一条结论：severity 为 WARN 的只是提醒，不挡发布。 */
-export type SnapshotViolation = { rule: string; message: string; count: number; severity?: "WARN" };
-
-export function validateVersionSnapshot(snapshot: VersionSnapshot, knownSourceIds?: readonly string[]) {
-  const violations: SnapshotViolation[] = [];
-  /*
-   * 对象身份是 (对象类型, 主键)：同一个对象类型里主键重复 = 本体里同一个对象存在两份，
-   * 后续按主键取数、写回、索引都会打架，所以这一条**挡发布**（不是提醒）。
-   */
-  for (const conflict of primaryKeyConflicts(snapshot.definition, snapshot.nodes)) {
-    violations.push({
-      rule: `${conflict.typeName}.主键`,
-      message: `主键重复：「${conflict.key}」出现在 ${conflict.ids.length} 个「${conflict.typeName}」对象上（${conflict.ids.join("、")}）。同一个对象类型里主键必须唯一。`,
-      count: conflict.ids.length,
-    });
-  }
-  // 来源绑定（一个类挂多份表，按主键合并属性）是建模信息，图里看不出来，只能查定义。
-  for (const entity of snapshot.definition.entityTypes) violations.push(...validateEntitySources(entity, { knownSourceIds }));
-  // 关系类型的键映射同理：它是定义层的声明，指向不存在的属性时换台机器导入就是悬空引用。
-  for (const item of relationshipKeyViolations(snapshot.definition)) violations.push(item);
-  // 关系类型的数据来源（D2）：配了但取不出实例的话，图上看不到边，这里提醒一句（不挡发布）。
-  for (const item of linkSourceViolations(snapshot.definition)) violations.push(item);
-  // 指标：指向不存在的对象类型 / 属性就是悬空引用，模型拿着它也算不出数。
-  for (const item of metricViolations(snapshot.definition)) violations.push(item);
-  const entityTypes = new Map(snapshot.definition.entityTypes.map((entity) => [entity.name, entity]));
-  const relationshipTypes = new Map(snapshot.definition.relationshipTypes.map((relationship) => [relationship.name, relationship]));
-  const entityTypesById = new Map(snapshot.definition.entityTypes.map((entity) => [entity.id, entity]));
-  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
-  /*
-   * 主键不能重复：勾了「主键」的属性按**整组值**判重（复合主键单列重复不算，整组一样才算）。
-   * 绑了来源的类型另有 `primaryKeyConflicts` 按对象身份再判一次，两条互补、都挡发布。
-   * 单列主键值太长会塞不进检索索引的唯一键，也一起挡在发布前。
-   */
-  const primaryKeyValues = new Map<string, Set<string>>();
-  const oversizedPrimaryKey = new Map<string, { typeName: string; propertyName: string; nodes: SnapshotNode[] }>();
-  for (const node of snapshot.nodes) {
-    const managed = node.labels.filter((label) => entityTypes.has(label));
-    if (managed.length !== 1 || managed.length !== node.labels.length) {
-      violations.push({ rule: node.id, message: "对象必须且只能使用一个草稿中定义的对象类型。", count: 1 });
-      continue;
-    }
-    const type = entityTypes.get(managed[0])!;
-    const properties = type.properties;
-    const businessProperties = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key !== "fx" && key !== "fy"));
-    try { parsePropertyValues(properties, businessProperties); } catch (error) {
-      violations.push({ rule: `${type.name}:${node.id}`, message: error instanceof Error ? error.message : "对象属性校验失败。", count: 1 });
-    }
-    const keyProperties = properties.filter((item) => item.primaryKey);
-    if (keyProperties.length && keyProperties.every((item) => node.properties[item.name] != null)) {
-      const value = JSON.stringify(keyProperties.map((item) => node.properties[item.name]));
-      const seen = primaryKeyValues.get(type.id) ?? new Set<string>();
-      if (seen.has(value)) {
-        const keyText = keyProperties.map((item) => `${item.name}=${String(node.properties[item.name])}`).join("&");
-        violations.push({ rule: `${type.name}.${keyProperties.map((item) => item.name).join("+")}`, message: `主键重复：「${keyText}」在本体里出现了不止一个对象。`, count: 1 });
-      }
-      seen.add(value);
-      primaryKeyValues.set(type.id, seen);
-    }
-    for (const property of keyProperties) {
-      if (node.properties[property.name] == null) continue;
-      const raw = node.properties[property.name];
-      const serialized = typeof raw === "string" ? raw : JSON.stringify(raw);
-      if (Buffer.byteLength(serialized, "utf8") > MAX_INDEXED_VALUE_BYTES) {
-        const rule = `${type.name}.${property.name}`;
-        const entry = oversizedPrimaryKey.get(rule) ?? { typeName: type.name, propertyName: property.name, nodes: [] };
-        entry.nodes.push(node);
-        oversizedPrimaryKey.set(rule, entry);
-      }
-    }
-  }
-  for (const relationship of snapshot.relationships) {
-    const type = relationshipTypes.get(relationship.type);
-    const source = nodes.get(relationship.sourceId);
-    const target = nodes.get(relationship.targetId);
-    if (!type) { violations.push({ rule: relationship.id, message: "关系使用了草稿中不存在的关系类型。", count: 1 }); continue; }
-    if (!source || !target) { violations.push({ rule: relationship.id, message: "关系引用了不存在的对象。", count: 1 }); continue; }
-    const sourceType = entityTypesById.get(type.sourceEntityTypeId);
-    const targetType = entityTypesById.get(type.targetEntityTypeId);
-    if (!sourceType || !targetType || !source.labels.includes(sourceType.name) || !target.labels.includes(targetType.name)) {
-      violations.push({ rule: `${type.name}:${relationship.id}`, message: "关系端点不符合草稿中的对象类型契约。", count: 1 });
-    }
-    try { parsePropertyValues(type.properties, relationship.properties); } catch (error) {
-      violations.push({ rule: `${type.name}:${relationship.id}`, message: error instanceof Error ? error.message : "关系属性校验失败。", count: 1 });
-    }
-  }
-  for (const entry of oversizedPrimaryKey.values()) {
-    const displayProperty = snapshot.definition.entityTypes.find((type) => type.name === entry.typeName)?.displayProperty;
-    const fallbackKeys = ["表名", "名称", "name", "title", "id"];
-    const involved = entry.nodes.map((node) => {
-      const keys = displayProperty ? [displayProperty, ...fallbackKeys] : fallbackKeys;
-      const readable = keys.map((key) => node.properties[key]).find((value) => (typeof value === "string" && value.trim()) || typeof value === "number");
-      const name = readable != null ? String(readable) : node.id;
-      const shortName = name.length > 60 ? `${name.slice(0, 60)}…` : name;
-      const raw = String(node.properties[entry.propertyName] ?? "");
-      const snippet = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw;
-      return `「${shortName}」(${node.id}，${entry.propertyName}开头：${snippet})`;
-    }).join("、");
-    violations.push({ rule: `${entry.typeName}.${entry.propertyName}`, message: `主键属性「${entry.propertyName}」有 ${entry.nodes.length} 个值的长度超过 ${MAX_INDEXED_VALUE_BYTES} 字节（约 8KB），不适合当主键。涉及：${involved}。请换一个短一点的主键列，或缩短字段内容后重试。`, count: entry.nodes.length });
-  }
-  /*
-   * 接口是抽象契约：声明实现了就必须满足它的必填属性与必填关系约束，否则应用拿到的是缺字段的对象。
-   * 这两条校验原先只挂在接口管理页（客户端提示），发布路径上漏了 —— 于是"接口页写着还差 2 项"的草稿照样能发布。
-   * 接进发布前校验后，界面上的承诺（发布前校验会拦住没满足的实现）才成立。
-   */
-  for (const item of [...validateInterfaces(snapshot.definition), ...validateInterfaceImplementations(snapshot.definition)]) {
-    violations.push({ rule: item.rule, message: item.message, count: item.count });
-  }
-  const actionViolations: SnapshotViolation[] = validateActionDefinition(snapshot.definition);
-  return [...violations, ...actionViolations];
-}
-
-/**
- * 这个对象上应该看到哪些动作。
- *
- * 隐藏规则只看动作执行前就有的数据，所以读的是快照当前的样子，不跑动作。
- */
-export async function visibleSnapshotActions(versionId: string, subjectEntityId: string): Promise<ActionVisibility[]> {
-  const snapshot = await readVersionSnapshot(versionId);
-  return visibleActions(snapshot.definition, snapshot, subjectEntityId);
-}
-
-/**
- * 运行动作。
- *
- * 干跑只读快照、返回"会发生什么"；执行则在草稿锁内按最新快照重算一次再落盘，
- * 命中闸门规则时抛出 `ActionBlockedError`，快照文件保持原样。
- */
-export async function runSnapshotAction(versionId: string, actionId: string, inputs: ActionRunInput[], options: { dryRun: boolean; subjectEntityId?: string }): Promise<{ outcome: ActionOutcome; applied: boolean }> {
-  const row = await getVersionRecord(versionId);
-  if (!row) throw new Error("本体版本不存在。");
-  if (row.status !== "DRAFT") throw new Error("只有草稿版本可以运行动作，请先创建草稿。");
-  const snapshot = await readVersionSnapshot(versionId);
-  const preview = runAction(snapshot.definition, snapshot, actionId, inputs, { subjectEntityId: options.subjectEntityId });
-  if (options.dryRun || preview.verdict === "BLOCKED") return { outcome: preview, applied: false };
-  const outcome = await mutateDraftSnapshot<ActionOutcome>(versionId, (current) => {
-    const fresh = runAction(current.definition, current, actionId, inputs, { subjectEntityId: options.subjectEntityId });
-    if (fresh.verdict === "BLOCKED") throw new ActionBlockedError(fresh);
-    current.nodes = fresh.graph.nodes;
-    current.relationships = fresh.graph.relationships;
-    return fresh;
-  }).catch((reason: unknown) => {
-    if (reason instanceof ActionBlockedError) return reason.outcome;
-    throw reason;
-  });
-  return { outcome, applied: outcome.verdict === "PASSED" };
-}
-
-export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
-    if (!type) throw new Error("对象类型未在当前草稿中定义。");
-    const properties = parsePropertyValues(type.properties, rawProperties);
-    /*
-     * 对象身份 = (对象类型, 主键)：主键齐全时 id 由主键推出来（确定性），
-     * 于是同一个业务记录在本体里只有一份，换快照 / 重复导入都落到同一个对象上（S1）。
-     */
-    const identity = resolveObjectIdentity(type, properties);
-    if (identity && snapshot.nodes.some((node) => node.id === identity.id)) {
-      throw new Error(`已经存在主键相同的「${type.name}」对象，不能在同一个本体里重复新建。`);
-    }
-    const node = nodeSchema.parse({ id: identity?.id ?? randomUUID(), labels: [type.name], properties });
-    snapshot.nodes.push(node);
-    return entityFromSnapshot(node);
-  });
-}
-
-export async function updateSnapshotEntity(versionId: string, entityId: string, rawProperties: Record<string, unknown>) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const node = snapshot.nodes.find((item) => item.id === entityId);
-    if (!node) return null;
-    const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
-    if (!type) throw new Error("对象类型未在当前草稿中定义。");
-    const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
-    node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
-    return entityFromSnapshot(node);
-  });
-}
-
-export async function deleteSnapshotEntity(versionId: string, entityId: string) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const before = snapshot.nodes.length;
-    snapshot.nodes = snapshot.nodes.filter((node) => node.id !== entityId);
-    snapshot.relationships = snapshot.relationships.filter((relationship) => relationship.sourceId !== entityId && relationship.targetId !== entityId);
-    return before !== snapshot.nodes.length;
-  });
-}
-
-export async function createSnapshotRelationship(versionId: string, typeName: string, sourceId: string, targetId: string, rawProperties: Record<string, unknown>) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const type = snapshot.definition.relationshipTypes.find((item) => item.name === typeName);
-    if (!type) throw new Error("关系类型未在当前草稿中定义。");
-    const source = snapshot.nodes.find((node) => node.id === sourceId);
-    const target = snapshot.nodes.find((node) => node.id === targetId);
-    const sourceType = snapshot.definition.entityTypes.find((item) => item.id === type.sourceEntityTypeId);
-    const targetType = snapshot.definition.entityTypes.find((item) => item.id === type.targetEntityTypeId);
-    if (!source || !target) throw new Error("关系端点不存在。");
-    if (!sourceType || !targetType || !source.labels.includes(sourceType.name) || !target.labels.includes(targetType.name)) throw new Error("关系端点不符合草稿类型契约。");
-    const relationship = relationshipSchema.parse({ id: randomUUID(), sourceId, targetId, type: type.name, properties: parsePropertyValues(type.properties, rawProperties) });
-    snapshot.relationships.push(relationship);
-    return relationshipFromSnapshot(relationship, new Map(snapshot.nodes.map((node) => [node.id, node])));
-  });
-}
-
-export async function updateSnapshotRelationship(versionId: string, relationshipId: string, rawProperties: Record<string, unknown>) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const relationship = snapshot.relationships.find((item) => item.id === relationshipId);
-    if (!relationship) return null;
-    const type = snapshot.definition.relationshipTypes.find((item) => item.name === relationship.type);
-    if (!type) throw new Error("关系类型未在当前草稿中定义。");
-    relationship.properties = parsePropertyValues(type.properties, rawProperties);
-    return relationshipFromSnapshot(relationship, new Map(snapshot.nodes.map((node) => [node.id, node])));
-  });
-}
-
-export async function deleteSnapshotRelationship(versionId: string, relationshipId: string) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const before = snapshot.relationships.length;
-    snapshot.relationships = snapshot.relationships.filter((relationship) => relationship.id !== relationshipId);
-    return before !== snapshot.relationships.length;
-  });
-}
-
-export async function updateSnapshotPositions(versionId: string, items: { elementId: string; x: number; y: number }[]) {
-  return mutateDraftSnapshot(versionId, (snapshot) => {
-    const positions = new Map(items.map((item) => [item.elementId, item]));
-    let updated = 0;
-    for (const node of snapshot.nodes) {
-      const position = positions.get(node.id);
-      if (!position) continue;
-      node.properties = { ...node.properties, fx: position.x, fy: position.y };
-      updated += 1;
-    }
-    return updated;
   });
 }

@@ -1,3 +1,7 @@
+import type { DataSourceKind, DataSourceRowFilter } from "@/lib/shared/common/data-source-kind";
+
+export type { DataSourceKind, DataSourceRowFilter } from "@/lib/shared/common/data-source-kind";
+
 /**
  * 数据资源抽象层。
  *
@@ -8,8 +12,6 @@
  * 真正引入驱动的注册表在 @/lib/datasource/index.ts，只能在服务端使用。
  * 接入一种新数据库 = 这里登记类型与元数据 + 注册表加一个分支，界面不用改。
  */
-
-export type DataSourceKind = "POSTGRES" | "MYSQL" | "ORACLE";
 
 /** 类型卡片上的图形：每个都画这种库自己的数据模型，而不是通用数据库图标。 */
 export type DataSourceMark = "rows" | "grid" | "table";
@@ -276,12 +278,6 @@ export type DataViewRef = { schema?: string; name: string; sql?: string };
  * 只要实现 `selectRows` / `countRows`，对象服务与上层界面一行都不用改。
  * 列名一律是库里真实的列名（来自本体属性的 `sourceField`），由连接器负责引用与转义。
  */
-export type DataSourceRowFilter = {
-  column: string;
-  operator: "EQ" | "NE" | "CONTAINS" | "IN";
-  value: string | number | boolean | string[];
-};
-
 export type DataSourceRowQuery = {
   view: DataViewRef;
   /** 只取这些列；空数组 = 全部列。 */

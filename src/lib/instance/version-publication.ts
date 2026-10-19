@@ -4,7 +4,8 @@ import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { listDataSources } from "@/lib/datasource/sources";
-import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, validateVersionSnapshot, withTargetLock, type VersionStatus } from "@/lib/versioning/snapshot";
+import { validateVersionSnapshot } from "@/lib/instance/version-validation";
+import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, withTargetLock, type VersionStatus } from "@/lib/versioning/snapshot";
 
 export async function publishVersionSnapshot(versionId: string, user: { id: string }, allowedStatuses: VersionStatus[]) {
   const initial = await getVersionRecord(versionId);

@@ -1,5 +1,5 @@
 import type { OntologyDefinition } from "@/lib/ontology";
-import type { ObjectPrimaryKey } from "@/lib/instance/object-identity";
+import type { ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import type { ObjectSearchFilter } from "@/lib/infrastructure/object-index/types";
 
 /**

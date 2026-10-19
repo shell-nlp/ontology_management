@@ -1,5 +1,5 @@
 import type { QueryRunner } from "typeorm";
-import { DATA_SOURCE_KINDS } from "@/lib/datasource/types";
+import { DATA_SOURCE_KIND_VALUES } from "@/lib/shared/common/data-source-kind";
 import { GRAPH_TARGET_KINDS } from "@/lib/infrastructure/graph/types";
 
 /**
@@ -17,7 +17,7 @@ export class PlatformSchema0001 {
 
   async up(queryRunner: QueryRunner): Promise<void> {
     const kinds = GRAPH_TARGET_KINDS.map((item) => `'${item.kind}'`).join(", ");
-    const sourceKinds = DATA_SOURCE_KINDS.map((item) => `'${item.kind}'`).join(", ");
+    const sourceKinds = DATA_SOURCE_KIND_VALUES.map((kind) => `'${kind}'`).join(", ");
 
     await queryRunner.query("CREATE SCHEMA IF NOT EXISTS ontology_platform");
     await queryRunner.query(`

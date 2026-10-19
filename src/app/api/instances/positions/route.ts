@@ -3,7 +3,8 @@ import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { ensureVersionSnapshot, updateSnapshotPositions } from "@/lib/versioning/snapshot";
+import { updateSnapshotPositions } from "@/lib/instance/snapshot-editing";
+import { ensureVersionSnapshot } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const positionUpdateInput = z.object({

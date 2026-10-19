@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { parsePrimaryKeyInput } from "@/lib/ontology/object-identity";
 import { resolveObjectContext } from "@/lib/instance/object-service";
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { withPermission } from "@/lib/platform/route-guard";

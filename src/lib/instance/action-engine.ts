@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parsePropertyValues } from "@/lib/instance/instance-property-editor";
-import { resolveObjectIdentity } from "@/lib/instance/object-identity";
+import { resolveObjectIdentity } from "@/lib/ontology/object-identity";
 import type { OntologyDefinition } from "@/lib/ontology";
 
 /**

@@ -23,7 +23,7 @@
 - 每个后端一个适配器实现 `GraphStore`：`neo4j.ts`（Cypher）与 `jena.ts`（SPARQL 1.1）。
 - `index.ts` 的 `createGraphStore(target, embeddedRepository)` 按 `target.kind` 分派；平台组合入口 `@/lib/platform/graph-store` 提供 `getGraphStore(target)`。
 
-上层（API 路由、`version-snapshot`、`version-publication`、React 组件）只调用 `GraphStore` 的
+上层（API 路由、版本快照投影、`instance/version-publication`、React 组件）只调用 `GraphStore` 的
 语义化方法，不再出现 Cypher 字符串，也不知道底层是属性图还是 RDF。
 
 `GraphStore` 的方法面：

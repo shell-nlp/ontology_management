@@ -1,4 +1,4 @@
-import { assertReadOnlySql } from "@/lib/datasource/sql-guard";
+import { assertReadOnlySql } from "@/lib/shared/server/sql-guard";
 import type { EntitySource } from "@/lib/ontology";
 
 /**

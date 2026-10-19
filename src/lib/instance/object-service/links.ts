@@ -1,6 +1,6 @@
 import type { DataSourceRowFilter } from "@/lib/datasource/types";
 import { hasKeyMappings, planLinkSource, type LinkPlan, type LinkSourceDefinition, type LinkSourceRelation } from "@/lib/ontology/link-source";
-import { objectIdOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/instance/object-identity";
+import { objectIdOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
 

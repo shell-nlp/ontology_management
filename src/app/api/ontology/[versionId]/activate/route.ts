@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { publishVersionSnapshot } from "@/lib/versioning/publication";
+import { publishVersionSnapshot } from "@/lib/instance/version-publication";
 import { withPermission } from "@/lib/platform/route-guard";
 
 export const POST = withPermission("ontology.publish", async (_: Request, context: { params: Promise<{ versionId: string }> }, user) => {

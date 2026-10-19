@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
-import { parsePrimaryKeyInput } from "@/lib/instance/object-identity";
+import { parsePrimaryKeyInput } from "@/lib/ontology/object-identity";
 import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object-service";
 import { getTarget } from "@/lib/platform/targets";
 import { getVersionRecord } from "@/lib/versioning/snapshot";

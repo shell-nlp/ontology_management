@@ -5,7 +5,8 @@ import { getGraphStore } from "@/lib/platform/graph-store";
 import { getTarget } from "@/lib/platform/targets";
 import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { createSnapshotEntity, ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";
+import { createSnapshotEntity } from "@/lib/instance/snapshot-editing";
+import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
 const entityCreateInput = z.object({

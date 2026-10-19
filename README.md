@@ -722,7 +722,7 @@ API 路由、版本发布流程与界面组件无需改动。
 | `sql.ts` | 关系库适配器：TypeORM 建连接，`test / listViews / describeView / previewView`；Oracle 走数据字典读结构 |
 | `index.ts` | `openDataSourceConnector(record, credentials)` 注册表，按 `record.kind` 分派 |
 | `sources.ts` · `input.ts` · `structure-cache.ts` | 数据资源记录的读写、表单校验与结构清单缓存 |
-| `ddl.ts` · `column-profile.ts` · `sql-guard.ts` | 给模型看的 DDL、列画像采样与只读 SQL 护栏 |
+| `ddl.ts` · `column-profile.ts` | 给模型看的 DDL 与列画像；只读 SQL 护栏在 `src/lib/shared/server/sql-guard.ts` |
 | `source-binding.ts` · `source-hints.ts` · `object-name.ts` | 对象类型到表 / 列的绑定与表名规范化 |
 
 当前支持 PostgreSQL、MySQL、Oracle。三类共用同一份 SQL 实现，接入新的关系库通常只需要在 `DATA_SOURCE_KINDS` 里加一条元数据；接入 Elasticsearch、REST、文件这类非关系来源时，在 `openDataSourceConnector` 里分流到一个新实现即可 —— 界面与 API 不用改。
@@ -796,7 +796,7 @@ flowchart TB
   subgraph L_DOMAIN["领域与平台层 · src/lib"]
     TOOLS["reasoning/tools/（11 个只读工具）"]
     ONTO["ontology/：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检"]
-    VER["versioning/：快照（定义 + 实例）· 发布 · 已发布定义"]
+    VER["versioning/：快照存储与投影 · 已发布定义<br/>instance/：快照编辑 · 发布前校验 · 发布编排"]
     INST["instance/：对象服务 · 对象索引 · 动作引擎"]
     DS["datasource/：连接器 · DDL · 只读 SQL 与护栏 · 列画像"]
     REA["reasoning/：工具循环 · 提示词 · 历史 · MCP 服务端"]
@@ -843,9 +843,9 @@ ontology_management/
 │       ├── infrastructure/ # 外部技术适配：graph/（GraphStore + jena/embedded）· object-index/（ObjectIndex + clickhouse）
 │       ├── shared/       # 无业务依赖的通用件：common/ · client/ · server/
 │       ├── platform/     # 平台自身：auth · users · permissions · audit · ontologies · targets · platform-db · db/（实体与迁移）
-│       ├── ontology/     # 本体模型：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检 · bkn 导入 · 关系键与数量关系
-│       ├── versioning/   # 版本：快照（定义 + 实例）· 发布 · 已发布定义
-│       ├── instance/     # 本体实例：对象服务 · 对象索引 · 动作引擎
+│       ├── ontology/     # 本体模型：定义 · 对象身份 · 字段换算 · 画布 · 接口 · 指标 · 分组 · 校验规则
+│       ├── versioning/   # 版本：快照存储 · 快照投影 · 已发布定义
+│       ├── instance/     # 本体实例：对象服务 · 快照编辑 · 发布前校验 · 发布编排 · 动作引擎
 │       ├── datasource/   # 数据资源：连接器 · DDL · 只读 SQL 与护栏 · 列画像 · 来源绑定
 │       ├── query-dsl/    # 查询语义：SQL 表层解析 · 绑定 · 编译 · 对象索引执行
 │       ├── reasoning/    # 智能问答：工具循环 · tools/（工具实现）· 提示词 · 历史 · MCP 服务端
@@ -868,7 +868,7 @@ ontology_management/
 
 - 包管理统一使用 **pnpm**（见 `packageManager`）
 - 业务逻辑优先放在 `src/lib`，API 路由保持薄封装
-- 改动版本快照 / 发布流程时，同步关注 `src/lib/versioning/snapshot.ts`、`src/lib/versioning/publication.ts` 与相关 ADR
+- 改动版本快照 / 发布流程时，同步关注 `src/lib/versioning/snapshot.ts`、`src/lib/instance/version-publication.ts` 与相关 ADR
 - 改 `src/lib/ontology/index.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
 - 新增或修改数据表 / 字段时，**表注释与字段注释必须一起补**（写进 `src/lib/platform/db/comments.ts`，迁移 0006 会生成 `COMMENT ON`）
 - 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建

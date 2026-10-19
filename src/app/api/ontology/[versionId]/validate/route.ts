@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { validateVersionSnapshot, ensureVersionSnapshot, getVersionRecord } from "@/lib/versioning/snapshot";
+import { validateVersionSnapshot } from "@/lib/instance/version-validation";
+import { ensureVersionSnapshot, getVersionRecord } from "@/lib/versioning/snapshot";
 import { getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
 

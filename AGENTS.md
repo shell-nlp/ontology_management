@@ -1335,7 +1335,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 
 ### 对象身份与对象服务（S1 / S2 / S3，2026-09-19）
 
-**身份 = (对象类型, 主键)**：`@/lib/instance/object-identity` 是唯一定义处（纯函数、有单测）。
+**身份 = (对象类型, 主键)**：`@/lib/ontology/object-identity` 是唯一定义处（纯函数、有单测）；旧的 `instance/object-identity` 只保留兼容导出。
 
 - `objectIdOf(entityType, primaryKey)`：SHA-1 派生的**确定性 UUID**（v5 风格）。同一主键永远同一个 id，
   发布 / 动作写入 / 导出快照 / 索引键四处共用；主键不全时返回空串，调用方退回"快照里的那一行"。
@@ -1469,7 +1469,7 @@ linkSource: { mode: "JOIN_TABLE" | "FOREIGN_KEY", dataSourceId, schema, view, fo
   **注意 MCP / 问答读的是已发布版本**：草稿里刚配好的数据来源，发布之后 AI 才看得到。
 
 顺带抽出来的共用件：`@/lib/ontology/fields.ts` 的 `propertyForColumn` / `columnForProperty`
-（属性 ↔ 列的换算）。**单独一个文件是因为客户端也要用它** —— 原来的家 `@/lib/instance/object-identity`
+（属性 ↔ 列的换算）。**单独一个文件是因为客户端也要用它** —— 原来的家 `@/lib/ontology/object-identity`
 依赖 `node:crypto`（算确定性 id），进不了浏览器包；服务端那边从 `object-identity` 转出去，实现只有一份。
 
 **实测**（2026-09-19，Oracle 测试库）：新建关系类型「网格属于县区」（政企网格编码字典 → 县区编码字典，
@@ -1496,7 +1496,7 @@ D2 当初只接了「从数据源加载」与 AI 子图，留下两处对不上�
   每行写清「关系类型 + 方向 + 另一端的引用」，点一行跳到那个对象（不在本页列表里就先切到它的对象类型再选）。
   空的两种原因要分开说（`linkHint`）：**没配 `linkSource`** vs **真的有零条边**。
 - **客户端也要算主键**：`primaryKeyFromProperties` / `primaryKeyColumns` / `normalizeKeyValue` 从
-  `@/lib/instance/object-identity` 搬到了 `@/lib/ontology/fields`（那边带 `node:crypto`，客户端引不了），
+  `@/lib/ontology/object-identity` 搬到了 `@/lib/ontology/fields`（那边带 `node:crypto`，客户端引不了），
   前者原样再导出，服务端调用点一行没改。**别再各写一份主键换算。**
 - 已知边界同 D2：复合主键的端点不做一跳展开；关系类型自己的属性只按 `sourceField` 同名列读。
 
@@ -1740,7 +1740,7 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 | `src/lib/infrastructure/` | **外部技术实现的适配层**：只在这里出现具体数据库、驱动、协议与查询语言 | `graph/`（`GraphStore` 契约、注册表、`jena/`、`embedded/`）、`object-index/`（`ObjectIndex` 契约、注册表、`clickhouse/`） |
 | `src/lib/shared/` | **与平台业务无关的通用件**：能不能整包搬去别的项目，是这里的准入门槛 | `common/`（`ids` `datetime` `format-units` `markdown` `graph-palette`）、`client/`（`api-client` `session-token` `clipboard` `local-layout`）、`server/`（`crypto` `public-origin` `zip`） |
 | `src/lib/platform/` | **平台自身**：账号、权限、审计、平台库 | `auth` `users` `permissions` `audit` `targets`（图引擎连接登记）、`platform-db`（平台表仓储）、`db/`（连接、实体、迁移） |
-| `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型：定义、草稿、画布、接口、指标、分组、体检、bkn 导入、关系键/基数）、`versioning/`（快照与发布）、`instance/`（对象服务与对象索引编排）、`datasource/`（数据资源与 SQL）、`query-dsl/`（查询语义与编译）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`oauth/`（授权服务器）、`skills/`（本体技能） |
+| `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型、对象身份、字段换算、校验规则）、`versioning/`（快照存储与投影）、`instance/`（对象服务、快照编辑、发布前校验、发布编排）、`datasource/`（数据资源与 SQL）、`query-dsl/`（查询语义与编译）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`oauth/`（授权服务器）、`skills/`（本体技能） |
 
 两条硬规矩：
 
@@ -1757,8 +1757,8 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 **不许出现** `platform/db`、`platform/*`（仓储与配置）、`versioning/snapshot`（写文件）这类持久化/副作用调用。
 需要落库的，把那段编排放到 `src/app/api/**/route.ts` 或 `src/lib/platform/`。
 
-现存的最后一处跨模块依赖是 `ontology/link-source.ts` → `instance/object-identity`（借实例层的列识别规则），
-两边都是纯函数，暂不算破例；真要收紧，把那两个纯函数提到 `shared/common/` 共用。
+**顶层模块不允许双向依赖**：`tests/lib/architecture.test.ts` 会检查 `src/lib/<模块 A> → <模块 B>` 与反向边同时出现。
+对象身份、版本校验、快照编辑、发布编排分别归 ontology / instance，不要再把上层逻辑塞回 `versioning/snapshot.ts`。
 
 ## 独立任务拆给子智能体并行做（2026-10-10 用户要求）
 

@@ -1,6 +1,6 @@
 import { DataSource } from "typeorm";
 import { describe, expect, it } from "vitest";
-import { derivedCountStatement, derivedRowsStatement } from "@/lib/datasource/sql-guard";
+import { derivedCountStatement, derivedRowsStatement } from "@/lib/shared/server/sql-guard";
 
 /**
  * **取数口径当来源**（对象类型的 `DERIVED` 来源）：纯函数部分永远跑，真库冒烟要 `DATABASE_URL`。

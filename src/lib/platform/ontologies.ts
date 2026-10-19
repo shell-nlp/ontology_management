@@ -14,7 +14,6 @@ import {
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/infrastructure/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/platform/targets";
-import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
 
 /**
  * 本体：平台的隔离单位。
@@ -239,7 +238,6 @@ export async function deleteOntology(id: string): Promise<{ removedTargetId: str
   if (!managedId) return { removedTargetId: null, purged };
   const targets = await platformRepo(GraphTargetEntity);
   await targets.delete({ id: managedId });
-  await removeTargetSnapshotDirectory(managedId);
   return { removedTargetId: managedId, purged };
 }
 

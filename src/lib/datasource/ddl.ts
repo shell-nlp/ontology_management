@@ -1,4 +1,4 @@
-import { qualifiedName, quoteIdentifier, quoteLiteral } from "@/lib/datasource/object-name";
+import { qualifiedName, quoteIdentifier, quoteLiteral } from "@/lib/shared/server/sql-object-name";
 import type { DataSourceKind, DataViewField, DataViewKind } from "@/lib/datasource/types";
 
 /**

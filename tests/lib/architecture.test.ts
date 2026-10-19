@@ -69,4 +69,24 @@ describe("src/lib 依赖边界", () => {
     const found = violations((_, specifier) => specifier.includes("/lib/framework"));
     expect(found).toEqual([]);
   });
+
+  it("顶层 lib 模块之间不存在双向依赖", () => {
+    const edges = new Map<string, Set<string>>();
+    for (const file of sourceFiles(libRoot)) {
+      const relative = path.relative(libRoot, file).replaceAll("\\", "/");
+      const from = relative.split("/")[0];
+      for (const specifier of importsOf(file)) {
+        if (!specifier.startsWith("@/lib/")) continue;
+        const to = specifier.slice("@/lib/".length).split("/")[0];
+        if (!to || to === from) continue;
+        const targets = edges.get(from) ?? new Set<string>();
+        targets.add(to);
+        edges.set(from, targets);
+      }
+    }
+    const found = [...edges].flatMap(([from, targets]) => [...targets]
+      .filter((to) => edges.get(to)?.has(from))
+      .map((to) => `${from} ⇄ ${to}`));
+    expect([...new Set(found)].sort()).toEqual([]);
+  });
 });
