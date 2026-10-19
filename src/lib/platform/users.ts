@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { platformRepo } from "@/lib/platform/db";
-import { PlatformUserEntity, RoleEntity } from "@/lib/platform/db/entities";
+import { platformRepo } from "@/lib/infrastructure/persistence/postgres";
+import { PlatformUserEntity, RoleEntity } from "@/lib/infrastructure/persistence/postgres/entities";
 import { can, effectivePermissions, isBuiltinRole, normalizePermissions, type Permission } from "@/lib/platform/permissions";
 
 /**

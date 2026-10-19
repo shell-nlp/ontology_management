@@ -840,9 +840,9 @@ ontology_management/
 │   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
 │   ├── components/       # 界面组件；workbench/ 下按页面一个文件（本体建模 / 图谱 / 对象 / 关系 / 设置 …）
 │   └── lib/              # 领域与平台代码（根目录只有目录，没有散文件）
-│       ├── infrastructure/ # 外部技术适配：graph/（GraphStore + jena/embedded）· object-index/（ObjectIndex + clickhouse）
+│       ├── infrastructure/ # 外部技术适配：graph/ · object-index/ · persistence/postgres/（平台库连接、实体、迁移）
 │       ├── shared/       # 无业务依赖的通用件：common/ · client/ · server/
-│       ├── platform/     # 平台自身：auth · users · permissions · audit · ontologies · targets · platform-db · db/（实体与迁移）
+│       ├── platform/     # 平台业务：auth · users · permissions · audit · ontologies · targets · 数据访问编排
 │       ├── ontology/     # 本体模型：定义 · 对象身份 · 字段换算 · 画布 · 接口 · 指标 · 分组 · 校验规则
 │       ├── versioning/   # 版本：快照存储 · 快照投影 · 已发布定义
 │       ├── instance/     # 本体实例：对象服务 · 快照编辑 · 发布前校验 · 发布编排 · 动作引擎
@@ -870,7 +870,7 @@ ontology_management/
 - 业务逻辑优先放在 `src/lib`，API 路由保持薄封装
 - 改动版本快照 / 发布流程时，同步关注 `src/lib/versioning/snapshot.ts`、`src/lib/instance/version-publication.ts` 与相关 ADR
 - 改 `src/lib/ontology/index.ts` 的本体 schema 时，同步改 `skills/ontology-bundle/references/` 下的格式文档与示例包（`skills.test.ts` 会校验）
-- 新增或修改数据表 / 字段时，**表注释与字段注释必须一起补**（写进 `src/lib/platform/db/comments.ts`，迁移 0006 会生成 `COMMENT ON`）
+- 新增或修改数据表 / 字段时，**表注释与字段注释必须一起补**（写进 `src/lib/infrastructure/persistence/postgres/comments.ts`，迁移 0006 会生成 `COMMENT ON`）
 - 日常验证统一用 `pnpm dev`，不在日常流程里跑生产构建
 - **每完成一批功能，把 [`docs/功能实现记录.md`](docs/功能实现记录.md) 里对应的功能分区更新掉**（能做什么 / 入口 / 限制 / 怎么验证）—— 那是"平台有什么功能"的账本，不记修复过程，别按日期往下堆条目
 

@@ -227,7 +227,7 @@
 - **401 必须带 `WWW-Authenticate: Bearer resource_metadata="…"`**：MCP 客户端靠它触发 OAuth 流程，少了它只会报"未授权"。
 - 客户端清单在「MCP 调试 → MCP 接入 → OAuth 客户端」里看 / 删；`deleteClient` 会把它的授权码与刷新令牌一起作废。
 - 新表 `oauth_clients` / `oauth_authorization_codes` / `oauth_refresh_tokens`（迁移 0011）。
-  表与字段注释的唯一出处仍是 `@/lib/platform/db/comments`，**迁移 0011 建完表顺手补注释**（不指望 0006 下一轮再跑）。
+  表与字段注释的唯一出处仍是 `@/lib/infrastructure/persistence/postgres/comments`，**迁移 0011 建完表顺手补注释**（不指望 0006 下一轮再跑）。
 
 ## 物化 / 联邦的粒度 = 对象类型（2026-10-12 用户要求）
 
@@ -1285,7 +1285,7 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 - **建表必须写表注释，加列必须写字段注释**，而且注释要进 PG（`COMMENT ON`）—— 只写在代码里不算。
 - 只写**作用**：表注释一句话说清「一行代表什么」；字段注释写「是什么 / 取值 / null 含义 / 指向哪张表」。
   **不写改动史、背景、用户口径、日期**，也不要把字段名翻译一遍当注释。
-- 唯一出处是 `src/lib/platform/db/comments.ts`，迁移 `0006` 由它生成 `COMMENT ON`（幂等）；新增表或列先在那里补一条。
+- 唯一出处是 `src/lib/infrastructure/persistence/postgres/comments.ts`，迁移 `0006` 由它生成 `COMMENT ON`（幂等）；新增表或列先在那里补一条。
 - PG 专有列（`object_entries` / `ontology_concepts` 的 `search_doc`、`embedding`）由代码按扩展可用性补建，
   注释写在**创建它们的那段代码**里。
 - 核对：查 `pg_description` / `information_schema`，**表与字段的注释一个都不能缺**。
@@ -1294,9 +1294,9 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 **口径：操作数据库一定要用 ORM，不能直接写 SQL；以前写在业务代码里的 SQL 也要改掉。**
 这条是硬约束，改任何数据访问前先看这一节。
 
-**平台库（PostgreSQL，schema `ontology_platform`）**：全部走 `@/lib/platform/db`。
+**平台库（PostgreSQL，schema `ontology_platform`）**：技术入口是 `@/lib/infrastructure/persistence/postgres`；`@/lib/platform/db` 仅为兼容出口。
 
-- 实体在 `src/lib/platform/db/entities.ts`，表结构在 `src/lib/platform/db/migrations/`（**幂等**，按数组顺序执行；
+- 实体在 `src/lib/infrastructure/persistence/postgres/entities.ts`，表结构在 `src/lib/infrastructure/persistence/postgres/migrations/`（**幂等**，按数组顺序执行；
   加表 / 加列就追加一支迁移类，不要在业务代码里写 DDL）。
 - 读写用 `platformRepo(Entity)`（事务内用 `repoIn(manager, Entity)`）；事务用
   `withPlatformTransaction(manager => …)`。`src/lib/platform/platform-db.ts` 只留业务口径与领域类型转换。
@@ -1326,8 +1326,8 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 
 **允许保留的显式 SQL**（都在各自文件的注释里写明原因，别再扩散）：
 
-1. `src/lib/platform/db/migrations/*`：建表 / 改列 / 数据回填（迁移本来就是干这个的）；
-2. `@/lib/platform/db` 的 `withAdvisoryLock`：PG 会话级 advisory lock，TypeORM 没有等价 API；
+1. `src/lib/infrastructure/persistence/postgres/migrations/*`：建表 / 改列 / 数据回填（迁移本来就是干这个的）；
+2. `@/lib/infrastructure/persistence/postgres` 的 `withAdvisoryLock`：PG 会话级 advisory lock，TypeORM 没有等价 API；
 3. `object-index/postgres.ts` 的**表结构与全文 / 向量检索**：GIN、tsvector 生成列、pgvector、
    `@@` / `ts_rank` / `<=>` —— PG 专有，换搜索引擎就是换这个文件；
 4. `data-source/sql.ts` 的 **DDL 还原、Oracle 数据字典、只读 SQL 工作台**：
@@ -1737,9 +1737,9 @@ Jena/Fuseki 图引擎均不进编排，按各自现有方式部署；保留 Jena
 
 | 目录 | 放什么 | 代表文件 |
 | --- | --- | --- |
-| `src/lib/infrastructure/` | **外部技术实现的适配层**：只在这里出现具体数据库、驱动、协议与查询语言 | `graph/`（`GraphStore` 契约、注册表、`jena/`、`embedded/`）、`object-index/`（`ObjectIndex` 契约、注册表、`clickhouse/`） |
+| `src/lib/infrastructure/` | **外部技术实现的适配层**：只在这里出现具体数据库、驱动、协议与查询语言 | `persistence/postgres/`（平台库连接、实体、迁移）、`graph/`（`GraphStore` 契约、注册表、`jena/`、`embedded/`）、`object-index/`（`ObjectIndex` 契约、注册表、`clickhouse/`） |
 | `src/lib/shared/` | **与平台业务无关的通用件**：能不能整包搬去别的项目，是这里的准入门槛 | `common/`（`ids` `datetime` `format-units` `markdown` `graph-palette`）、`client/`（`api-client` `session-token` `clipboard` `local-layout`）、`server/`（`crypto` `public-origin` `zip`） |
-| `src/lib/platform/` | **平台自身**：账号、权限、审计、平台库 | `auth` `users` `permissions` `audit` `targets`（图引擎连接登记）、`platform-db`（平台表仓储）、`db/`（连接、实体、迁移） |
+| `src/lib/platform/` | **平台业务与数据访问编排**：账号、权限、审计、平台业务仓储 | `auth` `users` `permissions` `audit` `targets`、`platform-db`（审计/设置/用户等业务查询）、`db/`（兼容出口）；底层 TypeORM 与迁移在 `infrastructure/persistence/postgres/` |
 | `src/lib/<业务模块>/` | 本体业务，按模块分目录 | `ontology/`（本体模型、对象身份、字段换算、校验规则）、`versioning/`（快照存储与投影）、`instance/`（对象服务、快照编辑、发布前校验、发布编排）、`datasource/`（数据资源与 SQL）、`query-dsl/`（查询语义与编译）、`reasoning/`（智能问答与工具）、`mcp/`（协议、schema、令牌）、`oauth/`（授权服务器）、`skills/`（本体技能） |
 
 两条硬规矩：

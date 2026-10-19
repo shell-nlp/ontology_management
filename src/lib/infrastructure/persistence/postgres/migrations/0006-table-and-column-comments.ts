@@ -1,10 +1,10 @@
 import type { QueryRunner } from "typeorm";
-import { PLATFORM_PG_ONLY_COLUMN_COMMENTS, platformCommentStatements } from "@/lib/platform/db/comments";
+import { PLATFORM_PG_ONLY_COLUMN_COMMENTS, platformCommentStatements } from "@/lib/infrastructure/persistence/postgres/comments";
 
 /**
  * 给平台库补上**表注释与字段注释**（用户要求：建库必须有注释，不然看不懂表和字段是干什么的）。
  *
- * 语句由 `@/lib/platform/db/comments` 生成，`COMMENT ON` 天然幂等（重复执行只是覆盖同样的文本），
+ * 语句由 `@/lib/infrastructure/persistence/postgres/comments` 生成，`COMMENT ON` 天然幂等（重复执行只是覆盖同样的文本），
  * 所以这支迁移每次启动跑一遍也没副作用。
  */
 export class TableAndColumnComments0006 {

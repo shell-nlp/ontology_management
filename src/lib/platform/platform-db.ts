@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { And, In, LessThanOrEqual, MoreThanOrEqual, type FindOptionsWhere } from "typeorm";
-import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/platform/db";
+import { DataSourceEntity, PlatformSettingEntity, AuditEntryEntity, PlatformUserEntity, ensurePlatformSchema, jsonValue, platformRepo, repoIn, withAdvisoryLock, withPlatformTransaction } from "@/lib/infrastructure/persistence/postgres";
 import { BUILTIN_EMBEDDED_TARGET_ID } from "@/lib/infrastructure/graph/types";
 import { effectivePermissions, type Permission } from "@/lib/platform/permissions";
-import { RoleEntity } from "@/lib/platform/db/entities";
+import { RoleEntity } from "@/lib/infrastructure/persistence/postgres/entities";
 
 /**
  * 平台库（PostgreSQL）的数据访问。
  *
  * **这一层现在只负责"业务口径"，SQL 全部交给 TypeORM**（2026-09-19 用户要求：
- * "操作数据库一定要用 ORM，不能直接写 SQL"）。表结构在 `@/lib/db/migrations`，
- * 实体在 `@/lib/db/entities`，这里只做查询编排与领域类型转换。
+ * "操作数据库一定要用 ORM，不能直接写 SQL"）。表结构在
+ * `@/lib/infrastructure/persistence/postgres/migrations`，实体在同一技术层的 `entities.ts`，
+ * 这里只做查询编排与领域类型转换。
  *
- * 换库 / 换存储实现时改的是 `@/lib/db` 里的 `type` 与那一处 advisory lock，
+ * 换库 / 换存储实现时改的是 `@/lib/infrastructure/persistence/postgres` 里的 `type` 与 advisory lock，
  * 本文件与所有调用点都不需要动。
  */
 

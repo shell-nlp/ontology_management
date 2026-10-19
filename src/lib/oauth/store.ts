@@ -5,7 +5,7 @@ import {
   OAuthAuthorizationCodeEntity,
   OAuthClientEntity,
   OAuthRefreshTokenEntity,
-} from "@/lib/platform/db/entities";
+} from "@/lib/infrastructure/persistence/postgres/entities";
 import { normalizeClientName, normalizeRedirectUris } from "@/lib/oauth/rules";
 
 /**

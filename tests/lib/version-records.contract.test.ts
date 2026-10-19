@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { platformRepo } from "@/lib/platform/db";
-import { OntologyConceptEntity } from "@/lib/platform/db/entities";
+import { OntologyConceptEntity } from "@/lib/infrastructure/persistence/postgres/entities";
 import {
   deleteTargetVersionRecords,
   deleteVersionRecordRow,

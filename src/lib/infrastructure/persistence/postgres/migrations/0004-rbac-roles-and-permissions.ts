@@ -1,5 +1,5 @@
 import type { QueryRunner } from "typeorm";
-import { BUILTIN_ROLES } from "@/lib/platform/permissions";
+import { BUILTIN_ROLES } from "@/lib/shared/common/permissions";
 
 /**
  * RBAC（2026-10-09 用户口径：做「用户管理 + 角色与权限」两档）。

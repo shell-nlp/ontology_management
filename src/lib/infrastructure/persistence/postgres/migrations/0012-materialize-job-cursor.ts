@@ -1,5 +1,5 @@
 import type { QueryRunner } from "typeorm";
-import { platformCommentStatements } from "@/lib/platform/db/comments";
+import { platformCommentStatements } from "@/lib/infrastructure/persistence/postgres/comments";
 
 /**
  * 物化任务加一列**断点游标**（`cursor`）。
@@ -13,7 +13,7 @@ export class MaterializeJobCursor0012 {
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`ALTER TABLE ontology_platform.materialization_jobs ADD COLUMN IF NOT EXISTS cursor JSONB`);
-    // 注释的唯一出处是 @/lib/platform/db/comments；这支迁移自己补上，不等 0006 下一轮再跑。
+    // 注释的唯一出处是 @/lib/infrastructure/persistence/postgres/comments；这支迁移自己补上，不等 0006 下一轮再跑。
     for (const statement of platformCommentStatements()) {
       if (!statement.startsWith("COMMENT ON COLUMN ontology_platform.materialization_jobs.cursor ")) continue;
       await queryRunner.query(statement);

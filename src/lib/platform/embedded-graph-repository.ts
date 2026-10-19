@@ -1,6 +1,6 @@
 import type { EmbeddedGraphRepository } from "@/lib/infrastructure/graph/embedded/repository";
 import type { GraphWriteSnapshot } from "@/lib/infrastructure/graph/types";
-import { EmbeddedGraphEntity, ensurePlatformSchema, jsonValue, platformRepo } from "@/lib/platform/db";
+import { EmbeddedGraphEntity, ensurePlatformSchema, jsonValue, platformRepo } from "@/lib/infrastructure/persistence/postgres";
 
 /** Embedded Store 在平台里的持久化实现：每个本体存储一行快照。 */
 export function createPlatformEmbeddedGraphRepository(): EmbeddedGraphRepository {

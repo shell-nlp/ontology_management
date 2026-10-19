@@ -1,5 +1,5 @@
 import type { QueryRunner } from "typeorm";
-import { platformCommentStatements } from "@/lib/platform/db/comments";
+import { platformCommentStatements } from "@/lib/infrastructure/persistence/postgres/comments";
 
 /**
  * OAuth 授权服务器（本地 AS）的三张表：客户端、授权码、刷新令牌。
@@ -7,7 +7,7 @@ import { platformCommentStatements } from "@/lib/platform/db/comments";
  * 为什么要落到库上：授权码必须**一次性**且能扛住多进程与重启（生产是 `next start` 多实例，
  * 进程内 Map 一重启就全丢）；客户端清单要能管、能撤；刷新令牌要能轮换。
  *
- * 建完表顺手把这几张表的注释也补上：注释的唯一出处是 `@/lib/platform/db/comments`，
+ * 建完表顺手把这几张表的注释也补上：注释的唯一出处是 `@/lib/infrastructure/persistence/postgres/comments`，
  * 而迁移 0006 在本支之前跑，那时这几张表还不存在 —— 不在这里补，就要等下一次启动才有注释。
  */
 export class OAuthTables0011 {
@@ -61,7 +61,7 @@ export class OAuthTables0011 {
       `CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_user_idx ON ontology_platform.oauth_refresh_tokens (user_id, created_at DESC)`,
     );
 
-    // 只补这三张表的注释（注释文案的唯一出处是 @/lib/platform/db/comments）。
+    // 只补这三张表的注释（注释文案的唯一出处是 @/lib/infrastructure/persistence/postgres/comments）。
     const mine = ["oauth_clients", "oauth_authorization_codes", "oauth_refresh_tokens"];
     const isMine = (statement: string) =>
       mine.some((table) =>

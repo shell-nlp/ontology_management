@@ -1,6 +1,6 @@
-import { jsonValue, platformRepo, withPlatformQueryRunner } from "@/lib/platform/db";
-import { OntologyConceptEntity, OntologyVersionEntity } from "@/lib/platform/db/entities";
-import { pgOnlyColumnComment } from "@/lib/platform/db/comments";
+import { jsonValue, platformRepo, withPlatformQueryRunner } from "@/lib/infrastructure/persistence/postgres";
+import { OntologyConceptEntity, OntologyVersionEntity } from "@/lib/infrastructure/persistence/postgres/entities";
+import { pgOnlyColumnComment } from "@/lib/infrastructure/persistence/postgres/comments";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { conceptsOfDefinition, type OntologyConcept } from "@/lib/ontology/concepts";
 

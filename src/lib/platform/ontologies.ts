@@ -10,7 +10,7 @@ import {
   OntologyVersionEntity,
   jsonValue,
   platformRepo,
-} from "@/lib/platform/db";
+} from "@/lib/infrastructure/persistence/postgres";
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/infrastructure/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/platform/targets";
