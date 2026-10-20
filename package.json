@@ -22,7 +22,9 @@
     "docker:up": "docker compose --env-file .env.docker up -d --build",
     "docker:down": "docker compose --env-file .env.docker down",
     "docker:logs": "docker compose --env-file .env.docker logs -f app",
-    "docker:config": "docker compose --env-file .env.docker config"
+    "docker:config": "docker compose --env-file .env.docker config",
+    "ods:rename-tables": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env.local scripts/rename-ods-tables.mjs",
+    "ods:rename-tables:apply": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env.local scripts/rename-ods-tables.mjs --apply"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.48",

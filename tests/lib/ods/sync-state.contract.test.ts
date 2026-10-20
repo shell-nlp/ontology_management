@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { OdsSourceEntity, OdsSyncJobEntity, jsonValue, platformRepo } from "@/lib/infrastructure/persistence/postgres";
-import { cancelOdsSync, listOdsJobs } from "@/lib/instance/ods/service";
+import { cancelOdsSync, deleteOdsSource, listOdsJobs } from "@/lib/instance/ods/service";
 
 const enabled = Boolean(process.env.DATABASE_URL);
 
@@ -75,6 +75,7 @@ describe("ODS 同步任务状态契约", () => {
         createdBy: null,
         checkpoint: null,
       }));
+      await expect(deleteOdsSource(sourceId)).rejects.toThrow(/正在同步或排队中/);
       const cancelled = await cancelOdsSync(queuedId);
       expect(cancelled.status).toBe("CANCELLED");
     } finally {

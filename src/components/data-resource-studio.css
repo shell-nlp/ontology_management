@@ -93,9 +93,10 @@
 .drs-placeholder b { color: #334155; font-size: 14px; }
 .drs-placeholder span { max-width: 380px; font-size: 12px; line-height: 1.7; }
 .drs-view-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #e8eef7; }
+.drs-view-head > div:first-child { min-width: 0; flex: 1 1 220px; }
 .drs-view-head h3 { margin: 2px 0 0; font-size: 14.5px; color: #14213d; word-break: break-all; }
-.drs-view-head-actions { display: flex; align-items: center; gap: 10px; flex: none; }
-.drs-view-meta { color: #7b8ca6; font-size: 11.5px; white-space: nowrap; }
+.drs-view-head-actions { display: flex; align-items: center; justify-content: flex-end; flex: 0 1 360px; flex-wrap: wrap; gap: 6px 10px; }
+.drs-view-meta { flex: 1 0 100%; order: -1; color: #7b8ca6; font-size: 11.5px; text-align: right; white-space: nowrap; }
 .drs-view-error { display: flex; align-items: center; gap: 7px; margin: 12px 14px; padding: 9px 11px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; font-size: 12px; }
 .drs-field-table { max-height: 46%; overflow: auto; border-bottom: 1px solid #e8eef7; }
 .drs-field-head, .drs-field-row { display: grid; grid-template-columns: minmax(120px, 1.1fr) 116px 108px minmax(0, 1.5fr); align-items: center; gap: 10px; padding: 6px 14px; }

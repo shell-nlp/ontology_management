@@ -148,6 +148,7 @@ export function OdsDialog({ source, schema, table, tableKind, fields, canEdit, o
 
   const remove = async () => {
     if (!config || !window.confirm(`删除 ${tableName} 的 ODS 镜像？ClickHouse 中的派生表会一并删除，源业务库不受影响。`)) return;
+    if (activeJob) { fail(new Error("这个 ODS 正在同步或排队中，请先取消并等待任务结束，再删除镜像。")); return; }
     setBusy("delete");
     try {
       await api(`/api/ods/${encodeURIComponent(config.id)}`, { method: "DELETE" });
@@ -212,7 +213,7 @@ export function OdsDialog({ source, schema, table, tableKind, fields, canEdit, o
     </div>
 
     <footer className="ods-dialog-foot">
-      {config && canEdit && <button className="action danger" disabled={Boolean(busy)} onClick={() => void remove()}><Trash2 size={14} />{busy === "delete" ? "删除中" : "删除镜像"}</button>}
+      {config && canEdit && <button className="action danger" disabled={Boolean(busy) || Boolean(activeJob)} onClick={() => void remove()} title={activeJob ? "同步或排队中不能删除，请先取消任务" : "删除 ClickHouse 派生镜像"}><Trash2 size={14} />{busy === "delete" ? "删除中" : "删除镜像"}</button>}
       <span className="ods-foot-note">ClickHouse 只保存源表副本；本体定义、版本与读取策略仍保存在 PostgreSQL。</span>
       <button className="action" onClick={onClose} disabled={Boolean(busy)}>关闭</button>
       {canEdit && <button className="action" disabled={Boolean(busy)} onClick={() => void save()}>{busy === "save" ? <Loader2 size={14} className="drs-spin" /> : <RefreshCcw size={14} />}保存配置</button>}

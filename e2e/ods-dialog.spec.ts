@@ -63,8 +63,10 @@ test("ODS 镜像弹窗在常见视口内完整渲染并可滚动正文", async (
 
 test("表清单优先显示对象类型和 ODS 使用的表，并标注用途", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  let dddOdsDeleted = false;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
     let json: unknown = {};
     if (path === "/api/auth/session") {
       json = { user: { id: "user", email: "fixture@example.test", roleId: "admin", roleName: "管理员", permissions: ["ontology.read", "datasource.read", "datasource.write", "instance.read", "target.read"] } };
@@ -123,11 +125,14 @@ test("表清单优先显示对象类型和 ODS 使用的表，并标注用途", 
         fetched_at: "2026-10-20T00:00:00Z",
         from_cache: false,
       };
+    } else if (path === "/api/ods/ods-ddd" && method === "DELETE") {
+      dddOdsDeleted = true;
+      json = { ok: true };
     } else if (path === "/api/ods") {
       json = {
         sources: [
-          { dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "CCC_ODS_ONLY", status: "RUNNING", enabled: true, rowCount: 0, lastError: null },
-          { dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "DDD_BOTH", status: "READY", enabled: true, rowCount: 1689, lastError: null },
+          { id: "ods-ccc", dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "CCC_ODS_ONLY", status: "RUNNING", enabled: true, rowCount: 0, lastError: null },
+          ...(dddOdsDeleted ? [] : [{ id: "ods-ddd", dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "DDD_BOTH", status: "READY", enabled: true, rowCount: 1689, lastError: null }]),
         ],
       };
     } else if (path === "/api/ods/jobs") {
@@ -148,6 +153,14 @@ test("表清单优先显示对象类型和 ODS 使用的表，并标注用途", 
   const both = page.locator(".drs-list-row").filter({ hasText: "DDD_BOTH" });
   await expect(both.getByText("对象类型", { exact: true })).toBeVisible();
   await expect(both.getByText("ODS 可读取", { exact: true })).toBeVisible();
+  const removeOds = page.getByRole("button", { name: "删除 ODS", exact: true });
+  await expect(removeOds).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("catalog-priority-actions.png"), fullPage: true });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await removeOds.click();
+  await expect(both.getByText("ODS 可读取", { exact: true })).toHaveCount(0);
+  await expect(both.getByText("对象类型", { exact: true })).toBeVisible();
+  await expect(removeOds).toHaveCount(0);
   const boundOnly = page.locator(".drs-list-row").filter({ hasText: "BBB_BOUND_ONLY" });
   await expect(boundOnly.getByText("对象类型", { exact: true })).toBeVisible();
   const odsOnly = page.locator(".drs-list-row").filter({ hasText: "CCC_ODS_ONLY" });

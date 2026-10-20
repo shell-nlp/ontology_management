@@ -19,8 +19,18 @@ import { isOdsReconcileDue } from "@/lib/instance/ods/service";
 
 describe("ClickHouse ODS 表规格", () => {
   it("同源表得到稳定且带隔离的表名", () => {
-    expect(odsTableName("a", "S", "T")).toBe(odsTableName("a", "S", "T"));
+    const name = odsTableName("a", "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY");
+    expect(name).toBe(odsTableName("a", "GISTOOLS", "TB_MK_GRP_LINE_LIST_DAY"));
+    expect(name).toMatch(/^ods_gistools_tb_mk_grp_line_list_day_[a-f0-9]{12}$/);
     expect(odsTableName("a", "S", "T")).not.toBe(odsTableName("b", "S", "T"));
+  });
+
+  it("原表名超长或含特殊字符时仍得到稳定、可读的安全标识", () => {
+    const name = odsTableName("source", "Very-Long Schema", `${"表名".repeat(30)} END`);
+    expect(name.startsWith("ods_very_long_schema_")).toBe(true);
+    expect(name).toMatch(/_[a-f0-9]{12}$/);
+    expect(name.length).toBeLessThanOrEqual(61);
+    expect(name).not.toMatch(/[^a-z0-9_]/);
   });
 
   it("源类型收敛成可比较的 ClickHouse 类型", () => {
@@ -40,6 +50,13 @@ describe("ClickHouse ODS 表规格", () => {
     expect(sql).toContain("_is_deleted");
     expect(sql).toContain("ReplacingMergeTree");
     expect(sql).toContain("`CUST_ID` Nullable(String)");
+  });
+
+  it("表注释带出原始 schema 和表名", () => {
+    const sql = odsCreateTableStatement("ontology_index.ods_x", [
+      { name: "CUST_ID", sourceType: "VARCHAR2(20)", clickhouseType: "String", nullable: false, primaryKey: true },
+    ], "LIVE", { sourceSchema: "GISTOOLS", sourceTable: "TB_MK_GRP_LINE_LIST_DAY" });
+    expect(sql).toContain("GISTOOLS.TB_MK_GRP_LINE_LIST_DAY 的 ODS 派生镜像");
   });
 });
 

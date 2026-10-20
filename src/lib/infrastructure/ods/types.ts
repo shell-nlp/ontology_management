@@ -14,6 +14,10 @@ export type OdsColumn = {
 export type OdsTableSpec = {
   sourceId: string;
   tableName: string;
+  /** 物理镜像对应的原始模式；用于表注释和运维识别。 */
+  sourceSchema?: string;
+  /** 物理镜像对应的原始表名；用于表注释和运维识别。 */
+  sourceTable?: string;
   columns: OdsColumn[];
   primaryKeyColumns: string[];
 };

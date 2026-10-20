@@ -253,8 +253,10 @@ export async function deleteOdsSource(id: string): Promise<void> {
   const repo = await platformRepo(OdsSourceEntity);
   const row = await repo.findOne({ where: { id } });
   if (!row) return;
-  await getOdsStore().drop(row.id, row.chTable);
   const jobs = await platformRepo(OdsSyncJobEntity);
+  const active = await jobs.findOne({ where: { sourceId: id, status: In(["QUEUED", "RUNNING", "CANCELLING"]) } });
+  if (active) throw new Error("这个 ODS 正在同步或排队中，请先取消并等待任务结束，再删除镜像。");
+  await getOdsStore().drop(row.id, row.chTable);
   await jobs.delete({ sourceId: row.id });
   await repo.remove(row);
 }
@@ -323,6 +325,8 @@ function specOf(row: OdsSourceEntity): OdsTableSpec {
   return {
     sourceId: row.id,
     tableName: row.chTable,
+    sourceSchema: row.schemaName,
+    sourceTable: row.tableName,
     columns: columnsOf(row.columns, []),
     primaryKeyColumns: primaryKeysOf(row.primaryKeyColumns, []),
   };

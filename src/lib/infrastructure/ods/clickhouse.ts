@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
 import { clickHouseExecute, clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/clickhouse/client";
+import { odsTableName } from "@/lib/infrastructure/ods/naming";
 import type { DataSourceRowFilter, DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
 import type { OdsColumn, OdsReadQuery, OdsReadResult, OdsStore, OdsTableSpec } from "@/lib/infrastructure/ods/types";
 
@@ -23,11 +24,7 @@ function tableRef(table: string) {
   return `${safeDatabase()}.${table}`;
 }
 
-/** 一张源表一个稳定表名；不同源库即使表名相同也不会撞。 */
-export function odsTableName(dataSourceId: string, schema: string, table: string) {
-  const digest = createHash("sha256").update(`${dataSourceId}\u0000${schema}\u0000${table}`).digest("hex").slice(0, 16);
-  return `ods_${digest}`;
-}
+export { odsTableName } from "@/lib/infrastructure/ods/naming";
 
 /** 把源库字段类型收敛成 ClickHouse 可存储、可比较的保守类型。 */
 export function clickHouseTypeFor(sourceType: string, sourceKind?: string) {
@@ -42,8 +39,19 @@ export function clickHouseTypeFor(sourceType: string, sourceKind?: string) {
   return "String";
 }
 
-export function odsCreateTableStatement(databaseTable: string, columns: OdsColumn[], mode: "LIVE" | "STAGE" = "LIVE") {
+export function odsCreateTableStatement(
+  databaseTable: string,
+  columns: OdsColumn[],
+  mode: "LIVE" | "STAGE" = "LIVE",
+  origin?: Pick<OdsTableSpec, "sourceSchema" | "sourceTable">,
+) {
   const comment = (text: string) => `'${text.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  const sourceName = origin?.sourceTable
+    ? `${origin.sourceSchema ? `${origin.sourceSchema}.` : ""}${origin.sourceTable}`
+    : "";
+  const tableComment = sourceName
+    ? `${sourceName} 的 ODS 派生镜像；按主键去重，可重建，不保存本体版本实例`
+    : "源表派生镜像，按源主键去重，不保存本体版本实例";
   const lines = [
     "`_source_id` String COMMENT 'ODS 配置标识'",
     "`_row_key` String COMMENT '完整源主键值生成的稳定行键'",
@@ -55,7 +63,7 @@ export function odsCreateTableStatement(databaseTable: string, columns: OdsColum
   const engine = mode === "STAGE"
     ? "MergeTree ORDER BY (_source_id, _row_key)"
     : "ReplacingMergeTree(_source_updated_at, _is_deleted) ORDER BY (_source_id, _row_key)";
-  return `CREATE TABLE IF NOT EXISTS ${databaseTable} (${lines.join(", ")}) ENGINE=${engine} COMMENT '源表派生镜像，按源主键去重，不保存本体版本实例'`;
+  return `CREATE TABLE IF NOT EXISTS ${databaseTable} (${lines.join(", ")}) ENGINE=${engine} COMMENT ${comment(tableComment)}`;
 }
 
 function normalizeValue(value: unknown, column?: OdsColumn): unknown {
@@ -169,10 +177,10 @@ export function createClickHouseOdsStore(): OdsStore {
       const stage = tableRef(stageName);
       const nextName = `${input.spec.tableName}__next_${input.batchId}`.slice(0, 120);
       const next = tableRef(nextName);
-      await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns));
-      await clickHouseExecute(odsCreateTableStatement(next, input.spec.columns));
+      await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns, "LIVE", input.spec));
+      await clickHouseExecute(odsCreateTableStatement(next, input.spec.columns, "LIVE", input.spec));
       await clickHouseExecute(`DROP TABLE IF EXISTS ${stage}`);
-      await clickHouseExecute(odsCreateTableStatement(stage, input.spec.columns, "STAGE"));
+      await clickHouseExecute(odsCreateTableStatement(stage, input.spec.columns, "STAGE", input.spec));
       try {
         const result = await writeStream({ spec: input.spec, rows: input.rows, batchId: input.batchId, targetTable: stageName, onProgress: input.onProgress });
         const selectedColumns = input.spec.columns.map((column) => quote(column.name)).join(", ");
@@ -213,7 +221,7 @@ export function createClickHouseOdsStore(): OdsStore {
 
     async writeIncremental(input) {
       const live = tableRef(input.spec.tableName);
-      await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns));
+      await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns, "LIVE", input.spec));
       const result = await writeStream({ spec: input.spec, rows: input.rows, batchId: input.batchId, targetTable: input.spec.tableName, onProgress: input.onProgress });
       return { ...result, storedRows: result.rows, warnings: [] };
     },

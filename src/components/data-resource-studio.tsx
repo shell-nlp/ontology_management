@@ -229,6 +229,7 @@ function cellText(value: unknown) {
 }
 
 type OdsCatalogSignal = {
+  id: string;
   dataSourceId: string;
   schemaName: string;
   tableName: string;
@@ -493,6 +494,7 @@ function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, 
   const tableCount = views.filter((item) => item.kind === "table").length;
   const viewCount = views.length - tableCount;
   const selected = views.find((item) => item.name === activeName) ?? null;
+  const selectedOds = selected ? odsByTable.get(catalogUsageKey(source.id, selected.schema, selected.name)) ?? null : null;
   const scoped = Boolean(source.schemaName);
   // 只有 PG 这种「一个连接能看到多个模式」的库，看全库才有意义；Oracle 的模式就是连接本身。
   const canWiden = scoped && source.kind !== "ORACLE";
@@ -563,6 +565,22 @@ function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, 
       setBusy("delete");
       await dataSourcesApi.remove(source.id);
       await onDeleted();
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const removeOds = async () => {
+    if (!selected || !selectedOds) return;
+    const tableName = selected.schema ? `${selected.schema}.${selected.name}` : selected.name;
+    if (!window.confirm(`删除「${tableName}」的 ODS 镜像？只会删除 ClickHouse 派生副本，不删除业务源表，也不删除对象类型绑定。`)) return;
+    try {
+      setBusy("delete-ods");
+      await api(`/api/ods/${encodeURIComponent(selectedOds.id)}`, { method: "DELETE" });
+      notify(`已删除「${tableName}」的 ODS 镜像；业务源表未改动。`);
+      await onOdsChanged();
     } catch (reason) {
       fail(reason);
     } finally {
@@ -679,6 +697,7 @@ function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, 
             <div className="drs-view-head-actions">
               <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}{!detailBusy && !detailError && detailMeta ? ` · ${detailMeta.fromCache ? "取自平台库" : "刚回源重读"} ${cacheClock(detailMeta.at)}` : ""}</span>
               <button type="button" className="action compact" disabled={!fields.length} onClick={() => setOdsOpen(true)} title={fields.length ? "把这张源表裁剪后同步到 ClickHouse；对象实例仍然在查询时投影" : "先读到字段结构才能配置 ODS"}><Boxes size={13} />ODS 镜像</button>
+              {selectedOds && canEdit && <button type="button" className="action compact danger" disabled={busy === "delete-ods" || selectedOds.status === "RUNNING"} onClick={() => void removeOds()} title={selectedOds.status === "RUNNING" ? "同步或排队中不能删除，请先在 ODS 镜像中取消任务" : "只删除 ClickHouse 派生镜像，不删除源表和对象类型绑定"}>{busy === "delete-ods" ? <Loader2 size={13} className="drs-spin" /> : <Trash2 size={13} />}{busy === "delete-ods" ? "删除中" : "删除 ODS"}</button>}
               <button type="button" className="action compact" disabled={detailBusy} onClick={() => { detailRefreshRef.current = true; setDetailToken((current) => current + 1); }} title="回源库重读这一张表的字段和数据（平时读的是平台库里存着的那一份），读完顺手存回平台库">{detailBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}重新取数</button>
             </div>
           </div>
