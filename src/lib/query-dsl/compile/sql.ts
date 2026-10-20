@@ -1,6 +1,7 @@
 import type { DataSourceKind } from "@/lib/datasource/types";
 import type { LogicalPlan, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "../ast";
 import { QueryDslError } from "../errors";
+import { compileCaseExpression, decimalLiteral } from "./case";
 
 export type CompiledSqlQuery = {
   statement: string;
@@ -204,16 +205,17 @@ function aggregateExpression(
   filters: ResolvedExpr[],
   kind: DataSourceKind,
   bag: ParameterBag,
+  argument?: string,
 ): string {
   const condition = expressionForFilters(plan, filters, kind, bag);
-  const column = field ? columnRef(field, kind) : "";
+  const column = argument ?? (field ? columnRef(field, kind) : "");
   const wrapped = (value: string) => condition ? `CASE WHEN ${condition} THEN ${value} END` : value;
 
   if (aggregation === "COUNT") {
-    if (!field) return condition ? `COUNT(CASE WHEN ${condition} THEN 1 END)` : "COUNT(*)";
+    if (!field && !argument) return condition ? `COUNT(CASE WHEN ${condition} THEN 1 END)` : "COUNT(*)";
     return `COUNT(${wrapped(column)})`;
   }
-  if (!field) throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property。`);
+  if (!field && !argument) throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property 或 CASE 参数。`);
   if (aggregation === "COUNT_DISTINCT") return `COUNT(DISTINCT ${wrapped(column)})`;
   return `${aggregation}(${wrapped(column)})`;
 }
@@ -251,7 +253,21 @@ function compileSelect(plan: LogicalPlan, kind: DataSourceKind, bag: ParameterBa
       items.push(`${compileMetricExpression(plan, item.metric, kind, bag)} AS ${quoteIdentifier(kind, item.as)}`);
       if (item.metric.status === "draft") warnings.push(`指标「${item.metric.name}」状态为 draft，尚未验收。`);
     } else {
-      items.push(`${aggregateExpression(plan, item.aggregate, item.field, [], kind, bag)} AS ${quoteIdentifier(kind, item.as)}`);
+      const conditional = item.case ? compileCaseExpression(item.case, {
+        condition: (condition) => compileExpr(plan, condition, kind, bag),
+        field: (field) => columnRef(field, kind),
+        literal: (value, allNull) => {
+          if (value === null) return allNull ? "CAST(NULL AS DECIMAL(38, 0))" : "NULL";
+          if (typeof value === "number") {
+            const { scale } = decimalLiteral(value);
+            const type = kind === "ORACLE" ? "NUMBER" : kind === "MYSQL" ? `DECIMAL(65, ${scale})` : "NUMERIC";
+            return `CAST(${bag.add(value)} AS ${type})`;
+          }
+          if (typeof value === "boolean" && kind !== "POSTGRES") return bag.add(value ? 1 : 0);
+          return typeof value === "boolean" ? `CAST(${bag.add(value)} AS BOOLEAN)` : bag.add(value);
+        },
+      }) : undefined;
+      items.push(`${aggregateExpression(plan, item.aggregate, item.field, [], kind, bag, conditional)} AS ${quoteIdentifier(kind, item.as)}`);
       warnings.push(`输出「${item.as}」使用临时聚合口径，未引用已定义指标。`);
     }
     columns.push(item.as);

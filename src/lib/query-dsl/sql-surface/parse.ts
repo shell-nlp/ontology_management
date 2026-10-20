@@ -46,13 +46,15 @@ export type SqlExpr =
   | SqlCondition;
 
 export type SqlAggregate = "COUNT" | "COUNT_DISTINCT" | "SUM" | "AVG" | "MIN" | "MAX";
+export type SqlCaseValue = { kind: "field"; field: SqlFieldRef } | SqlValue;
+export type SqlCaseExpression = { branches: { when: SqlExpr; then: SqlCaseValue }[]; otherwise: SqlCaseValue };
 
 export type SqlSelectItem =
   /** `SELECT 属性` / `SELECT 别名.属性` —— `as` 省略时用属性名。 */
   | { kind: "field"; field: SqlFieldRef; as: string }
   /** `SELECT 客户数` —— 是属性还是指标由 `bind.ts` 拿着本体定义判定。 */
   | { kind: "name"; name: string; as: string; position: number }
-  | { kind: "aggregate"; aggregate: SqlAggregate; field?: SqlFieldRef; as: string }
+  | { kind: "aggregate"; aggregate: SqlAggregate; field?: SqlFieldRef; case?: SqlCaseExpression; as: string }
   /** `SELECT LABEL(属性) AS 标签` —— 输出 / 分组的是中文标签，不是码值。 */
   | { kind: "label"; field: SqlFieldRef; as: string };
 
@@ -149,9 +151,10 @@ function tokenize(sql: string): Token[] {
       index = cursor;
       continue;
     }
-    if (isDigit(char) || (char === "." && isDigit(sql[index + 1] ?? ""))) {
+    if (isDigit(char) || (char === "." && isDigit(sql[index + 1] ?? "")) || ((char === "-" || char === "+") && isDigit(sql[index + 1] ?? ""))) {
       let cursor = index;
       let text = "";
+      if (char === "-" || char === "+") { text = char; cursor++; }
       while (cursor < length && (isDigit(sql[cursor]) || sql[cursor] === ".")) { text += sql[cursor]; cursor += 1; }
       const value = Number(text);
       if (!Number.isFinite(value)) throw new QueryDslError("INVALID_QUERY", `本体 SQL 解析失败：数字「${text}」看不懂。`);
@@ -182,6 +185,7 @@ const KEYWORDS = new Set([
   "where", "group", "by", "order", "asc", "desc", "limit",
   "and", "or", "not", "in", "between", "is", "null", "like", "distinct",
   "true", "false", "count", "sum", "avg", "min", "max", "label",
+  "case", "when", "then", "else", "end",
   "forward", "backward", "both",
 ]);
 
@@ -281,14 +285,17 @@ class Parser {
       this.cursor += 1; // (
       let aggregate = AGGREGATES[token.value.toLowerCase()];
       let field: SqlFieldRef | undefined;
+      let conditional: SqlCaseExpression | undefined;
       if (aggregate === "COUNT" && this.eatKeyword("distinct")) aggregate = "COUNT_DISTINCT";
       if (this.eatPunct("*")) {
         if (aggregate !== "COUNT") this.fail(`${token.value.toUpperCase()}(*) 只有 COUNT 能用。`);
+      } else if (this.isCaseStart()) {
+        conditional = this.parseCase();
       } else {
         field = this.parseFieldRef();
       }
       this.expectPunct(")");
-      return { kind: "aggregate", aggregate, field, as: this.readAs(`${aggregate.toLowerCase()}`) };
+      return { kind: "aggregate", aggregate, field, ...(conditional ? { case: conditional } : {}), as: this.readAs(`${aggregate.toLowerCase()}`) };
     }
     // LABEL(属性)：既能按标签过滤，也能把标签当输出列 / 分组维度（"按中文标签分组统计"的常见问法）。
     if (token.kind === "ident" && !token.quoted && token.value.toLowerCase() === "label") {
@@ -326,12 +333,43 @@ class Parser {
   }
 
   private parseFieldRef(): SqlFieldRef {
+    const token = this.peek();
+    if (token.kind === "ident" && !token.quoted && token.value.toLowerCase() === "case") {
+      this.fail("CASE WHEN 当前只允许作为 COUNT / SUM / AVG / MIN / MAX 的聚合参数，不支持嵌套或普通字段位置；若属性确实名为 CASE，请用双引号引用。");
+    }
     const first = this.readName("属性名");
     if (this.eatPunct(".")) {
       const property = this.readName("属性名");
       return { alias: first, property, explicitAlias: true };
     }
     return { alias: "root", property: first, explicitAlias: false };
+  }
+
+  private isCaseStart() {
+    const token = this.peek();
+    return token.kind === "ident" && !token.quoted && token.value.toLowerCase() === "case";
+  }
+
+  private parseCaseValue(): SqlCaseValue {
+    const token = this.peek();
+    if (token.kind === "ident" && !token.quoted && ["when", "then", "else", "end"].includes(token.value.toLowerCase())) this.fail("CASE 分支缺少返回值：请写属性、标量、NULL 或 :参数。");
+    if (token.kind === "ident" && (token.quoted || !["true", "false", "null"].includes(token.value.toLowerCase()))) return { kind: "field", field: this.parseFieldRef() };
+    return this.parseValue();
+  }
+
+  private parseCase(): SqlCaseExpression {
+    this.cursor++;
+    const branches: SqlCaseExpression["branches"] = [];
+    if (!this.eatKeyword("when")) this.fail("只支持 CASE WHEN 条件 THEN 值 的条件式写法；CASE 属性 WHEN 值 的简单式写法暂不支持。");
+    do {
+      if (branches.length >= 32) this.fail("单个 CASE 最多支持 32 个 WHEN 分支。");
+      const when = this.parseExpr();
+      this.expectKeyword("then");
+      branches.push({ when, then: this.parseCaseValue() });
+    } while (this.eatKeyword("when"));
+    const otherwise = this.eatKeyword("else") ? this.parseCaseValue() : { kind: "null" as const };
+    this.expectKeyword("end");
+    return { branches, otherwise };
   }
 
   private parseExpr(): SqlExpr {

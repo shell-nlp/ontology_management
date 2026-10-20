@@ -6,6 +6,27 @@
 
 ## 1. 目标与定位
 
+**方言约定：Ontology SQL 以 PostgreSQL 查询语法为基准，采用明确支持的子集，加上本体名称引用、关系连接、方向和 LABEL 等扩展。** 这不代表完整 PostgreSQL 兼容，也不要求数据存放在 PostgreSQL；底层 Oracle、MySQL、ClickHouse 等差异由编译器处理。参数仍用平台占位符 `:名字` 与 `parameters`。
+
+支持聚合参数中的 `CASE WHEN` 条件表达式，包括 `COUNT(DISTINCT CASE WHEN ... END)` 和 `SUM(CASE WHEN ... THEN ... ELSE 0 END)`。它与指标过滤、普通查询共用同一语义内核，可执行于业务源或 ClickHouse ODS。当前仍不支持聚合外 CASE、简单式 `CASE 属性 WHEN`、嵌套 CASE、HAVING、聚合 FILTER、子查询、CTE、UNION 和窗口函数；模型会收到实际支持清单。
+
+### 条件聚合怎么写
+
+```sql
+SELECT COUNT(DISTINCT USER_ID) AS 正常用户数,
+       SUM(ZX_COUNT) AS 正常专线条数,
+       COUNT(DISTINCT CASE WHEN ZX_FLAG = '1' THEN USER_ID END) AS 数据专线用户数,
+       SUM(CASE WHEN ZX_FLAG = '1' THEN ZX_COUNT ELSE 0 END) AS 数据专线条数
+FROM 专线产品用户
+WHERE STATIS_DATE >= '2026-09-13'
+  AND STATIS_DATE < '2026-09-14'
+  AND STATS NOT IN ('1', '3')
+```
+
+示例里的字段必须是本体实际属性名。CASE 只能放在 COUNT、COUNT DISTINCT、SUM、AVG、MIN、MAX 的参数中；支持多个 WHEN（最多 32 个），按顺序取第一个成立的分支。THEN / ELSE 可返回属性、标量常量、NULL 或 `:参数`，参数值仍放 `parameters`。各分支必须是兼容标量，数值类型可混合；不支持分支算术或函数调用。
+
+省略 ELSE 时返回 NULL；条件为 NULL 时不命中该分支。COUNT 忽略 NULL；SUM/AVG/MIN/MAX 在空集或全 NULL 时返回 NULL，即使写了 ELSE 0，空集也不会凭空变成 0。CH ODS 使用统一数值分支精度和相应空集聚合语义；精确小数和大整数不会为方便 CASE 推断而转为 Float64。源库浮点列仍按浮点语义处理，无法安全提升的精度会明确拒绝。旧对象物化索引不执行 CASE，普通查询走 ODS / 业务源。
+
 查询 DSL 是智能问答和外部 MCP 客户端访问业务数据的**统一逻辑查询协议**。
 
 它解决的问题是：

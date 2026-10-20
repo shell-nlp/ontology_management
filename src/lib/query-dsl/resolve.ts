@@ -15,6 +15,8 @@ import type {
   ResolvedSelectItem,
   ResolvedSource,
   ResolvedValue,
+  ResolvedCaseExpression,
+  ResolvedCaseValue,
 } from "./ast";
 import type { CompareOperator, FieldRef, FilterValue, QueryDsl, QueryExpr } from "./schema";
 
@@ -208,7 +210,7 @@ function assertOperatorCompatible(field: ResolvedField, op: CompareOperator): vo
 
 function assertAggregationCompatible(
   aggregation: ResolvedMetric["aggregation"],
-  field: ResolvedField | undefined,
+  field: Pick<ResolvedField, "dataType" | "name"> | undefined,
 ): void {
   if (!field) {
     if (aggregation !== "COUNT") throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property。`);
@@ -350,6 +352,7 @@ function resolveSelect(
   rootAlias: string,
   item: QueryDsl["select"][number],
   groupBy: ResolvedField[],
+  parameters: QueryDsl["parameters"],
 ): ResolvedSelectItem {
   if ("field" in item) return { kind: "field", field: resolveField(entities, item.field), as: item.as };
   if ("label" in item) {
@@ -375,14 +378,42 @@ function resolveSelect(
   }
   const on = item.on ?? rootAlias;
   const field = item.property ? resolveField(entities, { alias: on, property: item.property }) : undefined;
-  assertAggregationCompatible(item.aggregate, field);
+  const conditional = item.case ? resolveCase(entities, item.case, parameters) : undefined;
+  assertAggregationCompatible(item.aggregate, conditional ? { name: "CASE WHEN", dataType: conditional.dataType } : field);
   return {
     kind: "aggregate",
     aggregate: item.aggregate,
     ...(field ? { field } : {}),
+    ...(conditional ? { case: conditional } : {}),
     on,
     as: item.as,
   };
+}
+
+function resolveCase(entities: Map<string, ResolvedEntity>, expression: NonNullable<Extract<QueryDsl["select"][number], { aggregate: string }>["case"]>, parameters: QueryDsl["parameters"]): ResolvedCaseExpression {
+  const operand = (value: typeof expression.else): ResolvedCaseValue => {
+    if ("field" in value) return { kind: "field", field: resolveField(entities, value.field) };
+    let raw = value.value;
+    if (raw && typeof raw === "object") {
+      if (!Object.prototype.hasOwnProperty.call(parameters, raw.param)) throw new QueryDslError("INVALID_QUERY", `CASE 分支参数「${raw.param}」没有在 parameters 里提供值。`);
+      raw = parameters[raw.param];
+    }
+    if (typeof raw === "number" && Number.isInteger(raw) && !Number.isSafeInteger(raw)) throw new QueryDslError("INVALID_QUERY", "CASE 整数常量超过安全精度，请改为本体数值属性，避免静默丢失精度。");
+    return { kind: "literal", value: raw };
+  };
+  const branches = expression.branches.map((branch) => ({ when: resolveExpr(entities, branch.when), then: operand(branch.then) }));
+  const otherwise = operand(expression.else);
+  const types = [...branches.map((branch) => branch.then), otherwise].flatMap((value) => {
+    if (value.kind === "field") return [value.field.dataType];
+    if (value.value === null) return [];
+    return [typeof value.value === "number" ? Number.isInteger(value.value) ? "INTEGER" : "DECIMAL" : typeof value.value === "boolean" ? "BOOLEAN" : "TEXT"];
+  });
+  const unique = [...new Set(types)];
+  if (unique.some((type) => !SCALAR_TYPES.has(type)) || (unique.length > 1 && !unique.every((type) => NUMERIC_TYPES.has(type)))) {
+    throw new QueryDslError("INVALID_QUERY", `CASE 返回分支类型不兼容：${unique.join("、")}。所有 THEN / ELSE 必须返回兼容标量；数值类型可以混合，NULL 可用于任一类型。`);
+  }
+  const dataType = unique.includes("DECIMAL") ? "DECIMAL" : unique[0] ?? "INTEGER";
+  return { branches, otherwise, dataType };
 }
 
 function isUnsafeCardinality(value: string): boolean {
@@ -496,7 +527,7 @@ export function resolveQueryDsl(definition: OntologyDefinition, query: QueryDsl)
   }
 
   const groupBy = query.group_by.map((ref) => resolveField(resolvedRelationships.entities, ref));
-  const select = query.select.map((item) => resolveSelect(definition, resolvedRelationships.entities, root.alias, item, groupBy));
+  const select = query.select.map((item) => resolveSelect(definition, resolvedRelationships.entities, root.alias, item, groupBy, query.parameters));
   const aggregateCount = select.filter(isAggregate).length;
   if (query.kind === "records" && aggregateCount) {
     throw new QueryDslError("INVALID_QUERY", "kind=records 不能包含指标或聚合输出。");

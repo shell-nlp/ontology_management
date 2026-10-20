@@ -3,6 +3,8 @@ import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontolog
 import { compileQuerySql, executeOntologySql, parseOntologySql, resolveQueryDsl, toQueryDsl } from "@/lib/query-dsl";
 import { REASONING_TOOLS } from "@/lib/reasoning/tools/registry";
 import { runReasoningTool } from "@/lib/reasoning/tools";
+import { toolGuide } from "@/lib/reasoning/prompt";
+import { ONTOLOGY_SQL_DIALECT_GUIDE } from "@/lib/query-dsl/sql-surface/dialect";
 
 /**
  * 本体 SQL（SQL 形状的查询表层）。
@@ -371,5 +373,16 @@ describe("run_query 工具：只暴露一种表层", () => {
     expect(tool.description).toContain("本体 SQL");
     expect(tool.description).toContain("不接受");
     expect(tool.description).not.toContain("本体查询 DSL");
+    expect(tool.description).toContain(ONTOLOGY_SQL_DIALECT_GUIDE);
+    expect(toolGuide(["run_query"])).toContain(ONTOLOGY_SQL_DIALECT_GUIDE);
+    expect(toolGuide(["search_schema"])).not.toContain(ONTOLOGY_SQL_DIALECT_GUIDE);
+  });
+
+  it("CASE 条件聚合已经支持，普通 CASE 位置仍明确拒绝", () => {
+    for (const expression of ["COUNT(DISTINCT CASE WHEN ZX_FLAG = '1' THEN USER_ID END)", "SUM(CASE WHEN ZX_FLAG = '1' THEN ZX_COUNT ELSE 0 END)"]) {
+      expect(parseOntologySql(`SELECT ${expression} AS 数量 FROM 专线产品用户`).select[0]).toMatchObject({ kind: "aggregate", case: { branches: [{ when: { kind: "compare" } }] } });
+    }
+    expect(parseOntologySql('SELECT COUNT("CASE") AS 数量 FROM 专线产品用户').select).toHaveLength(1);
+    expect(() => parseOntologySql("SELECT CASE WHEN ZX_FLAG = '1' THEN 1 END FROM 专线产品用户")).toThrow(/只允许.*聚合参数/);
   });
 });

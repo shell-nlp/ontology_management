@@ -259,6 +259,7 @@ function compileRelationshipJoin(
 }
 
 export function compileLogicalQueryForClickHouse(plan: LogicalPlan, targetId: string, database: string): CompiledClickHouseQuery {
+  if (plan.select.some((item) => item.kind === "aggregate" && item.case)) throw new QueryDslError("INVALID_QUERY", "CASE 条件聚合请使用 ODS / 业务源虚拟查询；旧对象物化索引不支持该表达式。");
   const bag = new ParameterBag();
   const target = bag.add(targetId, "String");
   const root = quote(plan.root.alias);

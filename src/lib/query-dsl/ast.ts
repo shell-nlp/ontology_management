@@ -83,12 +83,19 @@ export type ResolvedMetric = {
   unit: string;
 };
 
+export type ResolvedCaseValue = { kind: "field"; field: ResolvedField } | { kind: "literal"; value: ResolvedScalar };
+export type ResolvedCaseExpression = {
+  branches: { when: ResolvedExpr; then: ResolvedCaseValue }[];
+  otherwise: ResolvedCaseValue;
+  dataType: string;
+};
+
 export type ResolvedSelectItem =
   | { kind: "field"; field: ResolvedField; as: string }
   /** `LABEL(属性) AS 列名`：输出 / 分组的是中文标签，不是码值。 */
   | { kind: "label"; field: ResolvedField; as: string }
   | { kind: "metric"; metric: ResolvedMetric; as: string }
-  | { kind: "aggregate"; aggregate: Extract<SelectItem, { aggregate: string }>["aggregate"]; field?: ResolvedField; on: string; as: string };
+  | { kind: "aggregate"; aggregate: Extract<SelectItem, { aggregate: string }>["aggregate"]; field?: ResolvedField; case?: ResolvedCaseExpression; on: string; as: string };
 
 export type ResolvedRelationship = {
   alias: string;

@@ -88,6 +88,11 @@
 
 ## 查询表层：本体 SQL（SQL 形状）+ 内核本体（2026-10-14 用户拍板）
 
+- **语法基准固定为 PostgreSQL**：Ontology SQL = PostgreSQL 查询语法的受限子集 + 本体扩展；已有查询语义、指标、只读闸门与基数保护仍由同一内核保证。后续扩语法优先沿用 PostgreSQL 的写法及空值、聚合等语义，后端不能等价执行时明确拒绝。
+- **模型必须知道实际边界**：工具说明与每轮工具提示共用 `query-dsl/sql-surface/dialect.ts` 的声明；只列已经实现的语法。不能把基准方言说成完整 PostgreSQL 兼容，也不能让模型按实际执行库切换表层方言。平台参数仍用 `:名字` + `parameters`，本体名称引用及关系方向属于显式扩展。
+- **条件聚合共用内核**：聚合参数支持 searched CASE（`CASE WHEN 条件 THEN 属性/标量/:参数 ... [ELSE ...] END`），最多 32 个 WHEN，省略 ELSE 按 NULL；同一 IR 贯通 SQL/JSON、类型校验、源库与 ODS 编译。分支只接受兼容标量类型，数字可混合，值必须绑定参数；普通 SELECT CASE、简单式 CASE、嵌套 CASE 和分支算术仍明确拒绝。
+- **CH 条件聚合与 PostgreSQL 对齐**：NULL 条件不命中分支，COUNT 忽略 NULL，非计数空集聚合返回 NULL；CH 数值分支按实际镜像类型统一精度，不可将整数/精确小数偷偷转 Float64，可能溢出时拒绝。CASE 条件与返回属性都必须进入 ODS 引用列校验。`IN / NOT IN` 保留 NULL 的三值逻辑。真实 CH/PG 对拍在 `tests/lib/ods/case-parity.contract.test.ts`，不得只凭编译通过声称 CH 兼容。
+
 用户口径：「表层用 SQL 形状，内核仍是本体语义」。**换表层不换保证** —— 通用性看表层，表达力看 IR，
 正确性看校验。以后动查询这块按下面办：
 

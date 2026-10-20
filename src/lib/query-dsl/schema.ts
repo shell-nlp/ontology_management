@@ -47,6 +47,17 @@ const queryExprSchema: z.ZodType<QueryExpr, z.ZodTypeDef, unknown> = z.lazy(() =
   filterConditionSchema,
 ]));
 
+const caseValueSchema = z.union([
+  z.strictObject({ field: fieldRefSchema }),
+  z.strictObject({ value: z.union([scalarSchema, parameterRefSchema]) }),
+]);
+const caseExpressionSchema = z.strictObject({
+  branches: z.array(z.strictObject({ when: queryExprSchema, then: caseValueSchema })).min(1).max(32),
+  else: caseValueSchema.default({ value: null }),
+});
+export type CaseValue = z.infer<typeof caseValueSchema>;
+export type CaseExpression = z.infer<typeof caseExpressionSchema>;
+
 const selectItemSchema = z.union([
   z.strictObject({ field: fieldRefSchema, as: z.string().trim().min(1) }),
   /** `LABEL(属性)`：把码值翻成 `enumValues` 里的中文标签（过滤、输出、分组都是这一份口径）。 */
@@ -55,9 +66,10 @@ const selectItemSchema = z.union([
   z.strictObject({
     aggregate: z.enum(["COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"]),
     property: z.string().trim().min(1).optional(),
+    case: caseExpressionSchema.optional(),
     on: z.string().trim().min(1).optional(),
     as: z.string().trim().min(1),
-  }),
+  }).refine((item) => !(item.property && item.case), { message: "聚合参数 property 与 case 只能配置一个。" }),
 ]);
 
 const relationshipRefSchema = z.strictObject({

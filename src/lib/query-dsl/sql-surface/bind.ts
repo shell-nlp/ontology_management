@@ -2,7 +2,7 @@ import type { OntologyDefinition } from "@/lib/ontology";
 import { QueryDslError } from "../errors";
 import { unknownPropertyHint } from "../property-hint";
 import { parseQueryDsl, type QueryDsl } from "../schema";
-import { parseOntologySql, type SqlCondition, type SqlExpr, type SqlFieldRef, type SqlQueryAst, type SqlSelectItem, type SqlValue } from "./parse";
+import { parseOntologySql, type SqlCaseValue, type SqlCondition, type SqlExpr, type SqlFieldRef, type SqlQueryAst, type SqlSelectItem, type SqlValue } from "./parse";
 
 /**
  * 本体 SQL 的**语义绑定**：拿本体定义把语法树变成与 JSON DSL **同一份** `QueryDsl`。
@@ -140,11 +140,13 @@ function toDslExpr(expr: SqlExpr, byName: Map<string, AliasBinding>): unknown {
 
 function toDslSelectItem(item: SqlSelectItem, byName: Map<string, AliasBinding>, definition: OntologyDefinition): { dsl: unknown; aggregated: boolean } {
   if (item.kind === "aggregate") {
+    const caseValue = (value: SqlCaseValue) => value.kind === "field" ? { field: toDslField(value.field, byName) } : { value: toDslValue(value) };
     const field = item.field ? toDslField(item.field, byName) : undefined;
     return {
       aggregated: true,
       dsl: {
         aggregate: item.aggregate,
+        ...(item.case ? { case: { branches: item.case.branches.map((branch) => ({ when: toDslExpr(branch.when, byName), then: caseValue(branch.then) })), else: caseValue(item.case.otherwise) } } : {}),
         ...(field ? { property: field.property } : {}),
         ...(field && field.alias !== "root" ? { on: byName.get(field.alias)?.entityTypeName } : {}),
         as: item.as,

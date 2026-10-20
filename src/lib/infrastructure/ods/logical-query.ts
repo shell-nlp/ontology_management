@@ -2,9 +2,10 @@ import { In } from "typeorm";
 import { clickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
 import { clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/object-index/clickhouse/client";
 import { OdsSourceEntity, platformRepo } from "@/lib/infrastructure/persistence/postgres";
-import type { LogicalPlan, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "@/lib/query-dsl/ast";
+import type { LogicalPlan, ResolvedCaseExpression, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "@/lib/query-dsl/ast";
 import type { OdsQueryExecutor } from "@/lib/query-dsl/contract";
 import { QueryDslError } from "@/lib/query-dsl/errors";
+import { compileCaseExpression, decimalLiteral } from "@/lib/query-dsl/compile/case";
 
 type OdsConfig = Pick<OdsSourceEntity, "id" | "dataSourceId" | "schemaName" | "tableName" | "chTable" | "status" | "enabled" | "columns" | "lastSyncAt">;
 type Route = {
@@ -66,7 +67,16 @@ function requiredColumns(plan: LogicalPlan) {
       if (item.metric.property) addField(item.metric.property);
       for (const filter of item.metric.filters) addExpr(filter);
       for (const dimension of item.metric.dimensions) addField(dimension);
-    } else if (item.field) addField(item.field);
+    } else {
+      if (item.field) addField(item.field);
+      if (item.case) {
+        for (const branch of item.case.branches) {
+          addExpr(branch.when);
+          if (branch.then.kind === "field") addField(branch.then.field);
+        }
+        if (item.case.otherwise.kind === "field") addField(item.case.otherwise.field);
+      }
+    }
   }
   for (const field of plan.groupBy) addField(field);
   for (const order of plan.query.order_by) {
@@ -184,7 +194,10 @@ function compileCondition(plan: LogicalPlan, expr: Extract<ResolvedExpr, { kind:
       if (value === undefined) throw new QueryDslError("INVALID_QUERY", `操作符「${expr.op}」缺少比较值。`);
       const values = Array.isArray(value) ? value : [value];
       if (!values.length) return expr.op === "in" ? "1 = 0" : "1 = 1";
-      return `${comparableColumn} ${expr.op === "in" ? "IN" : "NOT IN"} (${values.map((item) => typedValue(expr.field, item, plan, bag)).join(", ")})`;
+      const hasNull = values.some((item) => parameterValue(plan, item) === null);
+      const comparableValues = values.filter((item) => parameterValue(plan, item) !== null);
+      const match = comparableValues.length ? `${comparableColumn} IN (${comparableValues.map((item) => typedValue(expr.field, item, plan, bag)).join(", ")})` : "0";
+      return `CASE WHEN ${column} IS NULL THEN CAST(NULL AS Nullable(UInt8)) WHEN ${match} THEN ${expr.op === "in" ? "1" : "0"} ELSE ${hasNull ? "CAST(NULL AS Nullable(UInt8))" : expr.op === "in" ? "0" : "1"} END`;
     }
     case "contains":
     case "starts_with":
@@ -223,14 +236,14 @@ function compileExpr(plan: LogicalPlan, expr: ResolvedExpr, bag: Bag): string {
   return `(${expr.items.map((item) => compileExpr(plan, item, bag)).join(expr.kind === "and" ? " AND " : " OR ")})`;
 }
 
-function aggregateExpression(plan: LogicalPlan, aggregation: ResolvedMetric["aggregation"], field: ResolvedField | undefined, filters: ResolvedExpr[], bag: Bag) {
+function aggregateExpression(plan: LogicalPlan, aggregation: ResolvedMetric["aggregation"], field: ResolvedField | undefined, filters: ResolvedExpr[], bag: Bag, argument?: string) {
   const condition = filters.length ? compileExpr(plan, { kind: "and", items: filters }, bag) : "";
-  const column = field ? columnRef(field) : "";
+  const column = argument ?? (field ? columnRef(field) : "");
   const filtered = condition ? `CASE WHEN ${condition} THEN ${column} END` : column;
-  if (aggregation === "COUNT") return field ? `count(${filtered})` : condition ? `countIf(${condition})` : "count()";
-  if (!field) throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property。`);
+  if (aggregation === "COUNT") return field || argument ? `count(${filtered})` : condition ? `countIf(${condition})` : "count()";
+  if (!field && !argument) throw new QueryDslError("INVALID_QUERY", `聚合「${aggregation}」必须指定 property 或 CASE 参数。`);
   if (aggregation === "COUNT_DISTINCT") return `uniqExact(${filtered})`;
-  return `${aggregation}(${filtered})`;
+  return `${aggregation.toLowerCase()}OrNull(${filtered})`;
 }
 
 function labelExpression(field: ResolvedField, plan: LogicalPlan, bag: Bag) {
@@ -239,7 +252,41 @@ function labelExpression(field: ResolvedField, plan: LogicalPlan, bag: Bag) {
   return `CASE ${field.enumValues.map((item) => `WHEN ${column} = ${typedValue(field, item.value, plan, bag)} THEN ${bag.add(item.label)}`).join(" ")} ELSE NULL END`;
 }
 
-function compileSelect(plan: LogicalPlan, bag: Bag) {
+function compileConditionalCase(expression: ResolvedCaseExpression, plan: LogicalPlan, route: Route, bag: Bag) {
+  const operands = [...expression.branches.map((branch) => branch.then), expression.otherwise];
+  const numeric = expression.dataType === "INTEGER" || expression.dataType === "DECIMAL";
+  const physicalTypes = operands.flatMap((operand) => {
+    if (operand.kind !== "field") return [];
+    const columns = route.aliases.get(operand.field.sourceAlias)?.columns;
+    const column = Array.isArray(columns) ? columns.find((column) => String((column as { name?: unknown }).name ?? "").toLowerCase() === operand.field.column.toLowerCase()) as { clickhouseType?: string } | undefined : undefined;
+    if (numeric && !column?.clickhouseType) throw new QueryDslError("INVALID_QUERY", `CASE 数值属性「${operand.field.name}」缺少 ODS 存储类型，请刷新镜像结构后再查询。`);
+    return column?.clickhouseType ? [column.clickhouseType] : [];
+  });
+  const decimalTypes = physicalTypes.flatMap((type) => {
+    const match = /Decimal(?:32|64|128|256)?\(\s*(?:(\d+)\s*,\s*)?(\d+)\s*\)/i.exec(type);
+    return match ? [{ precision: match[1] ? Number(match[1]) : /256/.test(type) ? 76 : /128/.test(type) ? 38 : /64/.test(type) ? 18 : 9, scale: Number(match[2]) }] : [];
+  });
+  const literalScales = operands.flatMap((operand) => operand.kind === "literal" && typeof operand.value === "number" ? [decimalLiteral(operand.value).scale] : []);
+  const scale = Math.max(0, ...decimalTypes.map((type) => type.scale), ...literalScales);
+  const floating = physicalTypes.some((type) => /Float(?:32|64)/i.test(type));
+  if (numeric && !floating && (scale > 56 || decimalTypes.some((type) => type.precision - type.scale + scale > 76))) throw new QueryDslError("INVALID_QUERY", "CASE 数值分支提升到同一小数精度可能溢出，拒绝截断；请统一来源列的精度和小数位。");
+  const target = floating ? "Float64" : `Decimal256(${scale})`;
+  return compileCaseExpression(expression, {
+    condition: (condition) => compileExpr(plan, condition, bag),
+    field: (field) => numeric ? `CAST(${columnRef(field)} AS Nullable(${target}))` : columnRef(field),
+    literal: (value, allNull) => {
+      if (value === null) return numeric ? `CAST(NULL AS Nullable(${target}))` : allNull ? "CAST(NULL AS Nullable(Int64))" : "NULL";
+      if (typeof value === "number") {
+        const decimal = decimalLiteral(value);
+        return floating ? `toFloat64(${bag.add(decimal.text)})` : `toDecimal256(${bag.add(decimal.text)}, ${scale})`;
+      }
+      if (typeof value === "boolean") return `toUInt8(${bag.add(value ? 1 : 0)})`;
+      return bag.add(value);
+    },
+  });
+}
+
+function compileSelect(plan: LogicalPlan, bag: Bag, route: Route) {
   const items: string[] = [];
   const columns: string[] = [];
   const warnings: string[] = [];
@@ -259,7 +306,8 @@ function compileSelect(plan: LogicalPlan, bag: Bag) {
       items.push(`${aggregateExpression(plan, item.metric.aggregation, item.metric.property, item.metric.filters, bag)} AS ${identifier(item.as)}`);
       if (item.metric.status === "draft") warnings.push(`指标「${item.metric.name}」状态为 draft，尚未验收。`);
     } else {
-      items.push(`${aggregateExpression(plan, item.aggregate, item.field, [], bag)} AS ${identifier(item.as)}`);
+      const conditional = item.case ? compileConditionalCase(item.case, plan, route, bag) : undefined;
+      items.push(`${aggregateExpression(plan, item.aggregate, item.field, [], bag, conditional)} AS ${identifier(item.as)}`);
       warnings.push(`输出「${item.as}」使用临时聚合口径，未引用已定义指标。`);
     }
     columns.push(item.as);
@@ -326,7 +374,7 @@ export function createClickHouseOdsQueryExecutor(): OdsQueryExecutor {
       const route = await resolveRoute(plan).catch(() => null);
       if (!route) return null;
       const bag = new Bag();
-      const select = compileSelect(plan, bag);
+      const select = compileSelect(plan, bag, route);
       const rootSource = plan.root.sources.find((source) => source.primary) ?? plan.root.sources[0];
       const rootConfig = rootSource ? route.aliases.get(rootSource.alias) : undefined;
       if (!rootSource || !rootConfig) return null;
@@ -345,7 +393,7 @@ export function createClickHouseOdsQueryExecutor(): OdsQueryExecutor {
       const limit = plan.query.limit;
       const statement = `SELECT ${select.items.join(", ")} FROM ${odsTable(rootConfig)} AS ${identifier(plan.root.alias)}${joins.length ? ` ${joins.join(" ")}` : ""}${conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""}${group}${order} LIMIT ${limit + 1}`;
       const started = Date.now();
-      const raw = await clickHouseQuery<Record<string, unknown>>(statement, { params: bag.params, settings: { join_use_nulls: "1" } });
+      const raw = await clickHouseQuery<Record<string, unknown>>(statement, { params: bag.params, settings: { join_use_nulls: "1", output_format_json_quote_decimals: "1" } });
       const truncated = raw.length > limit;
       const rows = raw.slice(0, limit);
       return {
