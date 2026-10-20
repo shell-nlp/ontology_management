@@ -167,9 +167,13 @@ export function OdsDialog({ source, schema, table, tableKind, fields, canEdit, o
     <header className="ods-dialog-head">
       <span className="ods-icon"><Boxes size={22} /></span>
       <div><span className="eyebrow">ClickHouse ODS · 查询时投影</span><h2>{tableName}</h2><p>只镜像原始业务列；对象实例在查询时按当前本体版本映射形成，不按版本复制。</p></div>
-      <div className="ods-status-block"><span className={`ods-status ${config?.status.toLowerCase() ?? "never"}`}>{config ? STATUS_LABEL[config.status] : "未配置"}</span>{config && <small>{config.chTable}</small>}</div>
+      <div className="ods-head-side">
+        <div className="ods-status-block"><span className={`ods-status ${config?.status.toLowerCase() ?? "never"}`}>{config ? STATUS_LABEL[config.status] : "未配置"}</span>{config && <small>{config.chTable}</small>}</div>
+        <button type="button" className="ods-close" onClick={onClose} disabled={Boolean(busy)} aria-label="关闭 ODS 镜像配置" title="关闭"><X size={17} /></button>
+      </div>
     </header>
 
+    <div className="ods-dialog-body">
     {!loaded ? <div className="ods-loading"><Loader2 size={18} className="drs-spin" />读取 ODS 配置…</div> : <>
       <section className="ods-summary">
         <div><span>源资源</span><b>{source.name}</b></div>
@@ -205,6 +209,7 @@ export function OdsDialog({ source, schema, table, tableKind, fields, canEdit, o
         {!jobs.length ? <p className="ods-empty">还没有同步记录。保存配置后开始第一次全量同步。</p> : <div className="ods-job-list">{jobs.slice(0, 8).map((job) => <div key={job.id} className={`ods-job ${job.status.toLowerCase()}`}><span>{job.status === "RUNNING" || job.status === "QUEUED" || job.status === "CANCELLING" ? <Loader2 size={14} className="drs-spin" /> : job.status === "DONE" ? <Check size={14} /> : job.status === "FAILED" ? <TriangleAlert size={14} /> : <Clock3 size={14} />}{job.status}</span><b>{job.mode === "FULL" ? "全量" : "增量"} · {job.rows.toLocaleString()} 行</b><small>{job.message || `${job.pages} 页 · 扫描 ${job.scanned.toLocaleString()} 行`}</small>{canEdit && (job.status === "QUEUED" || job.status === "RUNNING") && <button type="button" className="action compact" disabled={Boolean(busy)} onClick={() => void cancel(job.id)}>{busy === `cancel:${job.id}` ? "取消中" : "取消"}</button>}</div>)}</div>}
       </section>
     </>}
+    </div>
 
     <footer className="ods-dialog-foot">
       {config && canEdit && <button className="action danger" disabled={Boolean(busy)} onClick={() => void remove()}><Trash2 size={14} />{busy === "delete" ? "删除中" : "删除镜像"}</button>}

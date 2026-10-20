@@ -143,11 +143,12 @@
 }
 
 /* ODS 源表镜像：列裁剪、同步策略与后台任务集中在一个可审计的弹窗里。 */
-.ods-dialog { width:min(1120px, calc(100vw - 48px)); max-width:1120px; max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; }
-.ods-dialog-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:14px; align-items:center; padding:20px 22px; border-bottom:1px solid #dfe8e4; background:linear-gradient(135deg,#f4faf7,#fbfcf8); }
+.ods-dialog { position:relative; width:min(1240px, calc(100vw - 40px)); max-width:1240px; height:min(900px, calc(100vh - 32px)); padding:0; display:flex; flex-direction:column; overflow:hidden; border-radius:8px; background:#fff; box-shadow:0 24px 70px rgba(16,30,31,.28); }
+.ods-dialog-head { flex:none; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:14px; align-items:center; padding:20px 22px; border-bottom:1px solid #dfe8e4; background:linear-gradient(135deg,#f4faf7,#fbfcf8); }
 .ods-dialog-head h2 { margin:3px 0 4px; color:#203334; font-size:22px; }
 .ods-dialog-head p { margin:0; color:#687874; font-size:12px; line-height:1.55; }
 .ods-icon { width:46px; height:46px; display:grid; place-items:center; border-radius:12px; color:#1e5e48; background:#e4f3eb; border:1px solid #cfe6da; }
+.ods-head-side { display:flex; align-items:flex-start; gap:12px; }
 .ods-status-block { display:grid; justify-items:end; gap:5px; min-width:140px; }
 .ods-status-block small { color:#7b8884; font:10px/1.4 ui-monospace,"Cascadia Code",monospace; }
 .ods-status { border:1px solid #d6dfdb; border-radius:999px; padding:5px 10px; color:#68756f; background:#fff; font-size:11px; font-weight:700; }
@@ -155,6 +156,10 @@
 .ods-status.running { color:#1d4f8a; border-color:#bed3ec; background:#eff6ff; }
 .ods-status.failed { color:#a43832; border-color:#efc5c1; background:#fff2f1; }
 .ods-status.stale { color:#8b641c; border-color:#ead7aa; background:#fff9e9; }
+.ods-close { width:30px; height:30px; display:grid; place-items:center; flex:none; border:1px solid #d6dfdb; border-radius:50%; color:#5d706a; background:#fff; cursor:pointer; }
+.ods-close:hover { color:#233c35; border-color:#aebfb8; background:#f6faf8; }
+.ods-close:disabled { opacity:.45; cursor:not-allowed; }
+.ods-dialog-body { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-bottom:2px; }
 .ods-loading { min-height:280px; display:grid; place-items:center; color:#63736f; gap:8px; }
 .ods-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:1px; margin:0 22px; padding:14px 0 0; }
 .ods-summary > div { padding:12px 15px; background:#f7faf8; border:1px solid #e0e8e4; }
@@ -164,7 +169,7 @@
 .ods-summary span { color:#7a8883; font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
 .ods-summary b { margin-top:5px; color:#2f4140; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ods-error { margin:12px 22px 0; padding:10px 12px; display:flex; gap:8px; align-items:flex-start; color:#9c3731; background:#fff3f1; border:1px solid #efd0cc; border-radius:6px; font-size:12px; }
-.ods-form-grid { display:grid; grid-template-columns:1.25fr .9fr; gap:16px; padding:16px 22px; overflow:auto; }
+.ods-form-grid { display:grid; grid-template-columns:1.25fr .9fr; gap:16px; padding:16px 22px; }
 .ods-form-block,.ods-jobs { border:1px solid #dfe7e3; border-radius:8px; background:#fff; padding:14px; min-width:0; }
 .ods-block-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
 .ods-block-head h3 { margin:3px 0 0; color:#2c3d3c; font-size:14px; }
@@ -187,9 +192,28 @@
 .ods-job.done > span { color:#19704f; }.ods-job.failed > span { color:#a43b34; }.ods-job.running > span,.ods-job.queued > span,.ods-job.cancelling > span { color:#235f99; }.ods-job.cancelled > span { color:#8b641c; }
 .ods-job b { color:#354645; font-size:12px; }.ods-job small { color:#7a8783; font-size:10px; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ods-empty { margin:4px 0; color:#7a8783; font-size:12px; }
-.ods-dialog-foot { display:flex; align-items:center; gap:8px; padding:14px 22px; border-top:1px solid #dfe7e3; background:#f8faf9; }
-.ods-foot-note { flex:1; color:#72807b; font-size:11px; }
-@media (max-width: 900px) { .ods-dialog { width:calc(100vw - 20px); }.ods-form-grid { grid-template-columns:1fr; }.ods-summary { grid-template-columns:repeat(2,1fr); }.ods-job { grid-template-columns:76px 1fr auto; }.ods-job small { grid-column:1/-1; text-align:left; } }
+.ods-dialog-foot { flex:none; display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:14px 22px; border-top:1px solid #dfe7e3; background:#f8faf9; }
+.ods-foot-note { flex:1; min-width:260px; color:#72807b; font-size:11px; line-height:1.5; }
+@media (max-width: 900px) {
+  .ods-dialog { width:calc(100vw - 20px); height:calc(100vh - 20px); }
+  .ods-dialog-head { grid-template-columns:auto minmax(0,1fr); }
+  .ods-head-side { grid-column:1/-1; justify-content:space-between; padding-top:2px; }
+  .ods-status-block { justify-items:start; }
+  .ods-form-grid { grid-template-columns:1fr; }
+  .ods-summary { grid-template-columns:repeat(3,minmax(0,1fr)); margin:0 16px; }
+  .ods-summary > div:first-child { border-radius:7px 0 0 0; }
+  .ods-summary > div:last-child { border-radius:0; }
+  .ods-form-grid { padding:14px 16px; }
+  .ods-jobs { margin:0 16px 16px; }
+  .ods-dialog-foot { padding:12px 16px; }
+  .ods-job { grid-template-columns:76px 1fr auto; }
+  .ods-job small { grid-column:1/-1; text-align:left; }
+}
+@media (max-width: 560px) {
+  .ods-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ods-dialog-head p { display:none; }
+  .ods-foot-note { min-width:100%; order:-1; }
+}
 
 @media (max-width: 1080px) {
   .drs-split { grid-template-columns: minmax(0, 1fr); height: auto; }
