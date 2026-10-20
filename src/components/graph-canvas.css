@@ -131,8 +131,6 @@
 .detail-meta span { color: #5c6e6a; font-size: 12px; }
 .detail-meta code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; color: #5b7571; background: #f1f6f3; border: 1px solid #e0e9e4; border-radius: 4px; font: 10px/1.5 ui-monospace, "Cascadia Code", monospace; }
 .detail-panel .functional-actions { margin-top: 12px; }
-.action.danger { color: #b04f3d; border-color: #e0bdb4; }
-.action.danger:hover { background: #fff1ed; }
 .endpoint-cards { display: grid; gap: 9px; margin: 0 0 14px; }
 .endpoint-card { border: 1px solid #e0e9e4; border-radius: 5px; background: #fbfdfb; padding: 10px 12px; }
 .endpoint-card-head { display: flex; align-items: center; gap: 10px; }

@@ -139,6 +139,8 @@ body { background:var(--paper); color:var(--ink); font-family:"Segoe UI", "PingF
 .action.primary, .primary-button { background:#1e3a8a; border-color:#1e3a8a; }
 .action.primary:hover, .primary-button:hover { background:#142f73; border-color:#142f73; }
 .action:hover, .quiet-button:hover { border-color:#9bb9eb; background:#f4f8ff; }
+.action.danger { color:#b04f3d; border-color:#e0bdb4; }
+.action.danger:hover { border-color:#d59b8e; background:#fff1ed; }
 .version-bar, .metric-strip, .status-grid, .overview-stats { border-color:#dfe7f1; border-radius:0; box-shadow:none; }
 .version-bar { margin-bottom:14px; background:#fff; }
 /* 全局版本操作收进页头：状态与按钮占一行，版本列表向下浮出，不再挤占内容区。 */
