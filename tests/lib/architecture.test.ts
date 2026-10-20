@@ -54,13 +54,13 @@ describe("src/lib 依赖边界", () => {
     expect(found).toEqual([]);
   });
 
-  it("具体图库和对象索引实现只能由适配层与契约测试直接引用", () => {
+  it("具体图库实现只能由适配层与契约测试直接引用", () => {
     const found = violations((file, specifier) => {
       if (file.startsWith("src/lib/infrastructure/")) return false;
       return specifier.startsWith("@/lib/infrastructure/graph/jena")
         || (specifier.startsWith("@/lib/infrastructure/graph/embedded")
           && !specifier.endsWith("/embedded/repository"))
-        || specifier.startsWith("@/lib/infrastructure/object-index/clickhouse");
+        ;
     });
     expect(found).toEqual([]);
   });

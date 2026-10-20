@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { encryptSecret } from "@/lib/shared/server/crypto";
-import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { GraphTargetEntity, platformRepo } from "@/lib/platform/db";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
@@ -69,19 +68,6 @@ export const DELETE = withPermission("target.write", async (_: Request, context:
     const repo = await platformRepo(GraphTargetEntity);
     await repo.delete({ id: targetId });
     await removeTargetSnapshotDirectory(targetId);
-    // 检索索引是派生数据，但它的行以 target_id 为键，不跟着本体存储一起删就会留下孤儿。
-    // 删本体存储是用户的最终意图，这里失败不挡请求，只留一条审计说明该清没清干净。
-    try {
-      await getObjectIndex().deleteTargetObjects(targetId);
-    } catch (error) {
-      await writeAuditEntry({
-        actorId: user.id,
-        // 本体存储这一行已经删了，审计只能挂空 targetId，把 id 放进 details 里。
-        targetId: undefined,
-        action: "TARGET_INDEX_CLEANUP_FAILED",
-        details: { targetId, name: target.name, error: apiErrorMessage(error, "未知错误") },
-      });
-    }
     return NextResponse.json({ deleted: true });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法删除本体存储。") }, { status: apiErrorStatus(error) });

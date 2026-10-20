@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { clickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
-import { clickHouseExecute, clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/object-index/clickhouse/client";
+import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
+import { clickHouseExecute, clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/clickhouse/client";
 import type { DataSourceRowFilter, DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
 import type { OdsColumn, OdsReadQuery, OdsReadResult, OdsStore, OdsTableSpec } from "@/lib/infrastructure/ods/types";
 

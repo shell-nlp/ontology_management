@@ -3,7 +3,6 @@ import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
-import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetError, getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
@@ -44,16 +43,6 @@ export const POST = withPermission("ontology.publish", async (request: NextReque
       return NextResponse.json({ error: "确认文字与本体存储名称不一致，已取消清空。" }, { status: 400 });
     }
     await getGraphStore(target).clearGraph();
-    try {
-      await getObjectIndex().deleteTargetObjects(targetId);
-    } catch (error) {
-      const message = apiErrorMessage(error, "未知错误");
-      await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_INDEX_CLEAR_FAILED", details: { name: target.name, error: message } });
-      return NextResponse.json(
-        { error: `图数据已清空，但检索索引清理失败：${message}。请重新执行清空以恢复一致。` },
-        { status: 400 },
-      );
-    }
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_GRAPH_CLEARED", details: { name: target.name, kind: target.kind } });
     return NextResponse.json({ cleared: true });
   } catch (error) {

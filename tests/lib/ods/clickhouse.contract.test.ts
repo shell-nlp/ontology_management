@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { getOdsStore } from "@/lib/infrastructure/ods";
 import type { OdsTableSpec } from "@/lib/infrastructure/ods/types";
-import { clickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
-import { clickHouseQuery } from "@/lib/infrastructure/object-index/clickhouse/client";
+import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
+import { clickHouseQuery } from "@/lib/infrastructure/clickhouse/client";
 
 const clickHouseUrl = process.env.CLICKHOUSE_URL;
 

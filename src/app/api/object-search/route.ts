@@ -2,7 +2,6 @@ import { objectKeyOf } from "@/lib/ontology/object-identity";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isUnauthorized } from "@/lib/platform/auth";
-import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
 import { queryAllObjects, queryObjects, resolveObjectContext } from "@/lib/instance/object-service";
@@ -12,7 +11,6 @@ const filterSchema = z.object({
   operator: z.enum(["EQ", "NE", "CONTAINS", "GT", "LT", "IN", "EXISTS"]),
   value: z.union([z.string().max(500), z.number(), z.boolean(), z.array(z.string().max(500)).max(200)]).optional(),
 });
-
 const sortSchema = z.object({
   property: z.string().trim().min(1).max(200),
   direction: z.enum(["ASC", "DESC"]).default("ASC"),
@@ -58,20 +56,5 @@ export const POST = withPermission("instance.read", async (request: NextRequest)
 
   } catch (error) {
     return fail(error, "检索对象失败。");
-  }
-});
-
-/** 索引状态与能力：条目数、按类的分布、以及全文/模糊/向量是否可用。 */
-export const GET = withPermission("instance.read", async (request: NextRequest) => {
-  try {
-    const targetId = request.nextUrl.searchParams.get("targetId");
-    if (!targetId) return NextResponse.json({ error: "targetId 不能为空。" }, { status: 400 });
-    const target = await getTarget(targetId);
-    if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
-    const index = getObjectIndex();
-    const [capabilities, stats] = await Promise.all([index.capabilities(), index.stats(targetId)]);
-    return NextResponse.json({ capabilities, stats });
-  } catch (error) {
-    return fail(error, "读取检索索引状态失败。");
   }
 });

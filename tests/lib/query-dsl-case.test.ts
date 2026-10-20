@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { compileQuerySql, parseOntologySql, resolveQueryDsl, toQueryDsl } from "@/lib/query-dsl";
-import { compileLogicalQueryForClickHouse } from "@/lib/infrastructure/object-index/clickhouse/query-dsl";
 import { caseDefinition, telecomCaseSql } from "./query-dsl-case.fixture";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
 
@@ -53,9 +52,6 @@ describe("CASE 条件聚合共享内核", () => {
     expect(() => parseOntologySql("SELECT SUM(CASE ZX_FLAG WHEN '1' THEN ZX_COUNT END) AS N FROM 专线产品用户")).toThrow(/简单式/);
     expect(() => parseOntologySql("SELECT SUM(CASE WHEN ZX_FLAG='1' THEN CASE WHEN STATS='0' THEN 1 END END) AS N FROM 专线产品用户")).toThrow(/不支持嵌套/);
     expect(() => parseOntologySql("SELECT SUM(CASE WHEN ZX_FLAG='1' THEN END) AS N FROM 专线产品用户")).toThrow(/缺少返回值/);
-  });
-  it("旧物化执行器不能把条件计数误编成 COUNT(*)", () => {
-    expect(() => compileLogicalQueryForClickHouse(resolve(telecomCaseSql), "target", "ontology_index")).toThrow(/使用 ODS/);
   });
   it("CASE 涉及关系别名时继续执行基数保护", () => {
     const model = caseDefinition();

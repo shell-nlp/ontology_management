@@ -1,6 +1,10 @@
 import type { OntologyDefinition } from "@/lib/ontology";
 import type { ObjectPrimaryKey } from "@/lib/ontology/object-identity";
-import type { ObjectSearchFilter } from "@/lib/infrastructure/object-index/types";
+export type ObjectSearchFilter = {
+  property: string;
+  operator: "EQ" | "NE" | "CONTAINS" | "GT" | "LT" | "IN" | "EXISTS";
+  value?: string | number | boolean | string[];
+};
 
 /**
  * 对象服务的公共契约（S2）。
@@ -84,14 +88,6 @@ export type ObjectSourceRead = {
   warnings: string[];
 };
 
-/**
- * 整份物化的**断点游标**：上一页最后一行的排序键值。
- *
- * 落库之后续跑就接着用键集翻页（而不是退回 OFFSET —— Oracle 的 OFFSET 上限是 5000 行，
- * 大表一旦中断就再也续不上）。`columns` 是源侧列名，`values` 是那一行对应的原始值。
- */
-export type MaterializeCursor = { columns: string[]; values: unknown[] };
-
 export type ObjectSourceQuery = {
   rows: ObjectRecord[];
   total: number | null;
@@ -99,10 +95,7 @@ export type ObjectSourceQuery = {
   /**
    * 这次**实际**向连接器要了多少行（过了所有上限之后的数）。
    *
-   * 为什么必须回传：连接器有自己的单次读取硬上限（Oracle 那条是 5000，见 `@/lib/datasource/sql` 的
-   * `VIEW_LIMIT_MAX`）。整份物化要是拿"我请求的页大小"去判断"这一页读满了没有"，
-   * 一旦请求值超过连接器的上限，就会把"连接器只给了 5000"误判成"源读完了"，
-   * 然后报一句"只读到 5000 行"（实测踩过）。
+   * 调用方用它判断"这一页是否读满"，而不是拿请求值猜测连接器上限。
    */
   limit: number;
 };

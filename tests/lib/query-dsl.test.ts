@@ -267,21 +267,19 @@ describe("executeQueryDsl", () => {
     expect(result.rows).toEqual([[11]]);
   });
 
-  it("旧 INDEXED 配置和对象索引执行器不影响 ODS 虚拟查询", async () => {
+  it("旧 INDEXED 配置不影响 ODS 虚拟查询", async () => {
     const definition = 定义();
     definition.entityTypes[0].indexPolicy = "INDEXED";
-    const materialized = vi.fn(async () => { throw new Error("不应访问旧对象副本"); });
     const ods = vi.fn(async () => ({
       data_source: "ClickHouse ODS", data_source_kind: "CLICKHOUSE" as const,
       columns: ["条数"], rows: [[7]], returned: 1, row_limit: 100,
       truncated: false, elapsed_ms: 3, warnings: [], statement: "SELECT 7",
     }));
     const result = await executeOntologySql(definition, "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
-      targetId: 数据资源, materializedQuery: { executeLogicalQuery: materialized },
+      targetId: 数据资源,
       odsQuery: { executeLogicalQuery: ods },
       getDataSource: async () => { throw new Error("ODS 接管时不回源"); },
     });
-    expect(materialized).not.toHaveBeenCalled();
     expect(ods).toHaveBeenCalledOnce();
     expect(result.data_source).toBe("ClickHouse ODS");
     expect(result.rows).toEqual([[7]]);

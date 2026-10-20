@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## 当前架构覆盖规则（2026-10-20）
+
+- 旧对象物化、对象索引、物化任务与相关接口已经退役。后文若出现 `object_entries`、`object_links`、`materialization_manifests`、`materialization_jobs`、`/api/objects/materialize-type`、`/api/objects/index`、`/api/object-search/reindex` 或「索引与物化」面板，均属于历史说明，不得据此新增或恢复实现。
+- 当前唯一实例读取路径是：按版本定义从 ODS / 业务源虚拟形成对象，合并 PostgreSQL 版本编辑；图谱关系按键映射实时读取。
+- ClickHouse 只保存 ODS 原始源表镜像；通用连接在 `src/lib/infrastructure/clickhouse/`，ODS 契约在 `src/lib/infrastructure/ods/`。
+- `POST /api/objects/materialize` 保留，只表示“按主键取进草稿快照”，不是对象物化。
+- 源数据主键重复、分页不前进或总数无法确定时必须报数或拒绝，不得静默折叠、截断或伪造完整结果。
+
 ## 源数据主键不唯一必须报数（2026-10-13 用户要求）
 
 用户口径：「表中 1000 行，配 `user_id` 为主键后对象只有 800 个」 —— **静默折叠就是 bug**。
@@ -234,9 +242,9 @@
 - 新表 `oauth_clients` / `oauth_authorization_codes` / `oauth_refresh_tokens`（迁移 0011）。
   表与字段注释的唯一出处仍是 `@/lib/infrastructure/persistence/postgres/comments`，**迁移 0011 建完表顺手补注释**（不指望 0006 下一轮再跑）。
 
-## 旧对象物化接口维护约束（仅兼容维护）
+## 已退役：对象物化接口（历史内容，不得恢复）
 
-普通读取不适用下列旧策略。对象列表、全部标签、图谱、问答和本体 SQL 统一查询时形成对象；发布不写对象索引，界面移除物化入口。旧数据不自动删除，ODS 同步不受影响。以下仅用于存量物化接口维护。
+以下内容仅保留作设计历史。旧对象物化接口、ClickHouse 对象副本、后台任务和管理面板已经删除，任何新需求都按“ODS / 业务源虚拟读取”实现。
 
 用户口径：「不需要只物化一部分 —— 那一部分只是查看用的，而真正存对象实例只有全部去实例化才对」；「支持筛选可读取、一键物化所有和多选物化」。
 

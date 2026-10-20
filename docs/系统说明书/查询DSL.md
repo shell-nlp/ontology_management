@@ -25,7 +25,7 @@ WHERE STATIS_DATE >= '2026-09-13'
 
 示例里的字段必须是本体实际属性名。CASE 只能放在 COUNT、COUNT DISTINCT、SUM、AVG、MIN、MAX 的参数中；支持多个 WHEN（最多 32 个），按顺序取第一个成立的分支。THEN / ELSE 可返回属性、标量常量、NULL 或 `:参数`，参数值仍放 `parameters`。各分支必须是兼容标量，数值类型可混合；不支持分支算术或函数调用。
 
-省略 ELSE 时返回 NULL；条件为 NULL 时不命中该分支。COUNT 忽略 NULL；SUM/AVG/MIN/MAX 在空集或全 NULL 时返回 NULL，即使写了 ELSE 0，空集也不会凭空变成 0。CH ODS 使用统一数值分支精度和相应空集聚合语义；精确小数和大整数不会为方便 CASE 推断而转为 Float64。源库浮点列仍按浮点语义处理，无法安全提升的精度会明确拒绝。旧对象物化索引不执行 CASE，普通查询走 ODS / 业务源。
+省略 ELSE 时返回 NULL；条件为 NULL 时不命中该分支。COUNT 忽略 NULL；SUM/AVG/MIN/MAX 在空集或全 NULL 时返回 NULL，即使写了 ELSE 0，空集也不会凭空变成 0。CH ODS 使用统一数值分支精度和相应空集聚合语义；精确小数和大整数不会为方便 CASE 推断而转为 Float64。源库浮点列仍按浮点语义处理，无法安全提升的精度会明确拒绝。查询统一走 ODS / 业务源，不再有对象物化索引执行路径。
 
 查询 DSL 是智能问答和外部 MCP 客户端访问业务数据的**统一逻辑查询协议**。
 

@@ -1,6 +1,6 @@
 import { In } from "typeorm";
-import { clickHouseConfig } from "@/lib/infrastructure/object-index/clickhouse/config";
-import { clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/object-index/clickhouse/client";
+import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
+import { clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/clickhouse/client";
 import { OdsSourceEntity, platformRepo } from "@/lib/infrastructure/persistence/postgres";
 import type { LogicalPlan, ResolvedCaseExpression, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "@/lib/query-dsl/ast";
 import type { OdsQueryExecutor } from "@/lib/query-dsl/contract";

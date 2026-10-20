@@ -4,7 +4,6 @@ import { objectIdOf, objectRefOf } from "@/lib/ontology/object-identity";
 import type { ObjectRecord } from "@/lib/instance/object-service/types";
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), readByKey: vi.fn(), readVersionSnapshot: vi.fn(), readLinks: vi.fn() }));
-vi.mock("@/lib/infrastructure/object-index", () => ({ getObjectIndex: () => { throw new Error("普通读取禁止访问对象副本"); } }));
 vi.mock("@/lib/instance/object-service/ods-source", () => ({ createOdsFirstObjectSource: () => ({ kind: "mock", query: mocks.query, readByKey: mocks.readByKey }) }));
 vi.mock("@/lib/versioning/snapshot", () => ({ readVersionSnapshot: mocks.readVersionSnapshot, listVersionRecords: vi.fn() }));
 vi.mock("@/lib/instance/object-service/links", () => ({ queryLinks: mocks.readLinks }));

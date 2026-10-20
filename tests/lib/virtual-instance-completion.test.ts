@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { materializationStamp, isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
 import { applyObjectEdit } from "@/lib/instance/object-service/edit-overlay";
 import { changedProperties } from "@/lib/ontology/object-edits";
 import type { ObjectRecord } from "@/lib/instance/object-service/types";
@@ -20,16 +19,6 @@ describe("版本编辑层", () => {
   });
   it("null 和清空值是明确修改；布局不构成业务编辑", () => {
     expect(changedProperties({ a: "old", b: 1 }, { a: null, b: 1, fx: 3 })).toEqual({ a: null });
-  });
-});
-describe("物化失效", () => {
-  it("相同定义可跨版本复用；旧清单缺指纹或改映射必须失效", () => {
-    const manifest = { ...materializationStamp(definition, "客户", "v1"), truncated: false };
-    expect(isMaterializationCurrent(definition, "客户", manifest)).toBe(true);
-    expect(isMaterializationCurrent(definition, "客户", { truncated: false })).toBe(false);
-    const next = structuredClone(definition); next.entityTypes[0].properties[2].sourceField = "OTHER_NAME";
-    expect(isMaterializationCurrent(next, "客户", manifest)).toBe(false);
-    expect(isMaterializationCurrent(definition, "客户", { ...manifest, truncated: true })).toBe(false);
   });
 });
 it("复合主键批次保持列值成对，不会读到交叉组合", () => {

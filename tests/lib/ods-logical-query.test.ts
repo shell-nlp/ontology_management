@@ -8,10 +8,10 @@ vi.mock("@/lib/infrastructure/persistence/postgres", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/infrastructure/persistence/postgres")>();
   return { ...actual, platformRepo: vi.fn(async () => ({ find: mocks.find })) };
 });
-vi.mock("@/lib/infrastructure/object-index/clickhouse/config", () => ({
+vi.mock("@/lib/infrastructure/clickhouse/config", () => ({
   clickHouseConfig: () => ({ database: "ontology_index", url: "http://localhost", user: "admin", password: "admin", timeoutMs: 1000 }),
 }));
-vi.mock("@/lib/infrastructure/object-index/clickhouse/client", () => ({ clickHouseQuery: mocks.query }));
+vi.mock("@/lib/infrastructure/clickhouse/client", () => ({ clickHouseQuery: mocks.query }));
 
 import { createClickHouseOdsQueryExecutor } from "@/lib/infrastructure/ods/logical-query";
 

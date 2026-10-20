@@ -35,7 +35,7 @@
 
 平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿与历史快照都写平台库，发布才重建图数据。
 
-图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象。PostgreSQL `ontology_platform` 保存账号、连接、审计、本体定义/版本、编辑层和压缩历史；ClickHouse 保存 ODS 源表镜像，查询时按当前版本形成对象。
+图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象。PostgreSQL `ontology_platform` 保存账号、连接、审计、本体定义/版本、编辑层和压缩历史；ClickHouse 只保存 ODS 源表镜像，查询时按当前版本形成对象。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
@@ -176,7 +176,6 @@ pnpm dev
 | `pnpm dev` | 开发服务器 |
 | `pnpm build` / `pnpm start` | 生产构建与启动 |
 | `pnpm test` | 单元测试（Vitest，并行跑） |
-| `pnpm test:object-index` | 对象索引契约测试（需平台库） |
 | `pnpm test:version-store` | 版本记录契约测试（需平台库） |
 | `pnpm test:schema-comments` | 表 / 字段注释契约测试（需平台库） |
 | `pnpm lint` | ESLint |
@@ -661,10 +660,8 @@ flowchart TB
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/api/objects/index` | 把对象按类型同步进检索索引 |
 | `POST` | `/api/objects/materialize` | 按主键取进草稿，保存版本编辑基线 |
 | `POST` | `/api/object-search` | 按关键词与过滤条件检索对象 |
-| `POST` | `/api/object-search/reindex` | 重建索引 |
 | `GET` | `/api/audit` | 审计记录（`scope=changes` / `actions` / `reads` / `all`，仅管理员） |
 | `GET/POST` | `/api/ods` | ODS 配置清单 / 保存裁剪后的源表镜像 |
 | `POST` | `/api/ods/:sourceId/sync` | 后台全量或增量同步 ODS |
@@ -814,7 +811,7 @@ flowchart TB
     MS["mcp/ · skills/：协议与令牌 · 技能与打包"]
     PLAT["platform/：auth · users · permissions · audit · ontologies · targets"]
     DBM["platform/db/：连接 · 实体 · 迁移"]
-    INFRA["infrastructure/：graph · ODS · persistence · 旧索引兼容适配<br/>shared/：common · client · server 通用件"]
+    INFRA["infrastructure/：graph · ClickHouse · ODS · persistence<br/>shared/：common · client · server 通用件"]
   end
 
   subgraph L_STORE["存储"]

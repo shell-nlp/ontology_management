@@ -6,7 +6,7 @@ import { parseQueryDsl } from "./schema";
 import type { QueryDsl } from "./schema";
 import { compileQuerySql } from "./compile/sql";
 import { QueryDslError } from "./errors";
-import type { MaterializedQueryExecutor, OdsQueryExecutor, QueryDslExecutionResult } from "./contract";
+import type { OdsQueryExecutor, QueryDslExecutionResult } from "./contract";
 import { toQueryDsl } from "./sql-surface";
 import type { LogicalPlan } from "./ast";
 
@@ -19,10 +19,6 @@ export type QueryDslExecutionDeps = {
   openConnector?: (record: DataSourceRecord) => Promise<DataSourceConnector>;
   /** 只在定义里有没绑资源的来源时才会被调（见 bindings.ts）。 */
   listDataSources?: () => Promise<readonly DataSourceRecord[]>;
-  /**
-   * 兼容旧调用方；普通查询不再执行对象物化索引，统一读取 ODS / 业务源。
-   */
-  materializedQuery?: MaterializedQueryExecutor;
   /** 可选 ODS 源表执行器：完整 READY 时直接在 ClickHouse 过滤 / 聚合。 */
   odsQuery?: OdsQueryExecutor;
   assertReadConsistency?: (plan: LogicalPlan) => Promise<void>;

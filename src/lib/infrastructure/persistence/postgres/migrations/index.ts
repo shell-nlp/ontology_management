@@ -14,6 +14,7 @@ import { ListMetricsDefaultOpen0013 } from "./0013-list-metrics-default-open";
 import { OdsTables0014 } from "./0014-ods";
 import { OdsReconcile0015 } from "./0015-ods-reconcile";
 import { InstanceHistory0016 } from "./0016-instance-history";
+import { DropLegacyObjectMaterialization0017 } from "./0017-drop-legacy-object-materialization";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -36,4 +37,5 @@ export const PLATFORM_MIGRATIONS = [
   new OdsTables0014(),
   new OdsReconcile0015(),
   new InstanceHistory0016(),
+  new DropLegacyObjectMaterialization0017(),
 ];

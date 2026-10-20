@@ -4,7 +4,6 @@ import type { ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import { objectIdOf, objectRefOf, primaryKeyColumns, primaryKeyFromProperties, propertyForColumn } from "@/lib/ontology/object-identity";
 import { getDataSource, openDataSource } from "@/lib/datasource/sources";
 import type { ObjectQuery, ObjectRecord, ObjectSource, ObjectSourceQuery, ObjectSourceRead } from "@/lib/instance/object-service/types";
-import { MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 
 /**
  * 「数据资源」这个对象来源的实现（S2 的默认实现）。
@@ -21,11 +20,9 @@ import { MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 /**
  * 单次回源最多取多少行。
  *
- * 交互式读取默认只要几十行（`DEFAULT_SOURCE_ROWS`），但**整份物化**会按页大小来要
- * （默认 2000、上限 20000，见 `materialize-limits`）—— 这个上限必须跟它对齐，
- * 否则物化要 2000 行、这里只给 500 行，读循环会以为"源读完了"，反而报"只读到 500 行"。
+ * 交互式读取默认只要几十行；调用方最多单次请求 5000 行，与连接器硬上限保持一致。
  */
-export const MAX_SOURCE_ROWS = MAX_MATERIALIZE_PAGE_SIZE;
+export const MAX_SOURCE_ROWS = 5000;
 const DEFAULT_SOURCE_ROWS = 50;
 /** 文本检索最多铺几列，避免一条语句里出现上百个 LIKE。 */
 const MAX_SEARCH_COLUMNS = 20;

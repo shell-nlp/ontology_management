@@ -4,7 +4,6 @@ import {
   ConversationMessageEntity,
   EmbeddedGraphEntity,
   GraphTargetEntity,
-  MaterializationJobEntity,
   InstanceHistoryEntity,
   OntologyConceptEntity,
   OntologyEntity,
@@ -12,7 +11,6 @@ import {
   jsonValue,
   platformRepo,
 } from "@/lib/infrastructure/persistence/postgres";
-import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { BUILTIN_EMBEDDED_TARGET_ID, type GraphTarget } from "@/lib/infrastructure/graph/types";
 import { getTarget, parseTargetOptions } from "@/lib/platform/targets";
 
@@ -199,7 +197,6 @@ export async function purgeTargetData(targetId: string): Promise<{ versions: num
   // 概念检索索引是按版本重建的派生数据，跟着版本一起走。
   const concepts = await (await platformRepo(OntologyConceptEntity)).delete({ targetId });
   await (await platformRepo(EmbeddedGraphEntity)).delete({ targetId });
-  await (await platformRepo(MaterializationJobEntity)).delete({ targetId });
   await (await platformRepo(InstanceHistoryEntity)).delete({ targetId });
   const conversationRepo = await platformRepo(ConversationEntity);
   const conversations = await conversationRepo.find({ where: { targetId }, select: { id: true } });
@@ -208,7 +205,6 @@ export async function purgeTargetData(targetId: string): Promise<{ versions: num
     await (await platformRepo(ConversationMessageEntity)).delete({ conversationId: In(conversationIds) });
     await conversationRepo.delete({ id: In(conversationIds) });
   }
-  await getObjectIndex().deleteTargetObjects(targetId);
   return {
     versions: versions.affected ?? 0,
     concepts: concepts.affected ?? 0,

@@ -1,6 +1,6 @@
 export * from "./schema";
 export * from "./errors";
-export type { MaterializedQueryExecutor, QueryDslExecutionResult } from "./contract";
+export type { OdsQueryExecutor, QueryDslExecutionResult } from "./contract";
 export * from "./property-hint";
 export * from "./ast";
 export * from "./resolve";

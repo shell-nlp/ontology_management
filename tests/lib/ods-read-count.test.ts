@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock("@/lib/infrastructure/object-index/clickhouse/client", () => ({ clickHouseQuery: mocks.query, clickHouseExecute: vi.fn() }));
+vi.mock("@/lib/infrastructure/clickhouse/client", () => ({ clickHouseQuery: mocks.query, clickHouseExecute: vi.fn() }));
 import { createClickHouseOdsStore } from "@/lib/infrastructure/ods/clickhouse";
 beforeEach(() => { vi.clearAllMocks(); mocks.query.mockImplementation(async (sql: string) => sql.includes("count()") ? [{ total: 3 }] : [{ ID: "A" }, { ID: "B" }, { ID: "C" }]); });
 const query = { sourceId: "source", tableName: "ods_test", columns: ["ID"], filters: [], limit: 2 };
