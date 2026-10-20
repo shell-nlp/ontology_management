@@ -21,6 +21,7 @@ import "@/components/graph-canvas.css";
  * 「只补过一批」这种半份状态必须显形 —— 半份物化会让 `auto` 读法静默截断，用户会以为"这个类型只有 N 个对象"。
  */
 type Materialization = {
+  stale?: boolean;
   entityType: string;
   rows: number;
   sourceRows: number;
@@ -159,7 +160,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
     if (!options?.silent) setLoading(true);
     try {
       const data = await api<{ materializations: Materialization[]; capabilities: Capabilities; stats: Stats; jobs: MaterializeJob[] }>(
-        `/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}`,
+        `/api/objects/materialize-type?targetId=${encodeURIComponent(targetId)}${versionId ? `&versionId=${encodeURIComponent(versionId)}` : ""}`,
       );
       setRows(data.materializations);
       setJobs(data.jobs ?? []);
@@ -170,7 +171,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, [targetId, fail]);
+  }, [targetId, versionId, fail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,8 +215,8 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
   const reindex = async () => {
     setReindexing(true);
     try {
-      const result = await api<{ indexed: number }>("/api/object-search/reindex", { method: "POST", body: JSON.stringify({ targetId }) });
-      notify(`已按当前发布版本重建索引：快照对象 ${result.indexed} 条（整份物化的对象不在这次替换范围内）。`);
+      await api<{ indexed: number }>("/api/object-search/reindex", { method: "POST", body: JSON.stringify({ targetId }) });
+      notify("遗留快照索引已清理；版本编辑和业务源物化已保留。");
       await load();
     } catch (reason) {
       fail(reason);
@@ -351,7 +352,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
     const job = jobFor(kind, name);
     if (job && job.status !== "DONE") return false;
     const item = indexed(name);
-    return Boolean(item) && !item?.truncated;
+    return Boolean(item) && !item?.truncated && !item?.stale;
   };
   // FEDERATED 按策略就不进索引：不列进"可物化"，避免做出与策略相反的索引数据。
   const readableTypes = types.filter((type) => Boolean(type.sourceLabel) && type.indexPolicy !== "FEDERATED");
@@ -395,8 +396,8 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
         <span className="index-summary-item">索引条目<b>{stats?.entries ?? 0}</b></span>
         <span className="index-summary-item">最近更新<b>{formatTime(stats?.updatedAt ?? null)}</b></span>
         {versionLabel && <span className="index-summary-item">物化版本<b>{versionLabel}</b></span>}
-        <button className="action compact" onClick={() => void reindex()} disabled={!mayWrite || reindexing} title="按当前发布版本的快照重建快照来源的索引；整份物化的对象不受影响">
-          <RefreshCw size={13} />{reindexing ? "重建中…" : "重建快照索引"}
+        <button className="action compact" onClick={() => void reindex()} disabled={!mayWrite || reindexing} title="清理旧版 SNAPSHOT 检索副本；版本中的编辑与业务源物化保留">
+          <RefreshCw size={13} />{reindexing ? "清理中…" : "清理旧快照索引"}
         </button>
         <button className="action compact" onClick={() => void rebuildAll()} disabled={!mayWrite || reindexing} title="清掉全部物化数据与清单，按发布快照重建，再把可物化的类型重新排队（会重读业务库）">
           <RotateCcw size={13} />整库重建
@@ -506,6 +507,7 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
             <span className="index-cell index-materialization-cell">
               <em className={state === "none" ? "index-state none" : "index-state full"}>当前对象 {currentObjectCount(type.name)} 个</em>
               {state === "none" && <em className="index-state none">未物化</em>}
+              {item?.stale && <em className="index-state partial">定义/映射已变化 · 需重新物化</em>}
               {state !== "none" && <em className={state === "full" ? "index-state full" : "index-state partial"}>源表 {item?.sourceRows ?? item?.scanned ?? 0} 行</em>}
               {state === "full" && (item?.folded ?? 0) > 0 && (
                 <em className="index-state partial" title="源里读到的行比对象多：主键在源数据里不唯一，重复的行被并进了同一个对象">

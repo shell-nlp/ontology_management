@@ -7,6 +7,8 @@ import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/
 import type { MaterializeCursor } from "@/lib/instance/object-service/types";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { withPermission } from "@/lib/platform/route-guard";
+import { isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
+import { resolveObjectContext } from "@/lib/instance/object-service";
 
 const materializeInput = z.object({
   targetId: z.string().uuid(),
@@ -100,7 +102,8 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
       getObjectIndex().stats(targetId),
       listMaterializeJobs(targetId),
     ]);
-    return NextResponse.json({ materializations, capabilities, stats, jobs });
+    const context = await resolveObjectContext(targetId, request.nextUrl.searchParams.get("versionId"));
+    return NextResponse.json({ materializations: materializations.map((item) => ({ ...item, stale: !isMaterializationCurrent(context.definition, item.entityType, item) && !item.truncated })), capabilities, stats, jobs });
   } catch (error) {
     const unauthorized = isUnauthorized(error);
     return NextResponse.json(

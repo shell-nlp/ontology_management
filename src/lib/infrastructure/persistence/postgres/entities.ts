@@ -296,3 +296,76 @@ export class ColumnProfileEntity {
   @Column("jsonb") profile!: JsonColumn;
   @Column("timestamptz", { name: "sampled_at" }) sampledAt!: Date;
 }
+
+@Entity({ schema: "ontology_platform", name: "instance_history" })
+export class InstanceHistoryEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "target_id" }) targetId!: string;
+  @Column("text", { name: "version_id" }) versionId!: string;
+  @Column("jsonb") definition!: JsonColumn;
+  @Column("jsonb", { name: "entity_types" }) entityTypes!: JsonColumn;
+  @Column("text") status!: string;
+  @Column("bigint", { default: 0 }) rows!: string;
+  @Column("integer", { default: 0 }) pages!: number;
+  @Column("text", { nullable: true }) message!: string | null;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "finished_at", nullable: true }) finishedAt!: Date | null;
+}
+
+@Entity({ schema: "ontology_platform", name: "instance_history_chunks" })
+export class InstanceHistoryChunkEntity {
+  @PrimaryColumn("text", { name: "snapshot_id" }) snapshotId!: string;
+  @PrimaryColumn("integer") page!: number;
+  @Column("text", { name: "entity_type" }) entityType!: string;
+  @Column("integer") rows!: number;
+  @Column("bytea") payload!: Buffer;
+  @Column("text") checksum!: string;
+}
+
+/** ClickHouse ODS 配置：一行 = 一张源表 / 视图在对象存储中的派生镜像。 */
+@Entity({ schema: "ontology_platform", name: "ods_sources" })
+export class OdsSourceEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "data_source_id" }) dataSourceId!: string;
+  @Column("text", { name: "schema_name", default: "" }) schemaName!: string;
+  @Column("text", { name: "table_name" }) tableName!: string;
+  @Column("text", { name: "table_kind", default: "table" }) tableKind!: string;
+  @Column("jsonb") columns!: JsonColumn;
+  @Column("jsonb", { name: "primary_key_columns" }) primaryKeyColumns!: JsonColumn;
+  @Column("text", { name: "watermark_column", default: "" }) watermarkColumn!: string;
+  @Column("text", { name: "sync_mode", default: "FULL" }) syncMode!: string;
+  @Column("boolean", { default: true }) enabled!: boolean;
+  @Column("text", { name: "ch_table" }) chTable!: string;
+  @Column("text", { default: "NEVER" }) status!: string;
+  @Column("timestamptz", { name: "last_sync_at", nullable: true }) lastSyncAt!: Date | null;
+  @Column("timestamptz", { name: "last_full_sync_at", nullable: true }) lastFullSyncAt!: Date | null;
+  @Column("integer", { name: "auto_reconcile_hours", default: 24 }) autoReconcileHours!: number;
+  @Column("timestamptz", { name: "next_reconcile_at", nullable: true }) nextReconcileAt!: Date | null;
+  @Column("text", { name: "last_sync_job_id", nullable: true }) lastSyncJobId!: string | null;
+  @Column("bigint", { name: "row_count", default: 0 }) rowCount!: string;
+  @Column("text", { name: "last_error", nullable: true }) lastError!: string | null;
+  @Column("jsonb", { name: "last_watermark", nullable: true }) lastWatermark!: JsonColumn | null;
+  @Column("text", { name: "created_by", nullable: true }) createdBy!: string | null;
+  @Column("timestamptz", { name: "created_at" }) createdAt!: Date;
+  @Column("timestamptz", { name: "updated_at" }) updatedAt!: Date;
+}
+
+/** ODS 同步任务：一行 = 一次全量重建或增量追平。 */
+@Entity({ schema: "ontology_platform", name: "ods_sync_jobs" })
+export class OdsSyncJobEntity {
+  @PrimaryColumn("text") id!: string;
+  @Column("text", { name: "source_id" }) sourceId!: string;
+  @Column("text") status!: string;
+  @Column("text") mode!: string;
+  @Column("bigint", { default: 0 }) scanned!: string;
+  @Column("bigint", { default: 0 }) rows!: string;
+  @Column("integer", { default: 0 }) pages!: number;
+  @Column("bigint", { name: "total", nullable: true }) total!: string | null;
+  @Column("boolean", { default: false }) truncated!: boolean;
+  @Column("text", { nullable: true }) message!: string | null;
+  @Column("timestamptz", { name: "queued_at" }) queuedAt!: Date;
+  @Column("timestamptz", { name: "started_at", nullable: true }) startedAt!: Date | null;
+  @Column("timestamptz", { name: "finished_at", nullable: true }) finishedAt!: Date | null;
+  @Column("text", { name: "created_by", nullable: true }) createdBy!: string | null;
+  @Column("jsonb", { nullable: true }) checkpoint!: JsonColumn | null;
+}

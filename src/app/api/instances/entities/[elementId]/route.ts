@@ -8,7 +8,7 @@ import { deleteSnapshotEntity, updateSnapshotEntity } from "@/lib/instance/snaps
 import { ensureVersionSnapshot, entityFromSnapshot } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
 
-const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}) });
+const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}), displayedBase: z.record(z.string(), z.unknown()).optional() });
 
 function targetIdOf(request: NextRequest) {
   return request.nextUrl.searchParams.get("targetId") ?? "";
@@ -47,7 +47,7 @@ export const PATCH = withPermission("instance.write", async (request: NextReques
     const versionId = versionIdOf(request);
     if (!versionId) return NextResponse.json({ error: "修改对象必须指定草稿 versionId。" }, { status: 400 });
     await ensureVersionSnapshot(versionId, target);
-    const updated = await updateSnapshotEntity(versionId, elementId, input.properties);
+    const updated = await updateSnapshotEntity(versionId, elementId, input.properties, input.displayedBase);
     if (!updated) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
     await writeAuditEntry({ actorId: user.id, targetId: target.id, action: "DRAFT_ENTITY_UPDATED", details: { versionId, entityId: elementId } });
     return NextResponse.json(updated);

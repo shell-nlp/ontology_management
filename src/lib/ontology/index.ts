@@ -95,6 +95,8 @@ export const entitySourceSchema = z.object({
    * 口径只允许 SELECT / WITH 开头（服务端 `assertReadOnlySql` 把关），执行时包成子查询。
    */
   kind: z.enum(["PHYSICAL", "DERIVED"]).default("PHYSICAL"),
+  /** 读取路径：AUTO = ODS 完整可用时优先、否则源库；DIRECT = 始终源库；ODS = 必须读 ODS。 */
+  readMode: z.enum(["AUTO", "DIRECT", "ODS"]).default("AUTO"),
   /** DERIVED 的取数口径：必须输出 `primaryKey` 里的列（可写 `*`，但隐式列会让口径跟源表结构漂移）。 */
   sql: z.string().trim().max(20000).default(""),
   /** 这条口径如果是「按规则生成」出来的，把生成参数留一份（手写 SQL 就是 null）。 */
@@ -478,11 +480,12 @@ export const ontologyDefinitionSchema = z.object({
     dictionaries: z.array(entityDictionarySchema).optional(),
     /**
      * 这个对象类型的**默认读法**（2026-10-12 用户要求，对齐 S4）：
-     * - `AUTO`（默认）：索引里有这个类型就用索引，没有就回源业务库 —— 老快照读出来就是它，不需要迁移；
+     * - `FEDERATED`（默认）：查询时按对象类型定义实时投影业务数据，不复制整版对象到索引；
+     * - `AUTO`：虚拟查询优先；只有调用方明确点名索引时才读物化索引；
      * - `INDEXED`：只读索引；没整份物化就明确报错，**不静默回源**（行为可预测，配"不许半份"的口径）；
-     * - `FEDERATED`：不进索引，每次直接读业务库（大表/点查型），代价是不能跨类型 join、多跳不完整、聚合受限。
+     * 代价：虚拟查询不能跨类型 join、多跳遍历不完整、聚合受限；需要这些能力时显式配置 INDEXED。
      */
-    indexPolicy: z.enum(["AUTO", "INDEXED", "FEDERATED"]).default("AUTO"),
+    indexPolicy: z.enum(["AUTO", "INDEXED", "FEDERATED"]).default("FEDERATED"),
     /** 加多来源之前的老字段；读进来自动折成 sources[0]，写回时不再输出。 */
     source: legacyEntitySourceSchema.optional(),
   }).superRefine((entity, context) => {

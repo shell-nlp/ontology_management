@@ -662,6 +662,9 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       const { database } = clickHouseConfig();
       const rows = await clickHouseQuery<{
         entity_type: string;
+        definition_version_id: string;
+        definition_hash: string;
+        mapping_hash: string;
         rows: number;
         source_rows: number;
         scanned: number;
@@ -670,7 +673,7 @@ export function createClickHouseObjectIndex(): ObjectIndex {
         pages: number;
         completed_at: string;
       }>(
-        `SELECT entity_type, rows, source_rows, scanned, folded, truncated, pages,
+        `SELECT entity_type, definition_version_id, definition_hash, mapping_hash, rows, source_rows, scanned, folded, truncated, pages,
                 formatDateTime(completed_at, '%Y-%m-%dT%H:%i:%S.%fZ', 'UTC') AS completed_at
            FROM ${database}.materialization_manifests FINAL
           WHERE target_id = {target:String}
@@ -680,6 +683,9 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       return rows.map((row) => ({
         targetId,
         entityType: row.entity_type,
+        definitionVersionId: row.definition_version_id,
+        definitionHash: row.definition_hash,
+        mappingHash: row.mapping_hash,
         rows: Number(row.rows ?? 0),
         sourceRows: Number(row.source_rows ?? 0) || Number(row.scanned ?? 0),
         scanned: Number(row.scanned ?? 0),
@@ -693,10 +699,13 @@ export function createClickHouseObjectIndex(): ObjectIndex {
       await ensureClickHouseObjectIndexSchema();
       const { database } = clickHouseConfig();
       await clickHouseExecute(
-        `INSERT INTO ${database}.materialization_manifests (target_id, entity_type, rows, source_rows, scanned, folded, truncated, pages) FORMAT JSONEachRow
+        `INSERT INTO ${database}.materialization_manifests (target_id, entity_type, definition_version_id, definition_hash, mapping_hash, rows, source_rows, scanned, folded, truncated, pages) FORMAT JSONEachRow
          ${JSON.stringify({
            target_id: record.targetId,
            entity_type: record.entityType,
+           definition_version_id: record.definitionVersionId ?? '',
+           definition_hash: record.definitionHash ?? '',
+           mapping_hash: record.mappingHash ?? '',
            rows: record.rows,
            source_rows: Number(record.sourceRows ?? record.scanned),
            scanned: record.scanned,

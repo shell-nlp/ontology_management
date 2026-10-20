@@ -77,7 +77,7 @@ export type ReviewableEntityType = {
   displayProperty?: string;
   groupId?: string;
   implements?: readonly string[];
-  /** 默认读法（老快照没有这个字段，当作 AUTO）。 */
+  /** 默认读法（新快照为 FEDERATED；老快照缺字段时由 schema 折叠）。 */
   indexPolicy?: "AUTO" | "INDEXED" | "FEDERATED";
   properties?: readonly ReviewableProperty[];
   sources?: readonly ReviewableSource[];

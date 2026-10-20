@@ -3,7 +3,8 @@ import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE, MIN_MATERIALI
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/infrastructure/object-index/types";
 import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
-import { connectorFor, createDataSourceObjectSource, selectRowsBy } from "@/lib/instance/object-service/data-source";
+import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
+import { createOdsFirstObjectSource } from "@/lib/instance/object-service/ods-source";
 import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
 import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
 import type { MaterializeCursor, ObjectContext, ObjectQuery, ObjectQueryResult, ObjectOrigin, ObjectRecord, ObjectSource } from "@/lib/instance/object-service/types";
@@ -11,6 +12,15 @@ import { averageEntryBytes, clamp, PAGE_MEMORY_BUDGET_BYTES, rawColumn, type Mat
 import type { ObjectIndexLink } from "@/lib/infrastructure/object-index/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
+import { applyObjectEdit, queryWithEdits, readEditSnapshot } from "./edit-overlay";
+import { materializationStamp, isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
+
+async function requireCurrentIndex(context: ObjectContext, name: string) {
+  const manifests = await getObjectIndex().listMaterializations(context.targetId);
+  if (!isMaterializationCurrent(context.definition, name, manifests.find((manifest) => manifest.entityType === name))) {
+    throw new Error(`对象类型「${name}」的物化索引未完成或定义/映射已变化；请重新物化后读取索引。`);
+  }
+}
 
 /**
  * 对象服务（S2）：平台里**唯一**的"按对象类型 + 主键取对象"的入口。
@@ -31,7 +41,7 @@ export function getObjectSource(kind: "DATA_SOURCE" = "DATA_SOURCE"): ObjectSour
   switch (kind) {
     case "DATA_SOURCE":
     default:
-      return createDataSourceObjectSource();
+      return createOdsFirstObjectSource();
   }
 }
 
@@ -76,15 +86,21 @@ export async function getObject(
   primaryKey: ObjectPrimaryKey,
   options: { origin?: "auto" | ObjectOrigin } = {},
 ): Promise<ObjectRecord | null> {
-  const origin = options.origin ?? "auto";
+  const editSnapshot = await readEditSnapshot(context);
+  const objectId = objectIdOf(entityTypeName, primaryKey);
+  const local = applyObjectEdit(context, editSnapshot, null, entityTypeName, objectId);
+  if (local || editSnapshot?.objectEdits?.[objectId]?.deleted) return local;
+  const policy = context.definition.entityTypes.find((item) => item.name === entityTypeName)?.indexPolicy ?? "FEDERATED";
+  const origin = resolveReadOrigin(policy, options.origin);
   const objectKey = objectKeyOf(entityTypeName, primaryKey);
   if (origin !== "source" && objectKey) {
+    await requireCurrentIndex(context, entityTypeName);
     const entry = await getObjectIndex().readObject(context.targetId, objectKey);
-    if (entry) return recordFromEntry(entry, "index");
+    if (entry) return applyObjectEdit(context, editSnapshot, recordFromEntry(entry, "index"), entityTypeName, objectId);
   }
-  if (origin === "index") return null;
+  if (origin === "index") return applyObjectEdit(context, editSnapshot, null, entityTypeName, objectId);
   const { record } = await getObjectSource().readByKey(context.definition, entityTypeName, primaryKey);
-  return record;
+  return applyObjectEdit(context, editSnapshot, record, entityTypeName, objectId);
 }
 
 /**
@@ -95,8 +111,8 @@ export async function getObject(
  * 对象类型上配的**默认读法**（`entityTypes[].indexPolicy`）说了算：
  * - `FEDERATED` → 一律回源（策略优先于这次查询里临时选的来源）；
  * - `INDEXED` → 只读索引，没物化就明确告知，不静默回源；
- * - `AUTO`（默认） → 按调用方这次的选择走（`auto` / `index` / `source`）。
- * 纯函数，便于单测；老快照没有这个字段时读出 `AUTO`。
+ * - `AUTO` → 虚拟查询优先；只有调用方明确点名 `index` 时才读索引。
+ * 纯函数，便于单测；新快照默认 `FEDERATED`，老快照缺字段时由 schema 折叠为 `FEDERATED`。
  */
 export function resolveReadOrigin(
   policy: "AUTO" | "INDEXED" | "FEDERATED" | undefined,
@@ -104,27 +120,54 @@ export function resolveReadOrigin(
 ): "auto" | ObjectOrigin {
   if (policy === "FEDERATED") return "source";
   if (policy === "INDEXED") return "index";
-  return requested ?? "auto";
+  return requested === "index" ? "index" : "source";
 }
 
 export async function queryObjects(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
+  return queryWithEdits(context, query, (next) => queryObjectsWithoutEdits(context, next));
+}
+
+async function queryObjectsWithoutEdits(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
   const started = Date.now();
   // 类型上配了策略就按策略，没配（老快照 / AUTO）才看这次调用临时选的来源。
-  const policy = context.definition.entityTypes.find((item) => item.name === query.entityType)?.indexPolicy ?? "AUTO";
+  const entityType = context.definition.entityTypes.find((item) => item.name === query.entityType);
+  const policy = entityType?.indexPolicy ?? "FEDERATED";
   const origin = resolveReadOrigin(policy, query.origin);
-  const policyWarning =
-    policy === "FEDERATED"
-      ? ["这个对象类型按策略走业务库（FEDERATED）：不能跨类型 join、多跳遍历不完整、聚合受限。"]
-      : [];
+  const policyWarning: string[] = [];
   const limit = clamp(query.limit, 1, 200, 20);
   const offset = clamp(query.offset, 0, 100000, 0);
 
   if (origin !== "source") {
+    await requireCurrentIndex(context, query.entityType);
+    const sort = (query.sort ?? []).map((item) => {
+      const property = entityType?.properties.find((candidate) => candidate.name === item.property);
+      if (!property) throw new Error(`对象类型「${query.entityType}」没有属性「${item.property}」，不能用于排序。`);
+      return { property: item.property, direction: item.direction, dataType: property.dataType };
+    });
+    if (query.keys?.length) {
+      if (query.text || query.filters?.length || query.sort?.length) {
+        throw new Error("批量按主键取对象暂不支持同时叠加文本检索、属性筛选或排序；请到对象列表使用单项查询。");
+      }
+      const hits = await Promise.all(query.keys.map((key) => {
+        const objectKey = objectKeyOf(query.entityType, key);
+        return objectKey ? getObjectIndex().readObject(context.targetId, objectKey) : Promise.resolve(null);
+      }));
+      const rows = hits.filter((entry): entry is ObjectIndexEntry => Boolean(entry && entry.entityType === query.entityType)).map((entry) => recordFromEntry(entry, "index"));
+      return {
+        entityType: query.entityType,
+        rows,
+        total: rows.length,
+        origin: "index",
+        warnings: policyWarning,
+        tookMs: Date.now() - started,
+      };
+    }
     const result = await getObjectIndex().searchObjects({
       targetId: context.targetId,
       labels: [query.entityType],
       text: query.text,
       filters: query.filters,
+      sort,
       limit,
       offset,
     });
@@ -182,17 +225,29 @@ export async function queryAllObjects(
   const started = Date.now();
   const limit = clamp(query.limit, 1, 200, 20);
   const offset = clamp(query.offset, 0, 100000, 0);
+  const manifests = await getObjectIndex().listMaterializations(context.targetId);
+  const currentLabels = context.definition.entityTypes.filter((entity) => isMaterializationCurrent(context.definition, entity.name, manifests.find((manifest) => manifest.entityType === entity.name))).map((entity) => entity.name);
+  const snapshot = await readEditSnapshot(context);
+  const locals = (snapshot?.nodes ?? []).flatMap((node) => {
+    const edit = snapshot?.objectEdits?.[node.id];
+    if (edit?.base || edit?.deleted) return [];
+    const type = context.definition.entityTypes.find((entity) => node.labels.includes(entity.name));
+    const record = type ? applyObjectEdit(context, snapshot, null, type.name, node.id) : null;
+    return record && (!query.text || JSON.stringify(record.properties).toLowerCase().includes(query.text.toLowerCase())) ? [record] : [];
+  });
+  const localPage = locals.slice(offset, offset + limit);
+  if (!currentLabels.length || localPage.length === limit) return { entityType: "", rows: localPage, total: currentLabels.length ? null : locals.length, origin: localPage.length ? "source" : "none", warnings: ["全部标签仅包含本地对象和有效物化；请选择具体类型读取完整虚拟对象。"], tookMs: Date.now() - started };
   const result = await getObjectIndex().searchObjects({
     targetId: context.targetId,
-    labels: [],
+    labels: currentLabels,
     text: query.text,
-    limit,
-    offset,
+    limit: limit - localPage.length,
+    offset: Math.max(0, offset - locals.length),
   });
   return {
     entityType: "",
-    rows: result.hits.map((hit) => recordFromEntry(hit, "index")),
-    total: result.total,
+    rows: [...localPage, ...result.hits.map((hit) => applyObjectEdit(context, snapshot, recordFromEntry(hit, "index"), hit.entityType, hit.objectId)).filter((row): row is ObjectRecord => Boolean(row))],
+    total: snapshot?.objectEdits && Object.values(snapshot.objectEdits).some((edit) => edit.deleted) ? null : result.total + locals.length,
     origin: "index",
     warnings: result.total > 0 ? [] : ["对象索引里还没有对象：先在「索引与物化」整份物化，或发布一版快照。"],
     tookMs: Date.now() - started,
@@ -245,6 +300,7 @@ export async function syncObjectsToIndex(
   if (!options.keys?.length) {
     await getObjectIndex()
       .saveMaterialization({
+        ...materializationStamp(context.definition, entityTypeName, context.versionId),
         targetId: context.targetId,
         entityType: entityTypeName,
         rows: synced.upserted,
@@ -593,6 +649,7 @@ export async function materializeObjectType(
     }
   }
   await getObjectIndex().saveMaterialization({
+    ...materializationStamp(context.definition, entityTypeName, context.versionId),
     targetId: context.targetId,
     entityType: entityTypeName,
     rows: written,
@@ -666,7 +723,7 @@ export async function ensureObjectInDraft(
   if (unmappedRequired.length) {
     throw new Error(`对象类型「${entityTypeName}」的必填属性「${unmappedRequired.map((property) => property.name).join("、")}」没有映射来源列，取进草稿也填不上值：请到「本体建模」给它选一列，或取消必填。`);
   }
-  const created = await createSnapshotEntity(draftVersionId, entityTypeName, source.properties);
+  const created = await createSnapshotEntity(draftVersionId, entityTypeName, source.properties, { sourceBase: source.properties });
   return {
     record: { ...source, objectId: created.id, properties: created.properties, origin: "index" },
     created: true,

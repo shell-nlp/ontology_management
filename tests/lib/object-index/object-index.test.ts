@@ -75,6 +75,21 @@ describe("normalizeSearchQuery", () => {
 });
 
 describe("planClickHouseSearch", () => {
+  it("属性排序按下推的数据类型生成表达式，数字列不会按字符串排", () => {
+    const plan = planClickHouseSearch({
+      targetId: "t",
+      labels: ["客户"],
+      sort: [
+        { property: "信用分", direction: "DESC", dataType: "INTEGER" },
+        { property: "客户名称", direction: "ASC", dataType: "TEXT" },
+      ],
+    }, { vector: true }, DB);
+    expect(plan.hits.sql).toContain("ORDER BY toFloat64OrNull(JSONExtractString(properties, {sort_key");
+    expect(plan.hits.sql).toMatch(/DESC, JSONExtractString\(properties/);
+    expect(plan.hits.sql).toContain("}) ASC, title ASC");
+    expect(plan.hits.params).toMatchObject({ sort_key3: "信用分", sort_key4: "客户名称" });
+  });
+
   const DB = "ontology_index";
 
   it("关键字走子串 + 分词双通道，关键字本身是参数、不进 SQL 文本", () => {

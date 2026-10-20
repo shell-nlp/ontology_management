@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
-import { rowProperties, sourceColumns, titleOf } from "@/lib/instance/object-service/data-source";
+import { rowProperties, sourceColumns, sourceRowProperties, titleOf } from "@/lib/instance/object-service/data-source";
+import { resolveReadOrigin } from "@/lib/instance/object-service";
 
 const definition = ontologyDefinitionSchema.parse({
   entityTypes: [
@@ -43,6 +44,13 @@ describe("rowProperties", () => {
   it("库里没返回的列不会凭空造出属性", () => {
     expect(rowProperties(customer, { CUST_ID: "1001" })).toEqual({ 客户编号: "1001" });
   });
+
+  it("按来源映射时不会把补充来源的同名列串到主来源", () => {
+    expect(sourceRowProperties(customer, "primary", { CUST_ID: "1001", CUST_NAME: "张三", SCORE: 88 }))
+      .toEqual({ 客户编号: "1001", 客户名称: "张三" });
+    expect(sourceRowProperties(customer, "extra", { CUST_ID: "1001", CUST_NAME: "张三", SCORE: 88 }))
+      .toEqual({ 信用分: 88 });
+  });
 });
 
 describe("titleOf", () => {
@@ -50,5 +58,29 @@ describe("titleOf", () => {
     expect(titleOf(customer, { 客户名称: "张三" }, { CUST_ID: "1001" })).toBe("张三");
     expect(titleOf(customer, { name: "李四" }, { CUST_ID: "1001" })).toBe("李四");
     expect(titleOf(customer, {}, { CUST_ID: "1001" })).toBe("1001");
+  });
+});
+
+describe("虚拟查询优先策略", () => {
+  it("新对象类型未显式配置时默认 FEDERATED", () => {
+    const parsed = ontologyDefinitionSchema.parse({
+      entityTypes: [{ id: "11111111-1111-4111-8111-111111111111", name: "客户", properties: [] }],
+      relationshipTypes: [],
+    });
+    expect(parsed.entityTypes[0].indexPolicy).toBe("FEDERATED");
+  });
+
+  it("FEDERATED 永远回源，忽略临时选择索引", () => {
+    expect(resolveReadOrigin("FEDERATED", "index")).toBe("source");
+  });
+
+  it("AUTO 默认回源，只有明确选择 index 才读索引", () => {
+    expect(resolveReadOrigin("AUTO", "auto")).toBe("source");
+    expect(resolveReadOrigin("AUTO", undefined)).toBe("source");
+    expect(resolveReadOrigin("AUTO", "index")).toBe("index");
+  });
+
+  it("INDEXED 始终只读索引", () => {
+    expect(resolveReadOrigin("INDEXED", "source")).toBe("index");
   });
 });

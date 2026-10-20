@@ -120,6 +120,17 @@ export function planClickHouseSearch(query: ObjectSearchQuery, features: ClickHo
   const vectorUsed = Boolean(q.vector?.length && features.vector);
   let score = textMode !== "none" ? textScore : "0.0";
   const order: string[] = [];
+  for (const item of q.sort) {
+    const keyParam = name("sort_key");
+    whereParams[keyParam] = item.property;
+    const key = `{${keyParam}:String}`;
+    const expression = item.dataType === "INTEGER" || item.dataType === "DECIMAL"
+      ? `toFloat64OrNull(JSONExtractString(properties, ${key}))`
+      : item.dataType === "BOOLEAN"
+        ? `JSONExtractBool(properties, ${key})`
+        : `JSONExtractString(properties, ${key})`;
+    order.push(`${expression} ${item.direction}`);
+  }
   if (vectorUsed) {
     where.push("notEmpty(embedding)");
     // 向量元素已经过滤成有限数字，直接内联；CH 的参数解析不认 JSON 数组字面量。

@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:object-index": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/object-index/clickhouse.contract.test.ts",
+    "test:ods": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/ods",
+    "test:instance-history": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/history.contract.test.ts tests/lib/object-edits.contract.test.ts --testTimeout=30000",
     "test:version-store": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/version-records.contract.test.ts",
     "test:schema-comments": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/lib/platform-schema-comments.contract.test.ts",
     "start": "next start",

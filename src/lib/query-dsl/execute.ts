@@ -6,8 +6,9 @@ import { parseQueryDsl } from "./schema";
 import type { QueryDsl } from "./schema";
 import { compileQuerySql } from "./compile/sql";
 import { QueryDslError } from "./errors";
-import type { MaterializedQueryExecutor, QueryDslExecutionResult } from "./contract";
+import type { MaterializedQueryExecutor, OdsQueryExecutor, QueryDslExecutionResult } from "./contract";
 import { toQueryDsl } from "./sql-surface";
+import type { LogicalPlan } from "./ast";
 
 export type { QueryDslExecutionResult } from "./contract";
 
@@ -23,6 +24,9 @@ export type QueryDslExecutionDeps = {
    * 这里是依赖注入点，查询层不 import 任何具体后端。
    */
   materializedQuery?: MaterializedQueryExecutor;
+  /** 可选 ODS 源表执行器：完整 READY 时直接在 ClickHouse 过滤 / 聚合。 */
+  odsQuery?: OdsQueryExecutor;
+  assertReadConsistency?: (plan: LogicalPlan) => Promise<void>;
 };
 
 async function defaultDataSource(sourceId: string): Promise<DataSourceRecord | null> {
@@ -75,10 +79,22 @@ async function runQuery(
    */
   const bound = await withInferredDataSources(definition, deps.listDataSources ?? defaultListDataSources);
   const plan = resolveQueryDsl(bound.definition, query);
+  await deps.assertReadConsistency?.(plan);
   const materialized = deps.targetId && deps.materializedQuery
-    ? await deps.materializedQuery.executeLogicalQuery(plan, deps.targetId)
+    ? await deps.materializedQuery.executeLogicalQuery(plan, deps.targetId, bound.definition)
     : null;
   if (materialized) return materialized;
+  if ([...plan.entities.values()].some((entity) => entity.indexPolicy === "INDEXED")) throw new QueryDslError("INVALID_QUERY", "查询包含 INDEXED 对象类型，但索引未完整物化或定义/映射已失效。请重新物化，或明确调整该类型的读取策略。");
+  const ods = deps.odsQuery ? await deps.odsQuery.executeLogicalQuery(plan) : null;
+  if (ods) return ods;
+  const explicitOds = [...plan.entities.values()].flatMap((entity) => entity.sources).filter((source) => source.readMode === "ODS");
+  if (explicitOds.length) {
+    throw new QueryDslError(
+      "ODS_QUERY_ROUTING_UNAVAILABLE",
+      `查询涉及 ${explicitOds.map((source) => source.table).join("、")}，来源读取路径设为 ODS，但参与查询的源表或关系连接表没有完整 READY 镜像。`,
+      "先到「数据资源 → 表详情 → ODS 镜像」完成同步，并确认对象属性映射列都在镜像里；不要把 ODS 改为 DIRECT 来绕过一致性要求。",
+    );
+  }
   const record = await (deps.getDataSource ?? defaultDataSource)(plan.root.dataSourceId);
   if (!record) {
     throw new QueryDslError("ENTITY_NOT_BOUND", `对象类型「${plan.root.entityTypeName}」绑定的数据资源已不存在。`);

@@ -15,6 +15,8 @@ import { columnValuesHint, executeOntologySql, QueryDslError, type QueryDslValue
 import { queryLinks } from "@/lib/instance/object-service/links";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
 import { getMaterializedQueryExecutor } from "@/lib/infrastructure/object-index";
+import { getOdsQueryExecutor } from "@/lib/infrastructure/ods";
+import { assertQueryEditConsistency } from "@/lib/instance/object-service/edit-overlay";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
 
 export function describeBriefly(text: string, limit = 80) {
@@ -900,6 +902,8 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         parameters,
         targetId: context.store.target.id,
         materializedQuery: getMaterializedQueryExecutor(),
+        odsQuery: getOdsQueryExecutor(),
+        assertReadConsistency: (plan) => assertQueryEditConsistency(objectContextOf(context), plan),
       })
         .catch(async (error: unknown) => { throw await enrichQueryError(error, definition); });
       return {
@@ -909,7 +913,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       };
     }
     /*
-     * 实例工具：走**对象服务**（索引优先，没有就按数据来源回源），
+     * 实例工具：走**对象服务**（虚拟查询优先，显式索引按策略使用），
      * 于是模型看到的对象与对象页/对象服务接口是同一批、同一套身份。
      */
     case "query_object_instance": {

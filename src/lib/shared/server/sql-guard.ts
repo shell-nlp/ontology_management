@@ -1,4 +1,5 @@
 import type { DataSourceKind, DataSourceRowFilter } from "@/lib/shared/common/data-source-kind";
+import type { DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
 import { quoteIdentifier } from "@/lib/shared/server/sql-object-name";
 
 const DATA_SOURCE_KIND_LABELS: Record<DataSourceKind, string> = {
@@ -129,9 +130,12 @@ export function escapeLikePattern(value: string) {
  * 只覆盖对象服务真正会下推的算子（EQ / NE / CONTAINS / IN）+ 主键游标翻页。
  */
 export type DerivedQuery = {
+  search?: { text: string; columns: string[] };
   columns?: readonly string[];
   filters?: readonly DataSourceRowFilter[];
+  keyGroups?: readonly DataSourceRowFilter[][];
   orderBy?: readonly string[];
+  sort?: readonly DataSourceRowSort[];
   after?: readonly unknown[];
   offset?: number;
 };
@@ -154,7 +158,7 @@ function oracleBinds(kind: DataSourceKind, params: unknown[]) {
 
 function derivedConditions(
   kind: DataSourceKind,
-  query: Pick<DerivedQuery, "filters" | "orderBy" | "after">,
+  query: Pick<DerivedQuery, "filters" | "keyGroups" | "search" | "orderBy" | "after">,
   alias: string,
   params: unknown[],
 ): string[] {
@@ -165,6 +169,10 @@ function derivedConditions(
     const name = String(filter.column ?? "").trim();
     if (!name) continue;
     const reference = column(name);
+    if (filter.operator === "EXISTS") {
+      conditions.push(`${reference} IS NOT NULL`);
+      continue;
+    }
     if (filter.operator === "IN") {
       const values = (Array.isArray(filter.value) ? filter.value : [filter.value])
         .filter((item) => item !== null && item !== undefined)
@@ -177,7 +185,8 @@ function derivedConditions(
       conditions.push(`${reference} LIKE ${place(`%${escapeLikePattern(String(filter.value ?? ""))}%`)} ESCAPE '\\'`);
       continue;
     }
-    conditions.push(`${reference} ${filter.operator === "NE" ? "<>" : "="} ${place(filter.value)}`);
+    const comparison = filter.operator === "NE" ? "<>" : filter.operator === "GT" ? ">" : filter.operator === "GTE" ? ">=" : filter.operator === "LT" ? "<" : "=";
+    conditions.push(`${reference} ${comparison} ${place(filter.value)}`);
   }
   /*
    * 键集（游标）翻页：`(k0 > :1) OR (k0 = :2 AND k1 > :3) …`；与结构化取行**同一语义**。
@@ -185,6 +194,21 @@ function derivedConditions(
    * 所以 after 的值会按出现的次数各绑一次 —— 语义相同，别当成 bug。
    */
   const orderColumns = (query.orderBy ?? []).map((name) => name.trim()).filter(Boolean);
+  if (query.search?.text && query.search.columns.length) {
+    const pattern = `%${escapeLikePattern(query.search.text)}%`;
+    const cast = (reference: string) => kind === "POSTGRES" ? `CAST(${reference} AS TEXT)` : kind === "MYSQL" ? `CAST(${reference} AS CHAR)` : `CAST(${reference} AS VARCHAR2(4000))`;
+    conditions.push(`(${query.search.columns.map((name) => `UPPER(${cast(column(name))}) LIKE UPPER(${place(pattern)}) ESCAPE '\\'`).join(" OR ")})`);
+  }
+  if (query.keyGroups) {
+    const groups = query.keyGroups.map((group) => {
+      if (!group.length) throw new Error("批量主键不能为空。");
+      return `(${group.map((key) => {
+        if (key.operator !== "EQ" || key.value === undefined) throw new Error("主键分组只允许完整等值条件。");
+        return `${column(key.column)} = ${place(key.value)}`;
+      }).join(" AND ")})`;
+    });
+    conditions.push(groups.length ? `(${groups.join(" OR ")})` : "1 = 0");
+  }
   const after = query.after ?? [];
   if (orderColumns.length && after.length === orderColumns.length) {
     const parts = orderColumns.map((name, position) => {
@@ -221,8 +245,12 @@ export function derivedRowsStatement(
     ? columns.map((name) => `${alias}.${quoteIdentifier(kind, name)}`).join(", ")
     : `${alias}.*`;
   const orderColumns = (query.orderBy ?? []).map((name) => name.trim()).filter(Boolean);
-  const order = orderColumns.length
-    ? ` ORDER BY ${orderColumns.map((name) => `${alias}.${quoteIdentifier(kind, name)} ASC`).join(", ")}`
+  const sort = (query.sort ?? []).map((item) => ({ column: item.column.trim(), direction: item.direction ?? "ASC" })).filter((item) => item.column);
+  const actualOrder = sort.length && !orderColumns.length
+    ? sort
+    : orderColumns.map((name) => ({ column: name, direction: "ASC" as const }));
+  const order = actualOrder.length
+    ? ` ORDER BY ${actualOrder.map((item) => `${alias}.${quoteIdentifier(kind, item.column)} ${item.direction}`).join(", ")}`
     : "";
   const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
   const rows = Math.max(1, Math.floor(limit));
@@ -238,7 +266,7 @@ export function derivedRowsStatement(
 export function derivedCountStatement(
   kind: DataSourceKind,
   derivedSql: string,
-  query: Pick<DerivedQuery, "filters">,
+  query: Pick<DerivedQuery, "filters" | "keyGroups" | "search">,
 ): { statement: string; params: unknown[] | Record<string, unknown> } {
   const sql = assertReadOnlySql(derivedSql, "取数口径");
   const alias = quoteIdentifier(kind, "t");

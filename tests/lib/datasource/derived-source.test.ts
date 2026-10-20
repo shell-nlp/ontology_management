@@ -57,6 +57,20 @@ describe("取数口径当来源：语句生成（纯函数）", () => {
     expect(built.params).toEqual(["u1", "u1", "张三"]);
   });
 
+  it("数值比较、空值判断与业务排序都下推到口径外层", () => {
+    const built = derivedRowsStatement("POSTGRES", DERIVED, {
+      filters: [
+        { column: "score", operator: "GT", value: 80 },
+        { column: "status", operator: "EXISTS" },
+      ],
+      sort: [{ column: "score", direction: "DESC" }],
+    }, 10);
+    expect(built.statement).toContain('"t"."score" > $1');
+    expect(built.statement).toContain('"t"."status" IS NOT NULL');
+    expect(built.statement).toContain('ORDER BY "t"."score" DESC');
+    expect(built.params).toEqual([80]);
+  });
+
   it("只读闸门：写语句直接拒掉（口径不许带写操作）", () => {
     expect(() => derivedRowsStatement("POSTGRES", "DELETE FROM t_user", {}, 10)).toThrow(/只读/);
     expect(() => derivedCountStatement("POSTGRES", "DROP TABLE t_user", {})).toThrow(/只读/);

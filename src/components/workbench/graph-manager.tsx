@@ -8,7 +8,6 @@ import "@/components/graph-canvas.css";
 import "@/components/type-edit-dialog.css";
 import { api } from "@/lib/shared/client/api-client";
 import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
-import { propertyForColumn } from "@/lib/ontology/fields";
 
 
 
@@ -253,6 +252,7 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
   /** 「从数据源加载」：按对象类型从业务库实时取一批对象作为节点（本体里不落副本）。 */
   const [sourceType, setSourceType] = useState("");
   const [sourceLimit, setSourceLimit] = useState(50);
+  const [neighborhoodDepth, setNeighborhoodDepth] = useState(1);
   const [sourceLoading, setSourceLoading] = useState(false);
   /** 从业务库读来的节点：记下它的 (对象类型, 主键)，点它展开时才能继续走 D2 的关系数据来源。 */
   const [keysByNodeId, setKeysByNodeId] = useState<NodeKeyMap>({});
@@ -311,17 +311,13 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
    */
   const loadLinkNeighbors = async (links: BusinessLink[], known: Set<string>) => {
     if (!target) return { nodes: [] as GraphNode[], keys: {} as NodeKeyMap };
-    const buckets = new Map<string, { property: string; values: Set<string> }>();
+    const buckets = new Map<string, Map<string, Record<string, string>>>();
     for (const link of links) {
       for (const side of [link.source, link.target]) {
         if (known.has(side.objectId)) continue;
-        const columns = Object.keys(side.primaryKey);
-        if (columns.length !== 1) continue;
-        const entityType = (version?.definition.entityTypes ?? []).find((item) => item.name === side.entityType);
-        const property = entityType ? propertyForColumn(entityType, columns[0]) : "";
-        if (!property) continue;
-        const bucket = buckets.get(side.entityType) ?? { property, values: new Set<string>() };
-        bucket.values.add(side.primaryKey[columns[0]]);
+        if (!Object.keys(side.primaryKey).length) continue;
+        const bucket = buckets.get(side.entityType) ?? new Map<string, Record<string, string>>();
+        bucket.set(JSON.stringify(side.primaryKey), side.primaryKey);
         buckets.set(side.entityType, bucket);
       }
     }
@@ -329,9 +325,12 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
     const nodes: GraphNode[] = [];
     const keys: NodeKeyMap = {};
     for (const [entityType, bucket] of buckets) {
-      const query = new URLSearchParams({ targetId: target.id, entityType, origin: "source", limit: String(settings.nodeLimit) });
+      const query = new URLSearchParams({ targetId: target.id, entityType, origin: "source", batch: "1", limit: String(settings.nodeLimit) });
       if (version?.id) query.set("versionId", version.id);
-      query.append("filter", `${bucket.property}:IN:${[...bucket.values].join(",")}`);
+      for (const key of bucket.values()) {
+        const encoded = keyParamOf(key);
+        if (encoded) query.append("key", encoded);
+      }
       const data = await api<{ rows: NeighborRow[] }>(`/api/objects?${query.toString()}`).catch(() => ({ rows: [] as NeighborRow[] }));
       for (const row of data.rows) {
         nodes.push({ id: row.objectId, labels: [row.entityType], properties: row.properties });
@@ -354,6 +353,9 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
     const params = new URLSearchParams({ targetId: target.id });
     if (version?.id) params.set("versionId", version.id);
     params.set("entityType", entityType);
+    params.set("depth", String(neighborhoodDepth));
+    params.set("maxNodes", String(Math.min(500, settings.nodeLimit)));
+    params.set("maxLinks", "2000");
     for (const primaryKey of primaryKeys) {
       const key = keyParamOf(primaryKey);
       if (key) params.append("key", key);
@@ -364,10 +366,13 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
      * 关系类型还没配数据来源时，`/api/links` 返回的是空边 —— 那是**正常的建模中间状态**，不是错误。
      * 所以这里兜住异常：界面照常显示"还是孤立点"，而不是弹一片红。
      */
-    const linked = await api<{ links: BusinessLink[]; warnings: string[] }>(`/api/links?${params.toString()}`).catch(() => ({ links: [] as BusinessLink[], warnings: [] as string[] }));
-    const relationships: GraphRelationship[] = linked.links.map((link) => ({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId, properties: link.properties }));
+    const linked = await api<{ links: BusinessLink[]; warnings: string[]; truncated?: boolean }>(`/api/links?${params.toString()}`);
     const { nodes, keys } = await loadLinkNeighbors(linked.links, known);
-    return { nodes, relationships, keys, warnings: linked.warnings };
+    const available = new Set([...known, ...nodes.map((node) => node.id)]);
+    const usable = linked.links.filter((link) => available.has(link.source.objectId) && available.has(link.target.objectId));
+    const relationships: GraphRelationship[] = usable.map((link) => ({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId, properties: link.properties }));
+    const missing = linked.links.length - usable.length;
+    return { nodes, relationships, keys, warnings: [...linked.warnings, ...(linked.truncated ? ["已达到邻域数量上限，只展示有界子图。"] : []), ...(missing ? [`${missing} 条关系的端点无法读取，已隐藏悬空边；请检查端点对象来源。`] : [])] };
   };
 
   /**
@@ -385,6 +390,7 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
       const linked = await readBusinessLinks(seed.entityType, [seed.primaryKey], new Set([nodeId, ...nodes.map((node) => node.id)]));
       nodes.push(...linked.nodes);
       relationships.push(...linked.relationships);
+      setKeysByNodeId((current) => ({ ...current, ...linked.keys }));
       if (linked.relationships.length) notify(`又从业务库取到 ${linked.relationships.length} 条关系、${linked.nodes.length} 个相邻对象。`);
       if (linked.warnings.length) notify(linked.warnings[0]);
     }
@@ -431,6 +437,10 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
   }, [target, cypher, cypherIsWrite, settings.recordLimit, fail]);
 
   return <section className="stack">
+      <div className="panel functional-panel" style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <label className="graph-head-filter">邻域范围<select aria-label="邻域跳数" value={neighborhoodDepth} onChange={(event) => setNeighborhoodDepth(Number(event.target.value))}><option value={1}>1 跳 · 直接关联</option><option value={2}>2 跳 · 关联的关联</option><option value={3}>3 跳 · 扩展邻域</option></select></label>
+        <p className="subtle" style={{ margin: 0 }}>用于加载业务对象及展开邻居。每次最多 {Math.min(500, settings.nodeLimit)} 个对象、2000 条关系；达到上限会提示。</p>
+      </div>
       <div className="panel functional-panel graph-head-panel"><div className="title-row"><div><span className="eyebrow">{draft ? `草稿 v${draft.version_number}` : "已发布图谱"}</span><h2>{draft ? "编辑版本快照" : "浏览当前发布数据"}</h2></div><div className="functional-actions"><label className="graph-head-filter">标签筛选<select value={label} onChange={(event) => { const filters = { labels: [], relationshipTypes: [] }; setLabel(event.target.value); setTypeFilters(filters); void load(event.target.value, search, settings.nodeLimit, filters); }}><option value="">全部</option>{(runtimeTypes?.labels ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}（{item.count}）</option>)}</select></label><button className="action" disabled={loading} onClick={() => void load(label, search, settings.nodeLimit)}><Search size={15} />{loading ? "加载中…" : "刷新"}</button><label className="graph-head-filter">业务对象<select value={sourceType} onChange={(event) => setSourceType(event.target.value)}><option value="">选择对象类型</option>{(version?.definition.entityTypes ?? []).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><input className="ted-input" style={{ maxWidth: 90 }} type="number" min={1} max={200} value={sourceLimit} onChange={(event) => setSourceLimit(Math.max(1, Math.min(200, Number(event.target.value) || 1)))} /><button className="action" disabled={!target || !sourceType || sourceLoading} onClick={() => void loadBusinessObjects()}>{sourceLoading ? "取数中…" : "从数据源加载"}</button><button className="action" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />可视化配置</button></div></div><p className="subtle">{draft ? `节点、关系、属性与位置修改只保存到草稿快照文件，发布前不会影响 ${graphNoun(target)}。` : "当前为只读发布版本；创建草稿后才可编辑图数据。"}</p></div>
       {!draft && <section className="panel cypher-bar"><button type="button" className="cypher-bar-trigger" aria-expanded={cypherOpen} onClick={() => setCypherOpen((current) => !current)}><span><span className="eyebrow">{graphTargetKindInfo(target?.kind ?? DEFAULT_GRAPH_TARGET_KIND).queryLanguageLabel} 只读查询</span><b>查询当前 {graphNoun(target)} 并可视化</b></span><span className="cypher-bar-toggle">{cypherOpen ? "收起查询" : "展开查询"}<ChevronDown size={15} className={cypherOpen ? "is-open" : ""} /></span></button>{cypherOpen && <div className="cypher-bar-content"><CypherEditor value={cypher} onChange={setCypher} language="sparql" labels={cypherLabels} relationshipTypes={cypherRelationshipTypes} propertyKeys={cypherPropertyKeys} placeholder={queryTemplate.placeholder} /><p className="cypher-hint">{queryTemplate.visualizationHint}</p><div className="cypher-controls"><span className={cypherIsWrite ? "write-warning" : "read-state"}>{cypherIsWrite ? "版本模式禁止直接写入" : "只读语句"}</span><button className="action primary" disabled={running || !target || cypherIsWrite} onClick={() => void runCypher()}><PlayIcon />{running ? "执行中" : "运行并可视化"}</button></div></div>}</section>}
       <GraphCanvas graph={graph} targetId={target?.id} versionId={draft?.id} user={user} editable={Boolean(draft)} definition={version?.definition ?? null} runtimeTypes={runtimeTypes ?? undefined} onExpand={draft ? undefined : expand} onRefresh={async () => { await load(label, search, settings.nodeLimit); await onSnapshotChange(); }} onTypeFilterChange={(filters) => { setTypeFilters(filters); void load(label, search, settings.nodeLimit, filters); }} notify={notify} fail={fail} />

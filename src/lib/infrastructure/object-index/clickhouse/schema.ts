@@ -99,6 +99,9 @@ async function ensureSchemaOnce(): Promise<void> {
   `);
   // 老表补列（folded 是加"主键折叠必须报数"时加的：1000 行折成 800 个对象要看得见）。
   await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS folded UInt64 DEFAULT 0`);
+  await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS definition_version_id String DEFAULT ''`);
+  await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS definition_hash String DEFAULT ''`);
+  await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS mapping_hash String DEFAULT ''`);
   await clickHouseExecute(`ALTER TABLE ${database}.materialization_manifests ADD COLUMN IF NOT EXISTS source_rows UInt64 DEFAULT 0`);
   /*
    * 整份物化的"运行号"：流式物化每页都盖一个标记，收尾凭它清掉"这次没读到的旧行"。

@@ -32,7 +32,7 @@ export function entityDisplayName(node: EntitySearchResult, definition: Definiti
 /**
  * 按名称搜索对象，选中后把整条记录回给调用方。
  *
- * 只选了一个对象类型时走**对象服务**（索引优先、没有就回源业务库），
+ * 只选了一个对象类型时走**对象服务**（虚拟查询优先，显式索引按策略使用），
  * 所以这里能选到业务表里的真实对象；选中项带着 `objectRef`，
  * 后续"取进草稿 / 当动作主对象"靠它按主键把人找回来。
  */

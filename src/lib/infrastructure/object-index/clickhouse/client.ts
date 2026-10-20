@@ -6,8 +6,8 @@ import { clickHouseConfig, type ClickHouseConfig } from "@/lib/infrastructure/ob
  * 两件事必须做对，否则要么注入、要么解析出错：
  * 1. **参数一律走命名参数**（URL 上的 `param_<name>`，SQL 里写 `{name:String}`）——
  *    属性名、关键字、对象键这些用户输入永远不进 SQL 文本；
- * 2. **默认返回 JSON**，并关掉"64 位整数加引号"（`output_format_json_quote_64bit_integers=0`），
- *    否则 `count()` 回来的是字符串，`total` 会变成 `"3"`。
+ * 2. **64 位整数用带引号 JSON 传输**，只将安全范围内的整数恢复为 number，
+ *    大主键保留为字符串，避免 JSON.parse 造成精度丢失。
  */
 export type ClickHouseParams = Record<string, string>;
 
@@ -22,7 +22,8 @@ type QueryOptions = {
 function buildUrl(config: ClickHouseConfig, options: QueryOptions): URL {
   const url = new URL(`${config.url}/`);
   url.searchParams.set("database", config.database);
-  url.searchParams.set("output_format_json_quote_64bit_integers", "0");
+  // Keep large identifiers exact; safe integers are normalized after JSON parsing.
+  url.searchParams.set("output_format_json_quote_64bit_integers", "1");
   if (!options.raw) url.searchParams.set("default_format", "JSON");
   for (const [key, value] of Object.entries(options.settings ?? {})) url.searchParams.set(key, value);
   for (const [key, value] of Object.entries(options.params ?? {})) url.searchParams.set(`param_${key}`, value);
@@ -64,7 +65,16 @@ async function execute(sql: string, options: QueryOptions = {}): Promise<string>
 export async function clickHouseQuery<T = Record<string, unknown>>(sql: string, options: QueryOptions = {}): Promise<T[]> {
   const text = await execute(sql, options);
   if (!text.trim()) return [];
-  const parsed = JSON.parse(text) as { data?: T[] };
+  const parsed = JSON.parse(text) as { data?: T[]; meta?: { name: string; type: string }[] };
+  const integerColumns = (parsed.meta ?? []).filter((column) => /\bU?Int(?:64|128|256)\b/.test(column.type));
+  for (const row of parsed.data ?? []) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    for (const column of integerColumns) {
+      const value = record[column.name];
+      if (typeof value === "string" && /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value))) record[column.name] = Number(value);
+    }
+  }
   return parsed.data ?? [];
 }
 

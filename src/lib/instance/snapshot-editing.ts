@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ActionBlockedError, runAction, visibleActions, type ActionOutcome, type ActionRunInput, type ActionVisibility } from "@/lib/instance/action-engine";
 import { parsePropertyValues } from "@/lib/instance/instance-property-editor";
+import { changedProperties } from "@/lib/ontology/object-edits";
 import { resolveObjectIdentity } from "@/lib/ontology/object-identity";
 import { entityFromSnapshot, getVersionRecord, mutateDraftSnapshot, nodeSchema, readVersionSnapshot, relationshipFromSnapshot, relationshipSchema } from "@/lib/versioning/snapshot";
 
@@ -31,6 +32,13 @@ export async function runSnapshotAction(versionId: string, actionId: string, inp
   const outcome = await mutateDraftSnapshot<ActionOutcome>(versionId, (current) => {
     const fresh = runAction(current.definition, current, actionId, inputs, { subjectEntityId: options.subjectEntityId });
     if (fresh.verdict === "BLOCKED") throw new ActionBlockedError(fresh);
+    const previousIds = new Set(current.nodes.map((node) => node.id));
+    current.objectEdits ??= {};
+    for (const node of fresh.graph.nodes) {
+      if (previousIds.has(node.id)) continue;
+      const type = current.definition.entityTypes.find((entity) => node.labels.includes(entity.name));
+      if (type) current.objectEdits[node.id] = { entityTypeId: type.id, primaryKey: resolveObjectIdentity(type, node.properties)?.primaryKey ?? {}, base: null };
+    }
     current.nodes = fresh.graph.nodes;
     current.relationships = fresh.graph.relationships;
     return fresh;
@@ -41,7 +49,7 @@ export async function runSnapshotAction(versionId: string, actionId: string, inp
   return { outcome, applied: outcome.verdict === "PASSED" };
 }
 
-export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>) {
+export async function createSnapshotEntity(versionId: string, entityType: string, rawProperties: Record<string, unknown>, options: { sourceBase?: Record<string, unknown> } = {}) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const type = snapshot.definition.entityTypes.find((item) => item.name === entityType);
     if (!type) throw new Error("对象类型未在当前草稿中定义。");
@@ -56,28 +64,53 @@ export async function createSnapshotEntity(versionId: string, entityType: string
     }
     const node = nodeSchema.parse({ id: identity?.id ?? randomUUID(), labels: [type.name], properties });
     snapshot.nodes.push(node);
+    snapshot.objectEdits ??= {};
+    snapshot.objectEdits[node.id] = { entityTypeId: type.id, primaryKey: identity?.primaryKey ?? {}, base: options.sourceBase ?? null };
     return entityFromSnapshot(node);
   });
 }
 
-export async function updateSnapshotEntity(versionId: string, entityId: string, rawProperties: Record<string, unknown>) {
+export async function updateSnapshotEntity(versionId: string, entityId: string, rawProperties: Record<string, unknown>, displayedBase?: Record<string, unknown>) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
     const node = snapshot.nodes.find((item) => item.id === entityId);
     if (!node) return null;
     const type = snapshot.definition.entityTypes.find((item) => node.labels.includes(item.name));
     if (!type) throw new Error("对象类型未在当前草稿中定义。");
     const layout = Object.fromEntries(Object.entries(node.properties).filter(([key]) => key === "fx" || key === "fy"));
-    node.properties = { ...parsePropertyValues(type.properties, rawProperties), ...layout };
+    const submitted = displayedBase && snapshot.objectEdits?.[entityId]?.base
+      ? { ...node.properties, ...changedProperties(displayedBase, rawProperties) }
+      : rawProperties;
+    const parsed = parsePropertyValues(type.properties, submitted);
+    const beforeKey = resolveObjectIdentity(type, node.properties);
+    const nextKey = resolveObjectIdentity(type, parsed);
+    if (beforeKey && beforeKey.id !== nextKey?.id) throw new Error("不能修改对象主键；主键决定对象身份。请新建对象。");
+    node.properties = { ...parsed, ...layout };
     return entityFromSnapshot(node);
   });
 }
 
 export async function deleteSnapshotEntity(versionId: string, entityId: string) {
   return mutateDraftSnapshot(versionId, (snapshot) => {
+    const edit = snapshot.objectEdits?.[entityId];
+    if (edit) {
+      if (edit.base) edit.deleted = true;
+      else delete snapshot.objectEdits![entityId];
+    }
     const before = snapshot.nodes.length;
     snapshot.nodes = snapshot.nodes.filter((node) => node.id !== entityId);
     snapshot.relationships = snapshot.relationships.filter((relationship) => relationship.sourceId !== entityId && relationship.targetId !== entityId);
     return before !== snapshot.nodes.length;
+  });
+}
+
+export async function resetSnapshotObjectEdit(versionId: string, entityId: string) {
+  return mutateDraftSnapshot(versionId, (snapshot) => {
+    const edit = snapshot.objectEdits?.[entityId];
+    if (!edit?.base) throw new Error("这不是源对象的覆盖修改，本地新建对象请使用删除。");
+    delete snapshot.objectEdits![entityId];
+    snapshot.nodes = snapshot.nodes.filter((node) => node.id !== entityId);
+    snapshot.relationships = snapshot.relationships.filter((edge) => edge.sourceId !== entityId && edge.targetId !== entityId);
+    return true;
   });
 }
 

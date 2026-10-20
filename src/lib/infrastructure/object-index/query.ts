@@ -17,6 +17,7 @@ export type NormalizedSearchQuery = {
   labels: string[];
   text: string;
   filters: NonNullable<ObjectSearchQuery["filters"]>;
+  sort: NonNullable<ObjectSearchQuery["sort"]>;
   limit: number;
   offset: number;
   vector: number[] | undefined;
@@ -42,6 +43,10 @@ export function normalizeSearchQuery(query: ObjectSearchQuery): NormalizedSearch
       // 大小比较的边界值本身也要是数字：非数字的边界属于写错的过滤条件，宁可丢掉也不能让整个查询报错。
       .filter((filter) => (filter.operator === "GT" || filter.operator === "LT" ? isNumericLiteral(filter.value) : true))
       .slice(0, MAX_SEARCH_FILTERS),
+    sort: (query.sort ?? [])
+      .map((item) => ({ ...item, property: item.property.trim() }))
+      .filter((item) => item.property)
+      .slice(0, 10),
     limit: Math.min(MAX_SEARCH_LIMIT, Math.max(1, rawLimit)),
     offset: Math.max(0, rawOffset),
     vector: query.vector?.length ? query.vector.filter((item) => Number.isFinite(item)) : undefined,

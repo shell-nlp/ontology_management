@@ -675,7 +675,7 @@ async function selectRowsFromDerived(
   const built = derivedRowsStatement(
     kind,
     derivedSql,
-    { columns: query.columns, filters: query.filters, orderBy: query.orderBy, after: query.after, offset },
+    { columns: query.columns, filters: query.filters, keyGroups: query.keyGroups, search: query.search, orderBy: query.orderBy, sort: query.sort, after: query.after, offset },
     rows + 1,
   );
   const raw = (await runner.query(built.statement, built.params)) as Record<string, unknown>[];
@@ -705,7 +705,7 @@ function rowQueryBuilder(
   kind: DataSourceKind,
   hit: CatalogObject,
   container: string,
-  query: Pick<DataSourceRowQuery, "columns" | "filters" | "search" | "orderBy" | "after">,
+  query: Pick<DataSourceRowQuery, "columns" | "filters" | "keyGroups" | "search" | "orderBy" | "sort" | "after">,
   padded: ReadonlySet<string>,
 ) {
   const schema = hit.schema || container;
@@ -729,6 +729,10 @@ function rowQueryBuilder(
   for (const filter of query.filters ?? []) {
     if (!filter.column?.trim()) continue;
     const column = `${alias}.${quoteIdentifier(kind, filter.column)}`;
+    if (filter.operator === "EXISTS") {
+      conditions.push(`${column} IS NOT NULL`);
+      continue;
+    }
     if (filter.operator === "IN") {
       const values = (Array.isArray(filter.value) ? filter.value : [filter.value])
         .filter((item) => item !== null && item !== undefined)
@@ -745,17 +749,34 @@ function rowQueryBuilder(
       builder.setParameter(`p${index}`, `%${escapeLikePattern(String(filter.value ?? ""))}%`);
       continue;
     }
-    conditions.push(`${filter.operator === "NE" ? column : equalityColumn(filter.column)} ${filter.operator === "NE" ? "<>" : "="} :p${index}`);
+    const comparison = filter.operator === "NE" ? "<>" : filter.operator === "GT" ? ">" : filter.operator === "GTE" ? ">=" : filter.operator === "LT" ? "<" : "=";
+    conditions.push(`${filter.operator === "EQ" ? equalityColumn(filter.column) : column} ${comparison} :p${index}`);
     builder.setParameter(`p${index}`, filter.value);
   }
 
   // 文本检索：在给定列上做不区分大小写的包含匹配（UPPER 两侧同改，Oracle / PG 都成立）。
+  if (query.keyGroups) {
+    const groups = query.keyGroups.map((group) => {
+      if (!group.length) throw new Error("批量主键不能为空。");
+      return `(${group.map((key) => {
+        if (key.operator !== "EQ" || key.value === undefined) throw new Error("主键分组只允许完整等值条件。");
+        const name = `p${++index}`;
+        builder.setParameter(name, key.value);
+        return `${equalityColumn(key.column)} = :${name}`;
+      }).join(" AND ")})`;
+    });
+    conditions.push(groups.length ? `(${groups.join(" OR ")})` : "1 = 0");
+  }
   const text = query.search?.text?.trim() ?? "";
   const searchColumns = (query.search?.columns ?? []).map((column) => column.trim()).filter(Boolean);
   if (text && searchColumns.length) {
     index += 1;
     builder.setParameter(`p${index}`, `%${escapeLikePattern(text)}%`);
-    const parts = searchColumns.map((column) => `UPPER(${alias}.${quoteIdentifier(kind, column)}) LIKE UPPER(:p${index}) ESCAPE '\\'`);
+    const parts = searchColumns.map((column) => {
+      const reference = `${alias}.${quoteIdentifier(kind, column)}`;
+      const cast = kind === "POSTGRES" ? `CAST(${reference} AS TEXT)` : kind === "MYSQL" ? `CAST(${reference} AS CHAR)` : `CAST(${reference} AS VARCHAR2(4000))`;
+      return `UPPER(${cast}) LIKE UPPER(:p${index}) ESCAPE '\\'`;
+    });
     conditions.push(`(${parts.join(" OR ")})`);
   }
   /*
@@ -775,10 +796,13 @@ function rowQueryBuilder(
     orderColumns.forEach((_, position) => builder.setParameter(`k${position}`, after[position] ?? null));
   }
   if (conditions.length) builder.where(conditions.join(" AND "));
-  orderColumns.forEach((column, position) => {
-    const expression = equalityColumn(column);
-    if (position === 0) builder.orderBy(expression, "ASC");
-    else builder.addOrderBy(expression, "ASC");
+  const sort = (query.sort ?? []).map((item) => ({ column: item.column.trim(), direction: item.direction ?? "ASC" })).filter((item) => item.column);
+  /* 键集游标的排序键优先：它决定 `after` 条件，不能被业务排序换掉。 */
+  const actualOrder = sort.length && !orderColumns.length ? sort : orderColumns.map((column) => ({ column, direction: "ASC" as const }));
+  actualOrder.forEach((item, position) => {
+    const expression = equalityColumn(item.column);
+    if (position === 0) builder.orderBy(expression, item.direction);
+    else builder.addOrderBy(expression, item.direction);
   });
   return builder;
 }
@@ -1036,22 +1060,25 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           if (!hit) return await selectRowsFromDerived(runner, kind, derivedSql, query, rows);
           const schema = hit.schema || container || "";
           const builder = rowQueryBuilder(connection, kind, hit, container, query, await paddedColumnsFor(connection, hit, schema));
-          const ordered = (query.orderBy ?? []).some((column) => column.trim());
+          const cursorOrdered = (query.orderBy ?? []).some((column) => column.trim());
+          const businessSorted = (query.sort ?? []).some((item) => item.column.trim());
           // 游标翻页自己带着"从哪继续"，不再用 OFFSET —— OFFSET 在深表上又慢又有上限。
-          const offset = ordered ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
+          const offset = cursorOrdered ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
           let raw: Record<string, unknown>[];
           let statement: string;
           try {
-            if (kind === "ORACLE" && ordered) {
+            if (kind === "ORACLE" && (cursorOrdered || businessSorted)) {
               /*
                * 有序取行必须"先排序、再限量"：`WHERE ROWNUM <= n … ORDER BY x` 在 Oracle 里是**先取 n 行再排**，
                * 拿到的是任意 n 行（游标会因此漏行）。所以套一层子查询：内层排好序，外层用 ROWNUM 截断。
                * 绑定参数仍是位置化的 `:1`，照原样传下去即可。
                */
               const [sql, values] = builder.getQueryAndParameters();
-              statement = `SELECT * FROM (${sql}) WHERE ROWNUM <= ${rows + 1}`;
+              const skip = cursorOrdered ? 0 : offset;
+              statement = `SELECT * FROM (${sql}) WHERE ROWNUM <= ${rows + 1 + skip}`;
               const binds = Object.fromEntries(values.map((value, index) => [String(index + 1), value]));
               raw = (await runner.query(statement, binds)) as Record<string, unknown>[];
+              if (skip) raw = raw.slice(skip);
             } else if (kind === "ORACLE") {
               /*
                * Oracle 11g 没有 `FETCH NEXT`（TypeORM 的 limit/offset 会生成它，旧库直接 ORA-03001），
@@ -1108,7 +1135,7 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           await beginReadOnlyTransaction(runner, kind);
           const derivedSql = String(query.view.sql ?? "").trim();
           if (derivedSql) {
-            const built = derivedCountStatement(kind, derivedSql, { filters: query.filters });
+            const built = derivedCountStatement(kind, derivedSql, { filters: query.filters, keyGroups: query.keyGroups, search: query.search });
             const counted = (await runner.query(built.statement, built.params)) as Record<string, unknown>[];
             const total = Number(Object.values((Array.isArray(counted) ? counted[0] : {}) ?? {})[0]);
             return Number.isFinite(total) ? total : 0;

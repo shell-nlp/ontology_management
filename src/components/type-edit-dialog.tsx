@@ -102,7 +102,7 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
   const [displayProperty, setDisplayProperty] = useState(kind === "entity" ? entity?.displayProperty ?? "" : "");
   /** 默认读法：这个类型的对象平时从索引读、还是直接问业务库（2026-10-12 用户要求）。 */
   const [indexPolicy, setIndexPolicy] = useState<"AUTO" | "INDEXED" | "FEDERATED">(
-    kind === "entity" ? entity?.indexPolicy ?? "AUTO" : "AUTO",
+    kind === "entity" ? entity?.indexPolicy ?? "FEDERATED" : "FEDERATED",
   );
   const [groupName, setGroupName] = useState(kind === "entity" ? groups.find((item) => item.id === entity?.groupId)?.name ?? "" : "");
   const [implementsList, setImplementsList] = useState<string[]>(kind === "entity" ? entity?.implements ?? [] : []);
@@ -530,15 +530,15 @@ export function TypeEditDialog({ kind, mode = "edit", entity, relation, entityTy
                 <label className="ted-field">
                   <span><Layers size={12} />默认读法</span>
                   <select className="ted-select" value={indexPolicy} onChange={(event) => setIndexPolicy(event.target.value as typeof indexPolicy)}>
-                    <option value="AUTO">AUTO · 索引里有就用索引，没有就回源</option>
+                    <option value="FEDERATED">FEDERATED · 查询时实时投影业务数据</option>
+                    <option value="AUTO">AUTO · 虚拟优先，显式请求时可读索引</option>
                     <option value="INDEXED">INDEXED · 只读索引（必须先整份物化）</option>
-                    <option value="FEDERATED">FEDERATED · 不进索引，每次直接读业务库</option>
                   </select>
                   <small>{indexPolicy === "AUTO"
-                    ? "默认：索引里这个类型的对象就用索引，没有就回源业务库 —— 过渡期最省事，但行为会随索引里有没有而变。"
+                    ? "虚拟查询优先：普通对象列表/详情回源，只有调用方明确选择索引时才读物化索引。"
                     : indexPolicy === "INDEXED"
                       ? "只从索引读：没整份物化就不会回源，而是明确告诉你「先去物化」——适合字典、需要检索/过滤/聚合的类型。"
-                      : "直接读业务库、不进索引：适合数据量大或变化快、只做点查的类型；代价是不能跨类型 join、多跳遍历不完整、聚合受限。"}</small>
+                      : "默认：查询时把业务数据实时投影成对象实例，不复制整版对象到索引；适合大数据量和版本频繁切换。"}</small>
                 </label>
                 <div className="ted-field">
                   <span className="ted-iface-head"><Boxes size={12} />实现接口{implementsList.length > 0 && <em>已实现 {implementsList.length}</em>}{implementsList.length > 0 && <button type="button" className="ted-iface-clear" onClick={() => setImplementsList([])}>全部取消</button>}</span>

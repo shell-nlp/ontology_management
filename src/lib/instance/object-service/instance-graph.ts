@@ -1,6 +1,7 @@
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import type { GraphData } from "@/lib/infrastructure/graph/types";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
+import { isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
 
 /**
  * 实例图谱的数据装配（**走对象服务，不读图库**）。
@@ -29,9 +30,14 @@ export async function readInstanceGraph(
   const index = getObjectIndex();
   const nodeLimit = Math.max(1, Math.floor(options.nodeLimit ?? 300));
   const warnings: string[] = [];
+  const manifests = await index.listMaterializations(context.targetId);
+  const current = context.definition.entityTypes.filter((type) => isMaterializationCurrent(context.definition, type.name, manifests.find((item) => item.entityType === type.name))).map((type) => type.name);
+  const requested = (options.labels ?? []).filter(Boolean);
+  const labels = requested.length ? requested.filter((label) => current.includes(label)) : current;
+  if (!labels.length) return { nodes: [], relationships: [], warnings: ["没有与当前定义匹配的完整索引。请选择业务对象类型并从数据源加载虚拟邻域。"] };
   const found = await index.searchObjects({
     targetId: context.targetId,
-    labels: (options.labels ?? []).filter(Boolean),
+    labels,
     text: options.search?.trim() || undefined,
     limit: nodeLimit,
     offset: 0,
@@ -50,9 +56,11 @@ export async function readInstanceGraph(
   }
   const nodeKeys = found.hits.map((hit) => hit.objectKey).filter(Boolean);
   const linkLimit = Math.max(1, Math.floor(options.linkLimit ?? 2000));
+  const currentRelations = context.definition.relationshipTypes.filter((type) => (!options.relationshipTypes?.length || options.relationshipTypes.includes(type.name)) && isMaterializationCurrent(context.definition, type.name, manifests.find((item) => item.entityType === type.name))).map((type) => type.name);
+  if (!currentRelations.length) return { nodes, relationships: [], warnings: [...warnings, "关系索引未完成或已失效；可从业务对象加载实时关系。"] };
   const edges = await index.searchLinks({
     targetId: context.targetId,
-    relationshipTypes: (options.relationshipTypes ?? []).filter(Boolean),
+    relationshipTypes: currentRelations,
     nodeKeys,
     limit: linkLimit,
     offset: 0,

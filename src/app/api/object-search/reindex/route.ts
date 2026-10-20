@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorMessage, isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
-import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { ensureVersionSnapshot, listVersionRecords } from "@/lib/versioning/snapshot";
@@ -50,7 +49,7 @@ export const POST = withPermission("instance.write", async (request: NextRequest
     }
     const { indexed } = await getObjectIndex().replaceTargetObjects(
       target.id,
-      buildIndexEntries(snapshot.definition, snapshot.nodes),
+      [], // Version edits are read from PostgreSQL and never copied over source materializations.
       // 重建索引只重建"快照那一份"：整份物化进来的业务对象不在这次替换范围内。
       { versionId: record.id, origin: "SNAPSHOT" },
     );

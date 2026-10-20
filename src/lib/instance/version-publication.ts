@@ -59,7 +59,13 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
        * 索引写失败时图数据已替换、版本仍是 DRAFT，走下面同一条「重新发布以恢复一致」的路径。
        */
       // 发布写的是"快照里的对象"= SNAPSHOT 来源：prune 只清这一来源，整份物化的对象不受影响。
-      await getObjectIndex().syncTargetObjects(target.id, buildIndexEntries(snapshot.definition, snapshot.nodes), {
+      /*
+       * 虚拟查询优先：FEDERATED 类型只存在于业务源/版本快照里，不再复制整版对象到 CH。
+       * AUTO 保留“可显式读索引”的兼容能力；INDEXED 是唯一要求索引完整的策略。
+       */
+      // Version edits now live in PostgreSQL; publishing must not overwrite source materializations.
+      const indexEntries: ReturnType<typeof buildIndexEntries> = [];
+      await getObjectIndex().syncTargetObjects(target.id, indexEntries, {
         versionId: version.id,
         prune: true,
         origin: "SNAPSHOT",

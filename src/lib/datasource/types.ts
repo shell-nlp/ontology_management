@@ -1,6 +1,6 @@
-import type { DataSourceKind, DataSourceRowFilter } from "@/lib/shared/common/data-source-kind";
+import type { DataSourceKind, DataSourceRowFilter, DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
 
-export type { DataSourceKind, DataSourceRowFilter } from "@/lib/shared/common/data-source-kind";
+export type { DataSourceKind, DataSourceRowFilter, DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
 
 /**
  * 数据资源抽象层。
@@ -283,6 +283,8 @@ export type DataSourceRowQuery = {
   /** 只取这些列；空数组 = 全部列。 */
   columns?: string[];
   filters?: DataSourceRowFilter[];
+  /** Exact tuples: AND inside each key, OR between keys; preserves composite-key identity. */
+  keyGroups?: DataSourceRowFilter[][];
   /** 不区分大小写的包含匹配；`columns` 为空时不做文本过滤。 */
   search?: { text: string; columns: string[] };
   limit: number;
@@ -293,6 +295,8 @@ export type DataSourceRowQuery = {
    * 给了它就不再走 `offset` —— 深翻页每页都等价于点查，不用把前面几页读出来再丢掉。
    */
   orderBy?: string[];
+  /** 业务排序。与键集游标用的 `orderBy` / `after` 互斥；两套排序不能同时生效。 */
+  sort?: DataSourceRowSort[];
   after?: unknown[];
 };
 

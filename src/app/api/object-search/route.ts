@@ -4,6 +4,8 @@ import { isUnauthorized } from "@/lib/platform/auth";
 import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { getTarget } from "@/lib/platform/targets";
 import { withPermission } from "@/lib/platform/route-guard";
+import { resolveObjectContext } from "@/lib/instance/object-service";
+import { isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
 
 const filterSchema = z.object({
   property: z.string().trim().min(1).max(200),
@@ -11,11 +13,18 @@ const filterSchema = z.object({
   value: z.union([z.string().max(500), z.number(), z.boolean(), z.array(z.string().max(500)).max(200)]).optional(),
 });
 
+const sortSchema = z.object({
+  property: z.string().trim().min(1).max(200),
+  direction: z.enum(["ASC", "DESC"]).default("ASC"),
+  dataType: z.enum(["TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME", "TEXT_ARRAY", "JSON"]).optional(),
+});
+
 const searchSchema = z.object({
   targetId: z.string().uuid(),
   labels: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
   text: z.string().max(200).optional(),
   filters: z.array(filterSchema).max(20).optional(),
+  sort: z.array(sortSchema).max(10).optional(),
   limit: z.number().int().min(1).max(200).optional(),
   offset: z.number().int().min(0).max(100000).optional(),
   vector: z.array(z.number()).min(1).max(4096).optional(),
@@ -36,7 +45,12 @@ export const POST = withPermission("instance.read", async (request: NextRequest)
     const input = searchSchema.parse(await request.json());
     const target = await getTarget(input.targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
-    const result = await getObjectIndex().searchObjects(input);
+    const context = await resolveObjectContext(input.targetId);
+    const manifests = await getObjectIndex().listMaterializations(input.targetId);
+    const current = context.definition.entityTypes.filter((type) => isMaterializationCurrent(context.definition, type.name, manifests.find((item) => item.entityType === type.name))).map((type) => type.name);
+    const labels = input.labels?.length ? input.labels.filter((label) => current.includes(label)) : current;
+    if (!labels.length) throw new Error("当前定义没有有效的完整物化索引，请重新物化或使用虚拟对象查询。");
+    const result = await getObjectIndex().searchObjects({ ...input, labels });
     return NextResponse.json(result);
   } catch (error) {
     return fail(error, "检索对象失败。");

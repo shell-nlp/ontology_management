@@ -236,6 +236,37 @@ describe("compileQuerySql aggregate", () => {
   });
 });
 describe("executeQueryDsl", () => {
+  it("来源显式要求 ODS 但查询 DSL 尚无 ODS 执行器时拒绝静默回源", async () => {
+    const definition = 定义();
+    definition.entityTypes[0].sources[0].readMode = "ODS";
+    await expect(executeOntologySql(definition, "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
+      getDataSource: async () => { throw new Error("显式 ODS 不应回源"); },
+    })).rejects.toMatchObject({ code: "ODS_QUERY_ROUTING_UNAVAILABLE" });
+  });
+
+  it("ODS 执行器完整接管后不再访问源业务库", async () => {
+    const definition = 定义();
+    definition.entityTypes[0].sources[0].readMode = "ODS";
+    const executeLogicalQuery = vi.fn(async () => ({
+      data_source: "ClickHouse ODS",
+      data_source_kind: "CLICKHOUSE" as const,
+      columns: ["条数"],
+      rows: [[11]],
+      returned: 1,
+      row_limit: 100,
+      truncated: false,
+      elapsed_ms: 2,
+      warnings: [],
+      statement: "SELECT 11",
+    }));
+    const result = await executeOntologySql(definition, "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
+      odsQuery: { executeLogicalQuery },
+      getDataSource: async () => { throw new Error("ODS 接管时不应回源"); },
+    });
+    expect(executeLogicalQuery).toHaveBeenCalledOnce();
+    expect(result.rows).toEqual([[11]]);
+  });
+
   it("完整物化执行器由调用方注入，查询层不依赖具体索引后端", async () => {
     const executeLogicalQuery = vi.fn(async () => ({
       data_source: "测试对象索引",

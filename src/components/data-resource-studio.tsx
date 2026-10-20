@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   Check,
+  Boxes,
   ChevronRight,
   Columns3,
   Database,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/datasource/types";
 import "./data-resource-studio.css";
 import "./graph-canvas.css";
+import { OdsDialog } from "@/components/ods-dialog";
 
 /**
  * 数据资源工作台。
@@ -350,6 +352,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
   // 「重新取数」要显式回源库（refresh=1）；用 ref 是因为它不该单独触发一次 effect。
   const detailRefreshRef = useRef(false);
   const [health, setHealth] = useState<DataSourceHealth | null>(null);
+  const [odsOpen, setOdsOpen] = useState(false);
   const [probedAt, setProbedAt] = useState<Date | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState("");
@@ -580,6 +583,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
             </div>
             <div className="drs-view-head-actions">
               <span className="drs-view-meta">{detailBusy ? "读取中…" : detailError ? "读取失败" : `${fields.length} 字段 · ${preview?.rows.length ?? 0} 行样本`}{!detailBusy && !detailError && detailMeta ? ` · ${detailMeta.fromCache ? "取自平台库" : "刚回源重读"} ${cacheClock(detailMeta.at)}` : ""}</span>
+              <button type="button" className="action compact" disabled={!fields.length} onClick={() => setOdsOpen(true)} title={fields.length ? "把这张源表裁剪后同步到 ClickHouse；对象实例仍然在查询时投影" : "先读到字段结构才能配置 ODS"}><Boxes size={13} />ODS 镜像</button>
               <button type="button" className="action compact" disabled={detailBusy} onClick={() => { detailRefreshRef.current = true; setDetailToken((current) => current + 1); }} title="回源库重读这一张表的字段和数据（平时读的是平台库里存着的那一份），读完顺手存回平台库">{detailBusy ? <Loader2 size={13} className="drs-spin" /> : <RefreshCcw size={13} />}重新取数</button>
             </div>
           </div>
@@ -617,6 +621,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
         </>}
       </div>
     </div>
+    {odsOpen && selected && <OdsDialog source={source} schema={selected.schema} table={selected.name} tableKind={selected.kind} fields={fields} canEdit={canEdit} onClose={() => setOdsOpen(false)} notify={notify} fail={fail} />}
   </div>;
 }
 

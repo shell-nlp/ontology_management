@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
 import { parsePrimaryKeyInput } from "@/lib/ontology/object-identity";
 import { resolveObjectContext } from "@/lib/instance/object-service";
-import { queryLinks } from "@/lib/instance/object-service/links";
+import { queryLinkNeighborhood, queryLinks } from "@/lib/instance/object-service/links";
 import { withPermission } from "@/lib/platform/route-guard";
 
 /**
@@ -26,11 +26,22 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
     if (keys.length && !entityType) return NextResponse.json({ error: "按对象取边时 entityType 不能为空。" }, { status: 400 });
     const seed = keys.length ? { entityType, keys } : undefined;
     const limitParam = params.get("limit");
-    const result = await queryLinks(context, {
+    const depthParam = params.get("depth");
+    const maxNodesParam = params.get("maxNodes");
+    const maxLinksParam = params.get("maxLinks");
+    const query = {
       relationshipType: params.get("relationshipType") ?? undefined,
       seed,
       limit: limitParam === null ? undefined : Number(limitParam),
-    });
+    };
+    const result = seed && depthParam !== null
+      ? await queryLinkNeighborhood(context, {
+        ...query,
+        depth: Number(depthParam),
+        maxNodes: maxNodesParam === null ? undefined : Number(maxNodesParam),
+        maxLinks: maxLinksParam === null ? undefined : Number(maxLinksParam),
+      })
+      : await queryLinks(context, query);
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系实例。") }, { status: apiErrorStatus(error) });

@@ -96,8 +96,10 @@ SQL 编译器
 `resolveQueryDsl` → 执行路由 → 编译 / 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
 执行路由只换“从哪里读”，不换解析、校验、指标口径、JOIN 语义或基数保护：
 
-- 查询涉及的对象类型和关系类型都已有“完整跑到源尾”的物化清单 → 编译到 ClickHouse 对象索引（`object_entries` / `object_links`）；
-- 任意一处没物化、只物化了一部分或清单已清掉 → 沿用原来的业务库 SQL 执行链；
+- 只有查询涉及的对象类型都显式配置为 `INDEXED`，且已有“完整跑到源尾”的物化清单 → 编译到 ClickHouse 对象索引；
+- `FEDERATED` / `AUTO`、任意一处没物化、只物化了一部分或清单已清掉 → 沿用业务库 SQL 执行链；
+- 对象来源设为 `AUTO / ODS` 时，若所有参与对象来源和关系连接表都有完整 READY ODS，会编译到 ClickHouse ODS；`AUTO` 缺镜像时回源，显式 `ODS` 缺镜像时返回 `ODS_QUERY_ROUTING_UNAVAILABLE`，不会静默回源；
+- ODS 只校验本次查询实际引用的列、主键和关系连接列；未用到的属性不必进入裁剪镜像。
 - 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse 对象索引` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把“到底查了哪边”藏起来。
 
 `query-dsl` 本身不 import ClickHouse：它只定义 `MaterializedQueryExecutor` 端口，具体适配器由对象索引层实现、由工具入口注入。因此增加另一个对象索引后端时，不需要修改 DSL 的解析、校验或编译逻辑。

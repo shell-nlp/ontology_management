@@ -1,3 +1,5 @@
+import type { DataType } from "@/lib/shared/common/model-data-type";
+
 /**
  * 对象检索层的公共契约。
  *
@@ -62,6 +64,8 @@ export type ObjectSearchQuery = {
   /** 关键字，走全文 + 模糊双通道。 */
   text?: string;
   filters?: ObjectSearchFilter[];
+  /** 按对象属性排序；`dataType` 决定按数字、布尔还是文本比较。 */
+  sort?: { property: string; direction: "ASC" | "DESC"; dataType?: DataType }[];
   limit?: number;
   offset?: number;
   /** 有向量时以向量相似度为主要排序信号。 */
@@ -161,6 +165,9 @@ export type ObjectLinkSearchResult = {
  * 实际是只物化了一部分。
  */
 export type ObjectIndexMaterialization = {
+  definitionVersionId?: string;
+  definitionHash?: string;
+  mappingHash?: string;
   targetId: string;
   entityType: string;
   /** 这一次物化提交/写入索引的条目数；**不等于当前对象数**。 */

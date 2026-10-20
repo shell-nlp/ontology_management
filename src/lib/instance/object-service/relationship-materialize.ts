@@ -7,6 +7,7 @@ import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { planLinkSource, type LinkSourceDefinition } from "@/lib/ontology/link-source";
 import { objectKeyOf } from "@/lib/ontology/object-identity";
+import { materializationStamp } from "@/lib/ontology/materialization-stamp";
 
 /**
  * **按关系类型整份物化**（边）。
@@ -179,6 +180,7 @@ export async function materializeRelationshipType(
     );
   }
   await getObjectIndex().saveMaterialization({
+    ...materializationStamp(context.definition, relation.name, context.versionId),
     targetId: context.targetId,
     entityType: relation.name,
     rows: written,

@@ -4,6 +4,7 @@ import type { MaterializedQueryExecutor, QueryDslExecutionResult } from "@/lib/q
 import { clickHouseQuery } from "./client";
 import { clickHouseConfig } from "./config";
 import { compileLogicalQueryForClickHouse } from "./query-dsl";
+import { isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
 
 function completeManifest(manifest: ObjectIndexMaterialization | undefined): boolean {
   // 空类型也可能已经完整物化：rows=0 本身不是问题，跑到源尾且没有截断才算完整。
@@ -24,7 +25,10 @@ function requiredNames(plan: LogicalPlan): string[] {
  */
 export function createClickHouseMaterializedQueryExecutor(index: ObjectIndex): MaterializedQueryExecutor {
   return {
-    async executeLogicalQuery(plan, targetId): Promise<QueryDslExecutionResult | null> {
+    async executeLogicalQuery(plan, targetId, definition): Promise<QueryDslExecutionResult | null> {
+      // 虚拟查询优先：AUTO / FEDERATED 都回源；只有显式 INDEXED 才允许自动读 CH。
+      if ([...plan.entities.values()].some((entity) => entity.indexPolicy !== "INDEXED")) return null;
+
       let manifests: ObjectIndexMaterialization[];
       try {
         manifests = await index.listMaterializations(targetId);
@@ -34,7 +38,7 @@ export function createClickHouseMaterializedQueryExecutor(index: ObjectIndex): M
       }
 
       const byName = new Map(manifests.map((manifest) => [manifest.entityType, manifest]));
-      if (!requiredNames(plan).every((name) => completeManifest(byName.get(name)))) return null;
+      if (!definition || !requiredNames(plan).every((name) => completeManifest(byName.get(name)) && isMaterializationCurrent(definition, name, byName.get(name)))) return null;
 
       const config = clickHouseConfig();
       const compiled = compileLogicalQueryForClickHouse(plan, targetId, config.database);

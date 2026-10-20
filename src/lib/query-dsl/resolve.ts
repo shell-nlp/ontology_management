@@ -87,11 +87,13 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
     return {
       id: source.id,
       alias: index === 0 ? alias : `${alias}__src${index}`,
+      dataSourceId: source.dataSourceId,
       schema: source.schema,
       table: source.view,
       primaryKey: [...source.primaryKey],
       titleField: source.titleField,
       primary: index === 0,
+      readMode: source.readMode ?? "AUTO",
       sql: sourceSql,
     };
   });
@@ -120,6 +122,7 @@ function resolveEntity(entity: OntologyDefinition["entityTypes"][number], alias:
     alias,
     entityTypeId: entity.id,
     entityTypeName: entity.name,
+    indexPolicy: entity.indexPolicy ?? "FEDERATED",
     primarySourceId: primary.id,
     dataSourceId: primary.dataSourceId ?? "",
     schema: primary.schema,

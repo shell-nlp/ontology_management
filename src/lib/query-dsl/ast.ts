@@ -5,11 +5,14 @@ import type { CompareOperator, QueryDsl, SelectItem } from "./schema";
 export type ResolvedSource = {
   id: string;
   alias: string;
+  dataSourceId: string;
   schema: string;
   table: string;
   primaryKey: string[];
   titleField: string;
   primary: boolean;
+  /** 来源读取路径；显式 ODS 在没有 ODS 查询执行器时必须报错，不能静默回源。 */
+  readMode: "AUTO" | "DIRECT" | "ODS";
   /**
    * 取数口径（`kind: DERIVED` 的主来源才有）。非空时**物理表这一格是空的**，
    * 编出来是 `(口径) 别名` 这个子查询 —— 与对象服务那边的读法保持同一个口径。
@@ -34,6 +37,8 @@ export type ResolvedEntity = {
   alias: string;
   entityTypeId: string;
   entityTypeName: string;
+  /** 虚拟查询优先：只有显式 INDEXED 的类型才允许自动路由到对象索引。 */
+  indexPolicy: "AUTO" | "INDEXED" | "FEDERATED";
   primarySourceId: string;
   dataSourceId: string;
   schema: string;

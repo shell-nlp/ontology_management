@@ -27,8 +27,8 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
-      { id: "credit", dataSourceId: otherSourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", readMode: "AUTO", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID", "AREA_CODE"], titleField: "CUST_NAME" },
+      { id: "credit", dataSourceId: otherSourceId, kind: "PHYSICAL", readMode: "AUTO", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CREDIT", primaryKey: ["CUST_ID", "AREA_CODE"], titleField: "" },
     ]);
     expect(parsed.entityTypes[0].properties[0]).toMatchObject({ sourceField: "CUST_NAME", sourceId: "primary" });
     expect(parsed.entityTypes[0].properties[1]).toMatchObject({ sourceField: "SCORE", sourceId: "credit" });
@@ -48,7 +48,7 @@ describe("类的数据来源绑定", () => {
       rules: [],
     });
     expect(parsed.entityTypes[0].sources).toEqual([
-      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
+      { id: "primary", dataSourceId: sourceId, kind: "PHYSICAL", readMode: "AUTO", sql: "", rule: null, schema: "GISTOOLS", view: "TB_CUSTOMER", primaryKey: ["ID"], titleField: "CUST_NAME" },
     ]);
   });
 

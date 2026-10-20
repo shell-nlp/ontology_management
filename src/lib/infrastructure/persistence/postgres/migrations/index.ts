@@ -11,6 +11,9 @@ import { OrphanTargetCleanup0010 } from "./0010-orphan-target-cleanup";
 import { OAuthTables0011 } from "./0011-oauth";
 import { MaterializeJobCursor0012 } from "./0012-materialize-job-cursor";
 import { ListMetricsDefaultOpen0013 } from "./0013-list-metrics-default-open";
+import { OdsTables0014 } from "./0014-ods";
+import { OdsReconcile0015 } from "./0015-ods-reconcile";
+import { InstanceHistory0016 } from "./0016-instance-history";
 
 /**
  * 平台库迁移清单：**按数组顺序执行，每支都必须幂等**。
@@ -30,4 +33,7 @@ export const PLATFORM_MIGRATIONS = [
   new OAuthTables0011(),
   new MaterializeJobCursor0012(),
   new ListMetricsDefaultOpen0013(),
+  new OdsTables0014(),
+  new OdsReconcile0015(),
+  new InstanceHistory0016(),
 ];

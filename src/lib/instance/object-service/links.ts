@@ -56,6 +56,22 @@ export type ObjectLinkQueryResult = {
   /** 这次实际问到哪些关系类型（按名字，去重）。 */
   relationshipTypes: string[];
   warnings: string[];
+  /** 命中查询上限，返回的边不是全部。 */
+  truncated: boolean;
+};
+
+export type ObjectLinkNeighborhoodQuery = ObjectLinkQuery & {
+  /** 从种子对象向外走几跳；默认 1，最大 3。 */
+  depth?: number;
+  /** 整张子图最多保留多少端对象；默认 200，最大 500。 */
+  maxNodes?: number;
+  /** 整张子图最多保留多少条边；默认 500，最大 2000。 */
+  maxLinks?: number;
+};
+
+export type ObjectLinkNeighborhoodResult = ObjectLinkQueryResult & {
+  depthReached: number;
+  truncated: boolean;
 };
 
 /** 行里的列名大小写由库决定（Oracle 会折成大写），取值一律按小写匹配并去空格。 */
@@ -217,8 +233,11 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
   const relationshipTypes: string[] = [];
   let total: number | null = 0;
   let counted = false;
+  let truncated = false;
 
   for (const relation of relationsToRead(context, query)) {
+    const remaining = limit - links.length;
+    if (remaining <= 0) { truncated = true; break; }
     const plan = planLinkSource(definition, relation);
     if (!plan.ok) {
       warnings.push(plan.reason);
@@ -236,12 +255,16 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
       continue;
     }
     const wanted = linkReadColumns(relation, plan);
-    const result = await connector.selectRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, columns: wanted, filters, limit });
-    if (result.truncated) warnings.push(`关系类型「${relation.name}」命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
+    const keyGroups = query.seed?.keys.map((key) => linkSeedFilters(plan, { entityType: query.seed!.entityType, keys: [key] })).filter((group): group is DataSourceRowFilter[] => Boolean(group));
+    const result = await connector.selectRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, columns: wanted, filters, ...(keyGroups ? { keyGroups } : {}), limit: remaining });
+    if (result.truncated) {
+      truncated = true;
+      warnings.push(`关系类型「${relation.name}」命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
+    }
     counted = true;
     if (connector.countRows) {
       try {
-        total = (total ?? 0) + (await connector.countRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, filters }));
+        total = (total ?? 0) + (await connector.countRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, filters, ...(keyGroups ? { keyGroups } : {}) }));
       } catch { total = null; }
     } else {
       total = null;
@@ -258,5 +281,98 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
     const key = `${link.relationshipTypeId}|${link.source.objectId}|${link.target.objectId}`;
     if (!unique.has(key)) unique.set(key, link);
   }
-  return { links: [...unique.values()], total: counted ? total : null, relationshipTypes, warnings };
+  const uniqueLinks = [...unique.values()];
+  if (links.length > uniqueLinks.length) warnings.push(`连接行重复：${links.length} 行形成 ${uniqueLinks.length} 条唯一关系，合并 ${links.length - uniqueLinks.length} 条重复边。`);
+  if (uniqueLinks.length >= limit) truncated = true;
+  return { links: uniqueLinks.slice(0, limit), total: counted ? total : null, relationshipTypes, warnings, truncated };
+}
+
+/**
+ * 有界邻域遍历：从一个/一批种子对象逐跳读关系实例。
+ *
+ * 不允许无界递归。每次只扩展上一层的端对象，跳数、节点数和边数都有硬上限；达到上限就停止并报数，
+ * 不把“只展开了一部分”伪装成完整子图。这里只返回边，节点属性由对象服务按端点主键批量补齐。
+ */
+export async function queryLinkNeighborhood(
+  context: ObjectContext,
+  query: ObjectLinkNeighborhoodQuery,
+): Promise<ObjectLinkNeighborhoodResult> {
+  if (!query.seed?.keys.length) throw new Error("邻域遍历必须提供至少一个种子对象。");
+  const depthLimit = Math.min(3, Math.max(1, Math.floor(query.depth ?? 1)));
+  const maxNodes = Math.min(500, Math.max(1, Math.floor(query.maxNodes ?? 200)));
+  const maxLinks = Math.min(2000, Math.max(1, Math.floor(query.maxLinks ?? 500)));
+  const allLinks = new Map<string, ObjectLinkRecord>();
+  const seenNodes = new Map<string, { entityType: string; key: ObjectPrimaryKey }>();
+  let frontier = new Map<string, Map<string, ObjectPrimaryKey>>();
+  for (const key of query.seed.keys) {
+    const endpointValue = endpoint(query.seed.entityType, key);
+    if (!endpointValue || seenNodes.has(endpointValue.objectId)) continue;
+    const item = { entityType: query.seed.entityType, key };
+    seenNodes.set(endpointValue.objectId, item);
+    const bucket = frontier.get(item.entityType) ?? new Map<string, ObjectPrimaryKey>();
+    bucket.set(endpointValue.objectId, key);
+    frontier.set(item.entityType, bucket);
+  }
+  // 同类型种子一次批量问；不同 seed 类型由调用方分别发起邻域。
+  const warnings: string[] = [];
+  const relationshipTypes = new Set<string>();
+  let depthReached = 0;
+  let truncated = false;
+
+  while (frontier.size && depthReached < depthLimit) {
+    const remaining = maxLinks - allLinks.size;
+    if (remaining <= 0) { truncated = true; warnings.push(`边数达到上限 ${maxLinks}，邻域已停止扩展。`); break; }
+    const next = new Map<string, Map<string, ObjectPrimaryKey>>();
+    let pageHadMore = false;
+    for (const [entityType, keys] of frontier) {
+      if (allLinks.size >= maxLinks) { truncated = true; break; }
+      const room = Math.min(MAX_LINK_ROWS, maxLinks - allLinks.size);
+      const result = await queryLinks(context, {
+        relationshipType: query.relationshipType,
+        seed: { entityType, keys: [...keys.values()] },
+        limit: room,
+      });
+      warnings.push(...result.warnings);
+      if (result.truncated) pageHadMore = true;
+      for (const name of result.relationshipTypes) relationshipTypes.add(name);
+      if (result.links.length >= room) pageHadMore = true;
+      for (const link of result.links) {
+        if (allLinks.size >= maxLinks) { truncated = true; break; }
+        const endpoints = [link.source, link.target];
+        const newEndpoints = endpoints.filter((side) => !seenNodes.has(side.objectId));
+        if (seenNodes.size + newEndpoints.length > maxNodes) {
+          truncated = true;
+          continue;
+        }
+        if (!allLinks.has(link.linkRef)) allLinks.set(link.linkRef, link);
+        for (const side of endpoints) {
+          if (seenNodes.has(side.objectId)) continue;
+          seenNodes.set(side.objectId, { entityType: side.entityType, key: side.primaryKey });
+          const bucket = next.get(side.entityType) ?? new Map<string, ObjectPrimaryKey>();
+          bucket.set(side.objectId, side.primaryKey);
+          next.set(side.entityType, bucket);
+        }
+      }
+    }
+    depthReached += 1;
+    if (truncated) {
+      warnings.push(`邻域达到节点上限 ${maxNodes} 或边数上限 ${maxLinks}，已返回有界子图。`);
+      break;
+    }
+    if (!next.size) break;
+    if (pageHadMore) {
+      truncated = true;
+      warnings.push(`当前层关系边达到单次读取上限 ${MAX_LINK_ROWS}，邻域没有继续向更深一层扩展。`);
+      break;
+    }
+    frontier = next;
+  }
+  return {
+    links: [...allLinks.values()],
+    total: allLinks.size,
+    relationshipTypes: [...relationshipTypes],
+    depthReached,
+    truncated,
+    warnings: [...new Set(warnings)],
+  };
 }

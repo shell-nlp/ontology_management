@@ -5,6 +5,7 @@ import {
   EmbeddedGraphEntity,
   GraphTargetEntity,
   MaterializationJobEntity,
+  InstanceHistoryEntity,
   OntologyConceptEntity,
   OntologyEntity,
   OntologyVersionEntity,
@@ -199,6 +200,7 @@ export async function purgeTargetData(targetId: string): Promise<{ versions: num
   const concepts = await (await platformRepo(OntologyConceptEntity)).delete({ targetId });
   await (await platformRepo(EmbeddedGraphEntity)).delete({ targetId });
   await (await platformRepo(MaterializationJobEntity)).delete({ targetId });
+  await (await platformRepo(InstanceHistoryEntity)).delete({ targetId });
   const conversationRepo = await platformRepo(ConversationEntity);
   const conversations = await conversationRepo.find({ where: { targetId }, select: { id: true } });
   const conversationIds = conversations.map((item) => item.id);

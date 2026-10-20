@@ -192,6 +192,15 @@ export function SourceCard({ source, index, dataSources, primaryKeyColumns, prop
             <datalist id={viewListId}>{views.map((item) => <option key={`${item.schema}.${item.name}`} value={item.name}>{item.comment || `${item.columnCount} 个字段`}</option>)}</datalist>
           </label>}
         </div>
+        {!derived && source.dataSourceId && source.view && <label className="ted-field">
+          <span><Database size={12} />读取路径</span>
+          <select className="ted-select" value={source.readMode} onChange={(event) => onChange({ readMode: event.target.value === "ODS" ? "ODS" : event.target.value === "DIRECT" ? "DIRECT" : "AUTO" })}>
+            <option value="AUTO">ODS 优先，缺失时回退源库</option>
+            <option value="DIRECT">只读源业务库</option>
+            <option value="ODS">必须读 ODS（不可用时拒绝）</option>
+          </select>
+          <small>ODS 在「数据资源 → 表详情 → ODS 镜像」里配置。对象实例始终在查询时投影，不按版本复制。</small>
+        </label>}
         {derived && (
           <>
             {ruleSentence && (

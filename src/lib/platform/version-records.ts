@@ -19,7 +19,7 @@ import { conceptsOfDefinition, type OntologyConcept } from "@/lib/ontology/conce
 export type VersionStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
 
 /** 实例快照的存储形状：这一层不解释它，读出来的人负责校验。 */
-export type StoredSnapshot = { nodes: unknown[]; relationships: unknown[] };
+export type StoredSnapshot = { nodes: unknown[]; relationships: unknown[]; objectEdits?: Record<string, { entityTypeId: string; primaryKey: Record<string, string>; base: Record<string, unknown> | null; deleted?: boolean }> };
 
 export type VersionRecordRow = {
   id: string;

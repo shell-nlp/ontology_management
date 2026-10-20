@@ -33,6 +33,7 @@ export type ObjectRecord = {
   title: string;
   properties: Record<string, unknown>;
   origin: ObjectOrigin;
+  editMode?: "LOCAL" | "OVERRIDE";
   /** 稳定引用串：`对象类型/主键串`，界面与工具之间传引用用它，不用内部 id。 */
   objectRef: string;
   /** 读取过程中的如实告知（没绑来源、来源不支持、被截断等），不挡结果。 */
@@ -43,6 +44,10 @@ export type ObjectQuery = {
   entityType: string;
   text?: string;
   filters?: ObjectSearchFilter[];
+  /** 批量按主键取对象；供图谱补齐一跳邻居等场景使用，不能与文本检索形成双重语义。 */
+  keys?: ObjectPrimaryKey[];
+  /** 按属性排序；属性必须映射到主来源的列，排序会下推到数据源。 */
+  sort?: { property: string; direction: "ASC" | "DESC" }[];
   limit?: number;
   offset?: number;
   /** auto = 索引里有这个对象类型的条目就用索引，否则回源。 */

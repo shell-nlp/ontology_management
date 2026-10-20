@@ -24,7 +24,7 @@ export type EntityType = {
   groupId?: string;
   /** 实现的接口（`Definition.interfaces` 里的 id）；一个对象类型可以实现多个接口。 */
   implements?: string[];
-  /** 默认读法：AUTO（索引有就用、没有回源）/ INDEXED（只读索引）/ FEDERATED（直接读业务库，不进索引）。老快照读出来是 AUTO。 */
+  /** 默认读法：FEDERATED（查询时虚拟投影）/ AUTO（虚拟优先，显式请求时可读索引）/ INDEXED（只读索引）。 */
   indexPolicy?: "AUTO" | "INDEXED" | "FEDERATED";
   /** 接口属性的显式映射：接口属性名 → 本对象类型的属性名。没写就按同名匹配。 */
   interfaceMappings?: { interfaceId: string; properties: Record<string, string>; actions?: Record<string, string> }[];
@@ -40,7 +40,7 @@ export type EntityType = {
 /** 还没接来源时的空绑定；直接写全字段，省得每处都判空。 */
 export function emptyEntitySource(id = "primary"): EntitySource {
   // `kind` / `sql` 写全：物理表是默认形态，口径要用户显式切过去（老快照读出来也是这两个默认值）。
-  return { id, kind: "PHYSICAL", sql: "", rule: null, dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" };
+  return { id, kind: "PHYSICAL", readMode: "AUTO", sql: "", rule: null, dataSourceId: "", schema: "", view: "", primaryKey: [], titleField: "" };
 }
 
 /** 来源清单的读写与自检都在 @/lib/ontology-sources，这里转出去，界面只认这一个入口。 */

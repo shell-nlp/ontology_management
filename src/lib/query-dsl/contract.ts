@@ -1,5 +1,6 @@
 import type { DataSourceRecord } from "@/lib/datasource/types";
 import type { LogicalPlan } from "./ast";
+import type { OntologyDefinition } from "@/lib/ontology";
 
 /** 本体查询的统一结果。源库查询与物化索引查询都返回这个形状。 */
 export type QueryDslExecutionResult = {
@@ -24,5 +25,10 @@ export type QueryDslExecutionResult = {
  * 由应用入口注入；没有注入或数据没有完整物化时，查询自动回退业务库。
  */
 export interface MaterializedQueryExecutor {
-  executeLogicalQuery(plan: LogicalPlan, targetId: string): Promise<QueryDslExecutionResult | null>;
+  executeLogicalQuery(plan: LogicalPlan, targetId: string, definition?: OntologyDefinition): Promise<QueryDslExecutionResult | null>;
+}
+
+/** 源表 ODS 查询执行端口；没有完整 READY ODS 时返回 null，由查询层回退源库。 */
+export interface OdsQueryExecutor {
+  executeLogicalQuery(plan: LogicalPlan): Promise<QueryDslExecutionResult | null>;
 }

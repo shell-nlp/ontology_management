@@ -35,7 +35,7 @@
 
 平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿与历史快照都写平台库，发布才重建图数据。
 
-图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象，不感知具体引擎。平台库（PostgreSQL `ontology_platform`）保存账号、连接、审计、对象检索索引，以及本体定义与版本快照（`ontology_versions` / `ontology_concepts`）。
+图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象。PostgreSQL `ontology_platform` 保存账号、连接、审计、本体定义/版本、编辑层和压缩历史；ClickHouse 保存 ODS 源表镜像及可选对象索引。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
@@ -94,7 +94,7 @@
 | 🤖 | **智能问答** | 服务端工具循环（AI SDK）：模型只调只读工具（本体检索、多跳、表结构、只读 SQL），流式输出、可中断、可带图片、带会话历史 |
 | 🛰 | **MCP** | 两个服务端：本体数据工具（会话或令牌）与建模技能（免令牌），外部 Agent / IDE 直接接 |
 | ✨ | **本体技能** | 三套建模技能（需求澄清 → 本体设计 → 出包交付），整包下载，或经 MCP 直接给 Agent 用 |
-| 🔍 | **对象检索** | 对象索引（全文 / 模糊 / 向量，当前落 PostgreSQL）+ 回源策略；海量业务对象不进进程内存 |
+| 🔍 | **对象检索** | 默认虚拟查询（查询时回源投影对象）；大表可先把裁剪列同步成 ClickHouse ODS 源表副本，再在对象服务与 `run_query` 中实时过滤/聚合；对象索引只作可选搜索加速 |
 | 🧾 | **审计记录** | 发布、导入、删除、改名等关键操作留痕，在「设置 → 审计记录」里按动作筛选 |
 
 ## 术语对照（中文 ↔ 代码 / 接口）
@@ -124,7 +124,8 @@
 | 前端 / API | Next.js 16（App Router）、React 19、TypeScript |
 | 本体存储 | 默认**内置图存储**（PostgreSQL 持久化 + Graphology 类型图 + N3.js / Comunica 只读 SPARQL）；可选 **Apache Jena / Fuseki**。Neo4j 已移除 |
 | 平台元数据 | PostgreSQL · Schema `ontology_platform` · TypeORM（业务侧不写裸 SQL） |
-| 对象检索 | PostgreSQL 索引表：`tsvector` 全文 + `pg_trgm` 模糊 + `pgvector` 向量；缺扩展自动降级 |
+| 对象检索 | 默认查询时虚拟投影；ClickHouse `object_entries` 作可选物化索引（全文 / 子串 / 向量能力按后端上报） |
+| 大表源表层 | ClickHouse ODS：一张源表一份裁剪副本，`FULL` 影子表原子替换 / `INCREMENTAL` 水位追平 |
 | 智能问答 | AI SDK 7（`ai` + `@ai-sdk/openai-compatible`）：服务端工具循环、流式输出、可中断 |
 | 对外协议 | MCP：本体数据工具与建模技能两个服务端 |
 | 图可视化 | Sigma + Graphology（实例图谱）、React Flow（本体建模画布） |
@@ -494,16 +495,20 @@ flowchart TB
         │  按「对象类型 + 主键」取对象
         ▼
    对象服务（Object Service）
-        │  auto（默认）：先查索引，索引里没有就回源
-        ├──► 对象检索索引（Object Index）   当前落 PostgreSQL：全文 / 模糊 / 向量
+        │  FEDERATED（默认）：按版本映射实时回源并投影对象
+        ├──► ODS 源表层（ClickHouse）  一张源表一份裁剪副本；AUTO 可用时查询时过滤成对象
+        ├──► 对象检索索引（Object Index）   ClickHouse：可选全文 / 模糊 / 向量加速
         └──► 数据资源连接（DataSourceConnector）  Oracle / PostgreSQL / MySQL 只读事务
 ```
 
-- **索引层**是可选加速：对象量大时把常用类型物化进索引表，检索、过滤、分页都快；不物化也能用，代价是每次回源查业务库。
+- **索引层**是可选加速：默认对象类型使用虚拟查询，不复制整版实例；只有显式 `AUTO` / `INDEXED` 才允许使用对象索引，代价是复杂 join 和多跳能力受限。
+- **ODS 是源表层，不是对象层**：只镜像选中列和主键，版本切换不复制；全量走影子表原子替换，增量按水位追平。对象来源可设 `AUTO / DIRECT / ODS`。
 - **回源**按对象类型上绑定的数据资源与主键字段读，只走只读事务与语句白名单。
 - 换中间件（例如把检索索引换成独立搜索引擎）只替换扩展点，对象服务、界面与 AI 工具一行都不用改。
 
 ## 角色与安全
+
+对象页支持版本编辑覆盖与“历史数据”：覆盖层仅保留改过字段，历史采集显式冻结定义和源投影、按页压缩保存。物化清单用定义/映射哈希避免版本切换后误读旧索引；实例图谱可选择 1～3 跳的有界邻域。历史快照记录采集区间，跨表不承诺同一事务时点。实现边界和验证命令见 [虚拟实例改造验收](docs/虚拟实例改造验收.md)。
 
 权限是 **13 个权限点**（按模块分组），角色 = 一组权限点。内置三档不可改不可删，也可以自建角色；
 **`admin` 永远拥有全部权限**。入口在「设置 → 用户与角色」。
@@ -660,6 +665,9 @@ flowchart TB
 | `POST` | `/api/object-search` | 按关键词与过滤条件检索对象 |
 | `POST` | `/api/object-search/reindex` | 重建索引 |
 | `GET` | `/api/audit` | 审计记录（`scope=changes` / `actions` / `reads` / `all`，仅管理员） |
+| `GET/POST` | `/api/ods` | ODS 配置清单 / 保存裁剪后的源表镜像 |
+| `POST` | `/api/ods/:sourceId/sync` | 后台全量或增量同步 ODS |
+| `GET` | `/api/ods/jobs` | ODS 同步任务与进度 |
 
 </details>
 
@@ -726,6 +734,8 @@ API 路由、版本发布流程与界面组件无需改动。
 | `source-binding.ts` · `source-hints.ts` · `object-name.ts` | 对象类型到表 / 列的绑定与表名规范化 |
 
 当前支持 PostgreSQL、MySQL、Oracle。三类共用同一份 SQL 实现，接入新的关系库通常只需要在 `DATA_SOURCE_KINDS` 里加一条元数据；接入 Elasticsearch、REST、文件这类非关系来源时，在 `openDataSourceConnector` 里分流到一个新实现即可 —— 界面与 API 不用改。
+
+**ODS 源表镜像**：数据资源 → 表详情 → ODS 镜像，可勾选列、配置复合主键和 `FULL / INCREMENTAL` 同步。ClickHouse 表只保存源行；对象类型来源的 `AUTO / DIRECT / ODS` 决定查询时是否读它。全量先写影子表再原子替换，增量按水位合并；删除检测依赖手动或按小时自动的全量校准。运行任务可取消，进程重启后的遗留任务会标为中断。
 
 ### 对象与数据表的对应关系
 
@@ -840,7 +850,7 @@ ontology_management/
 │   ├── app/              # 页面与 API 路由（含 /docs 的 OpenAPI 页面）
 │   ├── components/       # 界面组件；workbench/ 页面壳，qa/、type-editor/、action-studio/ 放编辑器区块
 │   └── lib/              # 领域与平台代码（根目录只有目录，没有散文件）
-│       ├── infrastructure/ # 外部技术适配：graph/ · object-index/ · persistence/postgres/（平台库连接、实体、迁移）
+│       ├── infrastructure/ # 外部技术适配：graph/ · object-index/ · ods/ · persistence/postgres/（平台库连接、实体、迁移）
 │       ├── shared/       # 无业务依赖的通用件：common/ · client/ · server/
 │       ├── platform/     # 平台业务：auth · users · permissions · audit · ontologies · targets · 数据访问编排
 │       ├── ontology/     # 本体模型：定义 · 对象身份 · 字段换算 · 画布 · 接口 · 指标 · 分组 · 校验规则

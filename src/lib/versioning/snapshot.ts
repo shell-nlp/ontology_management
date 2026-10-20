@@ -62,6 +62,8 @@ export type VersionSnapshot = {
   definition: OntologyDefinition;
   nodes: SnapshotNode[];
   relationships: SnapshotRelationship[];
+  /** Only edited objects: the original source values let reads overlay changed fields. */
+  objectEdits?: Record<string, { entityTypeId: string; primaryKey: Record<string, string>; base: Record<string, unknown> | null; deleted?: boolean }>;
 };
 
 /** 老磁盘版 manifest.json 的形状：只用于**入迁**，不再写回磁盘。 */
@@ -278,7 +280,7 @@ async function withSnapshotLock<T>(versionId: string, operation: () => Promise<T
   locks.set(versionId, queued);
   await previous;
   try {
-    return await operation();
+    return await withAdvisoryLock(`ontology:snapshot:${versionId}`, operation);
   } finally {
     release();
     if (locks.get(versionId) === queued) locks.delete(versionId);
@@ -310,7 +312,7 @@ function stripInternalProperties(properties: Record<string, unknown>) {
  *
  * 为什么不用 `JSON.stringify`：定义的哈希要能扛住两件事 ——
  * 1. jsonb 往返会重排 key（写进去的顺序和读出来的顺序不一样）；
- * 2. schema 加了字段默认值（例如 2026-10-12 的 `entityTypes[].indexPolicy` 默认 AUTO）——
+ * 2. schema 加了字段默认值（例如 `entityTypes[].indexPolicy`）——
  *    老行里没有这个字段，读出来解析后却"多"了它，哈希就变了，于是误报"可能被外部改写"（真踩过）。
  * 所以哈希只认**存储里的值**、且对 key 顺序免疫；schema 注入的默认值不参与哈希。
  */
@@ -343,7 +345,9 @@ function snapshotContent(snapshot: VersionSnapshot, stored?: VersionSnapshot) {
     ":TYPE": relationship.type,
     properties: stableStringify(relationship.properties ?? {}),
   })), { header: true, columns: ["relationship_id:ID", ":START_ID", ":END_ID", ":TYPE", "properties"] });
-  const contentHash = createHash("sha256").update(definition).update(nodes).update(relationships).digest("hex");
+  const digest = createHash("sha256").update(definition).update(nodes).update(relationships);
+  if (source.objectEdits) digest.update(stableStringify(source.objectEdits));
+  const contentHash = digest.digest("hex");
   return { definition, nodes, relationships, contentHash };
 }
 
@@ -352,11 +356,12 @@ async function writeSnapshotFiles(record: VersionRecord, snapshot: VersionSnapsh
     definition: ontologyDefinitionSchema.parse(snapshot.definition),
     nodes: snapshot.nodes.map((node) => nodeSchema.parse(node)),
     relationships: snapshot.relationships.map((relationship) => relationshipSchema.parse(relationship)),
+    ...(snapshot.objectEdits ? { objectEdits: snapshot.objectEdits } : {}),
   };
   const content = snapshotContent(validated);
   const updated = await updateVersionRecordRow(record.id, {
     definition: validated.definition,
-    snapshot: { nodes: validated.nodes, relationships: validated.relationships },
+    snapshot: { nodes: validated.nodes, relationships: validated.relationships, ...(validated.objectEdits ? { objectEdits: validated.objectEdits } : {}) },
     entityCount: validated.nodes.length,
     relationshipCount: validated.relationships.length,
     contentHash: content.contentHash,
@@ -397,7 +402,7 @@ async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot
   const relationships = (row.snapshot.relationships ?? []).map((item) => relationshipSchema.parse(item));
   /*
    * 完整性口径不变：定义 + 节点 + 关系三段算一个 sha256，写入时记、读出来比。
-   * **但哈希只能认存储里的值**：解析会把新加的 schema 默认值补上（例如 indexPolicy=AUTO），
+   * **但哈希只能认存储里的值**：解析会把新加的 schema 默认值补上（例如 indexPolicy=FEDERATED），
    * 拿它算哈希会让"schema 加字段"被误判成"内容被改写"。所以这里传原始行做哈希、解析结果只用于返回。
    */
   const content = snapshotContent(
@@ -406,6 +411,7 @@ async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot
       definition: row.definition as OntologyDefinition,
       nodes: (row.snapshot.nodes ?? []) as VersionSnapshot["nodes"],
       relationships: (row.snapshot.relationships ?? []) as VersionSnapshot["relationships"],
+      ...(row.snapshot.objectEdits ? { objectEdits: row.snapshot.objectEdits } : {}),
     },
   );
   if (row.content_hash && content.contentHash !== row.content_hash) {
@@ -421,7 +427,7 @@ async function readSnapshotFiles(record: VersionRecord): Promise<VersionSnapshot
     );
     await updateVersionRecordRow(record.id, { contentHash: content.contentHash });
   }
-  return { definition, nodes, relationships };
+  return { definition, nodes, relationships, ...(row.snapshot.objectEdits ? { objectEdits: row.snapshot.objectEdits } : {}) };
 }
 
 export async function exportTargetSnapshot(target: GraphTarget, definition: OntologyDefinition): Promise<VersionSnapshot> {
