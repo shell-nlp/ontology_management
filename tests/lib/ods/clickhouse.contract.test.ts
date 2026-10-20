@@ -33,6 +33,9 @@ describe("ODS ClickHouse 契约", () => {
       expect(filtered.total).toBe(2);
       await expect(store.writeFull({ spec, rows: rows([{ ID: "X", SCORE: 1 }, { ID: "X", SCORE: 2 }]), batchId: Date.now() + 10 })).rejects.toThrow(/主键不唯一/);
       expect(await store.count(spec)).toBe(3);
+      const exact = await store.writeFull({ spec, rows: rows([{ ID: "A", SCORE: 10 }, { ID: "A", SCORE: 10 }, { ID: "B", SCORE: 20 }]), batchId: Date.now() + 20 });
+      expect(exact).toMatchObject({ rows: 3, storedRows: 2, warnings: [expect.stringContaining("完全相同")] });
+      expect(await store.count(spec)).toBe(2);
       const aggregate = await clickHouseQuery<{ total: number }>(
         `SELECT countIf(trimBoth(toString("root"."ID")) = {needle:String}) AS total FROM ${clickHouseConfig().database}.${tableName} AS "root" FINAL WHERE "root"."_source_id" = {source:String} AND "root"."_is_deleted" = 0`,
         { params: { source: sourceId, needle: "A" } },

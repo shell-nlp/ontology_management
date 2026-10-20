@@ -447,8 +447,11 @@ async function runJob(jobId: string) {
       ? await store.writeIncremental({ spec, rows, batchId: Date.now(), onProgress: async (value) => updateProgress({ ...value, total }) })
       : await store.writeFull({ spec, rows, batchId: Date.now(), onProgress: async (value) => updateProgress({ ...value, total }) });
     job.status = "DONE";
-    job.message = `已同步 ${result.rows} 行。`;
-    job.rows = String(result.rows);
+    job.message = [
+      `已读取 ${result.rows.toLocaleString()} 行，镜像可读 ${result.storedRows.toLocaleString()} 行。`,
+      ...result.warnings,
+    ].join(" ");
+    job.rows = String(result.storedRows);
     job.finishedAt = new Date();
     await jobs.save(job);
     source.status = "READY";

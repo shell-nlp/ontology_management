@@ -5,6 +5,7 @@ import {
   Check,
   Boxes,
   ChevronRight,
+  CircleDot,
   Columns3,
   Database,
   Eye,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
 import { dataSourcesApi } from "@/lib/datasource/client-api";
+import type { Definition } from "@/lib/ontology/draft";
 import {
   DATA_SOURCE_KINDS,
   PLANNED_DATA_SOURCES,
@@ -226,10 +228,38 @@ function cellText(value: unknown) {
   return JSON.stringify(value);
 }
 
-export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+type OdsCatalogSignal = {
+  dataSourceId: string;
+  schemaName: string;
+  tableName: string;
+  status: "NEVER" | "RUNNING" | "READY" | "FAILED" | "STALE";
+  enabled: boolean;
+  rowCount: number;
+  lastError: string | null;
+};
+
+const ODS_SIGNAL_LABEL: Record<OdsCatalogSignal["status"], string> = {
+  NEVER: "ODS 未同步",
+  RUNNING: "ODS 同步中",
+  READY: "ODS 可读取",
+  FAILED: "ODS 失败",
+  STALE: "ODS 待校准",
+};
+
+function catalogUsageKey(dataSourceId: string, schema: string, table: string) {
+  return [dataSourceId, schema, table].map((value) => String(value ?? "").trim().toUpperCase()).join("\u0000");
+}
+
+export function DataResourceStudio({ canEdit, definition, notify, fail }: {
+  canEdit: boolean;
+  definition: Definition;
+  notify: (text: string) => void;
+  fail: (reason: unknown) => void;
+}) {
   const [sources, setSources] = useState<PublicDataSource[]>(() => sessionCache.sources ?? []);
   const [loading, setLoading] = useState(() => !sessionCache.sources);
   const [activeId, setActiveId] = useState(() => sessionCache.activeId);
+  const [odsSources, setOdsSources] = useState<OdsCatalogSignal[]>([]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PublicDataSource | null>(null);
   // 上层的提示函数每次渲染都是新引用，放进 ref，避免把加载回调拖成无限循环。
@@ -255,11 +285,24 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
     }
   }, []);
 
+  const loadOdsSignals = useCallback(async () => {
+    try {
+      const data = await api<{ sources: OdsCatalogSignal[] }>("/api/ods");
+      setOdsSources(data.sources);
+    } catch {
+      // ODS 标记是浏览辅助信息；接口异常不能挡住表结构本身。
+      setOdsSources([]);
+    }
+  }, []);
+
   // 挂载后再取一次：直接写在 effect 里会同步 setState，触发级联渲染。
   useEffect(() => {
-    const handle = window.setTimeout(() => { void load(); }, 0);
+    const handle = window.setTimeout(() => {
+      void load();
+      void loadOdsSignals();
+    }, 0);
     return () => window.clearTimeout(handle);
-  }, [load]);
+  }, [load, loadOdsSignals]);
 
   const active = sources.find((item) => item.id === activeId) ?? sources[0] ?? null;
   const groups = DATA_SOURCE_KINDS.map((info) => ({ info, items: sources.filter((item) => item.kind === info.kind) })).filter((group) => group.items.length);
@@ -296,11 +339,14 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
       {active && <DataResourceBrowser
         key={`${active.id}|${active.host}|${active.port}|${active.databaseName}|${active.schemaName}`}
         source={active}
+        definition={definition}
+        odsSources={odsSources}
         canEdit={canEdit}
         notify={notify}
         fail={fail}
         onEdit={() => setEditing(active)}
         onChanged={() => load(active.id)}
+        onOdsChanged={loadOdsSignals}
         onDeleted={async () => { forgetSource(active.id); notifyRef.current("数据资源已删除。"); await load(""); }}
       />}
     </div> : <div className="panel functional-panel drs-empty">
@@ -317,13 +363,16 @@ export function DataResourceStudio({ canEdit, notify, fail }: { canEdit: boolean
 type ScopeFilter = "all" | "table" | "view";
 
 /** 一个数据资源的结构浏览：左边是表与视图清单，右边是字段和数据预览。 */
-function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged, onDeleted }: {
+function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, fail, onEdit, onChanged, onOdsChanged, onDeleted }: {
   source: PublicDataSource;
+  definition: Definition;
+  odsSources: OdsCatalogSignal[];
   canEdit: boolean;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
   onEdit: () => void;
   onChanged: () => Promise<void> | void;
+  onOdsChanged: () => Promise<void> | void;
   onDeleted: () => Promise<void> | void;
 }) {
   const info = dataSourceKindInfo(source.kind);
@@ -386,7 +435,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
       setViews(data.views);
       setCatalogMeta(data.fetched_at ? { at: data.fetched_at, fromCache: Boolean(data.from_cache) } : null);
       setSelectedName((current) => {
-        const next = data.views.some((item) => item.name === current) ? current : data.views[0]?.name ?? "";
+        const next = data.views.some((item) => item.name === current) ? current : "";
         sessionCache.selected.set(source.id, next);
         return next;
       });
@@ -400,18 +449,62 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
     } finally {
       if (run === catalogRun.current) setViewsBusy(false);
     }
-  }, [catalogKey, source.id, source.enabled, scope]);
+  }, [catalogKey, scope, setCatalogMeta, setFields, setPreview, setSelectedName, setViews, setViewsBusy, setViewsError, source.enabled, source.id]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void loadViews(); }, 0);
     return () => window.clearTimeout(handle);
   }, [loadViews]);
 
+  const needle = search.trim().toLowerCase();
+  const boundByTable = useMemo(() => {
+    const result = new Map<string, string[]>();
+    for (const entityType of definition.entityTypes) {
+      for (const item of entityType.sources ?? []) {
+        if (!item.dataSourceId || !item.view) continue;
+        const key = catalogUsageKey(item.dataSourceId, item.schema || source.schemaName, item.view);
+        const current = result.get(key) ?? [];
+        if (!current.includes(entityType.name)) current.push(entityType.name);
+        result.set(key, current);
+      }
+    }
+    return result;
+  }, [definition.entityTypes, source.schemaName]);
+  const odsByTable = useMemo(() => new Map(odsSources
+    .filter((item) => item.dataSourceId === source.id)
+    .map((item) => [catalogUsageKey(item.dataSourceId, item.schemaName || source.schemaName, item.tableName), item])), [odsSources, source.id, source.schemaName]);
+  const matching = useMemo(() => {
+    const rows = views.filter((item) => (filter === "all" || item.kind === filter) && (!needle || item.name.toLowerCase().includes(needle) || item.comment.toLowerCase().includes(needle)));
+    const rank = (item: DataViewSummary) => {
+      const key = catalogUsageKey(source.id, item.schema, item.name);
+      const bound = Boolean(boundByTable.get(key)?.length);
+      const ods = odsByTable.has(key);
+      return bound && ods ? 0 : bound ? 1 : ods ? 2 : 3;
+    };
+    // Array.sort 稳定：使用中的表排前面，其余仍保持结构清单原有顺序。
+    return [...rows].sort((left, right) => rank(left) - rank(right));
+  }, [boundByTable, filter, needle, odsByTable, source.id, views]);
+  const hasUsage = matching.some((item) => {
+    const key = catalogUsageKey(source.id, item.schema, item.name);
+    return boundByTable.has(key) || odsByTable.has(key);
+  });
+  // 首次进入时直接展示优先表中的第一项，但不在 effect 里二次 setState。
+  const activeName = selectedName || matching[0]?.name || "";
+  const tableCount = views.filter((item) => item.kind === "table").length;
+  const viewCount = views.length - tableCount;
+  const selected = views.find((item) => item.name === activeName) ?? null;
+  const scoped = Boolean(source.schemaName);
+  // 只有 PG 这种「一个连接能看到多个模式」的库，看全库才有意义；Oracle 的模式就是连接本身。
+  const canWiden = scoped && source.kind !== "ORACLE";
+  // 同一个 databaseName 字段在 Oracle 叫服务名、在 PG 叫库名，标签直接取元数据，避免写死。
+  const databaseLabel = info.fields.find((field) => field.key === "databaseName")?.label.replace(/（.*/, "") ?? "库";
+  const containerLabel = info.containerLabel.replace(/（.*/, "");
+
   useEffect(() => {
     let cancelled = false;
-    const key = `${source.id}|${scope}|${selectedName}|${rows}`;
+    const key = `${source.id}|${scope}|${activeName}|${rows}`;
     const handle = window.setTimeout(() => {
-      if (!selectedName) { setFields([]); setPreview(null); setDetailError(""); return; }
+      if (!activeName) { setFields([]); setPreview(null); setDetailError(""); return; }
       const cached = sessionCache.details.get(key);
       // 先拿缓存铺满：换回来时不该先看到一片空白，再等一秒才出表。
       if (cached) { setFields(cached.fields); setPreview(cached.preview); setDetailBusy(false); setDetailError(""); }
@@ -423,7 +516,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
        */
       const refresh = detailRefreshRef.current ? "&refresh=1" : "";
       detailRefreshRef.current = false;
-      void dataSourcesApi.describeView(source.id, selectedName, { limit: rows, refresh: refresh === "&refresh=1" })
+      void dataSourcesApi.describeView(source.id, activeName, { limit: rows, refresh: refresh === "&refresh=1" })
         .then((data) => {
           if (cancelled) return;
           rememberDetail(key, { fields: data.fields, preview: data.preview });
@@ -435,19 +528,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
         .finally(() => { if (!cancelled) setDetailBusy(false); });
     }, 0);
     return () => { cancelled = true; window.clearTimeout(handle); };
-  }, [source.id, scope, selectedName, rows, detailToken]);
-
-  const needle = search.trim().toLowerCase();
-  const matching = views.filter((item) => (filter === "all" || item.kind === filter) && (!needle || item.name.toLowerCase().includes(needle) || item.comment.toLowerCase().includes(needle)));
-  const tableCount = views.filter((item) => item.kind === "table").length;
-  const viewCount = views.length - tableCount;
-  const selected = views.find((item) => item.name === selectedName) ?? null;
-  const scoped = Boolean(source.schemaName);
-  // 只有 PG 这种「一个连接能看到多个模式」的库，看全库才有意义；Oracle 的模式就是连接本身。
-  const canWiden = scoped && source.kind !== "ORACLE";
-  // 同一个 databaseName 字段在 Oracle 叫服务名、在 PG 叫库名，标签直接取元数据，避免写死。
-  const databaseLabel = info.fields.find((field) => field.key === "databaseName")?.label.replace(/（.*/, "") ?? "库";
-  const containerLabel = info.containerLabel.replace(/（.*/, "");
+  }, [activeName, detailToken, rows, scope, source.id]);
 
   // 试连要和本体存储页一样给出明确反馈：结果条 + 顶部提示，重复点也能看出「刚才那次是什么时候」。
   const probe = async () => {
@@ -548,18 +629,32 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
           {source.enabled && viewsBusy && <div className="drs-list-state"><Loader2 size={15} className="drs-spin" />正在读取结构清单…</div>}
           {viewsError && <div className="drs-list-state error"><TriangleAlert size={15} />{viewsError}<button type="button" className="action compact" onClick={() => void loadViews()}>重试</button></div>}
           {source.enabled && !viewsBusy && !viewsError && !matching.length && <div className="drs-list-state">{views.length ? "没有匹配的表或视图。" : "这个资源里没有表或视图。"}</div>}
-          {matching.map((item) => <button
-            type="button"
-            role="option"
-            aria-selected={item.name === selectedName}
-            key={`${item.schema}.${item.name}`}
-            className={item.name === selectedName ? "drs-list-row active" : "drs-list-row"}
-            onClick={() => { setSelectedName(item.name); sessionCache.selected.set(source.id, item.name); }}
-          >
-            <span className="drs-list-mark">{item.kind === "view" ? <Eye size={14} /> : <Table2 size={14} />}</span>
-            <span className="drs-list-text"><b>{item.name}</b><small>{item.comment || `${item.columnCount} 个字段`}</small></span>
-            <ChevronRight size={13} className="drs-list-arrow" />
-          </button>)}
+          {hasUsage && <div className="drs-list-priority-note">对象类型与 ODS 表优先排列</div>}
+          {matching.map((item) => {
+            const key = catalogUsageKey(source.id, item.schema, item.name);
+            const objectTypes = boundByTable.get(key) ?? [];
+            const ods = odsByTable.get(key);
+            const odsLabel = ods ? (ods.enabled ? ODS_SIGNAL_LABEL[ods.status] : "ODS 已停用") : "";
+            return <button
+              type="button"
+              role="option"
+              aria-selected={item.name === activeName}
+              key={`${item.schema}.${item.name}`}
+              className={item.name === activeName ? "drs-list-row active" : "drs-list-row"}
+              onClick={() => { setSelectedName(item.name); sessionCache.selected.set(source.id, item.name); }}
+            >
+              <span className="drs-list-mark">{item.kind === "view" ? <Eye size={14} /> : <Table2 size={14} />}</span>
+              <span className="drs-list-text">
+                <b>{item.name}</b>
+                <small>{item.comment || `${item.columnCount} 个字段`}</small>
+                {(objectTypes.length > 0 || ods) && <span className="drs-list-signals">
+                  {objectTypes.length > 0 && <i className="drs-signal object" title={`对象类型：${objectTypes.join("、")}`}><CircleDot size={10} />对象类型{objectTypes.length > 1 ? ` ${objectTypes.length}` : ""}</i>}
+                  {ods && <i className={`drs-signal ods ${ods.enabled ? ods.status.toLowerCase() : "disabled"}`} title={`${odsLabel}${ods.rowCount ? ` · ${ods.rowCount.toLocaleString()} 行` : ""}${ods.lastError ? ` · ${ods.lastError}` : ""}`}><Boxes size={10} />{odsLabel}</i>}
+                </span>}
+              </span>
+              <ChevronRight size={13} className="drs-list-arrow" />
+            </button>;
+          })}
           {matching.length >= 5000 && <div className="drs-list-state">结果已到上限，用搜索缩小范围。</div>}
         </div>
       </div>
@@ -621,7 +716,7 @@ function DataResourceBrowser({ source, canEdit, notify, fail, onEdit, onChanged,
         </>}
       </div>
     </div>
-    {odsOpen && selected && <OdsDialog source={source} schema={selected.schema} table={selected.name} tableKind={selected.kind} fields={fields} canEdit={canEdit} onClose={() => setOdsOpen(false)} notify={notify} fail={fail} />}
+    {odsOpen && selected && <OdsDialog source={source} schema={selected.schema} table={selected.name} tableKind={selected.kind} fields={fields} canEdit={canEdit} onClose={() => { setOdsOpen(false); void onOdsChanged(); }} notify={notify} fail={fail} />}
   </div>;
 }
 

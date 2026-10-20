@@ -42,7 +42,7 @@ export function clickHouseTypeFor(sourceType: string, sourceKind?: string) {
   return "String";
 }
 
-export function odsCreateTableStatement(databaseTable: string, columns: OdsColumn[]) {
+export function odsCreateTableStatement(databaseTable: string, columns: OdsColumn[], mode: "LIVE" | "STAGE" = "LIVE") {
   const comment = (text: string) => `'${text.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
   const lines = [
     "`_source_id` String COMMENT 'ODS 配置标识'",
@@ -52,7 +52,10 @@ export function odsCreateTableStatement(databaseTable: string, columns: OdsColum
     "`_is_deleted` UInt8 DEFAULT 0 COMMENT '删除标记：0 正常，1 删除'",
     ...columns.map((column) => `${quote(column.name)} Nullable(${column.clickhouseType}) COMMENT ${comment(column.comment || `源业务列 ${column.name}，类型 ${column.sourceType}`)}`),
   ];
-  return `CREATE TABLE IF NOT EXISTS ${databaseTable} (${lines.join(", ")}) ENGINE=ReplacingMergeTree(_source_updated_at, _is_deleted) ORDER BY (_source_id, _row_key) COMMENT '源表派生镜像，按源主键去重，不保存本体版本实例'`;
+  const engine = mode === "STAGE"
+    ? "MergeTree ORDER BY (_source_id, _row_key)"
+    : "ReplacingMergeTree(_source_updated_at, _is_deleted) ORDER BY (_source_id, _row_key)";
+  return `CREATE TABLE IF NOT EXISTS ${databaseTable} (${lines.join(", ")}) ENGINE=${engine} COMMENT '源表派生镜像，按源主键去重，不保存本体版本实例'`;
 }
 
 function normalizeValue(value: unknown, column?: OdsColumn): unknown {
@@ -164,19 +167,46 @@ export function createClickHouseOdsStore(): OdsStore {
       const live = tableRef(input.spec.tableName);
       const stageName = `${input.spec.tableName}__stage_${input.batchId}`.slice(0, 120);
       const stage = tableRef(stageName);
+      const nextName = `${input.spec.tableName}__next_${input.batchId}`.slice(0, 120);
+      const next = tableRef(nextName);
       await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns));
+      await clickHouseExecute(odsCreateTableStatement(next, input.spec.columns));
       await clickHouseExecute(`DROP TABLE IF EXISTS ${stage}`);
-      await clickHouseExecute(odsCreateTableStatement(stage, input.spec.columns));
+      await clickHouseExecute(odsCreateTableStatement(stage, input.spec.columns, "STAGE"));
       try {
         const result = await writeStream({ spec: input.spec, rows: input.rows, batchId: input.batchId, targetTable: stageName, onProgress: input.onProgress });
-        const counts = await clickHouseQuery<{ total: number }>(`SELECT count() AS total FROM ${stage} FINAL`);
+        const selectedColumns = input.spec.columns.map((column) => quote(column.name)).join(", ");
+        const keyColumns = input.spec.primaryKeyColumns.map((column) => quote(column)).join(", ");
+        const duplicateGroups = await clickHouseQuery<Record<string, unknown>>(
+          `SELECT ${keyColumns}, count() AS total, uniqExact(tuple(${selectedColumns})) AS variants
+             FROM ${stage}
+            GROUP BY ${input.spec.primaryKeyColumns.map((column) => quote(column)).join(", ")}
+           HAVING count() > 1
+            LIMIT 100000`,
+        );
+        const conflicting = duplicateGroups.filter((row) => Number(row.variants ?? 0) > 1);
+        if (conflicting.length) {
+          const samples = conflicting.slice(0, 3).map((row) => input.spec.primaryKeyColumns.map((column) => `${column}=${String(row[column] ?? "")}`).join(" / ")).join("；");
+          throw new Error(`源表主键不唯一：同一主键下存在业务列值不同的 ${conflicting.length.toLocaleString()} 组记录（${samples}）。不能安全折叠，请补充主键列或先在源视图去重；本次不替换线上 ODS。`);
+        }
+        const identicalDuplicates = duplicateGroups.reduce((total, row) => total + Math.max(0, Number(row.total ?? 0) - 1), 0);
+        await clickHouseExecute(`INSERT INTO ${next} SELECT * FROM ${stage}`);
+        const counts = await clickHouseQuery<{ total: number }>(`SELECT count() AS total FROM ${next} FINAL`);
         const stored = Number(counts[0]?.total ?? 0);
-        if (stored !== result.rows) throw new Error(`源表主键不唯一：读取 ${result.rows} 行，仅形成 ${stored} 个行键，折叠 ${result.rows - stored} 行。请修正主键；本次不替换线上 ODS。`);
-        await clickHouseExecute(`EXCHANGE TABLES ${live} AND ${stage}`);
+        const expected = result.rows - identicalDuplicates;
+        if (stored !== expected) {
+          throw new Error(`源表行键校验失败：读取 ${result.rows} 行，完全相同重复 ${identicalDuplicates} 行，预期镜像 ${expected} 行，实际 ${stored} 行；本次不替换线上 ODS。`);
+        }
+        await clickHouseExecute(`EXCHANGE TABLES ${live} AND ${next}`);
+        const warnings = identicalDuplicates > 0
+          ? [`源表有 ${identicalDuplicates.toLocaleString()} 行与另一行在本次同步的 ${input.spec.columns.length} 个业务列上完全相同，已按一条镜像保存；对象查询不会重复计数。`]
+          : [];
         await clickHouseExecute(`DROP TABLE IF EXISTS ${stage}`);
-        return result;
+        await clickHouseExecute(`DROP TABLE IF EXISTS ${next}`);
+        return { ...result, storedRows: stored, warnings };
       } catch (error) {
         await clickHouseExecute(`DROP TABLE IF EXISTS ${stage}`).catch(() => undefined);
+        await clickHouseExecute(`DROP TABLE IF EXISTS ${next}`).catch(() => undefined);
         throw error;
       }
     },
@@ -184,7 +214,8 @@ export function createClickHouseOdsStore(): OdsStore {
     async writeIncremental(input) {
       const live = tableRef(input.spec.tableName);
       await clickHouseExecute(odsCreateTableStatement(live, input.spec.columns));
-      return writeStream({ spec: input.spec, rows: input.rows, batchId: input.batchId, targetTable: input.spec.tableName, onProgress: input.onProgress });
+      const result = await writeStream({ spec: input.spec, rows: input.rows, batchId: input.batchId, targetTable: input.spec.tableName, onProgress: input.onProgress });
+      return { ...result, storedRows: result.rows, warnings: [] };
     },
 
     async read(query: OdsReadQuery): Promise<OdsReadResult> {

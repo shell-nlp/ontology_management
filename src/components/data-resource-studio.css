@@ -66,12 +66,22 @@
 .drs-list { flex: 1; min-height: 0; overflow: auto; }
 .drs-list-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 14px; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid #eef2f9; background: transparent; text-align: left; color: #334155; }
 .drs-list-row:hover { background: #f4f8ff; }
+.drs-list-row:focus-visible { position: relative; z-index: 1; outline: 2px solid #2563eb; outline-offset: -2px; }
 .drs-list-row.active { background: #eaf1ff; box-shadow: inset 3px 0 0 #2563eb; }
 .drs-list-mark { color: #94a3b8; display: grid; place-items: center; }
 .drs-list-row.active .drs-list-mark { color: #2563eb; }
 .drs-list-text { min-width: 0; }
 .drs-list-text b { display: block; font-size: 12px; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drs-list-text small { display: block; margin-top: 2px; color: #7b8ca6; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drs-list-priority-note { padding: 6px 10px; border-bottom: 1px solid #dfe9f8; color: #526b91; background: #f2f7ff; font-size: 10.5px; }
+.drs-list-signals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.drs-signal { display: inline-flex; align-items: center; gap: 3px; min-height: 18px; padding: 1px 5px; border: 1px solid; font-size: 9.5px; font-style: normal; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.drs-signal.object { color: #1d4ed8; background: #eef4ff; border-color: #d4e2ff; }
+.drs-signal.ods.ready { color: #0f766e; background: #effaf7; border-color: #c8ece2; }
+.drs-signal.ods.running { color: #1d4ed8; background: #eff4ff; border-color: #d6e2ff; }
+.drs-signal.ods.failed { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.drs-signal.ods.stale { color: #92400e; background: #fff8ec; border-color: #f4ddb5; }
+.drs-signal.ods.never, .drs-signal.ods.disabled { color: #64748b; background: #f4f7fb; border-color: #dfe7f1; }
 .drs-list-arrow { color: #cbd5e1; }
 .drs-list-row.active .drs-list-arrow { color: #2563eb; }
 .drs-list-state { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 12px; color: #7b8ca6; font-size: 12px; }

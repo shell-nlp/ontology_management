@@ -60,3 +60,99 @@ test("ODS 镜像弹窗在常见视口内完整渲染并可滚动正文", async (
   expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await page.screenshot({ path: test.info().outputPath("ods-dialog.png"), fullPage: true });
 });
+
+test("表清单优先显示对象类型和 ODS 使用的表，并标注用途", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let json: unknown = {};
+    if (path === "/api/auth/session") {
+      json = { user: { id: "user", email: "fixture@example.test", roleId: "admin", roleName: "管理员", permissions: ["ontology.read", "datasource.read", "datasource.write", "instance.read", "target.read"] } };
+    } else if (path === "/api/targets") {
+      json = [{ id: targetId, name: "验收", kind: "EMBEDDED", uri: "", options: {} }];
+    } else if (path === "/api/ontologies") {
+      json = [{ id: targetId, name: "验收本体", target_id: targetId, color: "#2563eb", tags: [], storage: { id: targetId, name: "验收", kind: "EMBEDDED", uri: "", managed: true }, versions: { published: 1, draft: null }, statistics: { objectTypes: 1, relationTypes: 0, objects: 0, relationships: 0 } }];
+    } else if (path === "/api/ontology") {
+      json = [{
+        id: versionId,
+        target_id: targetId,
+        version_number: 1,
+        status: "PUBLISHED",
+        definition: {
+          groups: [],
+          interfaces: [],
+          metrics: [],
+          entityTypes: [
+            {
+              id: "44444444-4444-4444-8444-444444444444",
+              name: "专线产品用户",
+              properties: [],
+              sources: [
+                { id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "BBB_BOUND_ONLY", primaryKey: ["USER_ID"] },
+                { id: "extra", dataSourceId: sourceId, schema: "GISTOOLS", view: "DDD_BOTH", primaryKey: ["USER_ID"] },
+              ],
+            },
+          ],
+          relationshipTypes: [],
+          actionTypes: [],
+          rules: [],
+        },
+      }];
+    } else if (path === "/api/instances/types") {
+      json = { labels: [], relationshipTypes: [], propertyKeys: [] };
+    } else if (path === "/api/data-sources") {
+      json = [{ id: sourceId, name: "oracle-test", kind: "ORACLE", kindLabel: "Oracle", modelLabel: "关系库", host: "39.164.136.34", port: 1251, databaseName: "orcl", schemaName: "GISTOOLS", username: "sk_ws", options: {}, enabled: true, createdAt: "2026-10-20T00:00:00Z", address: "oracle-test · orcl / GISTOOLS" }];
+    } else if (path === `/api/data-sources/${sourceId}/views`) {
+      json = {
+        views: [
+          { schema: "GISTOOLS", name: "AAA_UNUSED", kind: "table", columnCount: 2, comment: "未使用表" },
+          { schema: "GISTOOLS", name: "BBB_BOUND_ONLY", kind: "table", columnCount: 2, comment: "只绑对象类型" },
+          { schema: "GISTOOLS", name: "CCC_ODS_ONLY", kind: "table", columnCount: 2, comment: "只有 ODS" },
+          { schema: "GISTOOLS", name: "DDD_BOTH", kind: "table", columnCount: 2, comment: "对象类型与 ODS" },
+        ],
+        fetched_at: "2026-10-20T00:00:00Z",
+        from_cache: false,
+      };
+    } else if (path.startsWith(`/api/data-sources/${sourceId}/views/`)) {
+      json = {
+        fields: [
+          { name: "USER_ID", dataType: "VARCHAR2", typeDetail: "VARCHAR2(32)", nullable: false, primaryKey: true, unique: true, comment: "用户 ID", position: 0 },
+          { name: "CUST_NAME", dataType: "VARCHAR2", typeDetail: "VARCHAR2(200)", nullable: true, primaryKey: false, unique: false, comment: "客户名称", position: 1 },
+        ],
+        preview: { columns: ["USER_ID", "CUST_NAME"], rows: [{ USER_ID: "1001", CUST_NAME: "测试客户" }], truncated: false },
+        fetched_at: "2026-10-20T00:00:00Z",
+        from_cache: false,
+      };
+    } else if (path === "/api/ods") {
+      json = {
+        sources: [
+          { dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "CCC_ODS_ONLY", status: "RUNNING", enabled: true, rowCount: 0, lastError: null },
+          { dataSourceId: sourceId, schemaName: "GISTOOLS", tableName: "DDD_BOTH", status: "READY", enabled: true, rowCount: 1689, lastError: null },
+        ],
+      };
+    } else if (path === "/api/ods/jobs") {
+      json = { jobs: [] };
+    }
+    await route.fulfill({ json });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "数据资源", exact: true }).click();
+  await expect(page.locator(".drs-list-row")).toHaveCount(4);
+
+  const names = await page.locator(".drs-list-row .drs-list-text b").allTextContents();
+  expect(names).toEqual(["DDD_BOTH", "BBB_BOUND_ONLY", "CCC_ODS_ONLY", "AAA_UNUSED"]);
+  await expect(page.locator(".drs-list-row").first()).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("对象类型与 ODS 表优先排列", { exact: true })).toBeVisible();
+
+  const both = page.locator(".drs-list-row").filter({ hasText: "DDD_BOTH" });
+  await expect(both.getByText("对象类型", { exact: true })).toBeVisible();
+  await expect(both.getByText("ODS 可读取", { exact: true })).toBeVisible();
+  const boundOnly = page.locator(".drs-list-row").filter({ hasText: "BBB_BOUND_ONLY" });
+  await expect(boundOnly.getByText("对象类型", { exact: true })).toBeVisible();
+  const odsOnly = page.locator(".drs-list-row").filter({ hasText: "CCC_ODS_ONLY" });
+  await expect(odsOnly.getByText("ODS 同步中", { exact: true })).toBeVisible();
+  await expect(page.locator(".drs-list-row").filter({ hasText: "AAA_UNUSED" }).locator(".drs-list-signals")).toHaveCount(0);
+
+  await page.screenshot({ path: test.info().outputPath("catalog-priority.png"), fullPage: true });
+});

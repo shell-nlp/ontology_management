@@ -47,6 +47,16 @@ export type OdsWriteProgress = {
   message?: string;
 };
 
+export type OdsWriteResult = {
+  /** 从源侧实际读到的行数。 */
+  rows: number;
+  /** 最终可读取的镜像行数；完全相同重复行折叠后会小于 rows。 */
+  storedRows: number;
+  pages: number;
+  /** 可安全继续但必须让用户看到的同步告警。 */
+  warnings: string[];
+};
+
 /**
  * ODS 存储契约。
  *
@@ -60,13 +70,13 @@ export interface OdsStore {
     rows: AsyncIterable<Record<string, unknown>>;
     batchId: number;
     onProgress?: (progress: OdsWriteProgress) => void | Promise<void>;
-  }): Promise<{ rows: number; pages: number }>;
+  }): Promise<OdsWriteResult>;
   writeIncremental(input: {
     spec: OdsTableSpec;
     rows: AsyncIterable<Record<string, unknown>>;
     batchId: number;
     onProgress?: (progress: OdsWriteProgress) => void | Promise<void>;
-  }): Promise<{ rows: number; pages: number }>;
+  }): Promise<OdsWriteResult>;
   read(query: OdsReadQuery): Promise<OdsReadResult>;
   count(spec: OdsTableSpec): Promise<number>;
   drop(sourceId: string, tableName: string): Promise<void>;
