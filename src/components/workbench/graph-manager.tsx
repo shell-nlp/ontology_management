@@ -4,6 +4,8 @@ import { type User, type BusinessLink, type NodeKeyMap, type Target, type Versio
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Eraser, Search, Settings2, X } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
+import "@/components/graph-canvas.css";
+import "@/components/type-edit-dialog.css";
 import { api } from "@/lib/shared/client/api-client";
 import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { propertyForColumn } from "@/lib/ontology/fields";

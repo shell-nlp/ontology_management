@@ -12,6 +12,7 @@ import { newId } from "@/lib/shared/common/ids";
 import { propertyTypeOptions, ruleOperatorOptions, ruleOperatorsWithoutValue, type ActionEdit, type ActionParameter, type ActionType, type Definition, type OntologyRule, type Property, type RuleCondition, type RuleEffect } from "@/lib/ontology/draft";
 import type { OntologyDefinition } from "@/lib/ontology";
 import "./action-studio.css";
+import "./type-edit-dialog.css";
 
 /** 工作台里选中一个动作之后，右侧停在哪一阶段。 */
 /** 工作台里选中一个动作之后，右侧停在哪一阶段。 */

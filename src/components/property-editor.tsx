@@ -1,5 +1,7 @@
 "use client";
 
+import "./graph-canvas.css";
+
 import { useState } from "react";
 import type { DataType, PropertyDefinition } from "@/lib/instance/instance-property-editor";
 

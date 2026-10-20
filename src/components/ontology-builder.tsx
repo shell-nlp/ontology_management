@@ -18,6 +18,7 @@ import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { InterfaceEditDialog } from "@/components/interface-edit-dialog";
 // 画布上的浮层沿用「图谱」页的样式（graph-canvas.css 已随 GraphCanvas 进入同一份页面样式）。
 import "./ontology-builder.css";
+import "./graph-canvas.css";
 
 const SigmaGraph = dynamic(() => import("@/components/sigma-graph").then((module) => module.SigmaGraph), { ssr: false });
 

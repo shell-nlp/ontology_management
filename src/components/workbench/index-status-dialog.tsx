@@ -7,6 +7,7 @@ import { copyText } from "@/lib/shared/client/clipboard";
 import type { DataSourceKind, DataViewField, PublicDataSource } from "@/lib/datasource/types";
 import { dedupeSql, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
+import "@/components/graph-canvas.css";
 
 /**
  * 「索引与物化」面板（2026-10-12）。
@@ -171,7 +172,11 @@ export function IndexStatusDialog({ targetId, versionId, versionLabel, types, li
     }
   }, [targetId, fail]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) void load(); });
+    return () => { cancelled = true; };
+  }, [load]);
 
   // 有活动任务时每 2 秒刷新一次（后台任务在服务端串行跑，这里只拉进度）。
   const active = jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING");

@@ -6,6 +6,7 @@ import { AlertCircle, Check, Database, Loader2, Pencil, PlugZap, Plus, Trash2, X
 import { GraphKindBadge, GraphKindChoice, GraphKindMark, capabilityLine } from "@/components/graph-kind-picker";
 import { api } from "@/lib/shared/client/api-client";
 import { CREATABLE_GRAPH_TARGET_KINDS, DEFAULT_GRAPH_TARGET_KIND, FRONTEND_GRAPH_TARGET_KINDS, graphTargetKindInfo, type GraphTargetKind } from "@/lib/infrastructure/graph/types";
+import "@/components/graph-canvas.css";
 
 
 

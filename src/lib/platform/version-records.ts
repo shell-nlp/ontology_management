@@ -1,6 +1,6 @@
-import { jsonValue, platformRepo, withPlatformQueryRunner } from "@/lib/infrastructure/persistence/postgres";
+import { jsonValue, platformRepo } from "@/lib/infrastructure/persistence/postgres";
 import { OntologyConceptEntity, OntologyVersionEntity } from "@/lib/infrastructure/persistence/postgres/entities";
-import { pgOnlyColumnComment } from "@/lib/infrastructure/persistence/postgres/comments";
+import { ensureConceptSearchIndex } from "@/lib/infrastructure/persistence/postgres/concept-search-index";
 import { ontologyDefinitionSchema, type OntologyDefinition } from "@/lib/ontology";
 import { conceptsOfDefinition, type OntologyConcept } from "@/lib/ontology/concepts";
 
@@ -188,51 +188,4 @@ export async function replaceVersionConcepts(versionId: string, targetId: string
     // search_doc / embedding 是 PG 专有列，由库自己维护（生成列），这里不写。
   }
   return concepts.length;
-}
-
-let conceptIndexPromise: Promise<void> | undefined;
-
-/**
- * 概念索引的"库特性"补丁：全文生成列 + GIN、名字的 trigram 索引，以及
- * **pgvector 可用时的 `embedding vector(1536)` 列 + hnsw 索引**。
- *
- * 装不上扩展就如实降级（不是错误）：文本检索照常，向量检索这一路等有扩展时再补。
- * 幂等，可以重复调用；只在第一次写入概念时触发。
- */
-export async function ensureConceptSearchIndex(): Promise<void> {
-  conceptIndexPromise ??= bootstrapConceptSearchIndex().catch((error) => {
-    conceptIndexPromise = undefined;
-    throw error;
-  });
-  return conceptIndexPromise;
-}
-
-async function tryExtension(name: "pg_trgm" | "vector"): Promise<boolean> {
-  try {
-    await withPlatformQueryRunner((runner) => runner.query(`CREATE EXTENSION IF NOT EXISTS ${name}`));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function bootstrapConceptSearchIndex(): Promise<void> {
-  const trigram = await tryExtension("pg_trgm");
-  const vector = await tryExtension("vector");
-  await withPlatformQueryRunner(async (runner) => {
-    await runner.query(`ALTER TABLE ontology_platform.ontology_concepts ADD COLUMN IF NOT EXISTS search_doc tsvector GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED`);
-    await runner.query(`CREATE INDEX IF NOT EXISTS ontology_concepts_search_idx ON ontology_platform.ontology_concepts USING gin (search_doc)`);
-    if (trigram) {
-      await runner.query(`CREATE INDEX IF NOT EXISTS ontology_concepts_name_trgm_idx ON ontology_platform.ontology_concepts USING gin (name gin_trgm_ops)`);
-    }
-    if (vector) {
-      await runner.query(`ALTER TABLE ontology_platform.ontology_concepts ADD COLUMN IF NOT EXISTS embedding vector(1536)`);
-      await runner.query(`CREATE INDEX IF NOT EXISTS ontology_concepts_embedding_idx ON ontology_platform.ontology_concepts USING hnsw (embedding vector_cosine_ops)`);
-    }
-    // PG 专有列（生成列与 pgvector）不在实体与迁移里，注释在这里补（幂等）。
-    await runner.query(`COMMENT ON COLUMN ontology_platform.ontology_concepts.search_doc IS '${pgOnlyColumnComment("ontology_concepts", "search_doc").replace(/'/g, "''")}'`);
-    if (vector) {
-      await runner.query(`COMMENT ON COLUMN ontology_platform.ontology_concepts.embedding IS '${pgOnlyColumnComment("ontology_concepts", "embedding").replace(/'/g, "''")}'`);
-    }
-  });
 }

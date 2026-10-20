@@ -5,6 +5,7 @@ import { Brain, ChevronDown, Loader2 } from "lucide-react";
 import { formatDuration } from "@/lib/shared/common/format-units";
 import { toolTitle } from "@/lib/reasoning/tool-labels";
 import type { ReasoningStep } from "@/lib/reasoning/types";
+import "../qa-studio.css";
 
 function formatArgument(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);

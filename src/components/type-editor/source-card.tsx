@@ -8,6 +8,7 @@ import { assertReadOnlySql } from "@/lib/shared/server/sql-guard";
 import { dedupeSql, describeDedupeRule, matchesDedupeRule, orderCandidateColumns } from "@/lib/ontology/dedupe-sql";
 import { sourceFieldsKey, sourceName, type EntitySource, type Property } from "@/lib/ontology/draft";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
+import "../type-edit-dialog.css";
 
 type SourceCardProps = {
   source: EntitySource;

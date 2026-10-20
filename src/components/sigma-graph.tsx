@@ -8,6 +8,7 @@ import NoverlapLayoutSupervisor from "graphology-layout-noverlap/worker";
 import { createNodeCompoundProgram, EdgeArrowProgram, NodeCircleProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
 import { newId } from "@/lib/shared/common/ids";
 import "@react-sigma/core/lib/style.css";
+import "./graph-canvas.css";
 
 export type SigmaNode = {
   id: string;

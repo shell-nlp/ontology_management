@@ -5,6 +5,7 @@ import { type User, may, type Target, type Version, type DisplaySettings, DEFAUL
 import { useState } from "react";
 import { Eraser, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
+import "@/components/graph-canvas.css";
 
 
 

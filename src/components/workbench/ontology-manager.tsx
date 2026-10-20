@@ -19,6 +19,7 @@ import { type Definition, type EntityType, type Property, type RelationType } fr
 import { EMPTY_LINK_SOURCE } from "@/lib/ontology";
 import { ActionStudio } from "@/components/action-studio";
 import type { EntitySearchResult } from "@/components/entity-search-picker";
+import "@/components/graph-canvas.css";
 
 type ModelingMode = "visual" | "groups" | "entities" | "relations" | "interfaces" | "metrics" | "actions" | "rules";
 
@@ -90,8 +91,13 @@ export function OntologyManager({ definition, draft, targetId, user, runtimeType
   const searchHits = useMemo(() => modelingSearchHits(definition, filter), [definition, filter]);
   useEffect(() => {
     if (!openDynamics) return;
-    setMode(openDynamics);
-    onDynamicsOpened?.();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setMode(openDynamics);
+      onDynamicsOpened?.();
+    });
+    return () => { cancelled = true; };
   }, [openDynamics, onDynamicsOpened]);
   const openSearchHit = (hit: ModelingSearchHit) => {
     setFilter("");

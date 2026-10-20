@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Check, CircleSlash, ShieldAlert } from "lucide-react";
 import type { RuleEffect } from "@/lib/ontology/draft";
+import "../action-studio.css";
 
 const effectLabel = (effect: RuleEffect) => effect === "BLOCK" ? "拦截" : effect === "WARN" ? "提示" : "隐藏";
 

@@ -35,6 +35,7 @@ import {
   type PublicDataSource,
 } from "@/lib/datasource/types";
 import "./data-resource-studio.css";
+import "./graph-canvas.css";
 
 /**
  * 数据资源工作台。

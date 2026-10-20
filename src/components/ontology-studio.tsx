@@ -10,6 +10,7 @@ import { isFrontendGraphTargetKind, type GraphTargetKind } from "@/lib/infrastru
 /** 存储资源选项：只用到这几项，调用方传完整的 Target 也能满足。 */
 type StorageOption = { id: string; name: string; kind: string; kindLabel: string };
 import "./ontology-studio.css";
+import "./graph-canvas.css";
 
 /** 列表里的一条本体：本体本身 + 落点 + 版本状态 + 数量统计。 */
 export type OntologySummary = {

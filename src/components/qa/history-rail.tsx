@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { History, Loader2, Trash2 } from "lucide-react";
 import { reasoningApi } from "@/lib/shared/client/reasoning-api";
 import { conversationTimeLabel, groupConversationsByDay, type ConversationSummary } from "@/lib/reasoning/conversation-view";
+import "../qa-studio.css";
 
 /** 历史侧栏开没开记在本地：习惯开着的人，下次进来还是开着的。 */
 export const HISTORY_OPEN_KEY = "ontology.qa.history";

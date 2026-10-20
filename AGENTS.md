@@ -529,6 +529,7 @@
 - **HTTP 端点先建客户端**：本体/实例/问答等重复接口放在 `src/lib/shared/client/*-api.ts`；数据资源接口属于数据源域，放 `src/lib/datasource/client-api.ts`。组件不重复拼相同 URL；存量调用可渐进迁移。
 - **弹窗基础行为统一走 `DialogShell`**：Escape、遮罩关闭、初始焦点、Tab 焦点环和 ARIA 只实现一次；业务弹窗只保留表单与动作。
 - **大型编辑器按区块拆分**：对象类型的数据来源卡片在 `type-editor/source-card.tsx`；动作运行/写回面板在 `action-studio/run-panels.tsx`；问答轨迹、证据、附件、历史在 `qa/`。继续增加区块时就地扩展，不回堆主文件。
+- **共享控件样式必须显式依赖**：组件使用 `.graph-action`、`.graph-dialog`、`.ted-*`、`.qa-*` 等跨文件类名时，自己 import 对应 CSS，不能依赖另一个页面碰巧先加载。`tests/lib/component-css-dependencies.test.ts` 会拦截动态加载后丢样式的问题。
 - 前端流程用 `pnpm test:e2e`；新增关键交互时补 `e2e/component-flows.spec.ts`，测试服务固定使用 3011，不占用用户的 3000 端口。
 
 ## 存储必须走中间层，不许直链具体实现（2026-10-11 用户要求，最佳实践）
@@ -1304,6 +1305,9 @@ UI 用 **Swagger UI**（就是 FastAPI 默认那套，自托管静态资源，�
 这条是硬约束，改任何数据访问前先看这一节。
 
 **平台库（PostgreSQL，schema `ontology_platform`）**：技术入口是 `@/lib/infrastructure/persistence/postgres`；`@/lib/platform/db` 仅为兼容出口。
+
+- **平台业务层禁止直接执行原生 SQL**：`src/lib/platform/**` 只能使用 TypeORM Repository / QueryBuilder，不得调用 `runner.query()` / `manager.query()` / `connection.query()`。`tests/lib/architecture.test.ts` 会扫描拦截。
+- PostgreSQL 扩展、生成列、GIN/trigram/HNSW 索引等 ORM 无法表达的能力放在 `infrastructure/persistence/postgres/`（例如 `concept-search-index.ts`）；平台业务只调用“确保索引已准备”这类技术入口。
 
 - 实体在 `src/lib/infrastructure/persistence/postgres/entities.ts`，表结构在 `src/lib/infrastructure/persistence/postgres/migrations/`（**幂等**，按数组顺序执行；
   加表 / 加列就追加一支迁移类，不要在业务代码里写 DDL）。

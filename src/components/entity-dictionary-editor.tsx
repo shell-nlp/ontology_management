@@ -7,6 +7,7 @@ import { newId } from "@/lib/shared/common/ids";
 import type { EntityDictionary } from "@/lib/ontology/dictionaries";
 import type { DataViewField, DataViewSummary, PublicDataSource } from "@/lib/datasource/types";
 import "./entity-dictionary-editor.css";
+import "./type-edit-dialog.css";
 
 type Props = {
   value: EntityDictionary[];

@@ -8,6 +8,7 @@ import { PropertyEditor } from "@/components/property-editor";
 import { api } from "@/lib/shared/client/api-client";
 import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 import { sourceName } from "@/lib/ontology/draft";
+import "@/components/graph-canvas.css";
 
 
 

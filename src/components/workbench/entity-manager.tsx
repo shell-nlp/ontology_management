@@ -4,6 +4,7 @@ import { type User, may, type BusinessLink, type Target, type Version, type Enti
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, CircleDot, Layers, Link2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { BindSourcesDialog } from "@/components/bind-sources-dialog";
+import "@/components/graph-canvas.css";
 import { IndexStatusDialog, type IndexTypeRow } from "@/components/workbench/index-status-dialog";
 import { TypeEditDialog } from "@/components/type-edit-dialog";
 import { PropertyEditor } from "@/components/property-editor";

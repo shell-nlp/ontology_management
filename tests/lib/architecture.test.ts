@@ -70,6 +70,15 @@ describe("src/lib 依赖边界", () => {
     expect(found).toEqual([]);
   });
 
+  it("platform 业务层不直接执行原生 SQL", () => {
+    const databaseQuery = /\b(?:queryRunner|runner|manager|connection|dataSource)\.query\s*\(/g;
+    const found = sourceFiles(path.join(libRoot, "platform")).flatMap((file) => {
+      const relative = path.relative(repoRoot, file).replaceAll("\\", "/");
+      return [...fs.readFileSync(file, "utf8").matchAll(databaseQuery)].map(() => relative);
+    });
+    expect([...new Set(found)]).toEqual([]);
+  });
+
   it("顶层 lib 模块之间不存在双向依赖", () => {
     const edges = new Map<string, Set<string>>();
     for (const file of sourceFiles(libRoot)) {
