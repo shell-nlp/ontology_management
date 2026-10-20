@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { ontologyDefinitionSchema } from "@/lib/ontology";
+vi.mock("@/lib/instance/object-service/link-rows", () => ({ readOdsLinkRows: vi.fn(async () => null) }));
 
 const mocks = vi.hoisted(() => ({
   selectRowsBy: vi.fn(),

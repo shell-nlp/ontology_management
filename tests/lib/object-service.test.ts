@@ -74,13 +74,13 @@ describe("虚拟查询优先策略", () => {
     expect(resolveReadOrigin("FEDERATED", "index")).toBe("source");
   });
 
-  it("AUTO 默认回源，只有明确选择 index 才读索引", () => {
+  it("AUTO 的旧 index 请求也统一虚拟读取", () => {
     expect(resolveReadOrigin("AUTO", "auto")).toBe("source");
     expect(resolveReadOrigin("AUTO", undefined)).toBe("source");
-    expect(resolveReadOrigin("AUTO", "index")).toBe("index");
+    expect(resolveReadOrigin("AUTO", "index")).toBe("source");
   });
 
-  it("INDEXED 始终只读索引", () => {
-    expect(resolveReadOrigin("INDEXED", "source")).toBe("index");
+  it("旧 INDEXED 配置不再要求物化", () => {
+    expect(resolveReadOrigin("INDEXED", "source")).toBe("source");
   });
 });

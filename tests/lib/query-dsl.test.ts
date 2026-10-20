@@ -267,29 +267,23 @@ describe("executeQueryDsl", () => {
     expect(result.rows).toEqual([[11]]);
   });
 
-  it("完整物化执行器由调用方注入，查询层不依赖具体索引后端", async () => {
-    const executeLogicalQuery = vi.fn(async () => ({
-      data_source: "测试对象索引",
-      data_source_kind: "CLICKHOUSE" as const,
-      columns: ["条数"],
-      rows: [[7]],
-      returned: 1,
-      row_limit: 100,
-      truncated: false,
-      elapsed_ms: 3,
-      warnings: ["走索引"],
-      statement: "SELECT 7",
+  it("旧 INDEXED 配置和对象索引执行器不影响 ODS 虚拟查询", async () => {
+    const definition = 定义();
+    definition.entityTypes[0].indexPolicy = "INDEXED";
+    const materialized = vi.fn(async () => { throw new Error("不应访问旧对象副本"); });
+    const ods = vi.fn(async () => ({
+      data_source: "ClickHouse ODS", data_source_kind: "CLICKHOUSE" as const,
+      columns: ["条数"], rows: [[7]], returned: 1, row_limit: 100,
+      truncated: false, elapsed_ms: 3, warnings: [], statement: "SELECT 7",
     }));
-    const result = await executeOntologySql(定义(), "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
-      targetId: 数据资源,
-      materializedQuery: { executeLogicalQuery },
-      getDataSource: async () => {
-        throw new Error("完整物化时不应回源");
-      },
+    const result = await executeOntologySql(definition, "SELECT COUNT(*) AS 条数 FROM 专线产品用户", {
+      targetId: 数据资源, materializedQuery: { executeLogicalQuery: materialized },
+      odsQuery: { executeLogicalQuery: ods },
+      getDataSource: async () => { throw new Error("ODS 接管时不回源"); },
     });
-
-    expect(executeLogicalQuery).toHaveBeenCalledOnce();
-    expect(result.data_source).toBe("测试对象索引");
+    expect(materialized).not.toHaveBeenCalled();
+    expect(ods).toHaveBeenCalledOnce();
+    expect(result.data_source).toBe("ClickHouse ODS");
     expect(result.rows).toEqual([[7]]);
   });
 

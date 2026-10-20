@@ -521,7 +521,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
   </nav>
   <div class="sidebar-foot">
     <b>19 篇 · 单文件阅读版</b><br>
-    生成于 2026/10/20 16:48<br>
+    生成于 2026/10/20 17:36<br>
     源码目录：docs/系统说明书
   </div>
 </aside>
@@ -555,9 +555,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
     <p class="chapter-lede">平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。</p>
     <div class="chapter-meta">
       <span>00-新手指南.md</span>
-      <span>3,398 字</span>
+      <span>3,424 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/20 17:34</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -638,9 +638,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <td>发布“客户网络 v1”</td>
 </tr>
 <tr>
-<td>对象索引 / 物化</td>
-<td>把业务数据搬到平台的检索副本里，查询通常更快</td>
-<td>把客户和专线先整份物化</td>
+<td>ODS 源表镜像</td>
+<td>将需要的原始列同步到平台，查询时再按本体形成对象</td>
+<td>同一份客户表镜像供多个类型与版本使用</td>
 </tr>
 <tr>
 <td>动作</td>
@@ -863,8 +863,8 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 </tr>
 <tr>
 <td>实例图谱很空</td>
-<td>对象和关系还没有物化，或两端对象不在当前视图</td>
-<td>到对象页的“索引与物化”查看状态</td>
+<td>来源未绑定、ODS 未就绪、键映射未配置，或两端不在当前视图</td>
+<td>检查来源和关系键映射，选具体类型并展开邻域；无需物化</td>
 </tr>
 <tr>
 <td>智能问答说模型未配置</td>
@@ -922,9 +922,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
     <p class="chapter-lede">从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。</p>
     <div class="chapter-meta">
       <span>00A-从零跑通第一个本体.md</span>
-      <span>5,000 字</span>
+      <span>5,023 字</span>
       <span>14 个主节</span>
-      <span>更新 2026/10/14 17:25</span>
+      <span>更新 2026/10/20 17:36</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -1235,12 +1235,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <p>操作：</p>
 <ol>
 <li>选择对象类型“客户”。</li>
-<li>选择查看口径：<ul>
-<li>“业务库 / 实时取数”用于确认源数据；</li>
-<li>“已物化对象”用于查看平台索引数据；</li>
-<li>不确定时先用默认模式。</li>
-</ul>
-</li>
+<li>直接查询虚拟对象，无需先物化。读取位置由对象类型「属性映射 → 数据来源」的 AUTO / DIRECT / ODS 决定。</li>
 <li>在搜索框搜索一个客户名称或客户编号。</li>
 <li>点开一条客户，查看属性、主键和关系。</li>
 <li>再选择“专线”，确认专线对象也能读出来。</li>
@@ -1251,12 +1246,12 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <p>入口：<strong>本体实例 → 实例图谱</strong>。</p>
 <p>如果图谱是空的，通常不是本体被删了，而是：</p>
 <ul>
-<li>对象和关系还没有物化；</li>
+<li>数据来源未绑定、不可连接，或 ODS 镜像未就绪；</li>
 <li>当前筛选类型没有数据；</li>
 <li>两端对象没有同时出现在当前画面；</li>
 <li>关系类型的键映射还没有配置正确。</li>
 </ul>
-<p>到对象页里的“索引与物化”查看对象类型和关系类型的完成状态，必要时按提示逐个物化。</p>
+<p>检查数据来源与 ODS 同步状态、关系两端键映射；选择具体对象类型，再从节点展开邻域，无需物化。</p>
 <h2 id="doc-00A-从零跑通第一个本体--10-第八步-用智能问答问一个业务问题"><span>10. 第八步：用智能问答问一个业务问题</span><a class="heading-anchor" href="#doc-00A-从零跑通第一个本体--10-第八步-用智能问答问一个业务问题" aria-label="复制本节链接">#</a></h2>
 <p>入口：<strong>能力验证 → 智能问答</strong>。</p>
 <p>先确认：</p>
@@ -1322,7 +1317,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>先在草稿里检查对象类型和关系。</li>
 <li>按提示补数据资源绑定。</li>
 <li>重新校验和发布。</li>
-<li>对象数据仍需要从各自环境的数据资源读取或物化。</li>
+<li>对象数据按当前版本从本环境 ODS / 数据资源读取，无需对象物化。</li>
 </ol>
 <h2 id="doc-00A-从零跑通第一个本体--13-这条教程完整做完的检查清单"><span>13. 这条教程完整做完的检查清单</span><a class="heading-anchor" href="#doc-00A-从零跑通第一个本体--13-这条教程完整做完的检查清单" aria-label="复制本节链接">#</a></h2>
 <ul>
@@ -1360,12 +1355,12 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 </tr>
 <tr>
 <td>对象页没有关系</td>
-<td>关系键映射、关系来源、边是否物化</td>
+<td>关系键映射、关系来源、ODS 状态</td>
 <td>第 4、6 章</td>
 </tr>
 <tr>
 <td>图谱是空的</td>
-<td>对象和关系物化状态、当前筛选</td>
+<td>数据来源、ODS 状态、当前筛选</td>
 <td>第 6 章</td>
 </tr>
 <tr>
@@ -1394,9 +1389,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
     <p class="chapter-lede">按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。</p>
     <div class="chapter-meta">
       <span>00B-常见任务教程.md</span>
-      <span>7,141 字</span>
+      <span>6,957 字</span>
       <span>19 个主节</span>
-      <span>更新 2026/10/20 16:32</span>
+      <span>更新 2026/10/20 17:36</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -1521,7 +1516,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>填写“连接表列 → 终点对象属性”。</li>
 <li>保存、校验、发布。</li>
 </ol>
-<p><strong>完成后：</strong> 对象详情或关系页能看到关系；如果看不到，检查键映射和关系物化状态。</p>
+<p><strong>完成后：</strong> 对象详情或关系页能看到关系；如果看不到，检查键映射、关系来源与 ODS 状态。</p>
 <h2 id="doc-00B-常见任务教程--任务-6-我要查看对象-搜索对象和看图谱"><span>任务 6：我要查看对象、搜索对象和看图谱</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-6-我要查看对象-搜索对象和看图谱" aria-label="复制本节链接">#</a></h2>
 <p><strong>入口：</strong> 本体实例 → 对象 / 实例图谱</p>
 <h3 id="doc-00B-常见任务教程--查看对象"><span>查看对象</span><a class="heading-anchor" href="#doc-00B-常见任务教程--查看对象" aria-label="复制本节链接">#</a></h3>
@@ -1532,9 +1527,9 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>可以在属性筛选栏选择属性、运算符和值；也可以在排序栏选择属性和升降序，再点“应用”。</li>
 <li>在搜索框输入名称、编号或属性值查找对象。</li>
 <li>点开对象，查看属性、主键和一跳关系。</li>
-<li>需要对比时，在“虚拟查询 / 虚拟优先 / 物化索引”之间切换。</li>
+<li>在对象类型的「属性映射 → 数据来源」设置 AUTO / DIRECT / ODS 读取路径。</li>
 </ol>
-<p><strong>如果筛选或排序报“来自补充来源”：</strong> 当前版本不能跨来源安全下推，给这个对象类型配置一段 <code>DERIVED</code> 取数口径，或明确切换到物化索引。</p>
+<p><strong>如果筛选或排序报“来自补充来源”：</strong> 当前版本不能跨来源安全下推，给这个对象类型配置一段 <code>DERIVED</code> 取数口径。</p>
 <h3 id="doc-00B-常见任务教程--查看图谱"><span>查看图谱</span><a class="heading-anchor" href="#doc-00B-常见任务教程--查看图谱" aria-label="复制本节链接">#</a></h3>
 <ol>
 <li>进入“实例图谱”。</li>
@@ -1564,33 +1559,15 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <p><strong>完成后：</strong> 得到一份显式采集的历史数据。它对应采集开始至结束的区间，不承诺跨表事务一致时点，也不能回溯从未采集过的数据时点。</p>
 <p><strong>如果图谱为空：</strong></p>
 <ul>
-<li>对象类型和关系类型可能还没物化；</li>
+<li>对象来源未绑定，或 ODS 尚未就绪；</li>
 <li>关系类型可能没配键映射；</li>
 <li>两端对象可能不在当前画面；</li>
 <li>当前版本可能还没发布。</li>
 </ul>
-<h2 id="doc-00B-常见任务教程--任务-7-我要让查询更快-使用对象索引"><span>任务 7：我要让查询更快，使用对象索引</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-7-我要让查询更快-使用对象索引" aria-label="复制本节链接">#</a></h2>
-<p><strong>入口：</strong> 对象页 → 索引与物化</p>
-<p>“物化”可以理解为：把业务库里的对象和关系预先写入可重建的检索副本。默认对象读取不依赖它；当需要全文检索、复杂聚合、跨源宽表或反复查询同一类大数据时，再显式使用它加速。</p>
-<ol>
-<li>进入“对象”。</li>
-<li>打开“索引与物化”。</li>
-<li>查看哪些对象类型和关系类型是可读取的。</li>
-<li>选择一个类型或多个类型。</li>
-<li>点“物化”或“一键物化全部可读取”。</li>
-<li>等待后台任务完成。</li>
-<li>查看任务状态、扫描行数、对象数和告警。</li>
-<li>物化完成后，回到对象页或实例图谱查看结果。</li>
-</ol>
-<p><strong>注意：</strong></p>
-<ul>
-<li>对象物化不等于关系也物化，关系类型要单独处理。</li>
-<li>两端对象都要物化，图上才能画得出边。</li>
-<li>主键重复会导致多个源行折叠成一个对象，平台会报出折叠数量。</li>
-<li>中断、取消或失败后，可以从断点继续。</li>
-</ul>
-<h3 id="doc-00B-常见任务教程--大表先用-ods-不复制对象实例"><span>大表先用 ODS，不复制对象实例</span><a class="heading-anchor" href="#doc-00B-常见任务教程--大表先用-ods-不复制对象实例" aria-label="复制本节链接">#</a></h3>
-<p>如果业务表很大、对象列表反复查询却不需要全文检索，可以只把原始列同步到 ClickHouse ODS：</p>
+<h2 id="doc-00B-常见任务教程--任务-7-大表查询先同步-ods-镜像"><span>任务 7：大表查询先同步 ODS 镜像</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-7-大表查询先同步-ods-镜像" aria-label="复制本节链接">#</a></h2>
+<p><strong>入口：</strong> 数据资源 → 表详情 → ODS 镜像</p>
+<p><strong>开始前准备：</strong> 对象类型已绑定来源表；确认完整主键（支持复合主键）和需要查询的列。</p>
+<p>把需要读取的原始列同步到 ClickHouse ODS，后续查询时形成对象：</p>
 <ol>
 <li>平台 → 数据资源 → 打开一张表。</li>
 <li>点“ODS 镜像”，勾选需要读取的列和复合主键。</li>
@@ -1600,9 +1577,8 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>到对象类型编辑 → 数据来源，把读取路径设为 <code>AUTO</code> 或 <code>ODS</code>。</li>
 </ol>
 <p>切换本体版本不会复制 ODS 数据；对象实例仍然按当前版本的属性映射在查询时形成。</p>
-<ul>
-<li>清除物化不会删除业务库数据。</li>
-</ul>
+<p><strong>完成后：</strong> 对象列表（包括“全部标签”）和图谱直接查询虚拟对象，无需对象物化。数据新鲜度取决于 ODS 同步时间。</p>
+<p><strong>常见失败：</strong> 镜像尚未 READY、所需列未同步、主键配置不完整。显式 ODS 必须先解决镜像问题，AUTO 才允许回源。</p>
 <h2 id="doc-00B-常见任务教程--任务-8-我要修改一个对象-并让它正式生效"><span>任务 8：我要修改一个对象，并让它正式生效</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-8-我要修改一个对象-并让它正式生效" aria-label="复制本节链接">#</a></h2>
 <p><strong>入口：</strong> 本体实例 → 对象</p>
 <ol>
@@ -1719,7 +1695,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>处理违规项。</li>
 <li>发布。</li>
 </ol>
-<p><strong>注意：</strong> 本体包不带实例数据，也不带数据库密码。导入后对象数是 0 是正常现象，需要从本环境数据资源重新读取或物化。</p>
+<p><strong>注意：</strong> 本体包不带实例数据，也不带数据库密码。导入后对象数是 0 是正常现象，需要从本环境 ODS / 数据资源读取。</p>
 <h2 id="doc-00B-常见任务教程--任务-13-我要导出一份本体给同事"><span>任务 13：我要导出一份本体给同事</span><a class="heading-anchor" href="#doc-00B-常见任务教程--任务-13-我要导出一份本体给同事" aria-label="复制本节链接">#</a></h2>
 <p><strong>入口：</strong> 总览 → 本体卡片 → 导出，或本体建模页头</p>
 <ol>
@@ -1815,12 +1791,12 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <td>关系页没数据</td>
 <td>检查两端键映射</td>
 <td>检查关系数据来源</td>
-<td>检查关系是否物化</td>
+<td>检查 ODS / 业务源是否可读</td>
 </tr>
 <tr>
 <td>图谱为空</td>
-<td>检查对象物化</td>
-<td>检查关系物化</td>
+<td>检查来源及 ODS 状态</td>
+<td>检查关系键映射</td>
 <td>检查两端对象是否在当前画面</td>
 </tr>
 <tr>
@@ -1860,7 +1836,7 @@ h2:hover .heading-anchor, h3:hover .heading-anchor, .heading-anchor:focus { opac
 <li>想理解平台整体结构：第 1 章。</li>
 <li>想掌握建模：第 4 章。</li>
 <li>想理解草稿、版本和交付：第 5 章。</li>
-<li>想理解对象、索引、物化和图谱：第 6 章。</li>
+<li>想理解虚拟对象、ODS 和图谱：第 6 章。</li>
 <li>想定义动作、规则和决策记录：第 7 章。</li>
 <li>想接入业务数据库和列画像：第 8 章。</li>
 <li>想使用智能问答和查看证据：第 9 章。</li>
@@ -3602,9 +3578,9 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
     <p class="chapter-lede">实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。</p>
     <div class="chapter-meta">
       <span>06-本体实例与对象检索.md</span>
-      <span>11,320 字</span>
+      <span>4,549 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/20 16:44</span>
+      <span>更新 2026/10/20 17:34</span>
     </div>
   </header>
   <div class="doc-body"><!-- BEGINNER-GUIDE-NOTE -->
@@ -3654,268 +3630,59 @@ node scripts/import-ontology.mjs &quot;你的文件.json&quot; --publish</code><
 <li>“取进草稿”天然幂等，同一个对象取两次不会造出第二份；</li>
 <li>动作、问答、MCP 引用对象时都用同一套引用格式。</li>
 </ul>
-<h2 id="doc-06-本体实例与对象检索--6-3-对象服务-虚拟查询优先-索引按需启用"><span>6.3 对象服务：虚拟查询优先，索引按需启用</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-3-对象服务-虚拟查询优先-索引按需启用" aria-label="复制本节链接">#</a></h2>
-<p>对象服务（Object Service）是平台唯一的“按对象类型 + 主键取对象”入口：</p>
-<pre class="code-block"><code class="language-text">界面 / 智能问答 / MCP
-        │  (本体, 对象类型, 主键)
-        ▼
-   对象服务
-        ├─ 虚拟优先（默认）：按当前版本映射回源，查询时形成对象
-        ├─ index：只读对象索引
-        └─ source：只从业务库回源读取</code></pre><p>对象类型上的三种读取策略：</p>
+<h2 id="doc-06-本体实例与对象检索--6-3-对象服务-查询时形成虚拟对象"><span>6.3 对象服务：查询时形成虚拟对象</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-3-对象服务-查询时形成虚拟对象" aria-label="复制本节链接">#</a></h2>
+<p>对象列表、详情、全部标签、实例图谱和问答通过对象服务读取；本体 SQL 通过共享本体语义在 ODS 或业务源执行。查询时按当前版本映射形成对象，不要求提前存储整份对象实例。</p>
+<figure class="diagram-frame" data-mermaid-source="flowchart TB&#10;    UI[&quot;对象列表 / 全部标签 / 实例图谱 / 智能问答&quot;] --&gt; SERVICE[&quot;对象服务：当前版本定义、映射、主键&quot;]&#10;    SERVICE --&gt; ODS[&quot;ClickHouse ODS：源表镜像&quot;]&#10;    SERVICE --&gt; SOURCE[&quot;业务源：Oracle / PostgreSQL / MySQL&quot;]&#10;    ODS --&gt; EDIT[&quot;PostgreSQL：版本本地对象与字段覆盖&quot;]&#10;    SOURCE --&gt; EDIT&#10;    EDIT --&gt; RESULT[&quot;当前页虚拟对象与有界关系&quot;]">
+  <figcaption><span>系统结构图</span><small>Mermaid 流程图</small></figcaption>
+  <div class="mermaid">flowchart TB
+    UI[&quot;对象列表 / 全部标签 / 实例图谱 / 智能问答&quot;] --&gt; SERVICE[&quot;对象服务：当前版本定义、映射、主键&quot;]
+    SERVICE --&gt; ODS[&quot;ClickHouse ODS：源表镜像&quot;]
+    SERVICE --&gt; SOURCE[&quot;业务源：Oracle / PostgreSQL / MySQL&quot;]
+    ODS --&gt; EDIT[&quot;PostgreSQL：版本本地对象与字段覆盖&quot;]
+    SOURCE --&gt; EDIT
+    EDIT --&gt; RESULT[&quot;当前页虚拟对象与有界关系&quot;]</div>
+  <details class="diagram-source"><summary>查看图表源码</summary><pre><code>flowchart TB
+    UI[&quot;对象列表 / 全部标签 / 实例图谱 / 智能问答&quot;] --&gt; SERVICE[&quot;对象服务：当前版本定义、映射、主键&quot;]
+    SERVICE --&gt; ODS[&quot;ClickHouse ODS：源表镜像&quot;]
+    SERVICE --&gt; SOURCE[&quot;业务源：Oracle / PostgreSQL / MySQL&quot;]
+    ODS --&gt; EDIT[&quot;PostgreSQL：版本本地对象与字段覆盖&quot;]
+    SOURCE --&gt; EDIT
+    EDIT --&gt; RESULT[&quot;当前页虚拟对象与有界关系&quot;]</code></pre></details>
+</figure><p>来源上的读取路径决定从哪里读：</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
-<th>模式</th>
+<th>路径</th>
 <th>行为</th>
-<th>适用</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>FEDERATED</code>（默认）</td>
-<td>每次按当前版本定义查询业务资源，查询结果临时形成对象</td>
-<td>大数据量、版本频繁切换</td>
+<td>AUTO</td>
+<td>所需来源的 ODS 镜像完整 READY 时读取镜像，否则读业务源</td>
 </tr>
 <tr>
-<td><code>AUTO</code></td>
-<td>虚拟查询优先；只有调用方明确选择索引时才读索引</td>
-<td>需要可选索引的兼容场景</td>
+<td>DIRECT</td>
+<td>直接读业务源</td>
 </tr>
 <tr>
-<td><code>INDEXED</code></td>
-<td>只读对象索引，索引没有就明确提示</td>
-<td>明确要物化数据、要全文/复杂聚合</td>
+<td>ODS</td>
+<td>必须有完整 READY 镜像及所需列；不满足时报错，不偷偷回源</td>
 </tr>
 </tbody></table></div>
-<p>对象服务默认使用<strong>已发布版本</strong>的定义；对象页的草稿预览可以点名某个草稿版本。它不认识图库、索引表或业务表的实现细节，换中间件只替换来源实现。</p>
-<p>对象来源还可以选择 ODS 读取路径：<code>AUTO</code> 在完整镜像为 READY 时读 ClickHouse ODS，否则回源；<code>DIRECT</code> 始终回源；<code>ODS</code> 缺配置时直接报错。对象页与查询 DSL 共用这条口径；ODS 只是源表副本，不保存对象实例或版本副本。</p>
-<p>虚拟查询会先生成一份<strong>数据源查询计划</strong>，而不是把业务表整张拉回平台：</p>
-<ul>
-<li>只选择当前版本映射到的列；</li>
-<li>主来源上的 <code>EQ / NE / CONTAINS / GT / LT / IN / EXISTS</code> 下推到 SQL；</li>
-<li>多列排序、<code>LIMIT / OFFSET</code> 和总数统计下推；</li>
-<li>一个对象类型有多份来源时，当前页的补充属性按主键批量补齐，避免逐行 N+1；</li>
-<li>补充来源上的筛选或排序目前无法跨来源安全下推，平台会明确拒绝并提示改用 <code>DERIVED</code> 取数口径或显式索引，不会把列名错套到主表。</li>
-</ul>
-<p>因此普通版本切换的含义是：<strong>旧定义 / 新映射 + 当前源数据</strong>。它不是历史时点回放；精确历史数据要另配源库时间维度或压缩快照。</p>
-<h2 id="doc-06-本体实例与对象检索--6-4-对象索引"><span>6.4 对象索引</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-4-对象索引" aria-label="复制本节链接">#</a></h2>
-<p>对象索引是<strong>派生数据</strong>：任何时刻都可以从已发布快照重建，索引坏了不影响本体版本正确性。</p>
-<p>当前实现落在 ClickHouse 的 <code>object_entries</code> / <code>object_links</code>，属于可选派生索引：</p>
-<div class="table-wrap"><table>
-<thead>
-<tr>
-<th>能力</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>全文检索</td>
-<td>ClickHouse 文本索引；能力由适配器上报</td>
-</tr>
-<tr>
-<td>模糊检索</td>
-<td>文本/子串通道；不可用时如实降级</td>
-</tr>
-<tr>
-<td>向量检索</td>
-<td>预留向量通道；当前还没有 embedding 提供方</td>
-</tr>
-<tr>
-<td>属性过滤</td>
-<td><code>EQ</code> / <code>NE</code> / <code>CONTAINS</code> / <code>GT</code> / <code>LT</code> / <code>IN</code> / <code>EXISTS</code></td>
-</tr>
-<tr>
-<td>属性排序</td>
-<td>多列升序/降序；数字、布尔、文本按属性数据类型比较</td>
-</tr>
-<tr>
-<td>分页</td>
-<td>检索上限 200 条，偏移最大 100000</td>
-</tr>
-</tbody></table></div>
-<p><code>GET /api/object-search?targetId=</code> 会返回能力与统计：</p>
-<ul>
-<li><code>available</code>：索引是否可用；</li>
-<li><code>fullText</code> / <code>trigram</code> / <code>vector</code>：各通道能力；</li>
-<li><code>embeddingDim</code>：向量维度，未配置时为 null；</li>
-<li><code>entries</code> 与 <code>byLabel</code>：索引条目数和按对象类型的分布。</li>
-</ul>
-<h3 id="doc-06-本体实例与对象检索--物化与增量同步"><span>物化与增量同步</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--物化与增量同步" aria-label="复制本节链接">#</a></h3>
-<div class="table-wrap"><table>
-<thead>
-<tr>
-<th>操作</th>
-<th>接口</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>发布</td>
-<td>发布流程内部调用</td>
-<td>切换定义与版本编辑层，清理遗留 SNAPSHOT 索引；不复制整版对象</td>
-</tr>
-<tr>
-<td>单条/批量增量同步</td>
-<td><code>POST /api/objects/index</code></td>
-<td>给主键只同步这几条；不删已有数据</td>
-</tr>
-<tr>
-<td>取进草稿</td>
-<td><code>POST /api/objects/materialize</code></td>
-<td>把业务库对象取进草稿快照，供编辑或动作使用</td>
-</tr>
-<tr>
-<td>重建索引</td>
-<td><code>POST /api/object-search/reindex</code></td>
-<td>清理遗留快照索引；显式 rebuildMaterialized 时重读可索引类型，版本编辑仍保留在平台库</td>
-</tr>
-<tr>
-<td>对象检索</td>
-<td><code>POST /api/object-search</code></td>
-<td>全文 + 模糊 + 属性过滤；可带向量</td>
-</tr>
-<tr>
-<td>按主键取对象</td>
-<td><code>GET /api/objects</code></td>
-<td>走对象服务，可指定 <code>origin=auto/index/source</code></td>
-</tr>
-</tbody></table></div>
-<p>增量同步只 upsert 不 prune；发布才是权威路径。索引坏了、换后端、扩展缺失，都可以重建，不需要改本体版本。</p>
-<p><strong>来源隔离</strong>：索引行带 <code>origin</code> —— <code>SNAPSHOT</code>（手工 / 动作 / 取进草稿）与 <code>MATERIALIZED</code>（从业务库整份物化）。
-发布与「重建索引」只替换 <code>SNAPSHOT</code>，不会清掉物化数据；整份物化只动 <code>MATERIALIZED</code>。</p>
-<p><strong>默认读法（<code>entityTypes[].indexPolicy</code>，2026-10-20）</strong>：<code>FEDERATED</code>（默认，查询时按版本映射实时投影业务数据）/
-<code>AUTO</code>（虚拟查询优先，只有调用方明确选择索引时才读索引）/ <code>INDEXED</code>（只读索引，没物化就明确提示、不静默回源）。
-新快照缺字段时读出来是 <code>FEDERATED</code>。</p>
-<p><strong>物化按当前打开的版本</strong>（2026-10-12）：面板的可读性与取数都按「有草稿就是草稿」的那一版，汇总栏标出「物化版本 v2 草稿」；
-不带版本号会退回已发布版本，于是出现&quot;面板说能读、点下去说读不了&quot;。断点续跑同时带 <code>kind</code>（对象类型 / 关系类型）。</p>
-<p><strong>整份物化是后台任务</strong>：一个任务 = 一个<strong>类型</strong>（对象类型或关系类型），服务端串行执行，<strong>默认不限制行数</strong>（读到源读完）；
-入队立刻返回任务，进度可在对象页「索引与物化」里看（每页更新一次）。可取消（排队中立刻取消；运行中先标「取消中…」，
-等当前这一页读完才转 <code>CANCELLED</code>）。失败 / 取消 / 中断只是任务状态展示，不需要清理：在该行直接点「重试物化」或「继续物化」，服务端会从已读断点接着跑
-（<strong>断点连游标一起存</strong>，所以哪怕表有几千万行、中间被取消或服务重启过，也能接着翻页继续，不用从头再来一遍）。
-任务状态与历史落在 <code>ontology_platform.materialization_jobs</code>：进程重启后遗留的 <code>QUEUED</code>/<code>RUNNING</code> 会被标成 <code>INTERRUPTED</code>（物化幂等，重新排队即可）。
-半份必须报数：撞到单次上限（调用方显式传 <code>maxRows</code>）会停止、不 prune，并写进物化清单 <code>materialization_manifests</code>。</p>
-<p><strong>大表怎么物化</strong>（2026-10-14 起）：物化是&quot;<strong>读一页、写一页</strong>&quot;的，内存只跟页大小有关，不跟表的大小有关 ——
-所以几千万行的表也能跑，不会把服务撑爆。面板上的「每页」就是每次从业务库读多少行：</p>
-<ul>
-<li><strong>默认 5000 行</strong>（这也是上限：数据源连接器单次读取的硬上限，填更大也只按 5000 走）；</li>
-<li>页越大，<strong>往返次数越少、整体越快</strong>（实测 7034 行的表：500 行/页 15 页 16 秒；2000 行/页 4 页 8 秒；5000 行/页 2 页 7.6 秒）；</li>
-<li>页越大，单次查询在业务库那侧也越重 —— 业务库忙的时候把每页调小（面板上可选 100 / 500 / 2000 / 5000）。</li>
-<li>中途取消或失败<strong>不会丢数据</strong>：已经写进去的留着，没读到的部分等下次续跑 / 重跑补齐。
-这时索引里是&quot;本次新读的 + 上一次剩下的&quot;混合状态，面板会如实说明。</li>
-</ul>
-<p><strong>主键重复折叠也要报数</strong>（2026-10-13）：整份物化读完之后，用 <code>countTypeObjects(targetId, 对象类型, MATERIALIZED)</code>
-数一下索引里真正落下几个对象，<code>scanned - 对象数</code> 就是<strong>被主键折叠掉的行数</strong>，随清单写进 <code>materialization_manifests.folded</code>。
-大于 0 时对象页「索引与物化」在该类型那一行挂「主键重复折叠 N 行」，面板底部再给一条红字说明
-（哪个类型：源里 X 行 → Y 个对象 → 折叠 Z 行），并写明两条出路：改主键（或换成组合键）、或在取数口径里先去重。
-只有「从头读完、没截断、没取消、没卡住」的那一次才算得准；<code>syncObjectsToIndex</code> 的「补一批」路径不算（记 0）。
-计数走索引的一条 <code>COUNT</code>，<strong>不在内存里攒对象键的 Set</strong>（大表会把内存撑爆）。
-当前口径是<strong>报数不拦</strong>：物化照常完成，把折叠摊开给用户看，由用户决定改主键还是改口径。</p>
-<p><strong>少读了几行也要说</strong>（2026-10-13）：主键在源数据里不唯一时，主键游标翻页会在<strong>页边界跳过同一主键的其它行</strong>
-（<code>k &gt; 上一页最后一个 k</code> 永远够不到重复值）。物化读完之后拿源侧报过的总数对账（<code>total &gt; scanned</code>），
-对不上就报「源里共 N 行，这一趟只读到 M 行…」并给两条出路（改用取数口径 / 换真正唯一的主键）。
-<strong>实测</strong>：<code>GISTOOLS.TB_MK_GRP_LINE_LIST_DAY</code> 源里 1690 行、物理物化只读到 1688 行 —— 差的 2 行就是这么丢的。</p>
-<p>两条配套口径：</p>
-<ul>
-<li><strong>整份物化自己在翻页，不报&quot;页被截断&quot;</strong>：<code>ObjectQuery.paging = true</code> 时不报「命中行数超过 N 行」——
-那是下一页会接着读的常态，报出来只会刷一排假告警（实测一次物化刷 3 条）。</li>
-<li><strong>后台任务的告警要写进 <code>job.message</code></strong>：<code>materialize-jobs</code> 以前只存取消 / 截断 / 失败三种 message，
-物化返回的 <code>warnings</code>（折叠多少行、少读几行）整条丢掉。现在完成时把 warnings 并进 message，
-对象页「索引与物化」那一行才看得到。</li>
-</ul>
-<p><strong>对象类型的数据来源有两种形态</strong>（2026-10-13）：</p>
-<div class="table-wrap"><table>
-<thead>
-<tr>
-<th>形态</th>
-<th>字段</th>
-<th>读什么</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>PHYSICAL</code>（默认，老快照都是这一档）</td>
-<td><code>schema</code> + <code>view</code></td>
-<td>库里现成的表 / 视图</td>
-</tr>
-<tr>
-<td><code>DERIVED</code></td>
-<td><code>sql</code>（一段只读 SELECT）</td>
-<td><strong>取数口径</strong>的结果 —— 去重 / 聚合 / 拼装写在 SQL 里</td>
-</tr>
-</tbody></table></div>
-<ul>
-<li>口径在执行时被<strong>包成子查询</strong>（<code>SELECT … FROM (&lt;口径&gt;) &quot;t&quot; WHERE …</code>），过滤 / 排序 / 主键游标翻页全都照旧；
-Oracle 没有 <code>OFFSET</code>，用 <code>ROWNUM &lt;= n + skip</code> 多读几行、由内存丢掉。</li>
-<li><strong>只读是硬闸门</strong>：<code>assertReadOnlySql</code> 守在两处 —— 发布前（<code>validateEntitySources</code>，写语句挡发布）与执行前（连接器里再验一次）。</li>
-<li>口径必须输出主键列；主键没配只提示、不拦（建模中途允许先搭结构）。</li>
-<li><strong>补充来源暂不支持口径</strong>，只支持表 / 视图；校验里明确报出来，不静默当表用。</li>
-<li>语句生成走 <code>derivedRowsStatement</code> / <code>derivedCountStatement</code>（<code>src/lib/shared/server/sql-guard.ts</code>，纯函数、有单测）：
-值一律<strong>绑定参数</strong>、列名一律走驱动转义 —— 口径 SQL 只允许出现在连接器适配器里。</li>
-<li><strong>界面上在哪配</strong>：「编辑对象类型 → 数据来源」主来源顶部有 <code>表 / 视图 ↔ 取数口径</code> 切换（<code>view-switcher</code>）。
-切到口径档时给一个 SQL 框 + 主键列（逗号分隔）+ 显示名；SQL 的只读校验<strong>用与后端同一个</strong> <code>assertReadOnlySql</code>，
-边写边给结论（通过是绿字，写语句当场报「取数口径只能执行只读查询：…」）。切到口径档会清空表名，避免留下半套绑定。</li>
-<li><strong>不会写 SQL 就用「按规则生成」</strong>（<code>src/lib/ontology/dedupe-sql.ts</code>，纯函数 + 单测）：口径档里选
-「分组键（一个对象一行）+ 取值依据（哪一列）+ 取最新 / 最早」，一次生成<strong>确定的</strong>口径，并把分组键顺手写回对象主键。<ul>
-<li><strong>候选列只认日期 / 时间</strong>：类型是 DATE / TIME 的，或名字以 <code>DATE</code> / <code>TIME</code> / <code>DAY</code> / <code>TIMESTAMP</code> / <code>_TS</code> / <code>_DT</code> 结尾的
-（很多表的日期是 <code>VARCHAR2</code> 存的，只看类型会漏）。<strong>光 <code>TS</code> 结尾不算</strong> —— <code>STATS</code> 那种状态列会被误判（实测踩过）。</li>
-<li><strong>参考表里一个日期列都没有</strong>：不生成 SQL，直接给两条出路 —— 把主键换成真正唯一的键（那就根本不需要去重），
-或按业务条件筛一行（「状态 = 有效」这种，规则由业务定）。</li>
-<li><strong><code>DERIVED</code> 来源的 <code>view</code> 是「参考表」</strong>：它不参与取数（取数走 <code>sql</code>，口径优先），但<strong>要留着</strong> ——
-界面按它拿真实列清单来生成口径。没留参考表时只给指引，<strong>不猜 FROM 子句</strong>。</li>
-</ul>
-</li>
-<li><strong>报警之后必须给路</strong>（2026-10-13）：「索引与物化」面板里 <code>folded &gt; 0</code> 的那一行下面挂一个「怎么去重？」出口，
-展开给三样东西 —— ① 换主键（并显示当前的去重键是哪几列）；② 这张表能当「取哪一行」依据的<strong>候选列</strong>
-（按参考表的真实列清单挑，与对象类型编辑器<strong>同一个</strong> <code>orderCandidateColumns</code>）；③ 按该类型主键<strong>生成好的口径 SQL</strong><ul>
-<li>一键复制（<strong>同一个</strong> <code>dedupeSql</code>）。一个候选都没有时如实说「这张表没有日期 / 时间列」，把人引回 ①。
-面板只做<strong>只读诊断</strong>：不写任何定义，改动仍回编辑器里做。</li>
-</ul>
-</li>
-<li><strong>口径的生成参数（<code>sources[].rule</code>）是可选元数据</strong>（2026-10-13）：按规则生成时把
-<code>{ keyColumns, orderColumn, direction }</code> 一起存下来。作用有三：
-① 界面回显<strong>人话</strong>（「按 CUST_ID 取最新一行（依据 STATIS_DATE）」），不用让人读 SQL 才知道口径是什么；
-② 按规则可以<strong>重新生成</strong>（改一列不用从零选）；
-③ 平台能判「存下来的 SQL 和这条规则还是不是一回事」—— <strong>对不上时在编辑器里给红字警告</strong>（手改过）。
-手写 SQL 就是 <code>rule: null</code>（<strong>逃生舱一直留着</strong>）。发布前只做<strong>结构</strong>校验：有规则但缺分组键 / 缺取值依据 → <strong>挡发布</strong>；
-「SQL 与规则是否一致」要按数据源方言重新生成才知道，所以判断放在编辑器（那里知道 <code>kind</code>），不放进定义层校验。</li>
-</ul>
-<p><strong>关系类型的数据来源</strong>（2026-10-12）：形态由<strong>两端键映射</strong>决定 —— 任一端填了「连接列」就是<strong>连接表式</strong>（多对多），
-必须给出连接表与数据资源；两端都只填「属性」就是<strong>外键式</strong>（多对一 / 一对一），<strong>可以整块不配</strong>：外键在哪一端按
-键映射推断（一侧填该端主键、另一侧填非主键属性），表和数据资源取外键所在端对象类型的<strong>主来源</strong>。
-两端键映射都空 = 只在类型层声明，不报错也不出实例。</p>
-<p>读不出的关系类型<strong>在这张面板上要看得见</strong>：关系类型那段只列<strong>读得出</strong>的（判据与后端同源 —— 都走 <code>planLinkSource</code>，
-不另写一套），读不出的（键映射空、或连接表式没选连接表）不进表格，收成表尾一条黄色提示：还有几条读不出、
-本份本体共几条、为什么、去哪儿补（到「本体建模」点开关系类型补两端键映射；悬停能看到前几条的具体原因）。
-这样&quot;这一段是空的&quot;不会被误读成&quot;这份本体没有关系类型&quot;。
-物化的<strong>任务状态并进类型表的那一行</strong>（进行中带进度、失败带原因），不单开任务列表；一个类型只保留最近一条任务记录，
-已完成的靠「索引（物化）」那一列表达。表上方的筛选分两行：第一行可读性 + <strong>完成度（全部 / 未完成 / 已完成，各带数量）</strong>，第二行是每页与排队动作；默认「全部」。
-每个对象类型行同时显示<strong>当前主键</strong>（未配主键会标黄）；对象类型名称本身可点，直接打开该类型的配置，不用再回到建模页逐项查找。</p>
-<p><strong>关系（边）的物化</strong>（2026-10-12）：关系类型也能整份物化，任务形态与对象侧完全对等（进度 / 取消 / 断点续跑 / 清单）。
-一条边存一行：<code>(关系类型, 起点对象键, 终点对象键)</code> 是唯一键，<strong>双向共用一个方向不限</strong>（读的时候两个方向都查），
-prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>linkSource</code>（连接表 + 两侧键映射），整份读连接表。
-两端对象类型没物化也能先物化边，但图上要两端都在这一屏里才画得出边，不在就如实报数。</p>
-<p><strong>源侧分页</strong>（2026-10-12；2026-10-14 补漏读兜底）：整份物化按 <code>pageSize</code> 逐页回源。<strong>有主键且主键唯一时用主键游标翻页</strong> —— 按主键升序排，
-下一页只取&quot;排序键 &gt; 上一页最后一个键&quot;的行（键集翻页），每页等价于点查、offset 恒为 0，不受 Oracle 深翻页上限影响。
-第一页也要带排序列（只是不带游标值）；Oracle 上有序取行要先排序再限量（外包一层子查询用 <code>ROWNUM</code> 截断）。
-主键没配全或断点续跑时退回 <code>offset</code> 翻页。回源默认顺带 <code>COUNT(*)</code> 报总数，物化只在第一页要它（<code>ObjectQuery.count = false</code> 关掉），避免每页一次 <code>COUNT</code>。</p>
-<p>主键在源数据里不唯一时，严格的主键游标会在页边界跳过重复主键的后续行。整份物化现在会在游标读完后拿源侧总数对账：
-一旦发现 <code>total &gt; scanned</code>，自动从 0 改用 <code>offset</code> 重读；如果 <code>offset</code> 也不能读全（例如 Oracle 超过 5000 行的深翻页上限），
-任务直接失败，<strong>不会把半份写成&quot;物化完成&quot;</strong>。相邻两页读到的对象若完全相同（分页没前进），也会立即停止并说明，绝不空转。</p>
-<p>「索引与物化」面板那一行会同时显示：<strong>当前对象数</strong>（实时从对象索引统计，不拿物化清单的写入条数冒充）、
-最近一次物化的<strong>源表行数</strong>、<strong>折叠行数</strong>和是否需要重试的扫描状态。物化清单里的 <code>rows</code> 只表示这次提交/写索引的条目数；
-历史清单不承担“当前对象数”这个语义。</p>
-<h3 id="doc-06-本体实例与对象检索--当前限制"><span>当前限制</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--当前限制" aria-label="复制本节链接">#</a></h3>
-<ul>
-<li>没有 embedding 提供方；向量列和索引可以建，但生成向量的模型服务尚未接入。</li>
-<li>索引是最终一致的派生副本；业务库刚更新的数据，索引要等同步或发布才出现。</li>
-<li>对象索引落在 ClickHouse（列存检索副本）；数据量上来之后，如果要换 OpenSearch/Solr，只需实现对象索引接口。</li>
-<li>Oracle 按 <code>offset</code> 浏览有深翻页上限（<code>ORACLE_MAX_OFFSET = 5000</code>）；超过上限后普通 <code>offset</code> 查询会明确报错，
-不再静默重复同一段数据。主键唯一时整份物化走游标，不受这个上限影响；主键不唯一且 <code>offset</code> 兜底也读不全时，物化任务失败并给出改主键 / 改取数口径的出路。</li>
-<li><strong>实例图谱已发布视图走对象服务</strong>（对象索引 + 边索引）；草稿视图读这一版草稿快照；索引里一条数据都没有时才退回图库并如实说明。
-边要单独物化（见「物化与增量同步」），而且两端对象类型也要物化，点上才画得出边 —— 另一端不在这一屏时界面会报数。</li>
-<li><strong>对象页「全部标签」也走对象服务</strong>：跨对象类型读索引（回源必须知道是哪张表，全部标签没有单一来源可回）；
-选了具体对象类型才能在「已物化 / 业务库」之间切。</li>
-<li><code>pgvector</code> 缺失时向量检索会明确报错或按能力返回不可用，不会静默降级成假结果。</li>
-</ul>
+<p>旧 <code>indexPolicy=AUTO/INDEXED/FEDERATED</code> 和 <code>origin=index</code> 继续被接受，但普通读取统一为虚拟查询，不再选择对象副本。对象类型保存为统一虚拟读法。</p>
+<p>“实时形成对象”指映射在查询时执行。ODS 数据新鲜度取决于最后同步时间，不能将镜像查询描述成实时读取原始业务库。</p>
+<h2 id="doc-06-本体实例与对象检索--6-4-大表使用-ods-源表镜像"><span>6.4 大表使用 ODS 源表镜像</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-4-大表使用-ods-源表镜像" aria-label="复制本节链接">#</a></h2>
+<p>入口：<strong>数据资源 → 表详情 → ODS 镜像</strong>。</p>
+<ol>
+<li>选中对象映射需要的列及完整主键（支持复合主键）。</li>
+<li>首次执行全量同步，任务在后台运行，可查看进度和取消。</li>
+<li>有可靠更新时间列时，可配置增量同步与调度。</li>
+<li>增量不自动发现源表删除，应配置周期性全量校准。</li>
+<li>在对象类型「属性映射 → 数据来源」配置 AUTO 或 ODS。</li>
+<li>回对象列表或图谱查询，无需对象物化。</li>
+</ol>
+<p>一张源表一份镜像，多对象类型和版本复用。切换版本只改变定义与映射，不复制整份对象集合。全量取消保留原可用镜像；增量取消可能已提交部分页，镜像暂停读取，重试或校准后恢复。</p>
+<p>旧对象物化接口仅保留兼容维护，普通界面已移除入口，旧对象索引和边索引不参与普通读取。存量数据未自动删除；维护约束见 <code>docs/技术参考/旧对象索引维护.md</code>。</p>
 <h2 id="doc-06-本体实例与对象检索--6-5-实例图谱"><span>6.5 实例图谱</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-5-实例图谱" aria-label="复制本节链接">#</a></h2>
 <p>入口：<strong>本体实例 → 实例图谱</strong>。</p>
 <h3 id="doc-06-本体实例与对象检索--布局与交互"><span>布局与交互</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--布局与交互" aria-label="复制本节链接">#</a></h3>
@@ -3960,7 +3727,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <li>图谱默认显示数量有上限（常见默认 200 个节点 / 200 条边），可在本机显示设置里调整；</li>
 <li>位置写回需要 <code>instance.write</code>；没有权限时只影响本地视图，不会落库；</li>
 <li>只读查询写入一律拒绝，避免绕过版本边界；</li>
-<li>图谱两种读法并存：已发布快照可以读对象索引；点「从数据源加载」或节点「展开邻居」时，按当前版本映射实时读取业务对象与关系边。</li>
+<li>图谱初始加载、草稿预览、从数据源加载和展开邻居，均按指定版本读取虚拟对象及业务关系，并合并版本本地关系；不回退到对象索引或图库实例。</li>
 <li>关系边需要配好两端键映射和关系数据来源；没有配置时页面如实说明，不会凭对象名称猜边。</li>
 <li>图谱“邻域范围”可选择 1～3 跳，用于加载业务对象和展开邻居。节点最多 500、边最多 2000；撞上限会提示截断，端点无法读取的边不会渲染。复合主键保持完整列值配对参与查询。</li>
 </ul>
@@ -3980,11 +3747,11 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 </tr>
 <tr>
 <td>全部标签</td>
-<td>不选类型时<strong>跨对象类型读对象索引</strong>（回源必须知道是哪张表，全部标签没有单一来源可回）</td>
+<td>按定义中的类型顺序逐类型查询当前页及计数，合并本地对象，无需物化</td>
 </tr>
 <tr>
-<td>选择取数口径</td>
-<td>默认“虚拟查询”；也可切“虚拟优先”或“物化索引”</td>
+<td>数据读取路径</td>
+<td>由对象类型数据来源设置 AUTO / DIRECT / ODS，不再切换对象索引</td>
 </tr>
 <tr>
 <td>属性筛选与排序</td>
@@ -3996,7 +3763,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 </tr>
 <tr>
 <td>看一跳关系</td>
-<td>关系实例从业务库或已发布图读取；对象可能来自数据源而没有关系，界面会如实说明</td>
+<td>按两端键映射从 ODS / 业务源读取；未配置映射时说明原因</td>
 </tr>
 <tr>
 <td>编辑属性</td>
@@ -4029,8 +3796,8 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <p>源对象取进草稿时保存一份源基线。之后只覆盖人工或动作改过的字段；源库刷新时，未改属性继续随源更新。本地新建对象也随版本保存，不要求先写入对象索引。源对象的主键不能修改。</p>
 <p>在对象详情点“恢复源数据”可撤销该对象的覆盖修改及草稿本地关系。删除源对象表示在当前版本隐藏，不删除源业务行。要写业务库，继续通过显式开启的动作写回。</p>
 <p>涉及覆盖字段的筛选、排序，以及存在未写回编辑的本体 SQL 统计，目前会明确拒绝不完整口径；可按主键查看合并对象，或通过动作写回并同步 ODS 后统计。</p>
-<h3 id="doc-06-本体实例与对象检索--物化索引什么时候失效"><span>物化索引什么时候失效</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--物化索引什么时候失效" aria-label="复制本节链接">#</a></h3>
-<p>每次物化保存定义版本、定义哈希、映射哈希。读取前核对当前定义；旧清单缺哈希、定义/映射已变或物化未完整完成，都不能把旧数据当成当前对象。面板会提示“定义/映射已变化 · 需重新物化”。版本号变化但定义完全相同仍可复用数据。</p>
+<h3 id="doc-06-本体实例与对象检索--全部标签的分页边界"><span>全部标签的分页边界</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--全部标签的分页边界" aria-label="复制本节链接">#</a></h3>
+<p>按定义中的类型顺序拼接，各类型先显示本地对象，再查询按主键排序的源对象。只读取当前页需要的行，不把全表加载到内存。总数无法精确取得时显示未知；此时跨类型偏移分页不能保证不漏项，平台提示选择具体类型，不伪造完整结果。某个类型读取失败时保留其它类型，并明确提示结果不完整；不会把失败当成零条数据。</p>
 <h3 id="doc-06-本体实例与对象检索--历史数据与按需预热"><span>历史数据与按需预热</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--历史数据与按需预热" aria-label="复制本节链接">#</a></h3>
 <p>对象页“历史数据”可显式采集所选类型，任务在后台运行。采集结果按页 gzip 压缩保存在 PostgreSQL，并冻结采集所用定义；历史查看不再查询当前业务数据。只有完整完成的采集可被当作历史快照查询。</p>
 <p>快照记录采集开始与结束的区间，跨表不承诺同一事务时点。当前冻结源对象投影，人工编辑另由版本编辑层保存。可以分页查看、取消采集、删除快照或预热当前页；预热解压缓存上限 8 MiB、10 分钟，原始压缩页仍持久保存在数据库。</p>
@@ -4090,7 +3857,7 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <td>平台版本快照</td>
 <td>发布版本的实例快照与草稿实例</td>
 <td>版本的权威副本</td>
-<td>图库整图替换、对象索引物化的依据</td>
+<td>定义发布、版本编辑与本地对象的依据</td>
 </tr>
 <tr>
 <td>图存储</td>
@@ -4099,16 +3866,16 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <td>实例图谱、关系遍历、SPARQL/只读查询</td>
 </tr>
 <tr>
-<td>对象索引</td>
-<td>从快照或业务库派生的检索副本（ClickHouse 列存）</td>
+<td>ODS 源表镜像</td>
+<td>ClickHouse 中的原始列副本</td>
 <td>否，可重建</td>
-<td>全文、模糊、过滤和分页检索</td>
+<td>查询时按当前版本过滤、关联并形成对象</td>
 </tr>
 </tbody></table></div>
 <p>所以出现“业务库里明明有数据，图谱里没有”时，先分清楚是：</p>
 <ol>
 <li>对象类型没有绑定数据来源；</li>
-<li>数据没有物化进索引；</li>
+<li>来源未绑定、ODS 不可用或筛选条件没有命中；</li>
 <li>当前看的是草稿而不是已发布版本；</li>
 <li>图存储读的是发布投影，而没有重新发布。</li>
 </ol>
@@ -4166,9 +3933,9 @@ prune 只在这个关系类型里生效。取数走关系类型绑定的 <code>l
 <h2 id="doc-06-本体实例与对象检索--6-10-当前限制"><span>6.10 当前限制</span><a class="heading-anchor" href="#doc-06-本体实例与对象检索--6-10-当前限制" aria-label="复制本节链接">#</a></h2>
 <ul>
 <li>对象服务默认读已发布版本；草稿实例只能在对象页的草稿预览里操作。</li>
-<li>对象索引不是权威存储，业务库的实时变化不会自动进索引。</li>
+<li>ODS 是派生镜像，业务库变化需同步后才在镜像中可见。</li>
 <li>动作、属性编辑只写草稿快照，不回写业务库。</li>
-<li>对象/关系实例规模方案尚未最终定型；当前索引在 PostgreSQL，数据量上来后可以替换为独立搜索后端。</li>
+<li>实例查询时生成，大表通过 ClickHouse ODS 承载，千万行性能尚未压测。</li>
 <li>向量检索缺少 embedding 提供方，暂不可用。</li>
 </ul>
 </div>
@@ -7033,9 +6800,9 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
     <p class="chapter-lede">内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。</p>
     <div class="chapter-meta">
       <span>12-图存储与架构.md</span>
-      <span>5,293 字</span>
+      <span>5,183 字</span>
       <span>10 个主节</span>
-      <span>更新 2026/10/20 16:32</span>
+      <span>更新 2026/10/20 17:26</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -7083,7 +6850,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 </thead>
 <tbody><tr>
 <td>PostgreSQL 平台库</td>
-<td>本体台账、版本定义与实例快照、概念索引、用户角色、审计、对象索引、列画像</td>
+<td>本体台账、版本定义与实例快照、概念索引、用户角色、审计、ODS 配置与任务、列画像</td>
 <td>权威</td>
 <td>必须从备份恢复</td>
 </tr>
@@ -7109,7 +6876,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 <li><code>docker compose down</code> 或删图库数据，不会丢平台版本；</li>
 <li>图库损坏可以从已发布快照重建；</li>
 <li>业务库数据变化不会自动改本体版本；</li>
-<li>对象索引也是派生数据，可以重建。</li>
+<li>ClickHouse ODS 是可重建的源表镜像，对象查询时形成。</li>
 </ul>
 <h2 id="doc-12-图存储与架构--12-3-内置类型图"><span>12.3 内置类型图</span><a class="heading-anchor" href="#doc-12-图存储与架构--12-3-内置类型图" aria-label="复制本节链接">#</a></h2>
 <p>内置图存储是平台的默认后端，适合不需要外部图服务的部署。</p>
@@ -7170,7 +6937,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 <p>内置类型图当前只包含类型级定义和少量手工实例，<strong>不适合海量业务对象</strong>：</p>
 <ul>
 <li>发布视图以 JSONB 视图和进程内 RDF Store 形式存在；</li>
-<li>海量业务对象通过对象服务、对象索引和回源业务库读取；</li>
+<li>海量业务对象通过对象服务从 ODS / 业务源查询时形成；</li>
 <li>不要把内置图当作生产级对象存储或大规模图计算引擎。</li>
 </ul>
 <h2 id="doc-12-图存储与架构--12-4-apache-jena-fuseki"><span>12.4 Apache Jena / Fuseki</span><a class="heading-anchor" href="#doc-12-图存储与架构--12-4-apache-jena-fuseki" aria-label="复制本节链接">#</a></h2>
@@ -7367,7 +7134,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 <ul>
 <li>所有实例连同一个平台库；</li>
 <li>发布通过 advisory lock 串行；</li>
-<li>实例本身无状态；对象索引与列画像也在平台库；</li>
+<li>实例本身无状态；ODS 配置、版本编辑和列画像在平台库，ODS 原始列数据在 ClickHouse；</li>
 <li>旧磁盘快照目录只在一次性迁移时使用，不参与日常运行。</li>
 </ul>
 <h2 id="doc-12-图存储与架构--12-8-扩展新后端"><span>12.8 扩展新后端</span><a class="heading-anchor" href="#doc-12-图存储与架构--12-8-扩展新后端" aria-label="复制本节链接">#</a></h2>
@@ -7381,7 +7148,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 <p>内置图的快照仓储由 <code>EmbeddedGraphRepository</code> 契约描述，PostgreSQL 实现在平台层。图适配器本身只负责把快照变成图、执行 SPARQL，不再直接 import 平台数据库实体。</p>
 <p><strong>同一个原则适用于平台上所有外部存储</strong>（对象索引、关系库、搜索、向量、缓存）：先有契约层，业务代码只认契约与注册表，不直链某个实现。换存储 = 新增一个适配器目录 + 注册表登记一行，域代码 / API / 界面 / AI 工具都不动。</p>
 <p>对象索引就是这么做的：契约与注册表在 <code>src/lib/infrastructure/object-index/</code>，实现按后端分目录（现在只有 <code>clickhouse/</code>），领域侧的“快照节点 → 索引条目”映射留在 <code>src/lib/instance/object-index/entries.ts</code>。判断标准很简单：<strong>SQL、表名、参数格式这些只允许出现在适配器目录里</strong>；出了那个目录就只剩契约里的名词。</p>
-<p>本体查询也遵守这条边界：<code>src/lib/query-dsl/contract.ts</code> 定义 <code>MaterializedQueryExecutor</code>，ClickHouse 在 <code>src/lib/infrastructure/object-index/clickhouse/logical-query.ts</code> 实现，智能问答工具在调用查询入口时注入。<code>query-dsl</code> 不认识 ClickHouse 客户端、库名或物化表。</p>
+<p>本体查询通过 <code>OdsQueryExecutor</code> 端口注入 ODS 执行器；查询层不认识具体客户端或库表名，普通读取不再注入对象物化执行器。</p>
 <p>ODS 同样走独立契约：<code>src/lib/infrastructure/ods/</code> 定义源表镜像的写入、读取、计数和删除接口，ClickHouse 实现在同目录；业务层只操作 <code>OdsStore</code>。平台库的 <code>ods_sources</code> / <code>ods_sync_jobs</code> 保存配置与任务，ODS 表本身是可重建的源数据副本，不是对象索引，也不是版本快照。</p>
 <h2 id="doc-12-图存储与架构--12-9-迁移与切换后端"><span>12.9 迁移与切换后端</span><a class="heading-anchor" href="#doc-12-图存储与架构--12-9-迁移与切换后端" aria-label="复制本节链接">#</a></h2>
 <p>图后端是投影，切换后端的原则是“从平台版本重新发布”：</p>
@@ -7408,7 +7175,7 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
 </li>
 <li><p>发布是整图替换，不是增量发布；数据量大时发布耗时会上升。</p>
 </li>
-<li><p>对象索引现在在 ClickHouse（列存表 <code>&lt;库&gt;.object_entries</code>）；要不要再加搜索后端只影响适配器，对象服务接口不变。</p>
+<li><p>实例查询时形成，ClickHouse ODS 存原始表副本；旧 <code>object_entries</code> 仅兼容维护。</p>
 </li>
 <li><p>对象列表 / 详情、实例工具、查询 DSL 与 <code>run_query</code> 都已支持 ODS；只有所有参与对象来源和关系连接表都有完整 READY 镜像时才接管，否则按 <code>AUTO</code> 回源或让显式 <code>ODS</code> 报错。</p>
 </li>
@@ -7427,9 +7194,9 @@ node scripts/import-ontology.mjs &quot;&lt;文件.json&gt;&quot; --storage-targe
     <p class="chapter-lede">REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。</p>
     <div class="chapter-meta">
       <span>13-接口与集成参考.md</span>
-      <span>9,067 字</span>
+      <span>9,078 字</span>
       <span>15 个主节</span>
-      <span>更新 2026/10/20 16:32</span>
+      <span>更新 2026/10/20 17:26</span>
     </div>
   </header>
   <div class="doc-body"><h2 id="doc-13-接口与集成参考--13-1-接口总则"><span>13.1 接口总则</span><a class="heading-anchor" href="#doc-13-接口与集成参考--13-1-接口总则" aria-label="复制本节链接">#</a></h2>
@@ -7800,7 +7567,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <td><code>POST</code></td>
 <td><code>/api/objects/index</code></td>
 <td><code>instance.write</code></td>
-<td>增量同步对象到索引</td>
+<td>旧对象索引增量同步（兼容维护）</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
@@ -7812,13 +7579,13 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <td><code>POST</code> / <code>GET</code></td>
 <td><code>/api/object-search</code></td>
 <td><code>instance.read</code></td>
-<td>对象索引检索 / 索引能力与统计</td>
+<td>POST：虚拟对象检索；GET：旧索引维护统计</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
 <td><code>/api/object-search/reindex</code></td>
 <td><code>instance.write</code></td>
-<td>从版本快照重建索引</td>
+<td>旧对象索引重建（兼容维护）</td>
 </tr>
 <tr>
 <td><code>GET</code> / <code>POST</code></td>
@@ -7900,7 +7667,7 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
 <td>执行只读 SPARQL；写入一律拒绝</td>
 </tr>
 </tbody></table></div>
-<p>该接口面向图存储，与查询 DSL 不是同一条链路。智能问答在 <code>run_query</code> 打开时优先走本体 SQL；查询涉及的类型完整物化时读 ClickHouse 对象索引，否则回源数据资源。<code>run_sql</code> 走数据资源只读 SQL，作为 DSL 不支持或排障时的兜底。</p>
+<p>该接口面向图存储，与查询 DSL 不是同一条链路。智能问答在 <code>run_query</code> 打开时优先走本体 SQL；通过 ODS 或数据资源只读连接器执行，不再读取对象物化副本。<code>run_sql</code> 走数据资源只读 SQL，作为 DSL 不支持或排障时的兜底。</p>
 <h2 id="doc-13-接口与集成参考--13-9-数据资源"><span>13.9 数据资源</span><a class="heading-anchor" href="#doc-13-接口与集成参考--13-9-数据资源" aria-label="复制本节链接">#</a></h2>
 <div class="table-wrap"><table>
 <thead>
@@ -8789,9 +8556,9 @@ GET /openapi.json  OpenAPI 规范</code></pre><h2 id="doc-13-接口与集成参�
     <p class="chapter-lede">面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。</p>
     <div class="chapter-meta">
       <span>查询DSL.md</span>
-      <span>11,247 字</span>
+      <span>11,179 字</span>
       <span>14 个主节</span>
-      <span>更新 2026/10/20 15:29</span>
+      <span>更新 2026/10/20 17:36</span>
     </div>
   </header>
   <div class="doc-body"><blockquote>
@@ -8855,7 +8622,7 @@ SQL 编译器
 <li>枚举标签到实际码值的解析</li>
 <li><code>run_query</code> 工具已开放；出厂默认关闭，管理员在「MCP 调试」里打开后模型可用</li>
 <li>单对象类型主来源查询</li>
-<li>执行路由：根对象类型（以及 JOIN 涉及的关系类型）已<strong>完整物化</strong>时优先查 ClickHouse 对象索引；否则回源业务数据库</li>
+<li>执行路由：按来源读取策略使用 READY 的 ClickHouse ODS 镜像或业务数据库，查询时形成结果，不依赖对象物化</li>
 <li>外键式关系 JOIN</li>
 <li>中间表式关系 JOIN</li>
 <li>关系基数放大保护</li>
@@ -8880,13 +8647,12 @@ SQL 编译器
 <code>resolveQueryDsl</code> → 执行路由 → 编译 / 只读执行。<strong>不存在&quot;两套语义&quot;</strong>，改校验或改编译只需要改一处。
 执行路由只换“从哪里读”，不换解析、校验、指标口径、JOIN 语义或基数保护：</p>
 <ul>
-<li>只有查询涉及的对象类型都显式配置为 <code>INDEXED</code>，且已有“完整跑到源尾”的物化清单 → 编译到 ClickHouse 对象索引；</li>
-<li><code>FEDERATED</code> / <code>AUTO</code>、任意一处没物化、只物化了一部分或清单已清掉 → 沿用业务库 SQL 执行链；</li>
+<li>旧对象类型策略 <code>INDEXED / FEDERATED / AUTO</code> 不再控制普通查询路由，也不检查对象物化清单；</li>
 <li>对象来源设为 <code>AUTO / ODS</code> 时，若所有参与对象来源和关系连接表都有完整 READY ODS，会编译到 ClickHouse ODS；<code>AUTO</code> 缺镜像时回源，显式 <code>ODS</code> 缺镜像时返回 <code>ODS_QUERY_ROUTING_UNAVAILABLE</code>，不会静默回源；</li>
 <li>ODS 只校验本次查询实际引用的列、主键和关系连接列；未用到的属性不必进入裁剪镜像。</li>
-<li>路由结果通过 <code>data_source</code> / <code>data_source_kind</code> 返回（例如 <code>ClickHouse 对象索引</code> / <code>CLICKHOUSE</code>，或 <code>oracle-test</code> / <code>ORACLE</code>），不把“到底查了哪边”藏起来。</li>
+<li>路由结果通过 <code>data_source</code> / <code>data_source_kind</code> 返回（例如 <code>ClickHouse ODS</code> / <code>CLICKHOUSE</code>，或 <code>oracle-test</code> / <code>ORACLE</code>），不把实际来源藏起来。</li>
 </ul>
-<p><code>query-dsl</code> 本身不 import ClickHouse：它只定义 <code>MaterializedQueryExecutor</code> 端口，具体适配器由对象索引层实现、由工具入口注入。因此增加另一个对象索引后端时，不需要修改 DSL 的解析、校验或编译逻辑。</p>
+<p><code>query-dsl</code> 本身不 import ClickHouse：通过 <code>OdsQueryExecutor</code> 端口注入 ODS 执行器。旧 <code>MaterializedQueryExecutor</code> 仅保留类型兼容，不参与普通执行。替换 ODS 后端不改变 DSL 解析、校验或指标语义。</p>
 <p><code>run_query</code> 工具<strong>只收本体 SQL</strong>（<code>sql</code> + <code>parameters</code>）：一个工具只留一种表层，模型才不用在两套语法之间挑。
 JSON DSL 仍在代码里（<code>executeQueryDsl</code>，程序化构造与影子对拍用），只是不出现在工具入参上。</p>
 <div class="table-wrap"><table>
@@ -9151,7 +8917,7 @@ FROM 对象类型 [AS 别名]
 <li><strong>要求该属性配了 <code>enumValues</code></strong>；没配就如实拒绝 —— 错误里会带上<strong>这一列真实的取值</strong>（来自列画像），
 可以直接改成按码值筛。</li>
 <li>聚合查询里标签维度要写进 <code>group_by</code>：<code>GROUP BY LABEL(属性)</code>（分组的是它下面那一列，标签只是显示形态）。
-在对象索引（ClickHouse）那条路上，<code>SELECT</code> 与 <code>GROUP BY</code> 用的是<strong>同一个标签表达式</strong>。</li>
+在 ClickHouse ODS 路径上，<code>SELECT</code> 与 <code>GROUP BY</code> 用的是<strong>同一个标签表达式</strong>。</li>
 </ul>
 <p>临时聚合：</p>
 <pre class="code-block"><code class="language-json">{
@@ -9345,9 +9111,9 @@ COUNT(DISTINCT CASE WHEN 口径成立 THEN 客户编号 END)</code></pre><p>如�
 <ol>
 <li>解析 DSL</li>
 <li>Resolver 生成 LogicalPlan</li>
-<li>检查查询涉及的对象类型与关系类型是否有完整物化清单</li>
-<li>已完整物化 → 编译到 ClickHouse 对象索引并只读执行；否则按根对象解析数据资源</li>
-<li>未完整物化 → 根据数据资源类型选择业务库 SQL 编译器并调用连接器只读执行</li>
+<li>检查来源读取策略、READY ODS 配置和本次查询所需列</li>
+<li>满足 ODS 条件 → 编译到 ClickHouse ODS 并只读执行</li>
+<li>AUTO 不满足镜像条件或指定 DIRECT → 编译到业务源并只读执行；显式 ODS 不满足条件时报错</li>
 <li>归一化结果，并回传实际执行侧的 <code>data_source</code> / <code>data_source_kind</code></li>
 </ol>
 <p>结果形状：</p>
@@ -9746,7 +9512,7 @@ src/lib/reasoning/tool-summary.ts      步骤摘要</code></pre><h2 id="doc-查�
   <div class="search-hint">输入关键词，结果会定位到章节。支持 Ctrl/⌘ + K。</div>
   <div class="search-results" id="search-results"></div>
 </dialog>
-<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/20 16:48","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3398,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5000,"updatedAt":"2026/10/14 17:25"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":7141,"updatedAt":"2026/10/20 16:32"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5522,"updatedAt":"2026/10/19 19:34"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":10639,"updatedAt":"2026/10/15 23:56"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5890,"updatedAt":"2026/10/14 17:25"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":11320,"updatedAt":"2026/10/20 16:44"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":4440,"updatedAt":"2026/10/14 17:25"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":5327,"updatedAt":"2026/10/20 15:29"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6795,"updatedAt":"2026/10/15 18:59"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5717,"updatedAt":"2026/10/19 20:54"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":5171,"updatedAt":"2026/10/19 19:34"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":5890,"updatedAt":"2026/10/15 18:59"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":5293,"updatedAt":"2026/10/20 16:32"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":9067,"updatedAt":"2026/10/20 16:32"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/14 17:25"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":11247,"updatedAt":"2026/10/20 15:29"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3021,"updatedAt":"2026/10/14 17:25"}]}</script><script>
+<script id="manual-manifest" type="application/json">{"title":"本体管理平台 · 系统说明书","defaultDocId":"doc-00-新手指南","buildTime":"2026/10/20 17:36","docs":[{"id":"doc-00-新手指南","file":"00-新手指南.md","title":"新手指南 · 先从这里开始","navTitle":"新手指南 · 先从这里开始","chapter":"新","description":"平台能做什么、左侧导航怎么看、常用名词、新手阅读路线和常见问题。","group":"第一次使用","words":3424,"updatedAt":"2026/10/20 17:34"},{"id":"doc-00A-从零跑通第一个本体","file":"00A-从零跑通第一个本体.md","title":"跟着做 · 从零跑通第一个本体","navTitle":"跟着做 · 从零跑通第一个本体","chapter":"练","description":"从新建本体、登记数据资源、创建对象类型、建立关系，到校验发布、查看对象和智能问答。","group":"第一次使用","words":5023,"updatedAt":"2026/10/20 17:36"},{"id":"doc-00B-常见任务教程","file":"00B-常见任务教程.md","title":"常见任务教程 · 我要做一件事","navTitle":"常见任务教程 · 我要做一件事","chapter":"做","description":"按任务逐步操作：新建对象、绑定数据、关系、物化、编辑、动作、规则、问答、导入导出和权限管理。","group":"第一次使用","words":6957,"updatedAt":"2026/10/20 17:36"},{"id":"doc-01-系统概览","file":"01-系统概览.md","title":"第 1 章 · 系统概览与使用地图","navTitle":"系统概览与使用地图","chapter":"01","description":"用业务语言看系统定位、导航地图、典型场景和整体能力。","group":"功能说明（边用边查）","words":5522,"updatedAt":"2026/10/19 19:34"},{"id":"doc-04-本体建模","file":"04-本体建模.md","title":"第 4 章 · 本体建模","navTitle":"本体建模","chapter":"04","description":"对象类型、关系类型、接口、指标、属性、主键和发布校验的完整说明。","group":"功能说明（边用边查）","words":10639,"updatedAt":"2026/10/15 23:56"},{"id":"doc-05-版本管理与本体包","file":"05-版本管理与本体包.md","title":"第 5 章 · 版本管理与本体包","navTitle":"版本管理与本体包","chapter":"05","description":"草稿、校验、发布、历史激活、管理员删除版本、导入导出和本体包交付。","group":"功能说明（边用边查）","words":5890,"updatedAt":"2026/10/14 17:25"},{"id":"doc-06-本体实例与对象检索","file":"06-本体实例与对象检索.md","title":"第 6 章 · 本体实例与对象检索","navTitle":"本体实例与对象检索","chapter":"06","description":"实例图谱、对象页、关系页、对象索引、物化、回源和当前限制。","group":"功能说明（边用边查）","words":4549,"updatedAt":"2026/10/20 17:34"},{"id":"doc-07-动作与规则","file":"07-动作与规则.md","title":"第 7 章 · 动作与规则","navTitle":"动作与规则","chapter":"07","description":"动作、参数、编辑步骤、BLOCK/WARN/HIDE、干跑、执行和决策记录。","group":"功能说明（边用边查）","words":4440,"updatedAt":"2026/10/14 17:25"},{"id":"doc-08-数据资源与列画像","file":"08-数据资源与列画像.md","title":"第 8 章 · 数据资源与列画像","navTitle":"数据资源与列画像","chapter":"08","description":"PostgreSQL/MySQL/Oracle 连接、表结构、绑定对象类型、多来源、列画像和只读 SQL。","group":"功能说明（边用边查）","words":5327,"updatedAt":"2026/10/20 15:29"},{"id":"doc-09-智能问答","file":"09-智能问答.md","title":"第 9 章 · 智能问答","navTitle":"智能问答","chapter":"09","description":"提问、后台运行、多轮上下文、图片输入、工具轨迹、证据和回答边界。","group":"功能说明（边用边查）","words":6795,"updatedAt":"2026/10/15 18:59"},{"id":"doc-02-安装部署与初始化","file":"02-安装部署与初始化.md","title":"第 2 章 · 安装、部署与初始化","navTitle":"安装、部署与初始化","chapter":"02","description":"开发环境、Docker 部署、环境变量、首次初始化、升级迁移和备份要点。","group":"管理与集成（管理员、集成人员、开发者）","words":5717,"updatedAt":"2026/10/19 20:54"},{"id":"doc-03-账号权限与平台设置","file":"03-账号权限与平台设置.md","title":"第 3 章 · 账号、权限与平台设置","navTitle":"账号、权限与平台设置","chapter":"03","description":"登录、权限点、内置角色、用户/角色/审计/图引擎配置。","group":"管理与集成（管理员、集成人员、开发者）","words":5171,"updatedAt":"2026/10/19 19:34"},{"id":"doc-10-MCP服务与外部集成","file":"10-MCP服务与外部集成.md","title":"第 10 章 · MCP 服务与外部集成","navTitle":"MCP 服务与外部集成","chapter":"10","description":"两个 MCP 服务端、令牌、本体级端点、工具清单和客户端接入。","group":"管理与集成（管理员、集成人员、开发者）","words":5890,"updatedAt":"2026/10/15 18:59"},{"id":"doc-11-本体技能与出包","file":"11-本体技能与出包.md","title":"第 11 章 · 本体技能与出包","navTitle":"本体技能与出包","chapter":"11","description":"需求澄清、本体设计、出包交付三套技能，以及 blueprint → bundle 工作流。","group":"管理与集成（管理员、集成人员、开发者）","words":4070,"updatedAt":"2026/10/12 00:30"},{"id":"doc-12-图存储与架构","file":"12-图存储与架构.md","title":"第 12 章 · 图存储与系统架构","navTitle":"图存储与系统架构","chapter":"12","description":"内置图、Apache Jena/Jena 隔离、存储职责、发布原子性和扩展方式。","group":"管理与集成（管理员、集成人员、开发者）","words":5183,"updatedAt":"2026/10/20 17:26"},{"id":"doc-13-接口与集成参考","file":"13-接口与集成参考.md","title":"第 13 章 · 接口与集成参考","navTitle":"接口与集成参考","chapter":"13","description":"REST API 分组、鉴权、错误码、SSE、MCP 和 OpenAPI 入口。","group":"管理与集成（管理员、集成人员、开发者）","words":9078,"updatedAt":"2026/10/20 17:26"},{"id":"doc-14-运维安全与故障排查","file":"14-运维安全与故障排查.md","title":"第 14 章 · 运维、安全与故障排查","navTitle":"运维、安全与故障排查","chapter":"14","description":"安全模型、备份恢复、审计、常见问题、系统边界和后续方向。","group":"管理与集成（管理员、集成人员、开发者）","words":5363,"updatedAt":"2026/10/14 17:25"},{"id":"doc-查询DSL","file":"查询DSL.md","title":"查询 DSL（Ontology Query DSL）","navTitle":"查询 DSL（Ontology Query DSL）","chapter":"附","description":"面向模型与程序的逻辑查询协议、字段规范、关系查询和安全边界。","group":"管理与集成（管理员、集成人员、开发者）","words":11179,"updatedAt":"2026/10/20 17:36"},{"id":"doc-README","file":"README.md","title":"本体管理平台 · 系统说明书","navTitle":"本体管理平台 · 系统说明书","chapter":"首","description":"阅读地图、状态标记与维护规则。","group":"文档说明","words":3021,"updatedAt":"2026/10/14 17:25"}]}</script><script>
 (() => {
   "use strict";
   const manifest = JSON.parse(document.getElementById("manual-manifest").textContent);

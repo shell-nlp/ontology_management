@@ -7,6 +7,7 @@ import { GraphCanvas } from "@/components/graph-canvas";
 import "@/components/graph-canvas.css";
 import "@/components/type-edit-dialog.css";
 import { api } from "@/lib/shared/client/api-client";
+import { primaryKeyFromProperties } from "@/lib/ontology/fields";
 import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 
 
@@ -257,6 +258,19 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
   /** 从业务库读来的节点：记下它的 (对象类型, 主键)，点它展开时才能继续走 D2 的关系数据来源。 */
   const [keysByNodeId, setKeysByNodeId] = useState<NodeKeyMap>({});
 
+  const acceptGraph = useCallback((data: GraphData & { warnings?: string[] }) => {
+    setGraph(data);
+    const keys: NodeKeyMap = {};
+    for (const node of data.nodes) {
+      const type = version?.definition.entityTypes.find((item) => node.labels.includes(item.name));
+      if (!type) continue;
+      const { primaryKey, missing } = primaryKeyFromProperties(type, node.properties);
+      if (!missing.length && Object.keys(primaryKey).length) keys[node.id] = { entityType: type.name, primaryKey };
+    }
+    setKeysByNodeId(keys);
+    if (data.warnings?.length) notify(data.warnings.join("\n"));
+  }, [version, notify]);
+
   useEffect(() => {
     if (!target) return;
     const versionParam = version ? `&versionId=${version.id}` : "";
@@ -280,14 +294,14 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
       for (const type of filters.labels) params.append("graphLabel", type);
       for (const type of filters.relationshipTypes) params.append("relationshipType", type);
       params.set("nodeLimit", String(nodeLimit));
-      setGraph(await api<GraphData>(`/api/instances/graph?${params.toString()}`));
+      acceptGraph(await api<GraphData>(`/api/instances/graph?${params.toString()}`));
     } catch (reason) { fail(reason); } finally { setLoading(false); }
-  }, [target, version, fail, typeFilters]);
+  }, [target, version, fail, typeFilters, acceptGraph]);
 
   useEffect(() => {
     if (!target) return;
     const versionParam = version ? `&versionId=${version.id}` : "";
-    void api<GraphData>(`/api/instances/graph?targetId=${encodeURIComponent(target.id)}${versionParam}&nodeLimit=${settings.nodeLimit}`).then(setGraph).catch(fail);
+    void api<GraphData>(`/api/instances/graph?targetId=${encodeURIComponent(target.id)}${versionParam}&nodeLimit=${settings.nodeLimit}`).then(acceptGraph).catch(fail);
     // Graph is re-fetched when the selected target or the node limit changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id, version?.id, settings.nodeLimit]);
@@ -382,7 +396,7 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
    */
   const expand = async (nodeId: string) => {
     if (!target) return;
-    const expanded = await api<GraphData>(`/api/instances/neighbors?targetId=${encodeURIComponent(target.id)}&nodeId=${encodeURIComponent(nodeId)}&limit=${Math.max(1, settings.maxNeighbors)}`);
+    const expanded = await api<GraphData>(`/api/instances/neighbors?targetId=${encodeURIComponent(target.id)}&nodeId=${encodeURIComponent(nodeId)}${version?.id ? `&versionId=${encodeURIComponent(version.id)}` : ""}&limit=${Math.max(1, settings.maxNeighbors)}`);
     const nodes = [...expanded.nodes];
     const relationships = [...expanded.relationships];
     const seed = keysByNodeId[nodeId];

@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
     else if (p === "/api/instances/meta") json = { labels: [], relationshipTypes: [], propertyKeys: [] };
     else if (p === "/api/data-sources") json = [];
     else if (p === "/api/objects/history") json = url.searchParams.has("snapshotId") ? { rows: [{ objectId: "frozen", entityType: "客户", title: "历史客户", properties: { 编号: "OLD" } }], total: 1 } : { snapshots: [{ id: versionId, status: "DONE", rows: 1, pages: 1, entityTypes: ["客户"], createdAt: "2026-10-20T00:00:00Z", finishedAt: "2026-10-20T00:00:01Z", message: "采集区间" }] };
-    else if (p === "/api/objects") json = { rows: url.searchParams.has("entityType") ? [{ objectId: targetId, entityType: "客户", properties: { 编号: "A" }, primaryKey: { ID: "A" }, origin: "source" }] : [], total: 1, warnings: [] };
+    else if (p === "/api/objects") json = { rows: [{ objectId: targetId, entityType: "客户", properties: { 编号: "A" }, primaryKey: { ID: "A" }, origin: "source" }], total: 1, warnings: [] };
     else if (p === "/api/links") json = { links: [], warnings: [], truncated: false };
     else if (p === "/api/instances/graph") json = { nodes: [], relationships: [], warnings: [] };
     else if (p === "/api/object-search") json = { stats: { entries: 0, byLabel: [] }, capabilities: {} };
@@ -41,6 +41,19 @@ test("历史弹窗回看冻结数据并预热当前页", async ({ page }) => {
   await warm;
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("全部标签直接显示虚拟对象，界面不再要求物化", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("/api/objects?")) requests.push(request.url()); });
+  await page.getByRole("button", { name: "对象", exact: true }).click();
+  await expect(page.locator(".manager-row").filter({ hasText: "A" })).toBeVisible();
+  expect(requests.some((url) => !new URL(url).searchParams.has("entityType"))).toBe(true);
+  await expect(page.getByRole("button", { name: "索引与物化", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "来源：物化索引", exact: true })).toHaveCount(0);
+  await page.locator(".manager-row").filter({ hasText: "A" }).click();
+  await expect(page.getByText("数据新鲜度取决于来源及 ODS 同步时间。", { exact: false })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("virtual-objects.png"), fullPage: true });
 });
 
 test("图谱明确选择三跳，并将限制传到邻域接口", async ({ page }) => {

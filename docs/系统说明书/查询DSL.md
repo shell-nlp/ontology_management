@@ -69,7 +69,7 @@ SQL 编译器
 - 枚举标签到实际码值的解析
 - `run_query` 工具已开放；出厂默认关闭，管理员在「MCP 调试」里打开后模型可用
 - 单对象类型主来源查询
-- 执行路由：根对象类型（以及 JOIN 涉及的关系类型）已**完整物化**时优先查 ClickHouse 对象索引；否则回源业务数据库
+- 执行路由：按来源读取策略使用 READY 的 ClickHouse ODS 镜像或业务数据库，查询时形成结果，不依赖对象物化
 - 外键式关系 JOIN
 - 中间表式关系 JOIN
 - 关系基数放大保护
@@ -96,13 +96,12 @@ SQL 编译器
 `resolveQueryDsl` → 执行路由 → 编译 / 只读执行。**不存在"两套语义"**，改校验或改编译只需要改一处。
 执行路由只换“从哪里读”，不换解析、校验、指标口径、JOIN 语义或基数保护：
 
-- 只有查询涉及的对象类型都显式配置为 `INDEXED`，且已有“完整跑到源尾”的物化清单 → 编译到 ClickHouse 对象索引；
-- `FEDERATED` / `AUTO`、任意一处没物化、只物化了一部分或清单已清掉 → 沿用业务库 SQL 执行链；
+- 旧对象类型策略 `INDEXED / FEDERATED / AUTO` 不再控制普通查询路由，也不检查对象物化清单；
 - 对象来源设为 `AUTO / ODS` 时，若所有参与对象来源和关系连接表都有完整 READY ODS，会编译到 ClickHouse ODS；`AUTO` 缺镜像时回源，显式 `ODS` 缺镜像时返回 `ODS_QUERY_ROUTING_UNAVAILABLE`，不会静默回源；
 - ODS 只校验本次查询实际引用的列、主键和关系连接列；未用到的属性不必进入裁剪镜像。
-- 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse 对象索引` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把“到底查了哪边”藏起来。
+- 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse ODS` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把实际来源藏起来。
 
-`query-dsl` 本身不 import ClickHouse：它只定义 `MaterializedQueryExecutor` 端口，具体适配器由对象索引层实现、由工具入口注入。因此增加另一个对象索引后端时，不需要修改 DSL 的解析、校验或编译逻辑。
+`query-dsl` 本身不 import ClickHouse：通过 `OdsQueryExecutor` 端口注入 ODS 执行器。旧 `MaterializedQueryExecutor` 仅保留类型兼容，不参与普通执行。替换 ODS 后端不改变 DSL 解析、校验或指标语义。
 
 `run_query` 工具**只收本体 SQL**（`sql` + `parameters`）：一个工具只留一种表层，模型才不用在两套语法之间挑。
 JSON DSL 仍在代码里（`executeQueryDsl`，程序化构造与影子对拍用），只是不出现在工具入参上。
@@ -298,7 +297,7 @@ FROM 对象类型 [AS 别名]
 - **要求该属性配了 `enumValues`**；没配就如实拒绝 —— 错误里会带上**这一列真实的取值**（来自列画像），
   可以直接改成按码值筛。
 - 聚合查询里标签维度要写进 `group_by`：`GROUP BY LABEL(属性)`（分组的是它下面那一列，标签只是显示形态）。
-  在对象索引（ClickHouse）那条路上，`SELECT` 与 `GROUP BY` 用的是**同一个标签表达式**。
+  在 ClickHouse ODS 路径上，`SELECT` 与 `GROUP BY` 用的是**同一个标签表达式**。
 
 临时聚合：
 
@@ -545,9 +544,9 @@ executeQueryDsl(definition, dsl, deps?)
 
 1. 解析 DSL
 2. Resolver 生成 LogicalPlan
-3. 检查查询涉及的对象类型与关系类型是否有完整物化清单
-4. 已完整物化 → 编译到 ClickHouse 对象索引并只读执行；否则按根对象解析数据资源
-5. 未完整物化 → 根据数据资源类型选择业务库 SQL 编译器并调用连接器只读执行
+3. 检查来源读取策略、READY ODS 配置和本次查询所需列
+4. 满足 ODS 条件 → 编译到 ClickHouse ODS 并只读执行
+5. AUTO 不满足镜像条件或指定 DIRECT → 编译到业务源并只读执行；显式 ODS 不满足条件时报错
 6. 归一化结果，并回传实际执行侧的 `data_source` / `data_source_kind`
 
 结果形状：

@@ -35,7 +35,7 @@
 
 平台管三件事：**本体是什么**（对象类型、关系类型、接口、概念分组）、**本体能做什么**（动作与规则）、**本体里的数据从哪来**（数据资源绑定与对象检索）。本体按**版本快照**管理：草稿与历史快照都写平台库，发布才重建图数据。
 
-图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象。PostgreSQL `ontology_platform` 保存账号、连接、审计、本体定义/版本、编辑层和压缩历史；ClickHouse 保存 ODS 源表镜像及可选对象索引。
+图存储是**可替换的**：默认用平台自带的内置图存储（PostgreSQL 持久化，不需要外部服务），也可以在「设置 → 图引擎配置」里登记 Apache Jena / Fuseki；上层 API 与界面只调用 `GraphStore` 抽象。PostgreSQL `ontology_platform` 保存账号、连接、审计、本体定义/版本、编辑层和压缩历史；ClickHouse 保存 ODS 源表镜像，查询时按当前版本形成对象。
 
 本体类型与实例数据统一按 **版本快照** 管理：
 
@@ -94,7 +94,7 @@
 | 🤖 | **智能问答** | 服务端工具循环（AI SDK）：模型只调只读工具（本体检索、多跳、表结构、只读 SQL），流式输出、可中断、可带图片、带会话历史 |
 | 🛰 | **MCP** | 两个服务端：本体数据工具（会话或令牌）与建模技能（免令牌），外部 Agent / IDE 直接接 |
 | ✨ | **本体技能** | 三套建模技能（需求澄清 → 本体设计 → 出包交付），整包下载，或经 MCP 直接给 Agent 用 |
-| 🔍 | **对象检索** | 默认虚拟查询（查询时回源投影对象）；大表可先把裁剪列同步成 ClickHouse ODS 源表副本，再在对象服务与 `run_query` 中实时过滤/聚合；对象索引只作可选搜索加速 |
+| 🔍 | **对象检索** | 默认虚拟查询（查询时回源投影对象）；大表可先把裁剪列同步成 ClickHouse ODS 源表副本，再在对象服务与 `run_query` 中实时过滤/聚合；不依赖对象物化副本 |
 | 🧾 | **审计记录** | 发布、导入、删除、改名等关键操作留痕，在「设置 → 审计记录」里按动作筛选 |
 
 ## 术语对照（中文 ↔ 代码 / 接口）
@@ -124,7 +124,7 @@
 | 前端 / API | Next.js 16（App Router）、React 19、TypeScript |
 | 本体存储 | 默认**内置图存储**（PostgreSQL 持久化 + Graphology 类型图 + N3.js / Comunica 只读 SPARQL）；可选 **Apache Jena / Fuseki**。Neo4j 已移除 |
 | 平台元数据 | PostgreSQL · Schema `ontology_platform` · TypeORM（业务侧不写裸 SQL） |
-| 对象检索 | 默认查询时虚拟投影；ClickHouse `object_entries` 作可选物化索引（全文 / 子串 / 向量能力按后端上报） |
+| 对象检索 | 默认查询时虚拟投影；ClickHouse ODS 承载源表镜像，普通读取不使用 `object_entries` |
 | 大表源表层 | ClickHouse ODS：一张源表一份裁剪副本，`FULL` 影子表原子替换 / `INCREMENTAL` 水位追平 |
 | 智能问答 | AI SDK 7（`ai` + `@ai-sdk/openai-compatible`）：服务端工具循环、流式输出、可中断 |
 | 对外协议 | MCP：本体数据工具与建模技能两个服务端 |
@@ -396,12 +396,13 @@ flowchart TB
     SNAP["versioning/snapshot.ts<br/>版本 · 定义 · 实例快照 · 内容哈希"]
     PUB["versioning/published-ontology.ts<br/>只取 status = PUBLISHED，工具侧读定义的唯一入口"]
     SRCT["platform/targets · datasource/sources<br/>图引擎连接 · 数据资源登记 · 结构缓存 / 列画像"]
-    GRAPHS["infrastructure/graph · instance/object-service<br/>图库读写（Jena / 内置图）· 对象索引与回源取数"]
+    GRAPHS["infrastructure/graph · instance/object-service<br/>图库读写（Jena / 内置图）· ODS / 业务源虚拟取数"]
     PURE["ontology/*（纯函数）<br/>接口约束 · 关系键 · 数量关系 · 指标口径"]
   end
 
   subgraph L_STORE["存储"]
-    PG[("PostgreSQL · ontology_platform<br/>ontologies · ontology_versions（定义 + 快照）· ontology_concepts<br/>graph_targets · data_sources · object_entries · audit_entries · platform_settings")]
+    PG[("PostgreSQL · ontology_platform<br/>ontologies · ontology_versions（定义 + 编辑）· ontology_concepts<br/>graph_targets · data_sources · ods_sources / ods_sync_jobs · instance_history · audit_entries")]
+    CHODS[("ClickHouse ODS<br/>一张源表一份原始列镜像，查询时形成对象")]
     GRAPH[("图库：Jena / Fuseki 或内置类型图（embedded_graphs）<br/>发布后的投影，不是定义源")]
     BIZ[("业务库（只读）：Oracle / PostgreSQL / MySQL<br/>只读事务 + SQL 护栏")]
   end
@@ -424,13 +425,14 @@ flowchart TB
   SRCT --> BIZ
   GRAPHS --> PG
   GRAPHS --> GRAPH
+  GRAPHS --> CHODS
 
   classDef write fill:#fdf6f4,stroke:#e2bbae,color:#a04c38;
   classDef read fill:#f4faf6,stroke:#b9d8c6,color:#2f6b52;
   classDef plain fill:#ffffff,stroke:#cfd9d4,color:#24383a;
   class UI,REST write;
   class QA,EXT,RUN,MCPE,TOOLS read;
-  class ONTO,SNAP,PUB,SRCT,GRAPHS,PURE,PG,GRAPH,BIZ plain;
+  class ONTO,SNAP,PUB,SRCT,GRAPHS,PURE,PG,GRAPH,BIZ,CHODS plain;
   linkStyle 0 stroke:#b4553f,stroke-width:2px;
   linkStyle 1,2,7,8 stroke:#3d7c60,stroke-width:2px;
 ```
@@ -495,20 +497,19 @@ flowchart TB
         │  按「对象类型 + 主键」取对象
         ▼
    对象服务（Object Service）
-        │  FEDERATED（默认）：按版本映射实时回源并投影对象
+        │  按当前版本映射，查询时形成虚拟对象
         ├──► ODS 源表层（ClickHouse）  一张源表一份裁剪副本；AUTO 可用时查询时过滤成对象
-        ├──► 对象检索索引（Object Index）   ClickHouse：可选全文 / 模糊 / 向量加速
         └──► 数据资源连接（DataSourceConnector）  Oracle / PostgreSQL / MySQL 只读事务
 ```
 
-- **索引层**是可选加速：默认对象类型使用虚拟查询，不复制整版实例；只有显式 `AUTO` / `INDEXED` 才允许使用对象索引，代价是复杂 join 和多跳能力受限。
+- **对象无需物化**：列表、全部标签、图谱、问答和本体 SQL 统一虚拟查询。旧 `INDEXED` 配置不再要求物化；旧索引仅兼容维护，存量数据未自动删除。
 - **ODS 是源表层，不是对象层**：只镜像选中列和主键，版本切换不复制；全量走影子表原子替换，增量按水位追平。对象来源可设 `AUTO / DIRECT / ODS`。
 - **回源**按对象类型上绑定的数据资源与主键字段读，只走只读事务与语句白名单。
 - 换中间件（例如把检索索引换成独立搜索引擎）只替换扩展点，对象服务、界面与 AI 工具一行都不用改。
 
 ## 角色与安全
 
-对象页支持版本编辑覆盖与“历史数据”：覆盖层仅保留改过字段，历史采集显式冻结定义和源投影、按页压缩保存。物化清单用定义/映射哈希避免版本切换后误读旧索引；实例图谱可选择 1～3 跳的有界邻域。历史快照记录采集区间，跨表不承诺同一事务时点。实现边界和验证命令见 [虚拟实例改造验收](docs/虚拟实例改造验收.md)。
+对象页支持版本编辑覆盖与“历史数据”：覆盖层仅保留改过字段，历史采集显式冻结定义和源投影、按页压缩保存。版本切换只改变定义和映射，普通查询不读取旧对象索引；实例图谱可选择 1～3 跳的有界邻域。历史快照记录采集区间，跨表不承诺同一事务时点。实现边界和验证命令见 [虚拟实例改造验收](docs/虚拟实例改造验收.md)。
 
 权限是 **13 个权限点**（按模块分组），角色 = 一组权限点。内置三档不可改不可删，也可以自建角色；
 **`admin` 永远拥有全部权限**。入口在「设置 → 用户与角色」。
@@ -661,7 +662,7 @@ flowchart TB
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `POST` | `/api/objects/index` | 把对象按类型同步进检索索引 |
-| `POST` | `/api/objects/materialize` | 物化：把来源数据写进索引 |
+| `POST` | `/api/objects/materialize` | 按主键取进草稿，保存版本编辑基线 |
 | `POST` | `/api/object-search` | 按关键词与过滤条件检索对象 |
 | `POST` | `/api/object-search/reindex` | 重建索引 |
 | `GET` | `/api/audit` | 审计记录（`scope=changes` / `actions` / `reads` / `all`，仅管理员） |
@@ -807,17 +808,18 @@ flowchart TB
     TOOLS["reasoning/tools/（11 个只读工具）"]
     ONTO["ontology/：定义 · 草稿 · 画布 · 接口 · 指标 · 分组 · 体检"]
     VER["versioning/：快照存储与投影 · 已发布定义<br/>instance/：快照编辑 · 发布前校验 · 发布编排"]
-    INST["instance/：对象服务 · 对象索引 · 动作引擎"]
+    INST["instance/：虚拟对象服务 · 版本编辑 · 动作引擎"]
     DS["datasource/：连接器 · DDL · 只读 SQL 与护栏 · 列画像"]
     REA["reasoning/：工具循环 · 提示词 · 历史 · MCP 服务端"]
     MS["mcp/ · skills/：协议与令牌 · 技能与打包"]
     PLAT["platform/：auth · users · permissions · audit · ontologies · targets"]
     DBM["platform/db/：连接 · 实体 · 迁移"]
-    INFRA["infrastructure/：graph（jena / embedded）· object-index（clickhouse）<br/>shared/：common · client · server 通用件"]
+    INFRA["infrastructure/：graph · ODS · persistence · 旧索引兼容适配<br/>shared/：common · client · server 通用件"]
   end
 
   subgraph L_STORE["存储"]
-    PG[("PostgreSQL · ontology_platform：ontologies · ontology_versions · ontology_concepts · object_entries · graph_targets · data_sources · audit_entries")]
+    PG[("PostgreSQL · ontology_platform：定义 · 版本编辑 · 概念索引 · ODS 配置/任务 · 历史 · 权限 · 审计")]
+    ODS[("ClickHouse：ODS 原始源列镜像")]
     GRAPH[("图库：Jena / Fuseki 或内置类型图")]
     BIZ[("业务库（只读）：Oracle / PostgreSQL / MySQL")]
   end
@@ -833,6 +835,7 @@ flowchart TB
   ONTO --> VER
   VER --> PG
   INST --> PG
+  INST --> ODS
   INST --> GRAPH
   DS --> BIZ
   PLAT --> DBM
@@ -857,7 +860,7 @@ ontology_management/
 │       ├── versioning/   # 版本：快照存储 · 快照投影 · 已发布定义
 │       ├── instance/     # 本体实例：对象服务 · 快照编辑 · 发布前校验 · 发布编排 · 动作引擎
 │       ├── datasource/   # 数据资源：连接器 · DDL · 只读 SQL 与护栏 · 列画像 · 来源绑定
-│       ├── query-dsl/    # 查询语义：SQL 表层解析 · 绑定 · 编译 · 对象索引执行
+│       ├── query-dsl/    # 查询语义：SQL 表层解析 · 绑定 · 编译 · ODS / 业务源执行
 │       ├── reasoning/    # 智能问答：工具循环 · tools/（工具实现）· 提示词 · 历史 · MCP 服务端
 │       ├── mcp/          # MCP 对外契约：协议版本 · 工具 schema · 访问令牌
 │       ├── oauth/        # OAuth 2.1：授权码 + PKCE · 客户端 · 刷新令牌

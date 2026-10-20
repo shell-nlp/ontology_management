@@ -1,6 +1,4 @@
 import { getGraphStore } from "@/lib/platform/graph-store";
-import { getObjectIndex } from "@/lib/infrastructure/object-index";
-import { buildIndexEntries } from "@/lib/instance/object-index/entries";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { listDataSources } from "@/lib/datasource/sources";
@@ -47,30 +45,9 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
 
     let canEnforceRequired = false;
     let graphReplaced = false;
-    let indexSynced = false;
     try {
       await store.replaceGraph(snapshot);
       graphReplaced = true;
-      /*
-       * 检索索引是派生数据，但必须和发布同时成立：索引落后会让搜索结果指向不存在的对象，比发布失败更难排查。
-       * 走**增量同步**（按对象键 upsert + 删掉本次没出现的键），不再整表替换：
-       * - 没变的对象不会被删了重写，索引上的读请求不会因为一次发布而整段时间无数据；
-       * - 索引行以 (对象类型, 主键) 为键，和对象身份同一套口径（S3）。
-       * 索引写失败时图数据已替换、版本仍是 DRAFT，走下面同一条「重新发布以恢复一致」的路径。
-       */
-      // 发布写的是"快照里的对象"= SNAPSHOT 来源：prune 只清这一来源，整份物化的对象不受影响。
-      /*
-       * 虚拟查询优先：FEDERATED 类型只存在于业务源/版本快照里，不再复制整版对象到 CH。
-       * AUTO 保留“可显式读索引”的兼容能力；INDEXED 是唯一要求索引完整的策略。
-       */
-      // Version edits now live in PostgreSQL; publishing must not overwrite source materializations.
-      const indexEntries: ReturnType<typeof buildIndexEntries> = [];
-      await getObjectIndex().syncTargetObjects(target.id, indexEntries, {
-        versionId: version.id,
-        prune: true,
-        origin: "SNAPSHOT",
-      });
-      indexSynced = true;
       canEnforceRequired = (await store.reconcileStrongRules(snapshot.definition)).enforced;
       for (const record of await listVersionRecords(version.target_id)) {
         if (record.id !== version.id && record.status === "PUBLISHED") await updateVersionRecord(record.id, { status: "ARCHIVED" });
@@ -82,7 +59,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
         actorId: user.id,
         targetId: version.target_id,
         action: "VERSION_PUBLISH_FAILED",
-        details: { versionId: version.id, kind: target.kind, atomicReplace, graphReplaced, indexSynced, error: message },
+        details: { versionId: version.id, kind: target.kind, atomicReplace, graphReplaced, error: message },
       });
       // 原子替换的后端失败时图数据没动，可以明确告诉用户；非原子后端只能说“可能已改动”。
       throw new Error(graphReplaced

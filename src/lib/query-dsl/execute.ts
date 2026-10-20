@@ -13,15 +13,14 @@ import type { LogicalPlan } from "./ast";
 export type { QueryDslExecutionResult } from "./contract";
 
 export type QueryDslExecutionDeps = {
-  /** 当前本体存储；有它才会判断“完整物化优先”。 */
+  /** 当前本体存储。 */
   targetId?: string;
   getDataSource?: (sourceId: string) => Promise<DataSourceRecord | null>;
   openConnector?: (record: DataSourceRecord) => Promise<DataSourceConnector>;
   /** 只在定义里有没绑资源的来源时才会被调（见 bindings.ts）。 */
   listDataSources?: () => Promise<readonly DataSourceRecord[]>;
   /**
-   * 可选的对象索引执行器。传入且相关类型都已完整物化时优先走索引；否则回源业务库。
-   * 这里是依赖注入点，查询层不 import 任何具体后端。
+   * 兼容旧调用方；普通查询不再执行对象物化索引，统一读取 ODS / 业务源。
    */
   materializedQuery?: MaterializedQueryExecutor;
   /** 可选 ODS 源表执行器：完整 READY 时直接在 ClickHouse 过滤 / 聚合。 */
@@ -80,11 +79,6 @@ async function runQuery(
   const bound = await withInferredDataSources(definition, deps.listDataSources ?? defaultListDataSources);
   const plan = resolveQueryDsl(bound.definition, query);
   await deps.assertReadConsistency?.(plan);
-  const materialized = deps.targetId && deps.materializedQuery
-    ? await deps.materializedQuery.executeLogicalQuery(plan, deps.targetId, bound.definition)
-    : null;
-  if (materialized) return materialized;
-  if ([...plan.entities.values()].some((entity) => entity.indexPolicy === "INDEXED")) throw new QueryDslError("INVALID_QUERY", "查询包含 INDEXED 对象类型，但索引未完整物化或定义/映射已失效。请重新物化，或明确调整该类型的读取策略。");
   const ods = deps.odsQuery ? await deps.odsQuery.executeLogicalQuery(plan) : null;
   if (ods) return ods;
   const explicitOds = [...plan.entities.values()].flatMap((entity) => entity.sources).filter((source) => source.readMode === "ODS");

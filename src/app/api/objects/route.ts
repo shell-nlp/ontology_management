@@ -17,8 +17,8 @@ const filterSchema = z.object({
  * - `GET /api/objects?targetId=&entityType=&key=列=值&…` —— 按主键取一个对象；
  * - `GET /api/objects?targetId=&entityType=&text=&filter=…&sort=…` —— 检索 / 过滤 / 排序 / 分页；
  * - `GET /api/objects?targetId=&entityType=&batch=1&key=…&key=…` —— 批量按主键取对象（支持复合主键）；
- * - `GET /api/objects?targetId=&text=…`（不带 entityType）—— 「全部标签」：跨对象类型读索引；
- * - `origin=auto|index|source` 决定"看索引"还是"回业务库取"，默认 auto。
+ * - `GET /api/objects?targetId=&text=…`（不带 entityType）—— 「全部标签」：逐类型有界虚拟查询；
+ * - 旧 `origin=auto|index|source` 兼容接受，普通读取统一查询当前来源。
  *
  * 这一层不认识图库、索引表或业务表：全交给 `@/lib/object-service`，
  * 换中间件时这里一行都不用改。
@@ -69,10 +69,7 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
     const context = await resolveObjectContext(targetId, params.get("versionId"));
 
     const toNumber = (value: string | null) => (value === null ? undefined : Number(value));
-    /*
-     * 「全部标签」= 不传 entityType：没有单一对象类型，回源无从谈起，只能读对象索引
-     * （索引里没有就如实说没物化）。界面上的"来源：业务库"在全部标签下不适用。
-     */
+    // 全部标签按定义顺序查询每个类型的当前页，不加载全部源行。
     if (!entityType) {
       const all = await queryAllObjects(context, {
         text: params.get("text") ?? undefined,

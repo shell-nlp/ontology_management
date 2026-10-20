@@ -37,7 +37,7 @@ export type ResolvedEntity = {
   alias: string;
   entityTypeId: string;
   entityTypeName: string;
-  /** 虚拟查询优先：只有显式 INDEXED 的类型才允许自动路由到对象索引。 */
+  /** 保留旧定义字段；普通执行不再据此选择对象物化索引。 */
   indexPolicy: "AUTO" | "INDEXED" | "FEDERATED";
   primarySourceId: string;
   dataSourceId: string;

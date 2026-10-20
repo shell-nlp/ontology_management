@@ -3,6 +3,7 @@ import { hasKeyMappings, planLinkSource, type LinkPlan, type LinkSourceDefinitio
 import { objectIdOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
+import { readOdsLinkRows } from "./link-rows";
 
 /**
  * 关系实例（边）的读取（backlog D2）。
@@ -249,22 +250,26 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
     if (filters === null) continue; // 这条关系类型跟这个对象无关，不是问题，别报。
     relationshipTypes.push(relation.name);
 
-    const { connector, label } = await connectorFor(plan.dataSourceId);
-    if (!connector.selectRows) {
-      warnings.push(`数据资源「${label}」不支持结构化取行，读不出关系类型「${relation.name}」的实例。`);
-      continue;
-    }
     const wanted = linkReadColumns(relation, plan);
     const keyGroups = query.seed?.keys.map((key) => linkSeedFilters(plan, { entityType: query.seed!.entityType, keys: [key] })).filter((group): group is DataSourceRowFilter[] => Boolean(group));
-    const result = await connector.selectRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, columns: wanted, filters, ...(keyGroups ? { keyGroups } : {}), limit: remaining });
+    const ods = await readOdsLinkRows(context, plan, wanted, filters, keyGroups, remaining);
+    const direct = ods ? null : await connectorFor(plan.dataSourceId);
+    if (!ods && !direct?.connector.selectRows) {
+      warnings.push(`数据资源「${direct?.label}」不支持结构化取行，读不出关系类型「${relation.name}」的实例。`);
+      continue;
+    }
+    const result = ods ?? await direct!.connector.selectRows!({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, columns: wanted, filters, ...(keyGroups ? { keyGroups } : {}), limit: remaining });
     if (result.truncated) {
       truncated = true;
       warnings.push(`关系类型「${relation.name}」命中行数超过 ${result.rowLimit} 行，只返回了前 ${result.rowLimit} 行。`);
     }
     counted = true;
-    if (connector.countRows) {
+    if (ods) {
+      total = total === null || ods.total === null ? null : total + ods.total;
+    } else if (direct?.connector.countRows) {
       try {
-        total = (total ?? 0) + (await connector.countRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, filters, ...(keyGroups ? { keyGroups } : {}) }));
+        const count = await direct.connector.countRows({ view: { schema: plan.table.schema || undefined, name: plan.table.name }, filters, ...(keyGroups ? { keyGroups } : {}) });
+        if (total !== null) total += count;
       } catch { total = null; }
     } else {
       total = null;

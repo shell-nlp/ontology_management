@@ -2,7 +2,7 @@ import { getObjectIndex } from "@/lib/infrastructure/object-index";
 import { DEFAULT_MATERIALIZE_PAGE_SIZE, MAX_MATERIALIZE_PAGE_SIZE, MIN_MATERIALIZE_PAGE_SIZE } from "@/lib/instance/materialize-limits";
 import { buildIndexEntry } from "@/lib/instance/object-index/entries";
 import type { ObjectIndexEntry } from "@/lib/infrastructure/object-index/types";
-import { objectIdOf, objectKeyOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
+import { objectIdOf, objectRefOf, primaryKeyColumns, propertyForColumn, type ObjectPrimaryKey } from "@/lib/ontology/object-identity";
 import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import { createOdsFirstObjectSource } from "@/lib/instance/object-service/ods-source";
 import { linkOrderColumns, linkReadColumns, linksFromRows } from "@/lib/instance/object-service/links";
@@ -13,22 +13,12 @@ import type { ObjectIndexLink } from "@/lib/infrastructure/object-index/types";
 import { getTarget } from "@/lib/platform/targets";
 import { listVersionRecords } from "@/lib/versioning/snapshot";
 import { applyObjectEdit, queryWithEdits, readEditSnapshot } from "./edit-overlay";
-import { materializationStamp, isMaterializationCurrent } from "@/lib/ontology/materialization-stamp";
-
-async function requireCurrentIndex(context: ObjectContext, name: string) {
-  const manifests = await getObjectIndex().listMaterializations(context.targetId);
-  if (!isMaterializationCurrent(context.definition, name, manifests.find((manifest) => manifest.entityType === name))) {
-    throw new Error(`对象类型「${name}」的物化索引未完成或定义/映射已变化；请重新物化后读取索引。`);
-  }
-}
+import { materializationStamp } from "@/lib/ontology/materialization-stamp";
 
 /**
  * 对象服务（S2）：平台里**唯一**的"按对象类型 + 主键取对象"的入口。
  *
- * 它把"对象从哪来"变成可替换的一层：
- * - `origin: "index"` —— 物化检索索引里有（快，支持全文 / 过滤 / 向量）；
- * - `origin: "source"` —— 按需回源到业务库（全，业务表有多少行就能取多少行）；
- * - `auto`（默认）—— 先问索引，索引里没有这个对象再回源。
+ * 按当前定义从 ODS / 业务源投影对象，再合并版本编辑。普通读取不使用对象物化副本。
  *
  * 上层（API 路由、界面、AI 工具）只认 `(本体, 对象类型, 主键)`，
  * 不认识图库、不认识索引表、也不认识业务库；换中间件只改上面这两个来源的实现。
@@ -58,27 +48,8 @@ export async function resolveObjectContext(targetId: string, versionId?: string 
   return { targetId, definition: record.definition, versionId: record.id };
 }
 
-/** 索引条目与检索命中都满足这个形状，转成对象记录只用到这几项。 */
-type IndexedRecord = Pick<ObjectIndexEntry, "objectId" | "entityType" | "primaryKey" | "title" | "properties">;
-
-function recordFromEntry(entry: IndexedRecord, origin: ObjectOrigin): ObjectRecord {
-  return {
-    objectId: entry.objectId,
-    entityType: entry.entityType,
-    primaryKey: entry.primaryKey,
-    title: entry.title,
-    properties: entry.properties,
-    origin,
-    objectRef: objectRefOf(entry.entityType, entry.primaryKey),
-    warnings: [],
-  };
-}
-
-
-
 /**
- * 按主键取一个对象。索引里有就走索引；没有（或点名要回源）就按
- * `sources[]` 的映射回业务库取，多个来源按主键合并属性。
+ * 按主键虚拟读取对象，多个来源按当前版本映射合并属性。
  */
 export async function getObject(
   context: ObjectContext,
@@ -90,37 +61,19 @@ export async function getObject(
   const objectId = objectIdOf(entityTypeName, primaryKey);
   const local = applyObjectEdit(context, editSnapshot, null, entityTypeName, objectId);
   if (local || editSnapshot?.objectEdits?.[objectId]?.deleted) return local;
-  const policy = context.definition.entityTypes.find((item) => item.name === entityTypeName)?.indexPolicy ?? "FEDERATED";
-  const origin = resolveReadOrigin(policy, options.origin);
-  const objectKey = objectKeyOf(entityTypeName, primaryKey);
-  if (origin !== "source" && objectKey) {
-    await requireCurrentIndex(context, entityTypeName);
-    const entry = await getObjectIndex().readObject(context.targetId, objectKey);
-    if (entry) return applyObjectEdit(context, editSnapshot, recordFromEntry(entry, "index"), entityTypeName, objectId);
-  }
-  if (origin === "index") return applyObjectEdit(context, editSnapshot, null, entityTypeName, objectId);
+  void options; // legacy origin remains accepted; ordinary reads always project current source data
   const { record } = await getObjectSource().readByKey(context.definition, entityTypeName, primaryKey);
   return applyObjectEdit(context, editSnapshot, record, entityTypeName, objectId);
 }
 
-/**
- * 列 / 检索对象。`auto` 的口径：索引里这个对象类型有数据就用索引，
- * 否则回源（典型场景：只建了类型、还没把业务数据物化进索引）。
- */
-/**
- * 对象类型上配的**默认读法**（`entityTypes[].indexPolicy`）说了算：
- * - `FEDERATED` → 一律回源（策略优先于这次查询里临时选的来源）；
- * - `INDEXED` → 只读索引，没物化就明确告知，不静默回源；
- * - `AUTO` → 虚拟查询优先；只有调用方明确点名 `index` 时才读索引。
- * 纯函数，便于单测；新快照默认 `FEDERATED`，老快照缺字段时由 schema 折叠为 `FEDERATED`。
- */
+/** 兼容旧的策略入参；读取统一走虚拟来源，具体路径由来源 readMode 决定。 */
 export function resolveReadOrigin(
   policy: "AUTO" | "INDEXED" | "FEDERATED" | undefined,
   requested: "auto" | ObjectOrigin | undefined,
 ): "auto" | ObjectOrigin {
-  if (policy === "FEDERATED") return "source";
-  if (policy === "INDEXED") return "index";
-  return requested === "index" ? "index" : "source";
+  void policy;
+  void requested;
+  return "source";
 }
 
 export async function queryObjects(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
@@ -129,129 +82,68 @@ export async function queryObjects(context: ObjectContext, query: ObjectQuery): 
 
 async function queryObjectsWithoutEdits(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
   const started = Date.now();
-  // 类型上配了策略就按策略，没配（老快照 / AUTO）才看这次调用临时选的来源。
-  const entityType = context.definition.entityTypes.find((item) => item.name === query.entityType);
-  const policy = entityType?.indexPolicy ?? "FEDERATED";
-  const origin = resolveReadOrigin(policy, query.origin);
-  const policyWarning: string[] = [];
+  const type = context.definition.entityTypes.find((item) => item.name === query.entityType);
+  if (!type) throw new Error(`对象类型「${query.entityType}」不存在。`);
+  if (!type.sources?.some((source) => source.dataSourceId && (source.view || source.sql))) {
+    return { entityType: type.name, rows: [], total: 0, origin: "none", warnings: ["没有可读数据来源，仅展示当前版本的本地对象。"], tookMs: Date.now() - started };
+  }
   const limit = clamp(query.limit, 1, 200, 20);
   const offset = clamp(query.offset, 0, 100000, 0);
-
-  if (origin !== "source") {
-    await requireCurrentIndex(context, query.entityType);
-    const sort = (query.sort ?? []).map((item) => {
-      const property = entityType?.properties.find((candidate) => candidate.name === item.property);
-      if (!property) throw new Error(`对象类型「${query.entityType}」没有属性「${item.property}」，不能用于排序。`);
-      return { property: item.property, direction: item.direction, dataType: property.dataType };
-    });
-    if (query.keys?.length) {
-      if (query.text || query.filters?.length || query.sort?.length) {
-        throw new Error("批量按主键取对象暂不支持同时叠加文本检索、属性筛选或排序；请到对象列表使用单项查询。");
-      }
-      const hits = await Promise.all(query.keys.map((key) => {
-        const objectKey = objectKeyOf(query.entityType, key);
-        return objectKey ? getObjectIndex().readObject(context.targetId, objectKey) : Promise.resolve(null);
-      }));
-      const rows = hits.filter((entry): entry is ObjectIndexEntry => Boolean(entry && entry.entityType === query.entityType)).map((entry) => recordFromEntry(entry, "index"));
-      return {
-        entityType: query.entityType,
-        rows,
-        total: rows.length,
-        origin: "index",
-        warnings: policyWarning,
-        tookMs: Date.now() - started,
-      };
-    }
-    const result = await getObjectIndex().searchObjects({
-      targetId: context.targetId,
-      labels: [query.entityType],
-      text: query.text,
-      filters: query.filters,
-      sort,
-      limit,
-      offset,
-    });
-    if (result.total > 0 || origin === "index") {
-      const warnings = [
-        ...policyWarning,
-        ...(result.textMode === "none" && query.text ? ["索引里没有可用的全文检索能力，这次只按属性过滤。"] : []),
-        ...(policy === "INDEXED" && result.total === 0
-          ? ["这个对象类型要求走索引（INDEXED），但索引里没有它的对象：先到「索引与物化」整份物化；策略下不会自动回源。"]
-          : []),
-      ];
-      // 半份必须报数（2026-10-12 用户口径）：这个类型如果上次物化撞了上限，就说清"只物化了 N 条"。
-      const truncated = await getObjectIndex()
-        .listMaterializations(context.targetId)
-        .then((items) => items.find((item) => item.entityType === query.entityType))
-        .catch(() => undefined);
-      if (truncated?.truncated) {
-        warnings.push(
-          `这个对象类型只物化了 ${truncated.rows} 条（扫描 ${truncated.scanned} 条时撞到上限），源里可能还有更多；` +
-          `要看全量请重新整份物化，或把来源切到「业务库」。`,
-        );
-      }
-      return {
-        entityType: query.entityType,
-        rows: result.hits.map((hit) => recordFromEntry(hit, "index")),
-        total: result.total,
-        origin: "index",
-        warnings,
-        tookMs: Date.now() - started,
-      };
-    }
-  }
-
-  const source = await getObjectSource().query(context.definition, query.entityType, { ...query, limit, offset });
+  const defaultSort = primaryKeyColumns(type).map((column) => propertyForColumn(type, column)).filter((property): property is string => Boolean(property)).map((property) => ({ property, direction: "ASC" as const }));
+  const source = await getObjectSource().query(context.definition, query.entityType, { ...query, sort: query.sort?.length ? query.sort : defaultSort, origin: "source", limit, offset });
   return {
     entityType: query.entityType,
     rows: source.rows,
     total: source.total,
     origin: source.rows.length ? "source" : "none",
-    warnings: [...policyWarning, ...source.warnings],
+    warnings: source.warnings,
     tookMs: Date.now() - started,
   };
 }
 
-/**
- * **不限对象类型**地查对象（对象页「全部标签」用它）。
- *
- * 只能走索引：回源得先知道是哪张表，「全部标签」没有单一来源可回。
- * 所以索引里没有就如实说"还没物化"，不假装有数据。
- */
+/** 按定义中的类型顺序拼接虚拟列表；只取当前页，不把全表加载到内存。 */
 export async function queryAllObjects(
   context: ObjectContext,
-  query: { text?: string; limit?: number; offset?: number } = {},
+  query: { labels?: string[]; text?: string; limit?: number; offset?: number } = {},
 ): Promise<ObjectQueryResult> {
   const started = Date.now();
   const limit = clamp(query.limit, 1, 200, 20);
-  const offset = clamp(query.offset, 0, 100000, 0);
-  const manifests = await getObjectIndex().listMaterializations(context.targetId);
-  const currentLabels = context.definition.entityTypes.filter((entity) => isMaterializationCurrent(context.definition, entity.name, manifests.find((manifest) => manifest.entityType === entity.name))).map((entity) => entity.name);
-  const snapshot = await readEditSnapshot(context);
-  const locals = (snapshot?.nodes ?? []).flatMap((node) => {
-    const edit = snapshot?.objectEdits?.[node.id];
-    if (edit?.base || edit?.deleted) return [];
-    const type = context.definition.entityTypes.find((entity) => node.labels.includes(entity.name));
-    const record = type ? applyObjectEdit(context, snapshot, null, type.name, node.id) : null;
-    return record && (!query.text || JSON.stringify(record.properties).toLowerCase().includes(query.text.toLowerCase())) ? [record] : [];
-  });
-  const localPage = locals.slice(offset, offset + limit);
-  if (!currentLabels.length || localPage.length === limit) return { entityType: "", rows: localPage, total: currentLabels.length ? null : locals.length, origin: localPage.length ? "source" : "none", warnings: ["全部标签仅包含本地对象和有效物化；请选择具体类型读取完整虚拟对象。"], tookMs: Date.now() - started };
-  const result = await getObjectIndex().searchObjects({
-    targetId: context.targetId,
-    labels: currentLabels,
-    text: query.text,
-    limit: limit - localPage.length,
-    offset: Math.max(0, offset - locals.length),
-  });
-  return {
-    entityType: "",
-    rows: [...localPage, ...result.hits.map((hit) => applyObjectEdit(context, snapshot, recordFromEntry(hit, "index"), hit.entityType, hit.objectId)).filter((row): row is ObjectRecord => Boolean(row))],
-    total: snapshot?.objectEdits && Object.values(snapshot.objectEdits).some((edit) => edit.deleted) ? null : result.total + locals.length,
-    origin: "index",
-    warnings: result.total > 0 ? [] : ["对象索引里还没有对象：先在「索引与物化」整份物化，或发布一版快照。"],
-    tookMs: Date.now() - started,
-  };
+  let skip = clamp(query.offset, 0, 100000, 0);
+  const rows: ObjectRecord[] = [];
+  const warnings: string[] = [];
+  let total: number | null = 0;
+  const types = context.definition.entityTypes.filter((type) => !query.labels?.length || query.labels.includes(type.name));
+  const unknown = query.labels?.filter((label) => !context.definition.entityTypes.some((type) => type.name === label));
+  if (unknown?.length) throw new Error(`对象类型不存在：${unknown.join("、")}。`);
+  for (const type of types) {
+    // Counting and one bounded page per type avoids fetching offset+limit rows across every table.
+    let first: ObjectQueryResult;
+    try {
+      first = await queryObjects(context, { entityType: type.name, text: query.text, limit: Math.max(1, limit - rows.length), offset: 0 });
+    } catch (error) {
+      if (skip) throw new Error(`「${type.name}」查询失败，无法保证跨类型分页完整；请选择具体类型。${error instanceof Error ? error.message : String(error)}`);
+      total = null;
+      warnings.push(`「${type.name}」未能查询，本页不包含该类型，结果不完整：${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    warnings.push(...first.warnings.map((warning) => `「${type.name}」：${warning}`));
+    if (total !== null) total = first.total === null ? null : total + first.total;
+    if (rows.length >= limit) continue;
+    if (first.total !== null && skip >= first.total) {
+      skip -= first.total;
+      continue;
+    }
+    if (skip && first.total === null) {
+      throw new Error(`「${type.name}」无法确定完整对象总数，不能保证跨类型分页不漏项；请选择具体对象类型分页查看。`);
+    }
+    const page = skip
+      ? await queryObjects(context, { entityType: type.name, text: query.text, limit: limit - rows.length, offset: skip })
+      : first;
+    if (page !== first) warnings.push(...page.warnings.map((warning) => `「${type.name}」：${warning}`));
+    rows.push(...page.rows);
+    skip = 0;
+  }
+  return { entityType: "", rows, total, origin: rows.length ? "source" : "none", warnings: [...new Set(warnings)], tookMs: Date.now() - started };
 }
 
 /**

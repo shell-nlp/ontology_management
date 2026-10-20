@@ -1,3 +1,4 @@
+import { primaryKeyFromProperties, objectRefOf } from "@/lib/ontology/object-identity";
 import { ToolContext, toolEnabled, ConceptKind, CONCEPT_KINDS, DEFAULT_SEARCH_MATCHES, MAX_SEARCH_MATCHES, SQL_ROW_CEILING, DEFAULT_SQL_ROWS, REASONING_TOOLS } from "./registry";
 import { schemaConcepts, schemaQueryHasStrongHit, rankSchemaConcepts } from "./search";
 import { objectContextOf, instanceOf, keyMappingsOf, dataSourcesForTable, objectTypesBoundTo, clamp, DEFAULT_TRAVERSE_HOPS, MAX_TRAVERSE_HOPS, TypeGraphNode, TypeGraphEdge, interfaceDerivedLinks, TraverseDirection, parseTraverseDirection, TypeGraphTraversal } from "./projection";
@@ -12,9 +13,8 @@ import { cachedColumnValueIndex, columnValueOf, ensureColumnProfile, enumProfile
 import { type OntologyDefinition } from "@/lib/ontology";
 import { queryObjects } from "@/lib/instance/object-service";
 import { columnValuesHint, executeOntologySql, QueryDslError, type QueryDslValueLookup } from "@/lib/query-dsl";
-import { queryLinks } from "@/lib/instance/object-service/links";
+import { readInstanceGraph } from "@/lib/instance/object-service/instance-graph";
 import { type ObjectRecord } from "@/lib/instance/object-service/types";
-import { getMaterializedQueryExecutor } from "@/lib/infrastructure/object-index";
 import { getOdsQueryExecutor } from "@/lib/infrastructure/ods";
 import { assertQueryEditConsistency } from "@/lib/instance/object-service/edit-overlay";
 import { type ToolOutcome, type ToolSpec } from "@/lib/reasoning/types";
@@ -227,7 +227,7 @@ export function enabledReasoningToolNames(disabledTools: readonly string[] = [])
 }
 
 export async function runReasoningTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<ToolOutcome> {
-  const { definition, store, runtimeTypes } = context;
+  const { definition, runtimeTypes } = context;
 
   // 批量入口只负责编排，单项仍走下面原有实现，保证旧参数与单项返回字段完全不变。
   if (name === "search_schema") {
@@ -901,7 +901,6 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const result = await executeOntologySql(definition, sql, {
         parameters,
         targetId: context.store.target.id,
-        materializedQuery: getMaterializedQueryExecutor(),
         odsQuery: getOdsQueryExecutor(),
         assertReadConsistency: (plan) => assertQueryEditConsistency(objectContextOf(context), plan),
       })
@@ -933,34 +932,15 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       } catch (error) {
         result.warnings = [error instanceof Error ? error.message : "对象服务读取失败。"];
       }
-      // 对象服务没有这条数据来源、索引里也没有时，退回图库里已发布的那份对象，别让工具整个失败。
-      if (!result.rows.length && result.origin === "none") {
-        const nodes = await store.listEntities({ label: typeName, search, limit });
-        result = {
-          rows: nodes.slice(0, limit).map((node) => ({
-            objectId: node.id,
-            entityType: node.labels[0] ?? typeName,
-            primaryKey: {},
-            title: "",
-            properties: node.properties,
-            origin: "index" as const,
-            objectRef: node.id,
-            warnings: [],
-          })),
-          origin: nodes.length ? "index" : "none",
-          total: nodes.length,
-          warnings: result.warnings,
-        };
-      }
       const instances = result.rows.slice(0, limit).map(instanceOf);
       return {
         payload: {
           object_type: typeName,
           returned: instances.length,
           instances,
-          source: result.origin === "source" ? "数据资源（按主键回源，未落库）" : result.origin === "index" ? "本体索引" : "无",
+          source: result.origin === "source" ? "虚拟对象服务（ODS / 业务源 + 版本编辑）" : "无",
           total_matched: result.total,
-          note: "回答时只引用上面出现过的 object_id；_origin 为 source 的对象是实时读业务库拿到的，本体里没有它的副本。",
+          note: "回答时只引用上面出现过的 object_id。对象按当前定义从 ODS / 业务源生成并合并版本编辑；ODS 数据新鲜度取决于同步时间。",
           warnings: result.warnings,
         },
         evidence: instances.map((item) => ({ kind: "OBJECT" as const, id: item._instance_identity.object_id, label: item._instance_identity.title || item._instance_identity.object_type })),
@@ -972,72 +952,15 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
       const relationshipTypes = Array.isArray(args.relationship_types) ? args.relationship_types.map(String) : [];
       const nodeLimit = clamp(args.node_limit, 60, 200);
       const search = typeof args.search === "string" && args.search.trim() ? args.search.trim() : null;
-      const warnings: string[] = [];
-      // 节点走对象服务（索引 / 数据源），关系仍来自本体图里已有的关系实例。
-      const allScopeTypes = typeNames.length ? typeNames : definition.entityTypes.map((item) => item.name);
-      const scopeTypes = allScopeTypes.slice(0, 12);
-      // 一次只取前 12 个类型是**取数的量级控制**：这次没取的类型要说出来，别让模型以为本体里没有它们。
-      if (allScopeTypes.length > scopeTypes.length) {
-        warnings.push(`这次只从 ${scopeTypes.length} 个对象类型里取对象（共 ${allScopeTypes.length} 个可取的）：没取的 ${allScopeTypes.length - scopeTypes.length} 个是「${allScopeTypes.slice(scopeTypes.length, scopeTypes.length + 5).join("、")}${allScopeTypes.length - scopeTypes.length > 5 ? " 等" : ""}」。要指定取哪些就传 type_names。`);
-      }
-      const perType = Math.max(5, Math.ceil(nodeLimit / Math.max(1, scopeTypes.length)));
-      const objectContext = objectContextOf(context);
-      const collected: ObjectRecord[] = [];
-      for (const typeName of scopeTypes) {
-        try {
-          const result = await queryObjects(objectContext, { entityType: typeName, text: search ?? undefined, limit: perType });
-          collected.push(...result.rows);
-          warnings.push(...result.warnings);
-        } catch (error) {
-          warnings.push(`${typeName}：${error instanceof Error ? error.message : "读取失败。"}`);
-        }
-      }
-      const records = collected.slice(0, nodeLimit);
-      const nodeIds = new Set(records.map((record) => record.objectId));
-      const graph = await store.readGraph({ labels: typeNames, relationshipTypes, search, nodeLimit: nodeLimit * 3 });
-      const graphRelationships = graph.relationships.filter((item) => nodeIds.has(item.source) && nodeIds.has(item.target));
-      /*
-       * 关系类型配了数据来源（D2）就按对象主键回业务库取边 —— 否则"数据源来的节点没有连线"
-       * 会让模型以为 AB 之间没关系。按对象类型分组问，一个类型一次查询。
-       */
-      const liveLinks: { id: string; type: string; source: string; target: string }[] = [];
-      const seedByType = new Map<string, Record<string, string>[]>();
-      for (const record of records) {
-        if (!Object.keys(record.primaryKey).length) continue;
-        seedByType.set(record.entityType, [...(seedByType.get(record.entityType) ?? []), record.primaryKey]);
-      }
-      for (const [entityType, keys] of seedByType) {
-        try {
-          const result = await queryLinks(objectContext, { seed: { entityType, keys }, relationshipType: relationshipTypes[0], limit: nodeLimit });
-          for (const link of result.links) {
-            if (!nodeIds.has(link.source.objectId) || !nodeIds.has(link.target.objectId)) continue;
-            liveLinks.push({ id: link.linkRef, type: link.relationshipType, source: link.source.objectId, target: link.target.objectId });
-          }
-        } catch (error) {
-          warnings.push(`${entityType} 的关系实例读取失败：${error instanceof Error ? error.message : "未知错误"}`);
-        }
-      }
-      const seenRelationship = new Set<string>();
-      const relationships = [...graphRelationships.map((item) => ({ id: item.id, type: item.type, source: item.source, target: item.target })), ...liveLinks]
-        .filter((item) => (seenRelationship.has(item.id) ? false : (seenRelationship.add(item.id), true)))
-        .slice(0, nodeLimit * 2);
-      // 图库里还有、但对象服务没取到的节点（例如没绑来源也没进索引的旧对象）也一并带上，别凭空丢信息。
-      for (const node of graph.nodes) {
-        if (records.length >= nodeLimit) break;
-        if (nodeIds.has(node.id)) continue;
-        nodeIds.add(node.id);
-        records.push({
-          objectId: node.id,
-          entityType: node.labels[0] ?? "",
-          primaryKey: {},
-          title: "",
-          properties: node.properties,
-          origin: "index",
-          objectRef: node.id,
-          warnings: [],
-        });
-      }
+      const graph = await readInstanceGraph(objectContextOf(context), { labels: typeNames, relationshipTypes, search, nodeLimit });
+      const warnings = graph.warnings;
+      const records: ObjectRecord[] = graph.nodes.map((node) => {
+        const type = definition.entityTypes.find((item) => node.labels.includes(item.name));
+        const primaryKey = type ? primaryKeyFromProperties(type, node.properties).primaryKey : {};
+        return { objectId: node.id, entityType: type?.name ?? node.labels[0] ?? "", properties: node.properties, primaryKey, title: String(node.properties[type?.displayProperty ?? "name"] ?? ""), origin: "source", objectRef: type ? objectRefOf(type.name, primaryKey) : node.id, warnings: [] };
+      });
       const nodes = records.map(instanceOf);
+      const relationships = graph.relationships;
       return {
         payload: {
           node_count: nodes.length,
@@ -1048,7 +971,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
             source_id: relationship.source,
             target_id: relationship.target,
           })),
-          note: "节点可能来自数据源（_origin=source，实时读取、本体里没有副本）也可能来自本体索引；关系来自两处：本体索引里已存在的关系实例，以及**配了数据来源的关系类型**按对象主键回业务库取到的边。只有端点对象也在结果里的边才会带上。",
+          note: "节点和关系统一由虚拟对象服务按当前版本读取，包含版本本地编辑；ODS 的数据新鲜度取决于同步时间。结果是有界子图，只有两端对象都在结果中的关系才展示。",
           warnings,
         },
         evidence: [

@@ -194,7 +194,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
     name: "run_query",
     description:
       `按本体 SQL（SQL 形状的查询表层）执行只读问数：只写对象类型、属性、关系类型、指标与参数，不写物理表名 / 列名。这是结构化问数的优先入口。
-执行时会自动路由：查询涉及的对象类型与关系类型都已完整物化时读 ClickHouse 对象索引；任意一处没物化或只物化了一部分时回源业务库。返回值里的 data_source / data_source_kind 会标明这次实际读了哪一边。
+执行时按来源读取路径自动路由到 READY 的 ClickHouse ODS 镜像或业务源，在查询时形成对象与统计结果，不依赖对象物化索引。显式 ODS 缺镜像或所需列时报错，AUTO 才允许回源。data_source / data_source_kind 标明实际来源；ODS 的数据新鲜度取决于同步时间。
 语法子集：SELECT … FROM 对象类型 [AS 别名] [[LEFT] JOIN 关系类型 [AS 别名] [FORWARD|BACKWARD|BOTH]] … [WHERE …] [GROUP BY …] [ORDER BY …] [LIMIT n]。
 例：① SELECT 统计日期, 地市编码 FROM 专线产品用户 WHERE 业务状态 = '在用' ORDER BY 统计日期 DESC LIMIT 20；② SELECT 地市名称, COUNT(*) AS 条数 FROM 专线产品用户 LEFT JOIN 归属地市 AS 地市 GROUP BY 地市名称 ORDER BY 条数 DESC；③ SELECT 专线条数 AS 条数 FROM 专线产品用户 WHERE 统计日期 = :day（:名字 的取值放 parameters）。
 写法要点：聚合写 COUNT(*) / COUNT(DISTINCT 属性) / SUM|AVG|MIN|MAX(属性)，每项都要 AS 列名；聚合查询里出现的普通属性必须同时写进 GROUP BY；ORDER BY 用输出列名或属性名；筛选支持 = <> > >= < <= / IN / NOT IN / BETWEEN … AND … / IS [NOT] NULL / LIKE '%值%'（也支持 '值%' / '%值'）/ LABEL(属性) = '枚举标签'（按码值的中文标签过滤；也支持 SELECT LABEL(属性) AS 列名 … GROUP BY LABEL(属性) 把标签当输出 / 分组维度，要求该属性配了 enumValues）/ AND OR NOT 与括号。**日期属性（DATE / DATETIME 列）不能用 LIKE 取某一天**：某一天写 统计日期 >= '2026-09-13' AND 统计日期 < '2026-09-14'，区间写 BETWEEN … AND …（= '当天' 只在列里没有时分秒时才等于当天）。
@@ -218,7 +218,7 @@ JOIN 只能写关系类型、不给写 ON 条件（连接的读法由关系类�
   {
     name: "query_object_instance",
     description:
-      "按对象类型查询真实对象（实例）：先查本体的物化索引，索引里没有就按对象类型绑定的数据资源回源取数（回源这一批不落库）。传接口名时，实现了该接口的类型的实例也会一起返回。返回的 _instance_identity.object_id 与 _primary_key 是真标识，后续只能用返回过的 id。",
+      "按对象类型查询真实对象（实例）：按当前版本的来源和属性映射，从 ODS 或业务源查询时形成对象，并合并版本本地编辑；不要求对象物化。ODS 的数据新鲜度取决于同步时间。返回的 _instance_identity.object_id 与 _primary_key 是真标识，后续只能用返回过的 id。",
     parameters: {
       type: "object",
       properties: {
@@ -232,7 +232,7 @@ JOIN 只能写关系类型、不给写 ON 条件（连接的读法由关系类�
   {
     name: "query_instance_subgraph",
     description:
-      "按对象类型与关系类型取一张子图，返回节点与关系：节点来自对象服务（索引或数据源），关系来自本体图里已存在的关系实例。用于回答「A 和 B 之间怎么连」这类问题；节点可能来自数据源而没有任何关系，这时如实说明。",
+      "按对象类型与关系类型取有界子图：节点由当前版本对象服务查询时形成，关系按两端键映射从 ODS / 业务源读取，并包含版本本地关系，不要求对象或关系物化。只返回两端对象都在结果中的边，数量上限和未读取的端点会明确提示。用于回答「A 和 B 之间怎么连」。",
     parameters: {
       type: "object",
       properties: {

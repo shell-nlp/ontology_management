@@ -49,7 +49,7 @@ export async function queryWithEdits(context: ObjectContext, query: ObjectQuery,
   const type = context.definition.entityTypes.find((item) => item.name === query.entityType);
   if (!snapshot || !type) return execute(query);
   const edits = Object.entries(snapshot.objectEdits ?? {}).filter(([, edit]) => edit.entityTypeId === type.id);
-  const localNodes = snapshot.nodes.filter((node) => node.labels.includes(type.name) && (!snapshot.objectEdits?.[node.id] || snapshot.objectEdits[node.id].base === null));
+  const localNodes = snapshot.nodes.filter((node) => node.labels.includes(type.name) && !snapshot.objectEdits?.[node.id]?.deleted && (!snapshot.objectEdits?.[node.id] || snapshot.objectEdits[node.id].base === null));
   const touched = new Set<string>();
   for (const [id, edit] of edits) {
     if (!edit.base) continue;
@@ -72,16 +72,17 @@ export async function queryWithEdits(context: ObjectContext, query: ObjectQuery,
     return { ...result, total: result.rows.length };
   }
   // Avoid inventing a merged aggregate or a global sort across databases and local edits.
-  if (localNodes.length && (query.filters?.length || query.sort?.length || query.text)) {
+  if (localNodes.length && (query.filters?.length || query.sort?.length)) {
     throw new Error("当前版本包含本地新建对象，跨源筛选和排序尚不能保证全量口径。请按主键查询，或移除筛选查看合并列表。");
   }
   const limit = Math.min(200, Math.max(1, query.limit ?? 20));
   const offset = Math.max(0, query.offset ?? 0);
-  const locals = localNodes.slice(offset, offset + limit).map((node) => applyObjectEdit(context, snapshot, null, type.name, node.id)).filter((row): row is ObjectRecord => Boolean(row));
+  const matchingLocals = localNodes.filter((node) => !query.text || Object.values(node.properties).some((value) => String(value ?? "").toLowerCase().includes(query.text!.toLowerCase())));
+  const locals = matchingLocals.slice(offset, offset + limit).map((node) => applyObjectEdit(context, snapshot, null, type.name, node.id)).filter((row): row is ObjectRecord => Boolean(row));
   const result = locals.length === limit
     ? { entityType: type.name, rows: [], total: null, origin: "none" as const, warnings: [], tookMs: 0 }
-    : await execute({ ...query, offset: Math.max(0, offset - localNodes.length), limit: limit - locals.length });
+    : await execute({ ...query, offset: Math.max(0, offset - matchingLocals.length), limit: limit - locals.length });
   const rows = result.rows.map((row) => applyObjectEdit(context, snapshot, row, type.name, row.objectId)).filter((row): row is ObjectRecord => Boolean(row));
   const deleted = edits.some(([, edit]) => edit.deleted);
-  return { ...result, rows: [...locals, ...rows], total: deleted ? null : result.total === null ? null : result.total + localNodes.length, warnings: [...result.warnings, ...(deleted ? ["当前版本隐藏了部分源对象；总数未作跨源精确统计，当前页可能少于页大小。"] : [])] };
+  return { ...result, rows: [...locals, ...rows], total: deleted ? null : result.total === null ? null : result.total + matchingLocals.length, warnings: [...result.warnings, ...(deleted ? ["当前版本隐藏了部分源对象；总数未作跨源精确统计，当前页可能少于页大小。"] : [])] };
 }

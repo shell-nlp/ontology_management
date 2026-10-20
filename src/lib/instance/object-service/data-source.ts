@@ -288,7 +288,7 @@ export function createDataSourceObjectSource(): ObjectSource {
         if (mapped.sourceId !== main.id) {
           throw new Error(
             `筛选「${filter.property}」来自补充来源「${mapped.source.view || mapped.sourceId}」。` +
-            `当前虚拟查询不能跨来源下推过滤；请把它做成对象类型的取数口径（DERIVED SQL），或把该类型切到物化索引。`,
+            `当前虚拟查询不能跨来源下推过滤；请把它做成对象类型的取数口径（DERIVED SQL）。`,
           );
         }
         filters.push({
@@ -302,7 +302,7 @@ export function createDataSourceObjectSource(): ObjectSource {
         if (mapped.sourceId !== main.id) {
           throw new Error(
             `排序「${item.property}」来自补充来源「${mapped.source.view || mapped.sourceId}」。` +
-            `当前虚拟查询不能跨来源下推排序；请把它做成对象类型的取数口径（DERIVED SQL），或把该类型切到物化索引。`,
+            `当前虚拟查询不能跨来源下推排序；请把它做成对象类型的取数口径（DERIVED SQL）。`,
           );
         }
         return { column: mapped.column, direction: item.direction };

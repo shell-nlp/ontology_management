@@ -7,7 +7,7 @@ import type { ObjectSearchFilter } from "@/lib/infrastructure/object-index/types
  *
  * 三件事在这里被固定下来，之后换中间件的代价就只是"换一个适配器"：
  * 1. **上层只认 `(本体, 对象类型, 主键)`**，不认图库、不认索引表、不认业务表；
- * 2. **对象从哪来由 `origin` 决定**：`index` = 物化索引里有（快），`source` = 按需回源（全）；
+ * 2. **普通读取统一虚拟化**：按来源 readMode 读取 ODS / 业务源，合并版本编辑；
  * 3. **对象来源是一个端口（`ObjectSource`）**，当前实现是"数据资源连接器"，
  *    将来要接物化对象层 / ES / REST，只加一个实现，门面与界面都不用改。
  */
@@ -50,7 +50,7 @@ export type ObjectQuery = {
   sort?: { property: string; direction: "ASC" | "DESC" }[];
   limit?: number;
   offset?: number;
-  /** auto = 索引里有这个对象类型的条目就用索引，否则回源。 */
+  /** 兼容旧入参；普通读取始终按当前版本来源投影对象。 */
   origin?: "auto" | ObjectOrigin;
   /** 回源时是否顺带统计总数（默认 true）。整份物化逐页翻时传 false，省掉每页一次 COUNT(*)。 */
   count?: boolean;
@@ -70,7 +70,7 @@ export type ObjectQuery = {
 export type ObjectQueryResult = {
   entityType: string;
   rows: ObjectRecord[];
-  /** 索引侧给得出精确总数；回源侧拿不到时是 null，不编造。 */
+  /** 精确总数无法取得（例如版本墓碑覆盖）时为 null，不编造。 */
   total: number | null;
   origin: ObjectOrigin | "none";
   warnings: string[];
