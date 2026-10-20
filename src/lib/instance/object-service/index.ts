@@ -57,7 +57,43 @@ export function resolveReadOrigin(
 
 export async function queryObjects(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
   query.signal?.throwIfAborted();
-  return queryWithEdits(context, query, (next) => queryObjectsWithoutEdits(context, next));
+  const result = await queryWithEdits(context, query, (next) => queryObjectsWithoutEdits(context, next));
+  return dedupeObjectRows(result);
+}
+
+/**
+ * React 和对象操作都以对象身份作为键。源表主键重复时必须显式报数后折叠当前页，
+ * 不能把同一对象渲染成多个列表项，也不能静默装作源里只有一个。
+ */
+function dedupeObjectRows(result: ObjectQueryResult): ObjectQueryResult {
+  const seen = new Set<string>();
+  const rows: ObjectRecord[] = [];
+  let duplicated = 0;
+  let missingKey = 0;
+  for (const row of result.rows) {
+    if (!row.objectId) {
+      missingKey += 1;
+      rows.push(row);
+      continue;
+    }
+    if (seen.has(row.objectId)) {
+      duplicated += 1;
+      continue;
+    }
+    seen.add(row.objectId);
+    rows.push(row);
+  }
+  const warnings = [...result.warnings];
+  if (duplicated) {
+    warnings.push(
+      `源数据里有 ${duplicated} 行与其他行形成相同的对象身份（主键重复），当前页只显示每个身份一行。` +
+      "请修正主键或组合键，或使用 DERIVED 取数口径先去重。",
+    );
+  }
+  if (missingKey) {
+    warnings.push(`当前页有 ${missingKey} 行主键不完整，无法稳定识别和去重；请补齐主键映射。`);
+  }
+  return { ...result, rows, warnings: [...new Set(warnings)] };
 }
 
 async function queryObjectsWithoutEdits(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {

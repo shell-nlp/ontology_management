@@ -95,7 +95,23 @@ describe("统一虚拟对象读取", () => {
     mocks.query.mockResolvedValue({ rows: [row, row], total: 2, warnings: [], limit: 20 });
     const graph = await readInstanceGraph(context, { labels: ["客户"], nodeLimit: 20 });
     expect(graph.nodes).toHaveLength(1);
-    expect(graph.warnings.join()).toContain("主键重复合并 1 行");
+    expect(graph.warnings.join()).toContain("主键重复");
+    expect(graph.warnings.join()).toContain("只显示每个身份一行");
+  });
+  it("对象列表按身份去重并明确报告源主键重复", async () => {
+    const row = record("客户", "A");
+    mocks.query.mockResolvedValue({ rows: [row, row, { ...row, properties: { ...row.properties, 地区: "999" } }], total: 3, warnings: [], limit: 20 });
+    const result = await queryObjects(context, { entityType: "客户" });
+    expect(result.rows).toHaveLength(1);
+    expect(result.total).toBe(3);
+    expect(result.warnings.join()).toContain("有 2 行与其他行形成相同的对象身份");
+  });
+  it("主键不完整时保留行但提示无法稳定识别", async () => {
+    const noKey = { ...record("客户", ""), objectId: "", primaryKey: {}, objectRef: "客户/" };
+    mocks.query.mockResolvedValue({ rows: [noKey], total: 1, warnings: [], limit: 20 });
+    const result = await queryObjects(context, { entityType: "客户" });
+    expect(result.rows).toHaveLength(1);
+    expect(result.warnings.join()).toContain("主键不完整");
   });
   it("某个类型不可读时展示其它类型并明确报告不完整", async () => {
     mocks.query.mockImplementation(async (_definition, type) => {
