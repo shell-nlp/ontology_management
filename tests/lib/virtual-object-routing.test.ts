@@ -116,4 +116,21 @@ describe("统一虚拟对象读取", () => {
     expect(graph.relationships).toHaveLength(0);
     expect(graph.warnings.join()).toContain("关系不完整：link source offline");
   });
+  it("交互页拿满一页就停止类型扇出，不为总数继续查其它表", async () => {
+    const result = await queryAllObjects(context, { limit: 2, count: false });
+    expect(result.rows).toHaveLength(2);
+    expect(result.total).toBeNull();
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+    expect(mocks.query.mock.calls[0][2].count).toBe(false);
+    expect(result.warnings.join()).toContain("未继续查询其它类型");
+  });
+  it("取消的交互请求不再读取下一张表", async () => {
+    const controller = new AbortController();
+    mocks.query.mockImplementationOnce(async () => {
+      controller.abort();
+      return { rows: [record("客户", "A")], total: 1, warnings: [], limit: 20 };
+    });
+    await expect(queryAllObjects(context, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+  });
 });

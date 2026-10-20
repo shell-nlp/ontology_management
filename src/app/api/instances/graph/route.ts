@@ -23,7 +23,7 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
     const search = params.get("search");
     const nodeLimit = Number(params.get("nodeLimit") ?? 300);
     const context = await resolveObjectContext(targetId, versionId);
-    const graph = await readInstanceGraph(context, { labels, relationshipTypes, search, nodeLimit });
+    const graph = await readInstanceGraph(context, { labels, relationshipTypes, search, nodeLimit, signal: request.signal });
     return NextResponse.json(graph);
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取图谱。") }, { status: apiErrorStatus(error) });

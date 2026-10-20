@@ -555,6 +555,9 @@
 
 ## 前端组件边界（2026-10-19）
 
+- **交互读取有生命周期**：页面 GET 使用 `usePageApi` 或显式 AbortController，离开页面或切换本体时取消；服务端在类型/分页边界检查取消信号。不能取消后台问答、SSE 或已提交的写操作。通用 JSON GET 最长等待 30 秒，失败要有本地重试状态，不把错误伪装成零条数据。
+- **全部标签先返回当前页**：交互入口默认不统计跨类型总数，拿满一页就停止扇出，不继续扫描其它表。总数必须返回 null 并说明未统计；显式 `count=1` 保留完整计数入口，不得伪造精确总数。
+
 - **工作台页面按需加载**：`functional-workbench.tsx` 只同步加载登录和工作台壳；本体建模、对象、关系、图谱、问答、MCP、数据资源、技能等页面使用 `next/dynamic`。不要重新把重型页面全部静态 import 回来，否则首屏客户端包会重新变大。
 - **`workbench/shared.tsx` 只做兼容出口**：类型、权限/实体辅助、Toast、设置 hooks、分栏布局分别放在同目录 `types.ts`、`feedback.tsx`、`settings.ts`、`manager-grid.tsx`。新增代码优先 import 具体模块。
 - **HTTP 端点先建客户端**：本体/实例/问答等重复接口放在 `src/lib/shared/client/*-api.ts`；数据资源接口属于数据源域，放 `src/lib/datasource/client-api.ts`。组件不重复拼相同 URL；存量调用可渐进迁移。

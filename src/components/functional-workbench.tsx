@@ -5,7 +5,7 @@ import { Overview } from "@/components/workbench/overview";
 import { type User, may, type Target, type Version, type View, targetFromStorage, graphNoun, Toast, useDisplaySettings } from "@/components/workbench/shared";
 import { VersionBar } from "@/components/workbench/version-bar";
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, BookOpen, CircleDot, GitBranch, Link2, LogOut, Network, Settings2, ShieldAlert, ShieldCheck, MessagesSquare, Sparkles, Table2, Terminal, UserRound, type LucideIcon } from "lucide-react";
 
 import { type EntitySearchResult } from "@/components/entity-search-picker";
@@ -134,8 +134,8 @@ export function FunctionalWorkbench() {
   const workspaceVersion = versionsReady ? draft ?? published : null;
   const definition = versionsReady ? draft?.definition ?? published?.definition ?? emptyDefinition : emptyDefinition;
 
-  const notify = (text: string) => { setMessage(text); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); messageTimer.current = setTimeout(() => setMessage(null), 5000); };
-  const fail = (reason: unknown) => { setError(typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
+  const notify = useCallback((text: string) => { setMessage(text); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); messageTimer.current = setTimeout(() => setMessage(null), 5000); }, []);
+  const fail = useCallback((reason: unknown) => { if (reason instanceof Error && reason.name === "AbortError") return; setError(typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "操作失败。"); setMessage(null); if (messageTimer.current) clearTimeout(messageTimer.current); }, []);
   const dismiss = () => { setMessage(null); setError(null); if (messageTimer.current) clearTimeout(messageTimer.current); };
 
   const loadOntologies = async () => {

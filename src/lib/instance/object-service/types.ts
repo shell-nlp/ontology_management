@@ -41,6 +41,8 @@ export type ObjectRecord = {
 };
 
 export type ObjectQuery = {
+  /** 交互请求取消后停止后续读取，不影响后台问答或同步任务。 */
+  signal?: AbortSignal;
   entityType: string;
   text?: string;
   filters?: ObjectSearchFilter[];

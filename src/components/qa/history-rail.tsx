@@ -15,8 +15,8 @@ export function loadHistoryOpen() {
 }
 
 /** 读一个本体的历史列表。列表接口只回摘要，点开某一条才会取完整内容。 */
-export function fetchConversations(targetId: string) {
-  return reasoningApi.conversations(targetId).then((data) => data.conversations as ConversationSummary[]);
+export function fetchConversations(targetId: string, signal?: AbortSignal) {
+  return reasoningApi.conversations(targetId, signal).then((data) => data.conversations as ConversationSummary[]);
 }
 
 /**
@@ -40,7 +40,9 @@ export type RailItem = {
   pending?: boolean;
 };
 
-export function HistoryRail({ items, loading, activeId, loadingId, confirmingId, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
+export function HistoryRail({ items, loading, error, onRetry, activeId, loadingId, confirmingId, onOpen, onAskDelete, onCancelDelete, onConfirmDelete }: {
+  error?: string | null;
+  onRetry?: () => void;
   items: RailItem[];
   /** 列表正在读：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
   loading: boolean;
@@ -62,7 +64,8 @@ export function HistoryRail({ items, loading, activeId, loadingId, confirmingId,
         {items.length > 0 && <em>{items.length}</em>}
       </header>
 
-      {!items.length ? (
+      {error ? <div className="qa-history-empty" role="alert"><p>{error}</p><button className="action compact" onClick={onRetry}>重新加载</button></div> : null}
+      {!items.length && !error ? (
         <p className="qa-history-empty">
           {loading
             ? "正在读取对话历史…"

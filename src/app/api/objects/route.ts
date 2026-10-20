@@ -75,6 +75,8 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
         text: params.get("text") ?? undefined,
         limit: toNumber(params.get("limit")),
         offset: toNumber(params.get("offset")),
+        count: params.get("count") === "1",
+        signal: request.signal,
       });
       return NextResponse.json(all);
     }
@@ -95,6 +97,7 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
       limit: toNumber(params.get("limit")),
       offset: toNumber(params.get("offset")),
       origin,
+      signal: request.signal,
     });
     return NextResponse.json(result);
   } catch (error) {

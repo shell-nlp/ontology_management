@@ -19,6 +19,8 @@ export type OdsTableSpec = {
 };
 
 export type OdsReadQuery = {
+  /** false 时只取当前页，不执行全表计数；total 返回 null。 */
+  count?: boolean;
   sourceId: string;
   tableName: string;
   columns: string[];

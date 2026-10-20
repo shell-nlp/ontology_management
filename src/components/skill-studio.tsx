@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Boxes, Check, Copy, Download, FileText, PackageCheck, Sparkles, Terminal, X } from "lucide-react";
-import { api } from "@/lib/shared/client/api-client";
+import { usePageApi } from "@/lib/shared/client/use-page-api";
 import { copyText, downloadResponse } from "@/lib/shared/client/clipboard";
 import "./skill-studio.css";
 
@@ -139,24 +139,30 @@ function connectTabs(url: string): ConnectTab[] {
 }
 
 export function SkillStudio({ notify, fail }: { notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const api = usePageApi();
   const [skills, setSkills] = useState<SkillSummary[] | null>(null);
   const [mcp, setMcp] = useState<SkillMcpInfo | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [view, setView] = useState<SkillView>("skills");
   const [modalOpen, setModalOpen] = useState(false);
   const [connectTab, setConnectTab] = useState("generic");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     api<SkillsPayload>("/api/skills")
       .then((data) => {
+        if (cancelled) return;
         // MCP 地址以**浏览器当前地址**为准：服务端给的 absoluteUrl 有可能是它自己认的 localhost，
         // 复制出去换台机器就废了（2026-09-18 用户报的：「不能只是 localhost，要根据前端 url 变化才对」）。
         setMcp({ ...data.mcp, absoluteUrl: `${window.location.origin}${data.mcp.endpoint}` });
         setSkills(data.skills);
         setHint(data.hint);
       })
-      .catch((reason) => { setSkills([]); fail(reason); });
-  }, [fail]);
+      .catch((reason) => { if (!cancelled && reason?.name !== "AbortError") { setLoadError(reason instanceof Error ? reason.message : "技能清单读取失败"); fail(reason); } });
+    return () => { cancelled = true; };
+  }, [api, fail, reload]);
 
   const download = async (url: string, name: string, message: string) => {
     try {
@@ -189,12 +195,14 @@ export function SkillStudio({ notify, fail }: { notify: (text: string) => void; 
 
       <div className="view-switcher" aria-label="本体技能视图">
         <button className={view === "skills" ? "active" : ""} aria-pressed={view === "skills"} onClick={() => setView("skills")}>
-          技能清单 <b>{skills?.length ?? 0}</b>
+          技能清单 <b>{skills?.length ?? "…"}</b>
         </button>
         <button className={view === "mcp" ? "active" : ""} aria-pressed={view === "mcp"} onClick={() => setView("mcp")}>
           MCP 接入
         </button>
       </div>
+
+      {loadError ? <div className="panel functional-panel" role="alert"><p>{loadError}</p><button className="action" onClick={() => { setLoadError(null); setReload((value) => value + 1); }}>重新加载</button></div> : skills === null ? <p role="status" className="subtle">正在读取技能清单与 MCP 接入信息…</p> : null}
 
       {view === "skills" && (
         <>

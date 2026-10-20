@@ -10,7 +10,7 @@ export type InstanceGraph = GraphData & { warnings: string[] };
 /** 实例图谱只取有界虚拟对象和相关关系，不依赖整份对象或关系物化。 */
 export async function readInstanceGraph(
   context: ObjectContext,
-  options: { labels?: string[]; relationshipTypes?: string[]; search?: string | null; nodeLimit?: number; linkLimit?: number } = {},
+  options: { labels?: string[]; relationshipTypes?: string[]; search?: string | null; nodeLimit?: number; linkLimit?: number; signal?: AbortSignal } = {},
 ): Promise<InstanceGraph> {
   const nodeLimit = clamp(options.nodeLimit, 1, 500, 300);
   const linkLimit = clamp(options.linkLimit, 1, 2000, 2000);
@@ -18,7 +18,8 @@ export async function readInstanceGraph(
   const records: ObjectRecord[] = [];
   while (records.length < nodeLimit) {
     const take = Math.min(200, nodeLimit - records.length);
-    const page = await queryAllObjects(context, { labels: options.labels, text: options.search?.trim() || undefined, limit: take, offset: records.length });
+    options.signal?.throwIfAborted();
+    const page = await queryAllObjects(context, { labels: options.labels, text: options.search?.trim() || undefined, limit: take, offset: records.length, count: false, signal: options.signal });
     records.push(...page.rows);
     warnings.push(...page.warnings);
     if (page.total !== null && page.total > nodeLimit) warnings.push(`命中的对象超过一屏：最多展示 ${nodeLimit} 个（共 ${page.total} 个），请按对象类型或关键字收窄。`);
@@ -36,11 +37,13 @@ export async function readInstanceGraph(
   for (const row of records) groups.set(row.entityType, [...(groups.get(row.entityType) ?? []), row]);
   let omitted = 0;
   for (const [entityType, group] of groups) {
+    options.signal?.throwIfAborted();
     if (relationships.size >= linkLimit) { warnings.push(`当前图谱关系达到 ${linkLimit} 条展示上限。`); break; }
     let result;
     try {
       result = await queryLinks(scopedContext, { seed: { entityType, keys: group.map((row) => row.primaryKey) }, limit: Math.min(500, linkLimit - relationships.size) });
     } catch (error) {
+      options.signal?.throwIfAborted();
       warnings.push(`「${entityType}」关系读取失败，当前图谱关系不完整：${error instanceof Error ? error.message : String(error)}`);
       continue;
     }

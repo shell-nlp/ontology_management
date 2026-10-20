@@ -77,6 +77,7 @@ export function resolveReadOrigin(
 }
 
 export async function queryObjects(context: ObjectContext, query: ObjectQuery): Promise<ObjectQueryResult> {
+  query.signal?.throwIfAborted();
   return queryWithEdits(context, query, (next) => queryObjectsWithoutEdits(context, next));
 }
 
@@ -91,6 +92,7 @@ async function queryObjectsWithoutEdits(context: ObjectContext, query: ObjectQue
   const offset = clamp(query.offset, 0, 100000, 0);
   const defaultSort = primaryKeyColumns(type).map((column) => propertyForColumn(type, column)).filter((property): property is string => Boolean(property)).map((property) => ({ property, direction: "ASC" as const }));
   const source = await getObjectSource().query(context.definition, query.entityType, { ...query, sort: query.sort?.length ? query.sort : defaultSort, origin: "source", limit, offset });
+  query.signal?.throwIfAborted();
   return {
     entityType: query.entityType,
     rows: source.rows,
@@ -104,7 +106,7 @@ async function queryObjectsWithoutEdits(context: ObjectContext, query: ObjectQue
 /** 按定义中的类型顺序拼接虚拟列表；只取当前页，不把全表加载到内存。 */
 export async function queryAllObjects(
   context: ObjectContext,
-  query: { labels?: string[]; text?: string; limit?: number; offset?: number } = {},
+  query: { labels?: string[]; text?: string; limit?: number; offset?: number; count?: boolean; signal?: AbortSignal } = {},
 ): Promise<ObjectQueryResult> {
   const started = Date.now();
   const limit = clamp(query.limit, 1, 200, 20);
@@ -116,11 +118,18 @@ export async function queryAllObjects(
   const unknown = query.labels?.filter((label) => !context.definition.entityTypes.some((type) => type.name === label));
   if (unknown?.length) throw new Error(`对象类型不存在：${unknown.join("、")}。`);
   for (const type of types) {
+    query.signal?.throwIfAborted();
+    if (query.count === false && rows.length >= limit) {
+      total = null;
+      warnings.push("当前页已满，未继续查询其它类型或统计跨类型总数；请选择具体类型收窄范围。");
+      break;
+    }
     // Counting and one bounded page per type avoids fetching offset+limit rows across every table.
     let first: ObjectQueryResult;
     try {
-      first = await queryObjects(context, { entityType: type.name, text: query.text, limit: Math.max(1, limit - rows.length), offset: 0 });
+      first = await queryObjects(context, { entityType: type.name, text: query.text, limit: Math.max(1, limit - rows.length), offset: 0, count: query.count !== false || skip > 0, signal: query.signal });
     } catch (error) {
+      query.signal?.throwIfAborted();
       if (skip) throw new Error(`「${type.name}」查询失败，无法保证跨类型分页完整；请选择具体类型。${error instanceof Error ? error.message : String(error)}`);
       total = null;
       warnings.push(`「${type.name}」未能查询，本页不包含该类型，结果不完整：${error instanceof Error ? error.message : String(error)}`);
@@ -137,13 +146,13 @@ export async function queryAllObjects(
       throw new Error(`「${type.name}」无法确定完整对象总数，不能保证跨类型分页不漏项；请选择具体对象类型分页查看。`);
     }
     const page = skip
-      ? await queryObjects(context, { entityType: type.name, text: query.text, limit: limit - rows.length, offset: skip })
+      ? await queryObjects(context, { entityType: type.name, text: query.text, limit: limit - rows.length, offset: skip, count: query.count !== false, signal: query.signal })
       : first;
     if (page !== first) warnings.push(...page.warnings.map((warning) => `「${type.name}」：${warning}`));
     rows.push(...page.rows);
     skip = 0;
   }
-  return { entityType: "", rows, total, origin: rows.length ? "source" : "none", warnings: [...new Set(warnings)], tookMs: Date.now() - started };
+  return { entityType: "", rows, total: query.count === false ? null : total, origin: rows.length ? "source" : "none", warnings: [...new Set(warnings)], tookMs: Date.now() - started };
 }
 
 /**

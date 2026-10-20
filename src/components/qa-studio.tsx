@@ -151,6 +151,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
    * 也就不会出现"还没读完"和"确实是空的"看起来一样的尴尬（2026-09-19 用户报的）。
    */
   const [history, setHistory] = useState<{ targetId: string; items: ConversationSummary[] }>(() => ({ targetId: "", items: [] }));
+  const [historyFailure, setHistoryFailure] = useState<{ targetId: string; message: string } | null>(null);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [loadingConversation, setLoadingConversation] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
@@ -205,7 +207,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
    */
   const railActiveId = conversationId ?? viewRuns.find((run) => run.running && !run.conversationId)?.runId ?? null;
   /** 还没为当前本体读过列表：侧栏先给一句"正在读取"，别让空列表看着像"确实没有记录"。 */
-  const historyPending = history.targetId !== targetId;
+  const historyError = historyFailure?.targetId === targetId ? historyFailure.message : null;
+  const historyPending = history.targetId !== targetId && !historyError;
   /** 三个参数里只要设了一个，页头那个开关就挂角标 —— 不然看不出这次问答是被限制过的。 */
   const hasLimits = Boolean(settings.maxSteps || settings.toolResultLimit || settings.sqlRowLimit)
     || settings.historyTurns !== undefined;
@@ -216,13 +219,17 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
   const refreshConversations = useCallback(async () => {
     try {
       setHistory({ targetId, items: await fetchConversations(targetId) });
+      setHistoryFailure(null);
     } catch (reason) {
+      setHistoryFailure({ targetId, message: reason instanceof Error ? reason.message : "对话历史读取失败。" });
       fail(reason);
     }
   }, [fail, targetId]);
 
   useEffect(() => {
-    void reasoningApi.status().then(setStatus).catch(() => setStatus(null));
+    const controller = new AbortController();
+    void reasoningApi.status(controller.signal).then((value) => { if (!controller.signal.aborted) setStatus(value); }).catch(() => { if (!controller.signal.aborted) setStatus(null); });
+    return () => controller.abort();
   }, []);
 
   // 参数随手改随手存：抽屉里没有"保存"按钮 —— 这几个数没有"改到一半"的中间态。
@@ -266,16 +273,15 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
 
   /**
    * 页面加载、换本体、展开侧栏时读一次列表。
-   * 失败是静默的：侧栏是辅助区域，读不到就先空着，不该在页头弹一个错误。
+   * 读取失败在侧栏给重试，不把失败伪装成空历史。
    */
   useEffect(() => {
-    let cancelled = false;
-    void fetchConversations(targetId)
-      .then((items) => { if (!cancelled) setHistory({ targetId, items }); })
-      // 读不到就当作空：侧栏是辅助区域，不弹错，但也别一直停在"正在读取"上。
-      .catch(() => { if (!cancelled) setHistory({ targetId, items: [] }); });
-    return () => { cancelled = true; };
-  }, [historyOpen, targetId]);
+    const controller = new AbortController();
+    void fetchConversations(targetId, controller.signal)
+      .then((items) => { if (!controller.signal.aborted) { setHistory({ targetId, items }); setHistoryFailure(null); } })
+      .catch((error) => { if (!controller.signal.aborted) setHistoryFailure({ targetId, message: error instanceof Error ? error.message : "对话历史读取失败。" }); });
+    return () => controller.abort();
+  }, [historyOpen, targetId, historyRevision]);
 
   /**
    * 接回后台还在跑的那一轮。本机登记处是模块级的，切走再回来时它本来就在；
@@ -754,6 +760,8 @@ export function QaStudio({ targetId, ontologyName, published, onOpenObject, noti
         <HistoryRail
           items={railItems}
           loading={historyPending}
+          error={historyError}
+          onRetry={() => { setHistoryFailure(null); setHistoryRevision((value) => value + 1); }}
           activeId={railActiveId}
           loadingId={loadingConversation}
           confirmingId={confirmingDelete}

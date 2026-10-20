@@ -211,12 +211,12 @@ export function createClickHouseOdsStore(): OdsStore {
       const statement = `SELECT ${select} FROM ${table} FINAL WHERE ${where}${order ? ` ORDER BY ${order}` : ""} LIMIT ${limit + 1} OFFSET ${offset}`;
       const [rows, counts] = await Promise.all([
         clickHouseQuery<Record<string, unknown>>(statement, { params }),
-        clickHouseQuery<{ total: number }>(`SELECT count() AS total FROM ${table} FINAL WHERE ${where}`, { params }),
+        query.count === false ? Promise.resolve(null) : clickHouseQuery<{ total: number }>(`SELECT count() AS total FROM ${table} FINAL WHERE ${where}`, { params }),
       ]);
       return {
         columns: query.columns,
         rows: rows.slice(0, limit),
-        total: Number(counts[0]?.total ?? 0),
+        total: counts === null ? null : Number(counts[0]?.total ?? 0),
         truncated: rows.length > limit,
         statement,
       };

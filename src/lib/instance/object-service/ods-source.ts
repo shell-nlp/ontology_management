@@ -97,6 +97,7 @@ async function readOds(input: {
   sort?: { column: string; direction: "ASC" | "DESC" }[];
   limit: number;
   offset?: number;
+  count?: boolean;
 }) {
   const [main, ...extras] = input.routed;
   if (!main) throw new Error("没有可读的 ODS 来源。");
@@ -110,6 +111,7 @@ async function readOds(input: {
     ...(input.sort?.length ? { sort: input.sort } : {}),
     limit: input.limit,
     offset: input.offset,
+    count: input.count,
   });
   const warnings: string[] = [];
   if (result.truncated) warnings.push(`ODS 命中超过 ${input.limit} 行，只返回前 ${input.limit} 行。`);
@@ -158,7 +160,7 @@ export function createOdsFirstObjectSource(): ObjectSource {
       }
       const main = route.routed[0];
       const keyFilters: DataSourceRowFilter[] = main.source.primaryKey.map((column) => ({ column, operator: "EQ", value: primaryKey[column] ?? "" }));
-      const result = await readOds({ routed: route.routed, entityType, columns: sourceColumns(entityType, main.source.id), filters: keyFilters, limit: 1 });
+      const result = await readOds({ routed: route.routed, entityType, columns: sourceColumns(entityType, main.source.id), filters: keyFilters, limit: 1, count: false });
       return { record: result.records[0] ?? null, warnings: result.warnings };
     },
     async query(definition, entityTypeName, query): Promise<ObjectSourceQuery> {
@@ -193,6 +195,7 @@ export function createOdsFirstObjectSource(): ObjectSource {
         sort,
         limit: Math.min(20000, Math.max(1, query.limit ?? 50)),
         offset: query.offset,
+        count: query.count,
       });
       const wanted = query.keys?.length ? new Set(query.keys.map((key) => JSON.stringify(main.source.primaryKey.map((column) => String(key[column] ?? "").trim())))) : null;
       const records = wanted ? result.records.filter((record) => wanted.has(JSON.stringify(main.source.primaryKey.map((column) => String(record.primaryKey[column] ?? "").trim())))) : result.records;

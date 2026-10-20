@@ -7,6 +7,7 @@ import { GraphCanvas } from "@/components/graph-canvas";
 import "@/components/graph-canvas.css";
 import "@/components/type-edit-dialog.css";
 import { api } from "@/lib/shared/client/api-client";
+import { usePageApi } from "@/lib/shared/client/use-page-api";
 import { primaryKeyFromProperties } from "@/lib/ontology/fields";
 import { DEFAULT_GRAPH_TARGET_KIND, graphTargetKindInfo, type GraphData, type GraphNode, type GraphRelationship, type GraphTargetKind, type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
 
@@ -234,6 +235,7 @@ export function CypherEditor({ value, onChange, language = "cypher", labels, rel
 
 
 export function GraphManager({ target, user, version, draft, runtimeTypes, onSnapshotChange, notify, fail }: { target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; fail: (reason: unknown) => void }) {
+  const api = usePageApi(`${target?.id}:${version?.id}`);
   const [graph, setGraph] = useState<GraphData>({ nodes: [], relationships: [] });
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
@@ -296,7 +298,7 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
       params.set("nodeLimit", String(nodeLimit));
       acceptGraph(await api<GraphData>(`/api/instances/graph?${params.toString()}`));
     } catch (reason) { fail(reason); } finally { setLoading(false); }
-  }, [target, version, fail, typeFilters, acceptGraph]);
+  }, [target, version, fail, typeFilters, acceptGraph, api]);
 
   useEffect(() => {
     if (!target) return;
@@ -448,7 +450,7 @@ export function GraphManager({ target, user, version, draft, runtimeTypes, onSna
       const result = await api<QueryResult>("/api/query", { method: "POST", body: JSON.stringify({ targetId: target.id, query: cypher, confirmWrite: cypherIsWrite }) });
       setGraph(capResult(result, settings.recordLimit).graph);
     } catch (reason) { fail(reason); } finally { setRunning(false); }
-  }, [target, cypher, cypherIsWrite, settings.recordLimit, fail]);
+  }, [target, cypher, cypherIsWrite, settings.recordLimit, fail, api]);
 
   return <section className="stack">
       <div className="panel functional-panel" style={{ display: "flex", alignItems: "center", gap: 16 }}>

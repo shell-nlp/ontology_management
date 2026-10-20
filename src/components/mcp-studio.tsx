@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileJson, KeyRound, Loader2, Play, RefreshCcw, ShieldCheck, Terminal, Wand2 } from "lucide-react";
-import { api } from "@/lib/shared/client/api-client";
+import { usePageApi } from "@/lib/shared/client/use-page-api";
 import { dataSourcesApi } from "@/lib/datasource/client-api";
 import { copyText } from "@/lib/shared/client/clipboard";
 import { stripOntologyId } from "@/lib/mcp/schema";
@@ -214,7 +214,10 @@ function connectTabs(url: string, serverName: string = SERVER_NAME, token: strin
 }
 
 export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, fail }: Props) {
+  const api = usePageApi(selectedOntologyId || ontologies[0]?.id || "");
   const [info, setInfo] = useState<McpInfo | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [activeName, setActiveName] = useState("search_schema");
   const [argumentsText, setArgumentsText] = useState("{}");
   const [response, setResponse] = useState<string>("");
@@ -268,17 +271,20 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
   const activeTab = tabs.find((tab) => tab.key === connectTab) ?? tabs[0];
 
   useEffect(() => {
+    let cancelled = false;
     // 工具开关按本体分：带上当前本体，服务端会给"这个本体最终生效的那一份"与它的来源。
     void api<McpInfo>(`/api/mcp/info${ontologyId ? `?ontologyId=${encodeURIComponent(ontologyId)}` : ""}`).then((data) => {
+      if (cancelled) return;
       // 地址以**浏览器当前地址**为准，覆盖服务端拼的那份：服务端在 dev / 容器 / 转发后面
       // 有可能只认得到自己的 localhost，复制出去换台机器就废了（2026-09-18 用户报的）。
       setInfo({ ...data, absoluteUrl: `${window.location.origin}${data.endpoint}` });
       const first = data.tools.find((tool) => tool.name === "search_schema") ?? data.tools[0];
       if (first) { setActiveName(first.name); setArgumentsText(JSON.stringify(exampleArguments(first, ontologyId, "", !pinnedScope), null, 2)); }
-    }).catch(fail);
+    }).catch((error) => { if (!cancelled && error?.name !== "AbortError") { setLoadError(error instanceof Error ? error.message : "MCP 信息读取失败"); fail(error); } });
+    return () => { cancelled = true; };
     // 只在挂载 / 换本体时取一次；换了工具 / 数据资源时由 select 按最新依赖重填示例参数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ontologyId]);
+  }, [ontologyId, api, reload]);
 
   // 数据资源名要填进示例参数里（名字猜不出来），开机就先拿一份 —— 列表接口只回公开字段，没有密文。
   useEffect(() => {
@@ -383,7 +389,7 @@ export function McpStudio({ ontologies, ontologyId: selectedOntologyId, notify, 
     }
   }, [active, argumentsText, fail, scopePath]);
 
-  if (!info) return <section className="stack"><div className="panel functional-panel">正在读取 MCP 信息…</div></section>;
+  if (!info) return <section className="stack"><div className="panel functional-panel" role={loadError ? "alert" : "status"}>{loadError ?? "正在读取 MCP 信息…"}{loadError && <button className="action" onClick={() => { setLoadError(null); setReload((value) => value + 1); }}>重新加载</button>}</div></section>;
 
   /** 参数表跟着 scope 走：本体级端点不暴露 ontology_id，页面也不显示它（平台级则保留）。 */
   const activeSchema = active

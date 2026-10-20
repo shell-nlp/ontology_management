@@ -7,6 +7,7 @@ import { BindSourcesDialog } from "@/components/bind-sources-dialog";
 import "@/components/graph-canvas.css";
 import { PropertyEditor } from "@/components/property-editor";
 import { api } from "@/lib/shared/client/api-client";
+import { usePageApi } from "@/lib/shared/client/use-page-api";
 import { dataSourcesApi } from "@/lib/datasource/client-api";
 import { instancesApi } from "@/lib/shared/client/instances-api";
 import { type RuntimeTypeSet } from "@/lib/infrastructure/graph/types";
@@ -92,6 +93,7 @@ export function ObjectLinkList({ links, loading, hint, onOpen }: { links: Object
 }
 
 export function EntityManager({ ontologyId, target, user, version, draft, runtimeTypes, ensureDraft, onSnapshotChange, notify, onRunAction, fail, entityLimit, focusEntityId, onFocusHandled }: { ontologyId: string; target: Target | null; user: User; version: Version | null; draft: Version | null; runtimeTypes: RuntimeTypeSet | null; ensureDraft: () => Promise<Version>; onSnapshotChange: () => Promise<void>; notify: (text: string) => void; onRunAction: (actionId: string, subject: { id: string; labels: string[]; properties: Record<string, unknown>; objectRef?: string }) => void; saveDefinition: (definition: Definition) => Promise<void>; fail: (reason: unknown) => void; entityLimit: number; focusEntityId?: string | null; onFocusHandled?: () => void }) {
+  const api = usePageApi(`${target?.id}:${version?.id}`);
   const [rows, setRows] = useState<EntityRow[]>([]);
   const [label, setLabel] = useState("");
   const [search, setSearch] = useState("");
@@ -258,7 +260,7 @@ export function EntityManager({ ontologyId, target, user, version, draft, runtim
       setOriginById({});
       return rows;
     } catch (reason) { fail(reason); return []; }
-  }, [target, version?.id, fail, entityLimit, objectServiceView, notify, filterProperty, filterOperator, filterValue, sortProperty, sortDirection]);
+  }, [target, version?.id, fail, entityLimit, objectServiceView, notify, filterProperty, filterOperator, filterValue, sortProperty, sortDirection, api]);
 
   useEffect(() => {
     if (!target) return;
