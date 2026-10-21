@@ -3,10 +3,21 @@ import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
 import { clickHouseExecute, clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/clickhouse/client";
 import { odsTableName } from "@/lib/infrastructure/ods/naming";
 import type { DataSourceRowFilter, DataSourceRowSort } from "@/lib/shared/common/data-source-kind";
-import type { OdsColumn, OdsReadQuery, OdsReadResult, OdsStore, OdsTableSpec } from "@/lib/infrastructure/ods/types";
+import type {
+  OdsColumn,
+  OdsPublishedObjectChange,
+  OdsPublishedRelationshipChange,
+  OdsReadQuery,
+  OdsReadResult,
+  OdsStore,
+  OdsTableSpec,
+  OdsVersionChanges,
+} from "@/lib/infrastructure/ods/types";
 
 const INSERT_CHUNK_ROWS = 1000;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const OBJECT_CHANGES_TABLE = "ods_version_object_changes";
+export const RELATIONSHIP_CHANGES_TABLE = "ods_version_relationship_changes";
 
 function quote(name: string) {
   if (!name.trim()) throw new Error("ODS 标识符不能为空。");
@@ -22,6 +33,103 @@ function safeDatabase() {
 function tableRef(table: string) {
   if (!IDENTIFIER.test(table)) throw new Error(`ODS 表名不合法：${table}`);
   return `${safeDatabase()}.${table}`;
+}
+
+function versionChangesTableRef(table: string) {
+  return `${safeDatabase()}.${table}`;
+}
+
+function literal(value: string) {
+  return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseStringMap(value: unknown): Record<string, string> {
+  return Object.fromEntries(Object.entries(parseObject(value)).map(([key, item]) => [key, String(item ?? "")]));
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item ?? "")).filter(Boolean) : [];
+}
+
+async function ensureVersionChangeTables() {
+  await clickHouseExecute(`CREATE TABLE IF NOT EXISTS ${versionChangesTableRef(OBJECT_CHANGES_TABLE)} (
+    version_id String,
+    entity_type_id String,
+    entity_type String,
+    object_id String,
+    primary_key String,
+    operation LowCardinality(String),
+    base String,
+    properties String,
+    changed_properties Array(String),
+    _source_updated_at DateTime64(3, 'UTC'),
+    _publish_batch UInt64
+  ) ENGINE=ReplacingMergeTree(_source_updated_at)
+    ORDER BY (version_id, entity_type_id, object_id)
+    COMMENT '已发布版本的稀疏对象 CRUD 变更集'`);
+  await clickHouseExecute(`CREATE TABLE IF NOT EXISTS ${versionChangesTableRef(RELATIONSHIP_CHANGES_TABLE)} (
+    version_id String,
+    relationship_type_id String,
+    relationship_type String,
+    relationship_id String,
+    source_entity_type_id String,
+    target_entity_type_id String,
+    source_object_id String,
+    target_object_id String,
+    source_primary_key String,
+    target_primary_key String,
+    operation LowCardinality(String),
+    properties String,
+    _source_updated_at DateTime64(3, 'UTC'),
+    _publish_batch UInt64
+  ) ENGINE=ReplacingMergeTree(_source_updated_at)
+    ORDER BY (version_id, relationship_type_id, relationship_id)
+    COMMENT '已发布版本的稀疏关系 CRUD 变更集'`);
+}
+
+function objectChangeRow(change: OdsPublishedObjectChange, batch: number) {
+  return {
+    version_id: change.versionId,
+    entity_type_id: change.entityTypeId,
+    entity_type: change.entityType,
+    object_id: change.objectId,
+    primary_key: JSON.stringify(change.primaryKey),
+    operation: change.operation,
+    base: JSON.stringify(change.base ?? {}),
+    properties: JSON.stringify(change.properties),
+    changed_properties: change.changedProperties,
+    _source_updated_at: new Date().toISOString(),
+    _publish_batch: batch,
+  };
+}
+
+function relationshipChangeRow(change: OdsPublishedRelationshipChange, batch: number) {
+  return {
+    version_id: change.versionId,
+    relationship_type_id: change.relationshipTypeId,
+    relationship_type: change.relationshipType,
+    relationship_id: change.relationshipId,
+    source_entity_type_id: change.sourceEntityTypeId,
+    target_entity_type_id: change.targetEntityTypeId,
+    source_object_id: change.sourceObjectId,
+    target_object_id: change.targetObjectId,
+    source_primary_key: JSON.stringify(change.sourcePrimaryKey),
+    target_primary_key: JSON.stringify(change.targetPrimaryKey),
+    operation: change.operation,
+    properties: JSON.stringify(change.properties),
+    _source_updated_at: new Date().toISOString(),
+    _publish_batch: batch,
+  };
 }
 
 export { odsTableName } from "@/lib/infrastructure/ods/naming";
@@ -266,6 +374,83 @@ export function createClickHouseOdsStore(): OdsStore {
         params: { source: spec.sourceId },
       });
       return Number(rows[0]?.total ?? 0);
+    },
+
+    async replaceVersionChanges(versionId, changes) {
+      await ensureVersionChangeTables();
+      const version = literal(versionId);
+      await clickHouseExecute(`ALTER TABLE ${versionChangesTableRef(OBJECT_CHANGES_TABLE)} DELETE WHERE version_id = ${version} SETTINGS mutations_sync = 2`);
+      await clickHouseExecute(`ALTER TABLE ${versionChangesTableRef(RELATIONSHIP_CHANGES_TABLE)} DELETE WHERE version_id = ${version} SETTINGS mutations_sync = 2`);
+      const batch = Date.now();
+      if (changes.objects.length) {
+        const body = changes.objects.map((change) => JSON.stringify(objectChangeRow(change, batch))).join("\n");
+        await clickHouseExecute(`INSERT INTO ${versionChangesTableRef(OBJECT_CHANGES_TABLE)} FORMAT JSONEachRow\n${body}`, {
+          settings: { date_time_input_format: "best_effort" },
+        });
+      }
+      if (changes.relationships.length) {
+        const body = changes.relationships.map((change) => JSON.stringify(relationshipChangeRow(change, batch))).join("\n");
+        await clickHouseExecute(`INSERT INTO ${versionChangesTableRef(RELATIONSHIP_CHANGES_TABLE)} FORMAT JSONEachRow\n${body}`, {
+          settings: { date_time_input_format: "best_effort" },
+        });
+      }
+    },
+
+    async readVersionChanges(versionId) {
+      await ensureVersionChangeTables();
+      const params = { version: versionId };
+      const [objects, relationships] = await Promise.all([
+        clickHouseQuery<Record<string, unknown>>(
+          `SELECT version_id, entity_type_id, entity_type, object_id, primary_key, operation, base, properties, changed_properties
+             FROM ${versionChangesTableRef(OBJECT_CHANGES_TABLE)} FINAL
+            WHERE version_id = {version:String}
+            ORDER BY entity_type_id, object_id`,
+          { params },
+        ),
+        clickHouseQuery<Record<string, unknown>>(
+          `SELECT version_id, relationship_type_id, relationship_type, relationship_id,
+                  source_entity_type_id, target_entity_type_id, source_object_id, target_object_id,
+                  source_primary_key, target_primary_key, operation, properties
+             FROM ${versionChangesTableRef(RELATIONSHIP_CHANGES_TABLE)} FINAL
+            WHERE version_id = {version:String}
+            ORDER BY relationship_type_id, relationship_id`,
+          { params },
+        ),
+      ]);
+      return {
+        objects: objects.map((row) => ({
+          versionId: String(row.version_id ?? ""),
+          entityTypeId: String(row.entity_type_id ?? ""),
+          entityType: String(row.entity_type ?? ""),
+          objectId: String(row.object_id ?? ""),
+          primaryKey: parseStringMap(row.primary_key),
+          operation: String(row.operation ?? "UPDATE") as OdsPublishedObjectChange["operation"],
+          base: String(row.operation ?? "") === "CREATE" ? null : parseObject(row.base),
+          properties: parseObject(row.properties),
+          changedProperties: parseStringArray(row.changed_properties),
+        })),
+        relationships: relationships.map((row) => ({
+          versionId: String(row.version_id ?? ""),
+          relationshipTypeId: String(row.relationship_type_id ?? ""),
+          relationshipType: String(row.relationship_type ?? ""),
+          relationshipId: String(row.relationship_id ?? ""),
+          sourceEntityTypeId: String(row.source_entity_type_id ?? ""),
+          targetEntityTypeId: String(row.target_entity_type_id ?? ""),
+          sourceObjectId: String(row.source_object_id ?? ""),
+          targetObjectId: String(row.target_object_id ?? ""),
+          sourcePrimaryKey: parseStringMap(row.source_primary_key),
+          targetPrimaryKey: parseStringMap(row.target_primary_key),
+          operation: String(row.operation ?? "CREATE") as OdsPublishedRelationshipChange["operation"],
+          properties: parseObject(row.properties),
+        })),
+      };
+    },
+
+    async deleteVersionChanges(versionId) {
+      await ensureVersionChangeTables();
+      const version = literal(versionId);
+      await clickHouseExecute(`ALTER TABLE ${versionChangesTableRef(OBJECT_CHANGES_TABLE)} DELETE WHERE version_id = ${version} SETTINGS mutations_sync = 2`);
+      await clickHouseExecute(`ALTER TABLE ${versionChangesTableRef(RELATIONSHIP_CHANGES_TABLE)} DELETE WHERE version_id = ${version} SETTINGS mutations_sync = 2`);
     },
 
     async drop(sourceId, tableName) {

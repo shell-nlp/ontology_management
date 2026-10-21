@@ -7,25 +7,8 @@ import { runSnapshotAction, visibleSnapshotActions } from "@/lib/instance/snapsh
 import { ensureVersionSnapshot, getVersionRecord, readVersionSnapshot } from "@/lib/versioning/snapshot";
 import { parsePrimaryKeyInput } from "@/lib/ontology/object-identity";
 import { ensureObjectInDraft, resolveObjectContext } from "@/lib/instance/object-service";
-import { applyWritebackPlan, type WritebackExecution } from "@/lib/instance/object-service/writeback";
-import { getDataSource } from "@/lib/datasource/sources";
-import { actionWritebackDiffs, describeWritebackPlan, planActionWriteback, type WritebackPlan } from "@/lib/ontology/action-writeback";
 import { withPermission } from "@/lib/platform/route-guard";
 
-/**
- * 给界面看的写回计划：连接器要的字段（schema / view / sourceId）不出这一层，
- * 界面只关心"写哪张表、按什么键、改哪几列"，以及一句能直接念出来的说明。
- */
-function writebackPlanView(plan: WritebackPlan) {
-  return {
-    entityType: plan.entityType,
-    table: plan.table,
-    dataSourceName: plan.dataSourceName,
-    description: describeWritebackPlan(plan),
-    keys: plan.keys,
-    assignments: plan.assignments.map((item) => ({ column: item.column, property: item.property, value: item.value })),
-  };
-}
 const actionRunInput = z.object({
   actionId: z.string().uuid(),
   /** 动作作用在哪个对象上；动作配了作用的类时必填。 */
@@ -36,8 +19,6 @@ const actionRunInput = z.object({
    */
   subjectRef: z.string().trim().max(500).optional(),
   dryRun: z.boolean().default(true),
-  /** 真执行时是否把改动写回业务库（表 / 视图式来源才写得回，口径来源会被拒绝）。干跑只出计划、不写库。 */
-  writeback: z.boolean().default(false),
   inputs: z.array(z.object({
     code: z.string().min(1),
     entityId: z.string().optional(),
@@ -104,66 +85,7 @@ export const POST = withPermission("instance.write", async (request: NextRequest
       inputs.push({ code: item.code, entityId: ensured.record.objectId, value: item.value });
       materialized = materialized || ensured.created;
     }
-    /*
-     * 写回（可选）：把"这次动作真正改到了哪些属性"翻译成"改哪张表的哪几列"。
-     *
-     * 计划是**纯函数**算出来的、不碰库，所以干跑也能拿它给用户看："点执行会写这张表的这一行"。
-     * 真写的时候一定在动作落草稿**之前** —— 权威在业务库、草稿只是副本；库没改成功就不该落草稿。
-     */
-    const before = await readVersionSnapshot(versionId);
-    const preview = await runSnapshotAction(versionId, input.actionId, inputs, { dryRun: true, subjectEntityId });
-    const sourceNames = new Map<string, string>();
-    const nameOfSource = async (id: string) => {
-      if (!sourceNames.has(id)) sourceNames.set(id, (await getDataSource(id))?.name ?? "");
-      return sourceNames.get(id) ?? "";
-    };
-    const writebackPlans: WritebackPlan[] = [];
-    const writebackRefusals: { nodeId: string; entityType: string; reason: string; hint?: string }[] = [];
-    const writebackSkipped: { nodeId: string; entityType: string; reason: string }[] = [];
-    for (const diff of actionWritebackDiffs(before.definition, before, preview.outcome.graph)) {
-      if (diff.created) {
-        writebackSkipped.push({ nodeId: diff.nodeId, entityType: diff.entityType, reason: `动作新建的${diff.entityType}还没有源行，写回只支持改已有行。` });
-        continue;
-      }
-      const node = before.nodes.find((item) => item.id === diff.nodeId);
-      const planned = planActionWriteback(before.definition, diff.entityType, node?.properties ?? {}, diff.changes);
-      if (!planned.ok) {
-        writebackRefusals.push({ nodeId: diff.nodeId, entityType: diff.entityType, ...planned.refusal });
-        continue;
-      }
-      planned.plan.dataSourceName = await nameOfSource(planned.plan.dataSourceId);
-      writebackPlans.push(planned.plan);
-    }
-    /*
-     * 有一处写不回去就**整批不执行**：只写一半业务库是最难收拾的状态（界面上看到的和库里的对不上，
-     * 也没法自动回滚）。拒绝时把"哪一处、为什么、去哪儿改"一起返回，去掉那一处再执行。
-     */
-    if (input.writeback && !input.dryRun && writebackRefusals.length) {
-      return NextResponse.json({
-        error: `这次动作里有 ${writebackRefusals.length} 处写不回业务库，整批都没有执行（草稿与业务库都没动）。`,
-        writeback: { requested: true, mode: "REFUSED", plans: [], refusals: writebackRefusals, skipped: writebackSkipped, executions: [] },
-      }, { status: 409 });
-    }
-    const executions: WritebackExecution[] = [];
-    if (input.writeback && !input.dryRun && preview.outcome.verdict === "PASSED") {
-      // 一条一条串行写：同一动作改多个对象时一起压业务库没有好处，还会让"写到第几条失败"说不清。
-      for (const plan of writebackPlans) executions.push(await applyWritebackPlan(plan));
-    }
-    let ran: Awaited<ReturnType<typeof runSnapshotAction>>;
-    try {
-      ran = await runSnapshotAction(versionId, input.actionId, inputs, { dryRun: input.dryRun, subjectEntityId });
-    } catch (error) {
-      // 业务库已经改了、草稿没落上：这是最需要说清楚的一种状态，别吞掉。
-      if (executions.length) {
-        return NextResponse.json({
-          error: `${apiErrorMessage(error, "动作执行失败。")}（业务库已经写进去 ${executions.length} 处，草稿没有更新 —— 请重新运行一次让两边对齐）`,
-          applied: false,
-          writeback: { requested: true, mode: "APPLIED", plans: writebackPlans.map(writebackPlanView), refusals: [], skipped: writebackSkipped, executions },
-        }, { status: 500 });
-      }
-      throw error;
-    }
-    const { outcome, applied } = ran;
+    const { outcome, applied } = await runSnapshotAction(versionId, input.actionId, inputs, { dryRun: input.dryRun, subjectEntityId });
     await writeAuditEntry({
       actorId: user.id,
       targetId: version.target_id,
@@ -182,7 +104,7 @@ export const POST = withPermission("instance.write", async (request: NextRequest
         hidden: outcome.hidden,
         steps: outcome.steps,
         createdEntities: outcome.createdEntities,
-        writeback: { requested: input.writeback, plans: writebackPlans.map((plan) => describeWritebackPlan(plan)), refusals: writebackRefusals, skipped: writebackSkipped, executions },
+        deletedEntities: outcome.deletedEntities,
       },
     });
     return NextResponse.json({
@@ -195,16 +117,9 @@ export const POST = withPermission("instance.write", async (request: NextRequest
       hidden: outcome.hidden,
       steps: outcome.steps,
       createdEntities: outcome.createdEntities,
+      deletedEntities: outcome.deletedEntities,
       subject: outcome.subject,
       dryRun: input.dryRun,
-      writeback: {
-        requested: input.writeback,
-        mode: executions.length ? "APPLIED" : input.writeback ? "PREVIEW" : "OFF",
-        plans: writebackPlans.map(writebackPlanView),
-        refusals: writebackRefusals,
-        skipped: writebackSkipped,
-        executions,
-      },
       applied,
     });
   } catch (error) {

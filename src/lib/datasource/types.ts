@@ -310,34 +310,6 @@ export type DataSourceRows = {
   statement: string;
 };
 
-/**
- * 结构化写回 —— 一条「按键改一行」（UPDATE）。
- *
- * 与 `selectRows` 对称：调用方给的是**键列 / 赋值列 + 值**，不是一段 SQL；
- * 引号转义、参数绑定、方言差异全在连接器里。契约里不出现 SQL / 驱动 / 表名。
- *
- * 三条口径（写业务库是不可逆的，宁可不写）：
- * 1. **键必须恰好命中一行**：0 行 = 这一行不在了；2 行以上 = 键不唯一，盲写会改错数据 —— 两种都拒绝。
- * 2. **只支持表 / 视图**：取数口径（`view.sql`）是算出来的结果，写不回去，如实拒绝。
- * 3. 调用方负责给"库里真实的列名"（来自属性的 `sourceField`），连接器负责校验它确实存在。
- */
-export type DataSourceRowUpdate = {
-  view: DataViewRef;
-  /** 定位这一行的键列 + 值；多列 = 复合键，顺序即 `WHERE` 的连接顺序。 */
-  keys: { column: string; value: unknown }[];
-  /** 要改的列 + 新值。 */
-  assignments: { column: string; value: unknown }[];
-};
-
-export type DataSourceWriteResult = {
-  /** 实际执行的语句（标识符来自库元数据、值走绑定参数）。 */
-  statement: string;
-  /** 改了几行。**恒为 1**：定位不唯一时连接器先拒绝，不会写第二行；确认不到 1 行就回滚并报错。 */
-  affected: number;
-  /** 改之前这一行的旧值（只读要改的那几列），审计里记「旧值 → 新值」。 */
-  before: Record<string, unknown>;
-};
-
 export type DataSourceHealth = {
   connected: boolean;
   /** 服务端自报的身份，例如 "PostgreSQL 16.3"。 */
@@ -348,7 +320,7 @@ export type DataSourceHealth = {
 };
 
 /**
- * 一种来源要能接入平台，只需要实现这四个动作。
+ * 一种来源要能接入平台，只需要实现这些只读能力。
  * 图数据库没有实现它，因为本体存储不是"数据来源"。
  */
 export interface DataSourceConnector {
@@ -369,11 +341,6 @@ export interface DataSourceConnector {
   selectRows?(query: DataSourceRowQuery): Promise<DataSourceRows>;
   /** 统计满足条件的行数（分页要用的总数）。 */
   countRows?(query: Omit<DataSourceRowQuery, "columns" | "limit" | "offset">): Promise<number>;
-  /**
-   * 结构化写回（动作写回业务库用）。同样是可选的：来源没有"按行改值"这个概念时如实缺席，
-   * 动作执行会明确告知这个对象类型写不回去，而不是假装成功。
-   */
-  updateRows?(update: DataSourceRowUpdate): Promise<DataSourceWriteResult>;
   /** 表结构 / 视图定义（DDL）。同样只有关系库提供。 */
   describeTableDdl?(view: DataViewRef): Promise<TableDdl>;
 }

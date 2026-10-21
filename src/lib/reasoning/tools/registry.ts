@@ -7,6 +7,8 @@ import { type ToolSpec } from "@/lib/reasoning/types";
 export type ToolContext = {
   store: GraphStore;
   definition: OntologyDefinition;
+  /** 本轮实际使用的已发布版本；run_query 的版本变更集必须绑定到它。 */
+  publishedVersionId?: string;
   /** 运行时类型统计，给模型一个"这个类有多少对象"的量级直觉。 */
   runtimeTypes: RuntimeTypeSet | null;
   /**
@@ -196,7 +198,7 @@ export const REASONING_TOOLS: ToolSpec[] = [
     description:
       `按本体 SQL（SQL 形状的查询表层）执行只读问数：只写对象类型、属性、关系类型、指标与参数，不写物理表名 / 列名。这是结构化问数的优先入口。
 ${ONTOLOGY_SQL_DIALECT_GUIDE}
-执行时按来源读取路径自动路由到 READY 的 ClickHouse ODS 镜像或业务源，在查询时形成对象与统计结果，不依赖对象物化索引。显式 ODS 缺镜像或所需列时报错，AUTO 才允许回源。data_source / data_source_kind 标明实际来源；ODS 的数据新鲜度取决于同步时间。
+执行时按来源读取路径自动路由到 READY 的 ClickHouse ODS 镜像或业务源，在查询时形成对象与统计结果，不依赖对象物化索引。当前发布版本的手工/动作 CRUD 会叠加在 ODS 基础镜像上；显式 ODS 缺镜像或所需列时报错，AUTO 才允许回源。data_source / data_source_kind 标明实际来源；ODS 的数据新鲜度取决于同步时间。
 语法子集：SELECT … FROM 对象类型 [AS 别名] [[LEFT] JOIN 关系类型 [AS 别名] [FORWARD|BACKWARD|BOTH]] … [WHERE …] [GROUP BY …] [ORDER BY …] [LIMIT n]。
 例：① SELECT 统计日期, 地市编码 FROM 专线产品用户 WHERE 业务状态 = '在用' ORDER BY 统计日期 DESC LIMIT 20；② SELECT 地市名称, COUNT(*) AS 条数 FROM 专线产品用户 LEFT JOIN 归属地市 AS 地市 GROUP BY 地市名称 ORDER BY 条数 DESC；③ SELECT 专线条数 AS 条数 FROM 专线产品用户 WHERE 统计日期 = :day（:名字 的取值放 parameters）。
 写法要点：聚合写 COUNT(*) / COUNT(DISTINCT 属性) / SUM|AVG|MIN|MAX(属性)，每项都要 AS 列名；聚合查询里出现的普通属性必须同时写进 GROUP BY；ORDER BY 用输出列名或属性名；筛选支持 = <> > >= < <= / IN / NOT IN / BETWEEN … AND … / IS [NOT] NULL / LIKE '%值%'（也支持 '值%' / '%值'）/ LABEL(属性) = '枚举标签'（按码值的中文标签过滤；也支持 SELECT LABEL(属性) AS 列名 … GROUP BY LABEL(属性) 把标签当输出 / 分组维度，要求该属性配了 enumValues）/ AND OR NOT 与括号。**日期属性（DATE / DATETIME 列）不能用 LIKE 取某一天**：某一天写 统计日期 >= '2026-09-13' AND 统计日期 < '2026-09-14'，区间写 BETWEEN … AND …（= '当天' 只在列里没有时分秒时才等于当天）。

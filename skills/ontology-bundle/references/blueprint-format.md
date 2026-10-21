@@ -84,7 +84,7 @@
 | `dataSources[].kind` | `ORACLE` / `POSTGRES` / `MYSQL` |
 | `interfaces[].linkConstraints[].cardinality` | `ONE` / `MANY`（默认 `MANY`） |
 | `actionTypes[].params[].kind` | `ENTITY_REF`（指向一个已有对象）/ `VALUE`（字面量） |
-| `actionTypes[].edits[].op` | `CREATE_ENTITY` / `SET_PROPERTY` / `CREATE_RELATIONSHIP` |
+| `actionTypes[].edits[].op` | `CREATE_ENTITY` / `SET_PROPERTY` / `DELETE_ENTITY` / `CREATE_RELATIONSHIP` |
 | `actionTypes[].edits[].assignments[].value.kind` | `PARAM` / `CONST` / `NOW` |
 | `metrics[].aggregation` | `SUM` / `COUNT` / `COUNT_DISTINCT` / `AVG` / `MIN` / `MAX`（默认 `COUNT`） |
 | `metrics[].filters[].operator` | `EQ` / `NE` / `GT` / `GTE` / `LT` / `LTE` / `IN` / `NOT_IN` / `CONTAINS` / `IS_NULL` / `NOT_NULL` |

@@ -34,6 +34,14 @@ export async function runSnapshotAction(versionId: string, actionId: string, inp
     if (fresh.verdict === "BLOCKED") throw new ActionBlockedError(fresh);
     const previousIds = new Set(current.nodes.map((node) => node.id));
     current.objectEdits ??= {};
+    const resultIds = new Set(fresh.graph.nodes.map((node) => node.id));
+    for (const node of current.nodes) {
+      if (resultIds.has(node.id)) continue;
+      const edit = current.objectEdits[node.id];
+      if (!edit) continue;
+      if (edit.base) edit.deleted = true;
+      else delete current.objectEdits[node.id];
+    }
     for (const node of fresh.graph.nodes) {
       if (previousIds.has(node.id)) continue;
       const type = current.definition.entityTypes.find((entity) => node.labels.includes(entity.name));

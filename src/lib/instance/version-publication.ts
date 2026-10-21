@@ -3,7 +3,10 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { listDataSources } from "@/lib/datasource/sources";
 import { validateVersionSnapshot } from "@/lib/instance/version-validation";
-import { ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, withTargetLock, type VersionStatus } from "@/lib/versioning/snapshot";
+import { clearVersionOverlay, ensureVersionSnapshot, getVersionRecord, listVersionRecords, updateVersionRecord, withTargetLock, type VersionStatus } from "@/lib/versioning/snapshot";
+import { getOdsStore } from "@/lib/infrastructure/ods";
+import { versionChangesFromSnapshot } from "@/lib/instance/ods/published-changes";
+import { assertOdsReadyForPublishedChanges } from "@/lib/instance/ods/publish-readiness";
 
 export async function publishVersionSnapshot(versionId: string, user: { id: string }, allowedStatuses: VersionStatus[]) {
   const initial = await getVersionRecord(versionId);
@@ -19,6 +22,7 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     const target = await getTarget(version.target_id);
     if (!target) throw new Error("本体存储不存在。");
     const snapshot = await ensureVersionSnapshot(version.id, target);
+    const publishingDraft = version.status === "DRAFT";
     // 把本机登记的资源 id 传进去：来源「有表名、没资源」时才知道该不该提示补齐绑定（见 validateEntitySources）。
     const knownSourceIds = await listDataSources().then((rows) => rows.map((row) => row.id)).catch(() => []);
     const violations = validateVersionSnapshot(snapshot, knownSourceIds);
@@ -26,6 +30,12 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
     const blockers = violations.filter((violation) => violation.severity !== "WARN");
     const warnings = violations.filter((violation) => violation.severity === "WARN");
     if (blockers.length) return { published: false as const, violations: blockers };
+
+    const publishedChanges = publishingDraft ? versionChangesFromSnapshot(snapshot, version.id) : null;
+    if (publishedChanges) {
+      await assertOdsReadyForPublishedChanges(snapshot.definition, publishedChanges);
+      await getOdsStore().replaceVersionChanges(version.id, publishedChanges);
+    }
 
     const store = getGraphStore(target);
     const { atomicReplace } = store.info.capabilities;
@@ -68,6 +78,18 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
           ? `发布失败，图数据未改动：${message}`
           : `发布失败，且 ${store.info.label} 不支持事务替换，图数据可能已被部分修改：${message}`);
     }
+    const clearedOverlay = publishingDraft ? await clearVersionOverlay(version.id).catch((error) => {
+      console.warn(`[version-publish] 版本 ${version.id} 已发布，但活跃覆盖层清理失败：`, error);
+      return null;
+    }) : null;
+    if (publishingDraft && clearedOverlay === null) {
+      warnings.push({
+        rule: "ODS_OVERLAY_CLEANUP_FAILED",
+        message: "版本已发布并写入 ODS，但 PostgreSQL 活跃覆盖层清理失败；查询不会重复叠加，后台可安全重试清理。",
+        count: 1,
+        severity: "WARN",
+      });
+    }
     await writeAuditEntry({
       actorId: user.id,
       targetId: version.target_id,
@@ -80,6 +102,9 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
         relationshipCount: snapshot.relationships.length,
         // Jena 侧不落地必填约束（capabilities.strongRules 为 false），如实记录为未强制。
         strongRulesEnforced: canEnforceRequired,
+        publishedObjectChanges: publishedChanges?.objects.length ?? 0,
+        publishedRelationshipChanges: publishedChanges?.relationships.length ?? 0,
+        clearedOverlay,
       },
     });
     return {
@@ -89,6 +114,9 @@ export async function publishVersionSnapshot(versionId: string, user: { id: stri
       relationshipCount: snapshot.relationships.length,
       strongRulesEnforced: canEnforceRequired,
       atomicReplace,
+      publishedObjectChanges: publishedChanges?.objects.length ?? 0,
+      publishedRelationshipChanges: publishedChanges?.relationships.length ?? 0,
+      clearedOverlay,
       warnings,
     };
   });

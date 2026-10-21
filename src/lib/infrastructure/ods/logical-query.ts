@@ -1,8 +1,9 @@
 import { In } from "typeorm";
 import { clickHouseConfig } from "@/lib/infrastructure/clickhouse/config";
 import { clickHouseQuery, type ClickHouseParams } from "@/lib/infrastructure/clickhouse/client";
+import { OBJECT_CHANGES_TABLE, RELATIONSHIP_CHANGES_TABLE } from "@/lib/infrastructure/ods/clickhouse";
 import { OdsSourceEntity, platformRepo } from "@/lib/infrastructure/persistence/postgres";
-import type { LogicalPlan, ResolvedCaseExpression, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedRelationship, ResolvedScalar, ResolvedValue } from "@/lib/query-dsl/ast";
+import type { LogicalPlan, ResolvedCaseExpression, ResolvedEntity, ResolvedExpr, ResolvedField, ResolvedMetric, ResolvedProperty, ResolvedRelationship, ResolvedScalar, ResolvedSource, ResolvedValue } from "@/lib/query-dsl/ast";
 import type { OdsQueryExecutor } from "@/lib/query-dsl/contract";
 import { QueryDslError } from "@/lib/query-dsl/errors";
 import { compileCaseExpression, decimalLiteral } from "@/lib/query-dsl/compile/case";
@@ -12,6 +13,9 @@ type Route = {
   configs: Map<string, OdsConfig>;
   aliases: Map<string, OdsConfig>;
   links: Map<string, OdsConfig>;
+  versionId?: string;
+  changedEntityTypeIds: Set<string>;
+  changedRelationshipTypeIds: Set<string>;
 };
 
 class Bag {
@@ -41,6 +45,89 @@ function odsTable(config: OdsConfig) {
   const id = config.id.replace(/'/g, "''");
   // Filter each backing source before JOIN, preserving unmatched LEFT JOIN rows.
   return `(SELECT * FROM ${identifier(clickHouseConfig().database)}.${identifier(config.chTable)} FINAL WHERE _source_id = '${id}' AND _is_deleted = 0)`;
+}
+
+function baseOdsTable(config: OdsConfig) {
+  return odsTable(config);
+}
+
+function sourceProperty(entity: ResolvedEntity, source: ResolvedSource, column: string): ResolvedProperty | null {
+  return [...entity.properties.values()].find((property) =>
+    property.sourceAlias === source.alias && property.column.toLowerCase() === column.toLowerCase()) ?? null;
+}
+
+function columnType(config: OdsConfig, column: string) {
+  const fields = Array.isArray(config.columns) ? config.columns : [];
+  const field = fields.find((item) => String((item as { name?: unknown }).name ?? "").toLowerCase() === column.toLowerCase()) as { clickhouseType?: unknown } | undefined;
+  return String(field?.clickhouseType ?? "String");
+}
+
+function jsonText(alias: string, property: string) {
+  return `JSONExtractString(${alias}.properties, ${literal(property)})`;
+}
+
+function jsonTyped(alias: string, property: string, type: string) {
+  const raw = `JSONExtractRaw(${alias}.properties, ${literal(property)})`;
+  return `if(${raw} = 'null', CAST(NULL AS Nullable(${type})), CAST(${jsonText(alias, property)} AS Nullable(${type})))`;
+}
+
+function literal(value: string) {
+  return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+/**
+ * 把单个来源表包装成“基础 ODS + 当前版本对象变更”的有效来源。
+ * UPDATE 只覆盖真正修改的属性；CREATE 从变更集直接生成行；DELETE 从基础结果中排除。
+ */
+function effectiveSourceSql(entity: ResolvedEntity, source: ResolvedSource, config: OdsConfig, versionId: string) {
+  const database = identifier(clickHouseConfig().database);
+  const changes = `(SELECT * FROM ${database}.${identifier(OBJECT_CHANGES_TABLE)} FINAL WHERE version_id = ${literal(versionId)} AND entity_type_id = ${literal(entity.entityTypeId)} AND operation IN ('UPDATE', 'DELETE'))`;
+  const created = `(SELECT * FROM ${database}.${identifier(OBJECT_CHANGES_TABLE)} FINAL WHERE version_id = ${literal(versionId)} AND entity_type_id = ${literal(entity.entityTypeId)} AND operation = 'CREATE')`;
+  const primarySource = entity.sources.find((item) => item.primary) ?? entity.sources[0];
+  const baseColumns = Array.isArray(config.columns) ? config.columns.map((column) => String((column as { name?: unknown }).name ?? "").trim()).filter(Boolean) : [];
+  const join = source.primaryKey.map((column, index) => {
+    const keyColumn = primarySource?.primaryKey[index] ?? column;
+    return `toString(base.${identifier(column)}) = JSONExtractString(ch.primary_key, ${literal(keyColumn)})`;
+  });
+  const baseSelect = baseColumns.map((column) => {
+    const property = sourceProperty(entity, source, column);
+    if (!property) return `base.${identifier(column)} AS ${identifier(column)}`;
+    return `if(has(ch.changed_properties, ${literal(property.name)}), ${jsonTyped("ch", property.name, columnType(config, column))}, base.${identifier(column)}) AS ${identifier(column)}`;
+  });
+  const createSelect = baseColumns.map((column) => {
+    const property = sourceProperty(entity, source, column);
+    return property
+      ? `${jsonTyped("created", property.name, columnType(config, column))} AS ${identifier(column)}`
+      : `CAST(NULL AS Nullable(${columnType(config, column)})) AS ${identifier(column)}`;
+  });
+  if (!join.length) return odsTable(config);
+  return `(SELECT ${baseSelect.join(", ")} FROM ${odsTable(config)} AS base LEFT JOIN ${changes} AS ch ON ${join.join(" AND ")} WHERE coalesce(ch.operation, '') != 'DELETE' UNION ALL SELECT ${createSelect.join(", ")} FROM ${created} AS created)`;
+}
+
+async function changedObjectEntities(versionId: string | undefined) {
+  if (!versionId) return new Set<string>();
+  try {
+    const rows = await clickHouseQuery<{ entity_type_id: string }>(
+      `SELECT DISTINCT entity_type_id FROM ${identifier(clickHouseConfig().database)}.${identifier(OBJECT_CHANGES_TABLE)} FINAL WHERE version_id = {version:String}`,
+      { params: { version: versionId } },
+    );
+    return new Set(rows.map((row) => String(row.entity_type_id ?? "")).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+async function changedRelationshipTypes(versionId: string | undefined) {
+  if (!versionId) return new Set<string>();
+  try {
+    const rows = await clickHouseQuery<{ relationship_type_id: string }>(
+      `SELECT DISTINCT relationship_type_id FROM ${identifier(clickHouseConfig().database)}.${identifier(RELATIONSHIP_CHANGES_TABLE)} FINAL WHERE version_id = {version:String}`,
+      { params: { version: versionId } },
+    );
+    return new Set(rows.map((row) => String(row.relationship_type_id ?? "")).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function requiredColumns(plan: LogicalPlan) {
@@ -107,7 +194,7 @@ function requiredColumns(plan: LogicalPlan) {
   return byAlias;
 }
 
-async function resolveRoute(plan: LogicalPlan): Promise<Route | null> {
+async function resolveRoute(plan: LogicalPlan, versionId?: string): Promise<Route | null> {
   const entities = [...plan.entities.values()];
   const sources = entities.flatMap((entity) => entity.sources.map((source) => ({ entity, source })));
   if (sources.some(({ source }) => source.sql || source.readMode === "DIRECT")) return null;
@@ -135,7 +222,8 @@ async function resolveRoute(plan: LogicalPlan): Promise<Route | null> {
     if ([...needed].some((column) => !available.has(column.toLowerCase()))) return null;
     links.set(`${relation.alias}__link`, config);
   }
-  return { configs: byKey, aliases, links };
+  const [changedEntityTypeIds, changedRelationshipTypeIds] = await Promise.all([changedObjectEntities(versionId), changedRelationshipTypes(versionId)]);
+  return { configs: byKey, aliases, links, versionId, changedEntityTypeIds, changedRelationshipTypeIds };
 }
 
 function columnRef(field: ResolvedField) {
@@ -329,6 +417,30 @@ function qualified(alias: string, column: string) {
   return `${identifier(alias)}.${identifier(column)}`;
 }
 
+function entitySourceTable(route: Route, entity: ResolvedEntity, source: ResolvedSource, config: OdsConfig) {
+  return route.versionId && route.changedEntityTypeIds.has(entity.entityTypeId)
+    ? effectiveSourceSql(entity, source, config, route.versionId)
+    : baseOdsTable(config);
+}
+
+function effectiveRelationshipTable(route: Route, relation: ResolvedRelationship, config: OdsConfig) {
+  if (!route.versionId || !route.changedRelationshipTypeIds.has(relation.relationId) || relation.plan.mode !== "JOIN_TABLE") {
+    return odsTable(config);
+  }
+  const columns = Array.isArray(config.columns) ? config.columns.map((column) => String((column as { name?: unknown }).name ?? "").trim()).filter(Boolean) : [];
+  const sourcePairs = new Map(relation.plan.source.pairs.map((pair) => [pair.rowColumn, pair.keyColumn]));
+  const targetPairs = new Map(relation.plan.target.pairs.map((pair) => [pair.rowColumn, pair.keyColumn]));
+  const overlayColumns = columns.map((column) => {
+    const sourceKey = sourcePairs.get(column);
+    if (sourceKey) return `JSONExtractString(ch.source_primary_key, ${literal(sourceKey)}) AS ${identifier(column)}`;
+    const targetKey = targetPairs.get(column);
+    if (targetKey) return `JSONExtractString(ch.target_primary_key, ${literal(targetKey)}) AS ${identifier(column)}`;
+    return `CAST(NULL AS Nullable(${columnType(config, column)})) AS ${identifier(column)}`;
+  });
+  const changes = `(SELECT * FROM ${identifier(clickHouseConfig().database)}.${identifier(RELATIONSHIP_CHANGES_TABLE)} FINAL WHERE version_id = ${literal(route.versionId)} AND relationship_type_id = ${literal(relation.relationId)} AND operation IN ('CREATE', 'UPDATE'))`;
+  return `(SELECT ${columns.map((column) => identifier(column)).join(", ")} FROM ${odsTable(config)} UNION ALL SELECT ${overlayColumns.join(", ")} FROM ${changes} AS ch)`;
+}
+
 function compileEntityJoins(route: Route, entity: LogicalPlan["root"]) {
   const primary = entity.sources.find((source) => source.primary) ?? entity.sources[0];
   const primaryConfig = primary ? route.aliases.get(primary.alias) : undefined;
@@ -337,7 +449,7 @@ function compileEntityJoins(route: Route, entity: LogicalPlan["root"]) {
     const config = route.aliases.get(source.alias);
     if (!config) return [];
     const conditions = source.primaryKey.map((key, index) => `${qualified(source.alias, key)} = ${qualified(primary.alias, primary.primaryKey[index])}`);
-    return [`LEFT JOIN ${odsTable(config)} AS ${identifier(source.alias)} ON ${conditions.join(" AND ")}`];
+    return [`LEFT JOIN ${entitySourceTable(route, entity, source, config)} AS ${identifier(source.alias)} ON ${conditions.join(" AND ")}`];
   });
 }
 
@@ -352,7 +464,7 @@ function compileRelationshipJoin(route: Route, relation: ResolvedRelationship) {
     const holderAlias = holderId === relation.fromEntity.entityTypeId ? relation.fromAlias : relation.toAlias;
     const referencedAlias = referencedId === relation.fromEntity.entityTypeId ? relation.fromAlias : relation.toAlias;
     const conditions = plan.foreignKeys.rowColumns.map((rowColumn, index) => `${qualified(referencedAlias, plan.foreignKeys.keyColumns[index])} = ${qualified(holderAlias, rowColumn)}`);
-    return [`${relation.optional ? "LEFT JOIN" : "JOIN"} ${odsTable(targetConfig)} AS ${identifier(relation.toAlias)} ON ${conditions.join(" AND ")}`];
+    return [`${relation.optional ? "LEFT JOIN" : "JOIN"} ${entitySourceTable(route, relation.toEntity, targetSource, targetConfig)} AS ${identifier(relation.toAlias)} ON ${conditions.join(" AND ")}`];
   }
   const linkAlias = `${relation.alias}__link`;
   const linkConfig = route.links.get(linkAlias);
@@ -362,16 +474,16 @@ function compileRelationshipJoin(route: Route, relation: ResolvedRelationship) {
   const linkConditions = existingSide.pairs.map((pair) => `${qualified(linkAlias, pair.rowColumn)} = ${qualified(relation.fromAlias, pair.keyColumn)}`);
   const newConditions = newSide.pairs.map((pair) => `${qualified(relation.toAlias, pair.keyColumn)} = ${qualified(linkAlias, pair.rowColumn)}`);
   return [
-    `${relation.optional ? "LEFT JOIN" : "JOIN"} ${odsTable(linkConfig)} AS ${identifier(linkAlias)} ON ${linkConditions.join(" AND ")}`,
-    `${relation.optional ? "LEFT JOIN" : "JOIN"} ${odsTable(targetConfig)} AS ${identifier(relation.toAlias)} ON ${newConditions.join(" AND ")}`,
+    `${relation.optional ? "LEFT JOIN" : "JOIN"} ${effectiveRelationshipTable(route, relation, linkConfig)} AS ${identifier(linkAlias)} ON ${linkConditions.join(" AND ")}`,
+    `${relation.optional ? "LEFT JOIN" : "JOIN"} ${entitySourceTable(route, relation.toEntity, targetSource, targetConfig)} AS ${identifier(relation.toAlias)} ON ${newConditions.join(" AND ")}`,
   ];
 }
 
 export function createClickHouseOdsQueryExecutor(): OdsQueryExecutor {
   return {
-    async executeLogicalQuery(plan) {
+    async executeLogicalQuery(plan, options = {}) {
       if (!plan.root.sources.length) return null;
-      const route = await resolveRoute(plan).catch(() => null);
+      const route = await resolveRoute(plan, options.versionId).catch(() => null);
       if (!route) return null;
       const bag = new Bag();
       const select = compileSelect(plan, bag, route);
@@ -391,7 +503,7 @@ export function createClickHouseOdsQueryExecutor(): OdsQueryExecutor {
         ? ` ORDER BY ${plan.query.order_by.map((item) => `${orderExpression(plan, item.ref, select.labelOf)} ${item.direction.toUpperCase()}`).join(", ")}`
         : "";
       const limit = plan.query.limit;
-      const statement = `SELECT ${select.items.join(", ")} FROM ${odsTable(rootConfig)} AS ${identifier(plan.root.alias)}${joins.length ? ` ${joins.join(" ")}` : ""}${conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""}${group}${order} LIMIT ${limit + 1}`;
+      const statement = `SELECT ${select.items.join(", ")} FROM ${entitySourceTable(route, plan.root, rootSource, rootConfig)} AS ${identifier(plan.root.alias)}${joins.length ? ` ${joins.join(" ")}` : ""}${conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""}${group}${order} LIMIT ${limit + 1}`;
       const started = Date.now();
       const raw = await clickHouseQuery<Record<string, unknown>>(statement, { params: bag.params, settings: { join_use_nulls: "1", output_format_json_quote_decimals: "1" } });
       const truncated = raw.length > limit;

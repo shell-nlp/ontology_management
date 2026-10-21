@@ -18,10 +18,8 @@ import {
   type DataSourceKind,
   type DataSourceKindInfo,
   type DataSourceRowQuery,
-  type DataSourceRowUpdate,
   type DataSourceRecord,
   type DataSourceRows,
-  type DataSourceWriteResult,
   type DataViewField,
   type DataViewPreview,
   type DataViewRef,
@@ -807,44 +805,6 @@ function rowQueryBuilder(
   return builder;
 }
 
-/**
- * 执行一段**已经由 QueryBuilder 生成好**的语句（含绑定值）。
- *
- * Oracle 的绑定名就是数字，必须把值数组转成 `{ "1": v1, … }` 才认得 —— 这一点在取行那边已经踩过，
- * 写回走同一条路，免得"读数正常、写数悄悄绑不上"。
- */
-async function runParameterized(runner: QueryRunner, kind: DataSourceKind, sql: string, values: unknown[]): Promise<unknown> {
-  if (kind === "ORACLE") {
-    return await runner.query(sql, Object.fromEntries(values.map((value, index) => [String(index + 1), value])));
-  }
-  return await runner.query(sql, values);
-}
-
-/**
- * 写回之后回读比对用的宽松相等：库会自己规整值（定长 CHAR 补空格、数字/日期重新格式化），
- * 用严格字符串比会整天误判"没写进去"。只要两边都空、或规整后相等，就算写进去了。
- */
-function sameWrittenValue(left: unknown, right: unknown): boolean {
-  const empty = (value: unknown) => value === null || value === undefined || (typeof value === "string" && value.trim() === "");
-  if (empty(left) && empty(right)) return true;
-  if (empty(left) !== empty(right)) return false;
-  if (left instanceof Date || right instanceof Date) {
-    const leftTime = new Date(left as string | Date).getTime();
-    const rightTime = new Date(right as string | Date).getTime();
-    if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime === rightTime;
-  }
-  const leftText = String(left).trim();
-  const rightText = String(right).trim();
-  if (leftText === rightText) return true;
-  // 日期 / 数字常被库改写成别的写法：能都解析成同一个时间点或同一个数，就算相等。
-  const leftNumber = Number(leftText);
-  const rightNumber = Number(rightText);
-  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber === rightNumber;
-  const leftDate = Date.parse(leftText);
-  const rightDate = Date.parse(rightText);
-  return Number.isFinite(leftDate) && Number.isFinite(rightDate) && leftDate === rightDate;
-}
-
 export async function createSqlConnector(kind: DataSourceKind, record: DataSourceRecord, credentials: DataSourceCredentials): Promise<DataSourceConnector> {
   const container = resolveContainer(kind, record);
   // Oracle 旧版本必须走 Thick 模式：在建连接之前先把 Instant Client 装上（幂等）。
@@ -1148,101 +1108,6 @@ export async function createSqlConnector(kind: DataSourceKind, record: DataSourc
           return Number.isFinite(total) ? total : 0;
         } finally {
           await runner.query("ROLLBACK").catch(() => undefined);
-          await runner.release();
-        }
-      });
-    },
-
-    /**
-     * 结构化写回：按键改**一行**。动作写回业务库走的就是这里。
-     *
-     * 一个事务、三步，任一步不成立就回滚（写业务库不可逆，宁可不写）：
-     * 1. **先读后写**：按键读这一行（最多读 2 行）。0 行 = 这行不在了；2 行 = 键不唯一、盲写会改到别人的行 ——
-     *    两种都拒绝。这次读顺带把旧值拿回来，审计里要记「旧值 → 新值」。
-     * 2. **生成 UPDATE**：语句由 ORM 的 QueryBuilder 出（列名走驱动转义、值走绑定参数），一处字符串拼接都没有；
-     *    列名先在库的表结构里核对过 —— 属性映射写错就在这一步拦住，不会把语句发下去。
-     * 3. **回读确认**：改完再读一次那几列比对。驱动不一定给影响行数（Oracle 就不给），所以一律靠回读算：
-     *    确认不到就回滚报错，而不是报一个"以为写进去了"。
-     */
-    async updateRows(update: DataSourceRowUpdate): Promise<DataSourceWriteResult> {
-      const keys = (update.keys ?? []).map((item) => ({ column: String(item?.column ?? "").trim(), value: item?.value })).filter((item) => item.column);
-      const assignments = (update.assignments ?? []).map((item) => ({ column: String(item?.column ?? "").trim(), value: item?.value })).filter((item) => item.column);
-      if (!keys.length) throw new Error("写回必须给出定位这一行的键列。");
-      if (!assignments.length) throw new Error("写回必须给出至少一个要改的列。");
-      if (String(update.view.sql ?? "").trim()) {
-        throw new Error("取数口径的结果不是一张表，写不回去 —— 这个对象类型的主来源要改成表 / 视图才能写回。");
-      }
-      return withConnection(kind, record, credentials, async (_info, connection) => {
-        const hit = await locate(connection, update.view);
-        const schema = hit.schema || container || "";
-        const label = qualifiedName(kind, hit.schema || undefined, hit.name);
-        const target = [schema, hit.name].filter(Boolean).join(".");
-        // 列名先跟库里的真实结构核对：列不存在 / 大小写对不上都不往下走。
-        const columns = await readColumns(connection, hit);
-        const known = new Map(columns.map((column) => [column.name.toUpperCase(), column.name]));
-        const realColumn = (column: string) => {
-          const found = known.get(column.toUpperCase());
-          if (!found) throw new Error(`表 ${label} 里没有列「${column}」：属性的列映射和这张表对不上，写回停在发语句之前。`);
-          return found;
-        };
-        const realKeys = keys.map((item) => ({ column: realColumn(item.column), value: item.value }));
-        const realAssignments = assignments.map((item) => ({ column: realColumn(item.column), value: item.value }));
-        const padded = await paddedColumnsFor(connection, hit, schema);
-        const alias = quoteIdentifier(kind, "t");
-        /*
-         * 定长 CHAR 列按"去空格"比（和取行那边同一个口径）。**两边都要 RTRIM**：
-         * 键值常常就是从库里读回来的（对象属性就是列值），它自带尾空格 —— 只 RTRIM 左边还是会匹配不上。
-         */
-        const equality = (item: { column: string; value: unknown }, index: number, prefix: string) => {
-          const quoted = `${prefix}${quoteIdentifier(kind, item.column)}`;
-          const paddedColumn = kind === "ORACLE" && padded.has(item.column.toUpperCase());
-          if (!paddedColumn) return `${quoted} = :k${index}`;
-          return typeof item.value === "string" ? `RTRIM(${quoted}) = RTRIM(:k${index})` : `${quoted} = :k${index}`;
-        };
-        // 取行用带别名的写法（走 QueryBuilder 的 from），UPDATE 上不带别名 —— 单表 UPDATE 里别名各家方言支持不一（Oracle 的 UPDATE 就没有别名）。
-        const where = realKeys.map((item, index) => equality(item, index, `${alias}.`)).join(" AND ");
-        const whereWithoutAlias = realKeys.map((item, index) => equality(item, index, "")).join(" AND ");
-        const readColumnsSql = [...new Set([...realKeys, ...realAssignments].map((item) => item.column))]
-          .map((column) => `${alias}.${quoteIdentifier(kind, column)}`).join(", ");
-
-        /** 按键回读（最多 2 行）：写之前确认唯一、写之后确认生效，两边用的都是这一份。 */
-        const readBack = async (runner: QueryRunner): Promise<Record<string, unknown>[]> => {
-          const builder = runner.manager.createQueryBuilder().select(readColumnsSql).from(target, "t").where(where);
-          realKeys.forEach((item, index) => builder.setParameter(`k${index}`, item.value));
-          const [sql, values] = builder.getQueryAndParameters();
-          const raw = await runParameterized(runner, kind, kind === "ORACLE" ? `SELECT * FROM (${sql}) WHERE ROWNUM <= 2` : sql, values);
-          return (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
-        };
-
-        const runner = connection.createQueryRunner();
-        try {
-          await runner.startTransaction();
-          const found = await readBack(runner);
-          if (!found.length) throw new Error(`按这个键在 ${label} 里没找到这一行（源数据可能已经变了）：写回已取消，业务库里没有改动。`);
-          if (found.length > 1) {
-            throw new Error(`这个键在 ${label} 里不止一行 —— 键不唯一，写回会改到别的行：已取消。请把对象类型的主键换成真正唯一的列（或用取数口径去重）。`);
-          }
-          const before = normalizeRow(found[0]);
-
-          const updateBuilder = runner.manager.createQueryBuilder()
-            .update(target)
-            .set(Object.fromEntries(realAssignments.map((item) => [item.column, item.value])))
-            .where(whereWithoutAlias);
-          realKeys.forEach((item, index) => updateBuilder.setParameter(`k${index}`, item.value));
-          const [statement, values] = updateBuilder.getQueryAndParameters();
-          await runParameterized(runner, kind, statement, values);
-
-          const after = normalizeRow((await readBack(runner))[0] ?? {});
-          const mismatched = realAssignments.filter((item) => !sameWrittenValue(after[item.column], item.value));
-          if (mismatched.length) {
-            throw new Error(`写回没有生效（回读对不上：${mismatched.map((item) => item.column).join("、")}）：已回滚，业务库里没有改动。语句：${statement.slice(0, 400)}`);
-          }
-          await runner.commitTransaction();
-          return { statement, affected: 1, before };
-        } catch (error) {
-          await runner.rollbackTransaction().catch(() => undefined);
-          throw error;
-        } finally {
           await runner.release();
         }
       });

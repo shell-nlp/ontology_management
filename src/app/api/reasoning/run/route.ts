@@ -5,7 +5,7 @@ import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { getPublishedOntology } from "@/lib/versioning/published-ontology";
+import { getPublishedVersion } from "@/lib/versioning/published-ontology";
 import { loadToolPolicy } from "@/lib/reasoning/tool-policy";
 import { runReasoning } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
@@ -42,8 +42,11 @@ export const POST = withPermission("reasoning.use", async (request: NextRequest,
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
 
     let definition;
+    let publishedVersionId: string;
     try {
-      definition = await getPublishedOntology(target.id);
+      const published = await getPublishedVersion(target.id);
+      definition = published.definition;
+      publishedVersionId = published.id;
     } catch {
       return NextResponse.json({ error: "该本体还没有发布版本，先在「本体草稿」里发布后再推理。" }, { status: 409 });
     }
@@ -58,7 +61,7 @@ export const POST = withPermission("reasoning.use", async (request: NextRequest,
     const run = await runReasoning({
       question,
       attachments: input.attachments,
-      context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
+      context: { store, definition, publishedVersionId, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit },
       maxSteps: input.maxSteps,
       disabledTools: policy.disabledTools,
       systemPrompt: input.systemPrompt,

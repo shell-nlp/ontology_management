@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/platform/graph-store";
 import { getTarget } from "@/lib/platform/targets";
-import { getPublishedOntology } from "@/lib/versioning/published-ontology";
-import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";
+import { ensureVersionSnapshot, getVersionRecord, listSnapshotEntities } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { queryAllObjects, resolveObjectContext } from "@/lib/instance/object-service";
 
 export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
@@ -25,25 +24,32 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
         labels = [];
       }
     }
-    const displayProps: Record<string, string> = {};
-    try {
-      const ontology = await getPublishedOntology(target.id);
-      for (const item of ontology.entityTypes) if (item.displayProperty) displayProps[item.name] = item.displayProperty;
-    } catch {
-      // 未发布本体时按任意属性搜索并仅按属性值排序
-    }
     const limit = Math.min(Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 12), 30);
     const versionId = request.nextUrl.searchParams.get("versionId");
     if (versionId) {
-      const snapshot = await ensureVersionSnapshot(versionId, target);
-      const results = listSnapshotEntities(snapshot, { search: q, limit: 200 })
-        .filter((node) => !labels.length || node.labels.some((label) => labels.includes(label)))
-        .slice(0, limit)
-        .map((node) => ({ ...node, matched: Object.keys(node.properties), rank: 0 }));
-      return NextResponse.json({ results });
+      const version = await getVersionRecord(versionId);
+      if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+      if (version.status === "DRAFT") {
+        const snapshot = await ensureVersionSnapshot(versionId, target);
+        const results = listSnapshotEntities(snapshot, { search: q, limit: 200 })
+          .filter((node) => !labels.length || node.labels.some((label) => labels.includes(label)))
+          .slice(0, limit)
+          .map((node) => ({ ...node, matched: Object.keys(node.properties), rank: 0 }));
+        return NextResponse.json({ results });
+      }
     }
-    const results = await getGraphStore(target).searchEntities({ search: q, labels, limit, displayProperties: displayProps });
-    return NextResponse.json({ results });
+    const context = await resolveObjectContext(target.id, versionId ?? undefined);
+    const page = await queryAllObjects(context, { labels, text: q, limit, count: false, signal: request.signal });
+    return NextResponse.json({
+      results: page.rows.map((row, rank) => ({
+        id: row.objectId,
+        labels: [row.entityType],
+        properties: row.properties,
+        matched: Object.entries(row.properties).filter(([, value]) => String(value ?? "").toLowerCase().includes(q.toLowerCase())).map(([key]) => key),
+        rank,
+      })),
+      warnings: page.warnings,
+    });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法搜索对象。") }, { status: apiErrorStatus(error) });
   }

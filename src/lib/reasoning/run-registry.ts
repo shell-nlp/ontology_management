@@ -4,7 +4,7 @@ import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { getOntologyByTargetId } from "@/lib/platform/ontologies";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
-import { getPublishedOntology } from "@/lib/versioning/published-ontology";
+import { getPublishedVersion } from "@/lib/versioning/published-ontology";
 import { runReasoning, worthKeepingTurn } from "@/lib/reasoning/agent";
 import { attachmentsSchema } from "@/lib/reasoning/attachment-schema";
 import { effectiveQuestion } from "@/lib/reasoning/attachments";
@@ -200,8 +200,11 @@ export async function startReasoningRun({ userId, actorId, input }: StartRunOpti
   if (!target) throw new Error("本体存储不存在。");
 
   let definition;
+  let publishedVersionId: string;
   try {
-    definition = await getPublishedOntology(target.id);
+    const published = await getPublishedVersion(target.id);
+    definition = published.definition;
+    publishedVersionId = published.id;
   } catch {
     throw new Error("该本体还没有发布版本，先在「本体草稿」里发布后再提问。");
   }
@@ -236,7 +239,7 @@ export async function startReasoningRun({ userId, actorId, input }: StartRunOpti
   };
   registry().set(record.runId, record);
 
-  void executeRun({ record, actorId, input, question, target: target.id, scope, context: { store, definition, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit } });
+  void executeRun({ record, actorId, input, question, target: target.id, scope, context: { store, definition, publishedVersionId, runtimeTypes, dataSources, toolResultLimit: input.toolResultLimit, sqlRowLimit: input.sqlRowLimit } });
   return summaryOf(record);
 }
 

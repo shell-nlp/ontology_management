@@ -5,6 +5,7 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { deleteTargetVersions } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { deleteTargetVersionChanges } from "@/lib/instance/ods/published-changes";
 
 export const POST = withPermission("ontology.version.delete", async (_: Request, context: { params: Promise<{ targetId: string }> }, user) => {
   try {
@@ -13,6 +14,7 @@ export const POST = withPermission("ontology.version.delete", async (_: Request,
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
 
+    await deleteTargetVersionChanges(targetId);
     const deletedVersions = await deleteTargetVersions(targetId);
     await writeAuditEntry({
       actorId: user.id,

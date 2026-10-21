@@ -1,13 +1,30 @@
-import { readVersionSnapshot, listVersionRecords, type VersionSnapshot } from "@/lib/versioning/snapshot";
+import { getVersionRecord, readVersionSnapshot, listVersionRecords, type VersionSnapshot } from "@/lib/versioning/snapshot";
 import { changedProperties, overlayObjectProperties } from "@/lib/ontology/object-edits";
 import { primaryKeyFromProperties, objectRefOf } from "@/lib/ontology/object-identity";
 import { titleOf } from "./data-source";
 import type { ObjectContext, ObjectQuery, ObjectQueryResult, ObjectRecord } from "./types";
 import type { LogicalPlan } from "@/lib/query-dsl/ast";
+import { getOdsStore } from "@/lib/infrastructure/ods";
+import { snapshotFromVersionChanges } from "@/lib/instance/ods/published-changes";
 
 export async function readEditSnapshot(context: ObjectContext): Promise<VersionSnapshot | null> {
-  const versionId = context.versionId ?? (await listVersionRecords(context.targetId)).find((version) => version.status === "PUBLISHED")?.id;
+  let versionId = context.versionId;
+  if (versionId) {
+    const explicit = await getVersionRecord(versionId);
+    if (!explicit) return null;
+    if (explicit.status === "DRAFT") return readVersionSnapshot(versionId);
+  } else {
+    versionId = (await listVersionRecords(context.targetId)).find((version) => version.status === "PUBLISHED")?.id ?? null;
+  }
   if (!versionId) return null;
+  try {
+    const changes = await getOdsStore().readVersionChanges(versionId);
+    if (changes.objects.length || changes.relationships.length) {
+      return snapshotFromVersionChanges(context.definition, changes);
+    }
+  } catch {
+    // 兼容尚未升级到发布变更集的旧部署；发布覆盖层清空后这里会自然返回空快照。
+  }
   return readVersionSnapshot(versionId);
 }
 
@@ -32,6 +49,8 @@ export function applyObjectEdit(context: ObjectContext, snapshot: VersionSnapsho
 }
 
 export async function assertQueryEditConsistency(context: ObjectContext, plan: LogicalPlan) {
+  // 发布版本的稀疏变更已经由 ClickHouse 查询层合并；这里只对显式草稿版本做一致性检查。
+  if (!context.versionId) return;
   const snapshot = await readEditSnapshot(context);
   if (!snapshot) return;
   const ids = new Set([...plan.entities.values()].map((entity) => entity.entityTypeId));
@@ -39,7 +58,7 @@ export async function assertQueryEditConsistency(context: ObjectContext, plan: L
     if (!ids.has(edit.entityTypeId)) continue;
     const node = snapshot.nodes.find((item) => item.id === id);
     if (edit.deleted || edit.base === null || Object.keys(changedProperties(edit.base, node?.properties ?? {})).length) {
-      throw new Error("查询涉及尚未写回源业务库的版本编辑。为避免遗漏本地对象或使用旧值统计，本体 SQL 暂停出数；请先通过动作写回并同步 ODS，或按主键查看合并对象。");
+      throw new Error("草稿查询涉及尚未进入 ODS 的本地编辑。请先发布版本到 ODS，或按主键查看合并对象。");
     }
   }
 }
@@ -58,8 +77,8 @@ export async function queryWithEdits(context: ObjectContext, query: ObjectQuery,
   }
   if (query.paging) return execute(query); // materialization copies the source, never version edits
   const dependent = [...(query.filters ?? []).map((filter) => filter.property), ...(query.sort ?? []).map((sort) => sort.property)];
-  if ((query.text && touched.size) || dependent.some((name) => touched.has(name))) {
-    throw new Error("本次筛选或排序涉及当前版本覆盖修改的属性，源数据下推不能保证结果完整。请先通过动作写回业务库，再同步 ODS；或按主键查看编辑后的对象。");
+  if (dependent.some((name) => touched.has(name))) {
+    throw new Error("草稿预览的筛选或排序涉及本地覆盖属性，暂时不能安全下推。发布后由 ODS 版本变更集查询，或按主键查看合并对象。");
   }
   if (query.keys?.length) {
     const result = await execute(query);
@@ -70,6 +89,38 @@ export async function queryWithEdits(context: ObjectContext, query: ObjectQuery,
     }
     result.rows = result.rows.map((row) => applyObjectEdit(context, snapshot, row, type.name, row.objectId)).filter((row): row is ObjectRecord => Boolean(row));
     return { ...result, total: result.rows.length };
+  }
+  if (query.text && touched.size && snapshot.publishedChanges) {
+    const needle = query.text.toLowerCase();
+    const matches = (record: ObjectRecord) => Object.values(record.properties).some((value) => String(value ?? "").toLowerCase().includes(needle));
+    const limit = Math.min(200, Math.max(1, query.limit ?? 20));
+    const source = await execute({ ...query, limit, offset: 0, count: false });
+    const merged = new Map<string, ObjectRecord>();
+    for (const row of source.rows) {
+      const edited = applyObjectEdit(context, snapshot, row, type.name, row.objectId);
+      if (edited && matches(edited)) merged.set(edited.objectId, edited);
+    }
+    for (const [, edit] of edits) {
+      if (!edit.base || edit.deleted) continue;
+      const page = await execute({ ...query, text: undefined, keys: [edit.primaryKey], limit: 1, offset: 0, count: false });
+      for (const row of page.rows) {
+        const edited = applyObjectEdit(context, snapshot, row, type.name, row.objectId);
+        if (edited && matches(edited)) merged.set(edited.objectId, edited);
+      }
+    }
+    for (const node of localNodes) {
+      const local = applyObjectEdit(context, snapshot, null, type.name, node.id);
+      if (local && matches(local)) merged.set(local.objectId, local);
+    }
+    return {
+      ...source,
+      rows: [...merged.values()].slice(0, limit),
+      total: null,
+      warnings: [...source.warnings, "搜索结果已合并当前发布版本的本地 CRUD；总数不提供精确值。"],
+    };
+  }
+  if (query.text && touched.size) {
+    throw new Error("草稿预览的关键词检索涉及本地覆盖属性，暂时不能安全下推。发布后由 ODS 版本变更集查询，或按主键查看合并对象。");
   }
   // Avoid inventing a merged aggregate or a global sort across databases and local edits.
   if (localNodes.length && (query.filters?.length || query.sort?.length)) {

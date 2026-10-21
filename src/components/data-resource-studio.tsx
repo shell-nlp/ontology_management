@@ -239,6 +239,12 @@ type OdsCatalogSignal = {
   lastError: string | null;
 };
 
+export type DataResourceFocus = {
+  dataSourceId: string;
+  schema: string;
+  table: string;
+};
+
 const ODS_SIGNAL_LABEL: Record<OdsCatalogSignal["status"], string> = {
   NEVER: "ODS 未同步",
   RUNNING: "ODS 同步中",
@@ -251,9 +257,10 @@ function catalogUsageKey(dataSourceId: string, schema: string, table: string) {
   return [dataSourceId, schema, table].map((value) => String(value ?? "").trim().toUpperCase()).join("\u0000");
 }
 
-export function DataResourceStudio({ canEdit, definition, notify, fail }: {
+export function DataResourceStudio({ canEdit, definition, focus, notify, fail }: {
   canEdit: boolean;
   definition: Definition;
+  focus?: DataResourceFocus | null;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
 }) {
@@ -274,7 +281,7 @@ export function DataResourceStudio({ canEdit, definition, notify, fail }: {
       sessionCache.sources = rows;
       setSources(rows);
       setActiveId((current) => {
-        const wanted = focusId ?? current ?? sessionCache.activeId;
+        const wanted = focusId ?? (focus?.dataSourceId && rows.some((item) => item.id === focus.dataSourceId) ? focus.dataSourceId : current || sessionCache.activeId);
         const next = rows.some((item) => item.id === wanted) ? wanted : rows[0]?.id ?? "";
         sessionCache.activeId = next;
         return next;
@@ -284,7 +291,7 @@ export function DataResourceStudio({ canEdit, definition, notify, fail }: {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [focus]);
 
   const loadOdsSignals = useCallback(async () => {
     try {
@@ -340,6 +347,7 @@ export function DataResourceStudio({ canEdit, definition, notify, fail }: {
       {active && <DataResourceBrowser
         key={`${active.id}|${active.host}|${active.port}|${active.databaseName}|${active.schemaName}`}
         source={active}
+        focus={focus}
         definition={definition}
         odsSources={odsSources}
         canEdit={canEdit}
@@ -364,10 +372,11 @@ export function DataResourceStudio({ canEdit, definition, notify, fail }: {
 type ScopeFilter = "all" | "table" | "view";
 
 /** 一个数据资源的结构浏览：左边是表与视图清单，右边是字段和数据预览。 */
-function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, fail, onEdit, onChanged, onOdsChanged, onDeleted }: {
+function DataResourceBrowser({ source, definition, odsSources, focus, canEdit, notify, fail, onEdit, onChanged, onOdsChanged, onDeleted }: {
   source: PublicDataSource;
   definition: Definition;
   odsSources: OdsCatalogSignal[];
+  focus?: DataResourceFocus | null;
   canEdit: boolean;
   notify: (text: string) => void;
   fail: (reason: unknown) => void;
@@ -436,7 +445,10 @@ function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, 
       setViews(data.views);
       setCatalogMeta(data.fetched_at ? { at: data.fetched_at, fromCache: Boolean(data.from_cache) } : null);
       setSelectedName((current) => {
-        const next = data.views.some((item) => item.name === current) ? current : "";
+        const focused = focus?.dataSourceId === source.id && data.views.some((item) => item.name === focus.table)
+          ? focus.table
+          : "";
+        const next = focused || (data.views.some((item) => item.name === current) ? current : "");
         sessionCache.selected.set(source.id, next);
         return next;
       });
@@ -450,7 +462,7 @@ function DataResourceBrowser({ source, definition, odsSources, canEdit, notify, 
     } finally {
       if (run === catalogRun.current) setViewsBusy(false);
     }
-  }, [catalogKey, scope, setCatalogMeta, setFields, setPreview, setSelectedName, setViews, setViewsBusy, setViewsError, source.enabled, source.id]);
+  }, [catalogKey, focus, scope, setCatalogMeta, setFields, setPreview, setSelectedName, setViews, setViewsBusy, setViewsError, source.enabled, source.id]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void loadViews(); }, 0);

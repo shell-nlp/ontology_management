@@ -362,11 +362,11 @@ export const actionValueSchema = z.object({
 });
 
 /**
- * 动作对图的一次操作。三种操作覆盖"新建对象 / 改属性 / 连关系"，
+ * 动作对图的一次操作。四种操作覆盖"新建对象 / 改属性 / 删除对象 / 连关系"，
  * 也就是把过去散落在 API 调用里的写事务写成声明式模板。
  */
 export const actionEditSchema = z.object({
-  op: z.enum(["CREATE_ENTITY", "SET_PROPERTY", "CREATE_RELATIONSHIP"]),
+  op: z.enum(["CREATE_ENTITY", "SET_PROPERTY", "DELETE_ENTITY", "CREATE_RELATIONSHIP"]),
   /** CREATE_ENTITY 的别名，后续操作与规则条件用它引用这个新对象。 */
   alias: z.string().trim().default(""),
   entityTypeId: z.union([z.string().uuid(), z.literal("")]).default(""),

@@ -6,6 +6,7 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { createVersionRecord, deleteVersionRecord, ensureVersionSnapshot, initializeVersionSnapshot, listVersionRecords, withTargetLock } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { hydrateDraftFromPublishedVersion } from "@/lib/instance/ods/published-changes";
 
 const draftCreateInput = z.object({ targetId: z.string().uuid(), baseVersionId: z.string().uuid().optional(), definition: ontologyDefinitionSchema.optional() });
 
@@ -37,6 +38,9 @@ export const POST = withPermission("ontology.write", async (request: NextRequest
       const record = await createVersionRecord({ targetId: input.targetId, versionNumber, createdBy: user.id, definition: ontologyDefinitionSchema.parse(definition) });
       try {
         const manifest = await initializeVersionSnapshot(record.id, target, base?.id);
+        if (base?.status === "PUBLISHED" || base?.status === "ARCHIVED") {
+          await hydrateDraftFromPublishedVersion(record.id, base.id);
+        }
         await writeAuditEntry({ actorId: user.id, targetId: input.targetId, action: "VERSION_DRAFT_CREATED", details: { versionId: record.id, baseVersionId: base?.id ?? null, entityCount: manifest.entityCount, relationshipCount: manifest.relationshipCount } });
         return NextResponse.json({ id: record.id, versionNumber: record.version_number, status: "DRAFT", definition, entity_count: manifest.entityCount, relationship_count: manifest.relationshipCount }, { status: 201 });
       } catch (error) {

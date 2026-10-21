@@ -4,6 +4,8 @@ import { objectIdOf, objectRefOf, type ObjectPrimaryKey } from "@/lib/ontology/o
 import { connectorFor, selectRowsBy } from "@/lib/instance/object-service/data-source";
 import type { ObjectContext } from "@/lib/instance/object-service/types";
 import { readOdsLinkRows } from "./link-rows";
+import { getOdsStore } from "@/lib/infrastructure/ods";
+import { getVersionRecord, listVersionRecords } from "@/lib/versioning/snapshot";
 
 /**
  * 关系实例（边）的读取（backlog D2）。
@@ -145,6 +147,47 @@ function relationsToRead(context: ObjectContext, query: ObjectLinkQuery): LinkSo
   });
 }
 
+async function publishedRelationshipLinks(context: ObjectContext, query: ObjectLinkQuery) {
+  let versionId = context.versionId;
+  if (versionId) {
+    const explicit = await getVersionRecord(versionId);
+    if (!explicit || explicit.status === "DRAFT") return { links: [] as ObjectLinkRecord[], relationshipTypes: [] as string[], warnings: [] as string[] };
+  } else {
+    versionId = (await listVersionRecords(context.targetId)).find((version) => version.status === "PUBLISHED")?.id ?? null;
+  }
+  if (!versionId) return { links: [] as ObjectLinkRecord[], relationshipTypes: [] as string[], warnings: [] as string[] };
+  const changes = await getOdsStore().readVersionChanges(versionId).catch(() => null);
+  if (!changes?.relationships.length) return { links: [] as ObjectLinkRecord[], relationshipTypes: [] as string[], warnings: [] as string[] };
+  const types = new Map(context.definition.relationshipTypes.map((type) => [type.id, type]));
+  const entityTypes = new Map(context.definition.entityTypes.map((type) => [type.id, type]));
+  const links: ObjectLinkRecord[] = [];
+  const relationshipTypes = new Set<string>();
+  const seedIds = query.seed
+    ? new Set(query.seed.keys.map((key) => objectIdOf(query.seed!.entityType, key)).filter(Boolean))
+    : null;
+  for (const change of changes.relationships) {
+    const type = types.get(change.relationshipTypeId);
+    if (!type) continue;
+    if (query.relationshipType && query.relationshipType !== type.name && query.relationshipType !== type.id) continue;
+    const source = endpoint(change.sourceEntityTypeId ? entityTypes.get(change.sourceEntityTypeId)?.name ?? change.sourceEntityTypeId : "", change.sourcePrimaryKey);
+    const target = endpoint(change.targetEntityTypeId ? entityTypes.get(change.targetEntityTypeId)?.name ?? change.targetEntityTypeId : "", change.targetPrimaryKey);
+    if (!source || !target) continue;
+    if (seedIds && !seedIds.has(source.objectId) && !seedIds.has(target.objectId)) continue;
+    relationshipTypes.add(type.name);
+    links.push({
+      relationshipTypeId: type.id,
+      relationshipType: type.name,
+      source,
+      target,
+      properties: change.properties,
+      origin: "source",
+      linkRef: `${type.name}/${source.objectRef}->${target.objectRef}`,
+      warnings: [],
+    });
+  }
+  return { links, relationshipTypes: [...relationshipTypes], warnings: [] as string[] };
+}
+
 /** 这条关系类型要从连接表里取的列：键映射落到的列 + 关系类型自己属性落到的列。 */
 export function linkReadColumns(relation: LinkSourceRelation, plan: LinkPlan & { ok: true }): string[] {
   const propertyColumns = (relation as { properties?: readonly { name: string; sourceField?: string }[] }).properties ?? [];
@@ -279,6 +322,21 @@ export async function queryLinks(context: ObjectContext, query: ObjectLinkQuery 
     links.push(...decoded.links);
     if (decoded.skipped) warnings.push(`关系类型「${relation.name}」有 ${decoded.skipped} 行的键不全（连接行里的连接列是空值），这些行没有取成边。`);
   }
+
+  const published = await publishedRelationshipLinks(context, query).catch((error) => ({
+    links: [] as ObjectLinkRecord[],
+    relationshipTypes: [] as string[],
+    warnings: [`发布版本本地关系读取失败：${error instanceof Error ? error.message : String(error)}`],
+  }));
+  const publishedRoom = Math.max(0, limit - links.length);
+  links.push(...published.links.slice(0, publishedRoom));
+  warnings.push(...published.warnings);
+  for (const name of published.relationshipTypes) if (!relationshipTypes.includes(name)) relationshipTypes.push(name);
+  if (published.links.length) {
+    counted = true;
+    if (total !== null) total += published.links.length;
+  }
+  if (published.links.length > publishedRoom) truncated = true;
 
   // 同一个 (关系类型, 起点, 终点) 只留一条：连接表里重复行不该在图上画出两条边。
   const unique = new Map<string, ObjectLinkRecord>();

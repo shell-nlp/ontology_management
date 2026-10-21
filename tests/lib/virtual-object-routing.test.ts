@@ -5,7 +5,11 @@ import type { ObjectRecord } from "@/lib/instance/object-service/types";
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), readByKey: vi.fn(), readVersionSnapshot: vi.fn(), readLinks: vi.fn() }));
 vi.mock("@/lib/instance/object-service/ods-source", () => ({ createOdsFirstObjectSource: () => ({ kind: "mock", query: mocks.query, readByKey: mocks.readByKey }) }));
-vi.mock("@/lib/versioning/snapshot", () => ({ readVersionSnapshot: mocks.readVersionSnapshot, listVersionRecords: vi.fn() }));
+vi.mock("@/lib/versioning/snapshot", () => ({
+  readVersionSnapshot: mocks.readVersionSnapshot,
+  listVersionRecords: vi.fn(),
+  getVersionRecord: vi.fn(async () => ({ id: "version", status: "DRAFT" })),
+}));
 vi.mock("@/lib/instance/object-service/links", () => ({ queryLinks: mocks.readLinks }));
 
 import { getObject, queryAllObjects, queryObjects } from "@/lib/instance/object-service";

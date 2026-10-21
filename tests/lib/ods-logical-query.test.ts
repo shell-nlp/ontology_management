@@ -161,3 +161,48 @@ it("关系 JOIN 使用两端 ODS 表，外键连接仍走本体关系计划", as
   expect(result?.statement).toContain('"c"."CUST_ID" = "o"."CUST_ID"');
   expect(result?.rows).toEqual([["O-1"]]);
 });
+
+it("发布版本的本地关系会叠加到连接表查询", async () => {
+  const relationId = "33333333-3333-4333-8333-333333333333";
+  const linked = ontologyDefinitionSchema.parse({
+    entityTypes: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "客户",
+        properties: [{ name: "客户编号", dataType: "TEXT", sourceField: "CUST_ID" }],
+        sources: [{ id: "primary", dataSourceId: DATA_SOURCE, readMode: "ODS", schema: "S", view: "CUSTOMER", primaryKey: ["CUST_ID"] }],
+      },
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        name: "地市",
+        properties: [{ name: "地市编码", dataType: "TEXT", sourceField: "AREA_CODE" }],
+        sources: [{ id: "primary", dataSourceId: DATA_SOURCE, readMode: "ODS", schema: "S", view: "AREA", primaryKey: ["AREA_CODE"] }],
+      },
+    ],
+    relationshipTypes: [{
+      id: relationId,
+      name: "归属地市",
+      sourceEntityTypeId: "11111111-1111-4111-8111-111111111111",
+      targetEntityTypeId: "22222222-2222-4222-8222-222222222222",
+      sourceKeyMappings: [{ linkProperty: "CUST_ID", entityProperty: "客户编号" }],
+      targetKeyMappings: [{ linkProperty: "AREA_CODE", entityProperty: "地市编码" }],
+      linkSource: { mode: "JOIN_TABLE", dataSourceId: DATA_SOURCE, schema: "S", view: "CUSTOMER_AREA" },
+    }],
+  });
+  mocks.find.mockResolvedValue([
+    { id: "ods-customer", dataSourceId: DATA_SOURCE, schemaName: "S", tableName: "CUSTOMER", chTable: "ods_customer", status: "READY", enabled: true, lastSyncAt: new Date(), columns: [{ name: "CUST_ID" }] },
+    { id: "ods-area", dataSourceId: DATA_SOURCE, schemaName: "S", tableName: "AREA", chTable: "ods_area", status: "READY", enabled: true, lastSyncAt: new Date(), columns: [{ name: "AREA_CODE" }] },
+    { id: "ods-link", dataSourceId: DATA_SOURCE, schemaName: "S", tableName: "CUSTOMER_AREA", chTable: "ods_link", status: "READY", enabled: true, lastSyncAt: new Date(), columns: [{ name: "CUST_ID" }, { name: "AREA_CODE" }] },
+  ]);
+  mocks.query.mockReset();
+  mocks.query.mockImplementation(async (sql: string) => {
+    if (sql.includes("SELECT DISTINCT entity_type_id")) return [];
+    if (sql.includes("SELECT DISTINCT relationship_type_id")) return [{ relationship_type_id: relationId }];
+    return [{ 地市编码: "371" }];
+  });
+  const plan = resolveQueryDsl(linked, toQueryDsl("SELECT 地市.地市编码 FROM 客户 JOIN 归属地市 AS 地市", linked));
+  const result = await createClickHouseOdsQueryExecutor().executeLogicalQuery(plan, { versionId: "version-1" });
+  expect(result?.statement).toContain("ods_version_relationship_changes");
+  expect(result?.statement).toContain("UNION ALL");
+  expect(result?.rows).toEqual([["371"]]);
+});

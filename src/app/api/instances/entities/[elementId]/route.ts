@@ -5,8 +5,10 @@ import { getTarget } from "@/lib/platform/targets";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { deleteSnapshotEntity, updateSnapshotEntity } from "@/lib/instance/snapshot-editing";
-import { ensureVersionSnapshot, entityFromSnapshot } from "@/lib/versioning/snapshot";
+import { ensureVersionSnapshot, entityFromSnapshot, getVersionRecord } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { getObject, resolveObjectContext } from "@/lib/instance/object-service";
+import { readEditSnapshot } from "@/lib/instance/object-service/edit-overlay";
 
 const entityPatchInput = z.object({ properties: z.record(z.string(), z.unknown()).default({}), displayedBase: z.record(z.string(), z.unknown()).optional() });
 
@@ -25,10 +27,23 @@ export const GET = withPermission("instance.read", async (request: NextRequest, 
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     const versionId = versionIdOf(request);
     if (versionId) {
-      const snapshot = await ensureVersionSnapshot(versionId, target);
-      const entity = snapshot.nodes.find((node) => node.id === elementId);
-      if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
-      return NextResponse.json(entityFromSnapshot(entity));
+      const version = await getVersionRecord(versionId);
+      if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+      if (version.status === "DRAFT") {
+        const snapshot = await ensureVersionSnapshot(versionId, target);
+        const entity = snapshot.nodes.find((node) => node.id === elementId);
+        if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
+        return NextResponse.json(entityFromSnapshot(entity));
+      }
+    }
+    const objectContext = await resolveObjectContext(target.id, versionId || undefined);
+    const overlay = await readEditSnapshot(objectContext);
+    const changed = overlay?.nodes.find((node) => node.id === elementId);
+    const edit = overlay?.objectEdits?.[elementId];
+    if (changed && edit) {
+      const record = await getObject(objectContext, changed.labels[0] ?? "", edit.primaryKey);
+      if (!record) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });
+      return NextResponse.json({ id: record.objectId, labels: [record.entityType], properties: record.properties });
     }
     const entity = await getGraphStore(target).readEntity(elementId);
     if (!entity) return NextResponse.json({ error: "对象不存在。" }, { status: 404 });

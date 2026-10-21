@@ -902,6 +902,7 @@ export async function runReasoningTool(name: string, args: Record<string, unknow
         parameters,
         targetId: context.store.target.id,
         odsQuery: getOdsQueryExecutor(),
+        versionId: context.publishedVersionId,
         assertReadConsistency: (plan) => assertQueryEditConsistency(objectContextOf(context), plan),
       })
         .catch(async (error: unknown) => { throw await enrichQueryError(error, definition); });

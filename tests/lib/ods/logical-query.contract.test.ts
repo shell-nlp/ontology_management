@@ -11,6 +11,7 @@ describe("ODS 查询 DSL 契约", () => {
   it.skipIf(!enabled)("从平台库解析 ODS 配置并直接在 ClickHouse 聚合", async () => {
     const dataSourceId = randomUUID();
     const configId = randomUUID();
+    const versionId = randomUUID();
     const tableName = `ods_query_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const definition = ontologyDefinitionSchema.parse({
       entityTypes: [{
@@ -68,7 +69,51 @@ describe("ODS 查询 DSL 契约", () => {
       expect(result).toMatchObject({ data_source: "ClickHouse ODS", columns: ["条数", "总分"] });
       expect(Number(result?.rows[0][0])).toBe(2);
       expect(Number(result?.rows[0][1])).toBe(179);
+
+      await getOdsStore().replaceVersionChanges(versionId, {
+        objects: [
+          {
+            versionId,
+            entityTypeId: definition.entityTypes[0].id,
+            entityType: "客户",
+            objectId: "A",
+            primaryKey: { CUST_ID: "A" },
+            operation: "UPDATE",
+            base: { 客户编号: "A", 信用分: 91 },
+            properties: { 客户编号: "A", 信用分: 100 },
+            changedProperties: ["信用分"],
+          },
+          {
+            versionId,
+            entityTypeId: definition.entityTypes[0].id,
+            entityType: "客户",
+            objectId: "B",
+            primaryKey: { CUST_ID: "B" },
+            operation: "DELETE",
+            base: { 客户编号: "B", 信用分: 72 },
+            properties: {},
+            changedProperties: [],
+          },
+          {
+            versionId,
+            entityTypeId: definition.entityTypes[0].id,
+            entityType: "客户",
+            objectId: "D",
+            primaryKey: { CUST_ID: "D" },
+            operation: "CREATE",
+            base: null,
+            properties: { 客户编号: "D", 信用分: 60 },
+            changedProperties: ["客户编号", "信用分"],
+          },
+        ],
+        relationships: [],
+      });
+      const effectivePlan = resolveQueryDsl(definition, toQueryDsl("SELECT COUNT(*) AS 条数, SUM(信用分) AS 总分 FROM 客户", definition));
+      const effective = await getOdsQueryExecutor().executeLogicalQuery(effectivePlan, { versionId });
+      expect(Number(effective?.rows[0][0])).toBe(3);
+      expect(Number(effective?.rows[0][1])).toBe(248);
     } finally {
+      await getOdsStore().deleteVersionChanges(versionId).catch(() => undefined);
       await getOdsStore().drop(configId, tableName).catch(() => undefined);
       await repo.delete({ id: configId }).catch(() => undefined);
     }

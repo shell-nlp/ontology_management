@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/platform/graph-store";
 import { getTarget } from "@/lib/platform/targets";
-import { getPublishedOntology } from "@/lib/versioning/published-ontology";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { createSnapshotEntity } from "@/lib/instance/snapshot-editing";
-import { ensureVersionSnapshot, listSnapshotEntities } from "@/lib/versioning/snapshot";
+import { ensureVersionSnapshot, getVersionRecord, listSnapshotEntities } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { queryAllObjects, resolveObjectContext } from "@/lib/instance/object-service";
 
 const entityCreateInput = z.object({
   targetId: z.string().uuid(),
@@ -23,18 +22,6 @@ function parseLimit(value: string | null, fallback = 200) {
   return Math.min(10000, Math.floor(parsed));
 }
 
-/** 读取已发布本体的展示属性，供搜索排序使用；未发布时按任意属性搜索。 */
-async function displayPropertiesOf(targetId: string) {
-  const displayProps: Record<string, string> = {};
-  try {
-    const ontology = await getPublishedOntology(targetId);
-    for (const item of ontology.entityTypes) if (item.displayProperty) displayProps[item.name] = item.displayProperty;
-  } catch {
-    // 未发布本体时退回按任意属性搜索
-  }
-  return displayProps;
-}
-
 export const GET = withPermission("instance.read", async (request: NextRequest) => {
   try {
     const targetId = request.nextUrl.searchParams.get("targetId");
@@ -46,16 +33,25 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     if (versionId) {
-      const snapshot = await ensureVersionSnapshot(versionId, target);
-      return NextResponse.json({ rows: listSnapshotEntities(snapshot, { label, search, limit }) });
+      const version = await getVersionRecord(versionId);
+      if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+      if (version.status === "DRAFT") {
+        const snapshot = await ensureVersionSnapshot(versionId, target);
+        return NextResponse.json({ rows: listSnapshotEntities(snapshot, { label, search, limit }) });
+      }
     }
-    const rows = await getGraphStore(target).listEntities({
-      label,
-      search,
+    const context = await resolveObjectContext(target.id, versionId ?? undefined);
+    const page = await queryAllObjects(context, {
+      labels: label ? [label] : [],
+      text: search?.trim() || undefined,
       limit,
-      displayProperties: await displayPropertiesOf(target.id),
+      count: false,
+      signal: request.signal,
     });
-    return NextResponse.json({ rows });
+    return NextResponse.json({
+      rows: page.rows.map((row) => ({ id: row.objectId, labels: [row.entityType], properties: row.properties })),
+      warnings: page.warnings,
+    });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取对象。") }, { status: apiErrorStatus(error) });
   }

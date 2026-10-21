@@ -7,6 +7,7 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { describeTargetConflict, findTargetConflict, getTarget, listTargets, parseTargetOptions, publicTarget } from "@/lib/platform/targets";
 import { removeTargetSnapshotDirectory } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { deleteTargetVersionChanges } from "@/lib/instance/ods/published-changes";
 
 const targetUpdate = z.object({
   name: z.string().trim().min(2).max(100).optional(),
@@ -65,6 +66,7 @@ export const DELETE = withPermission("target.write", async (_: Request, context:
     if (target.kind === "EMBEDDED") return NextResponse.json({ error: "内置类型图是平台自带资源，不能删除；如需删除本体，请到本体列表操作。" }, { status: 409 });
     // 审计记录必须先写：graph_targets 删除后审计表的外键就找不到本体存储了。
     await writeAuditEntry({ actorId: user.id, targetId, action: "TARGET_DELETED", details: { name: target.name } });
+    await deleteTargetVersionChanges(targetId);
     const repo = await platformRepo(GraphTargetEntity);
     await repo.delete({ id: targetId });
     await removeTargetSnapshotDirectory(targetId);

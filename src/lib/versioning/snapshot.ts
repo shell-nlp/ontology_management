@@ -64,6 +64,8 @@ export type VersionSnapshot = {
   relationships: SnapshotRelationship[];
   /** Only edited objects: the original source values let reads overlay changed fields. */
   objectEdits?: Record<string, { entityTypeId: string; primaryKey: Record<string, string>; base: Record<string, unknown> | null; deleted?: boolean }>;
+  /** 运行期标记：该快照是从已发布 ClickHouse 变更集还原的，不是 PG 草稿快照。 */
+  publishedChanges?: boolean;
 };
 
 /** 老磁盘版 manifest.json 的形状：只用于**入迁**，不再写回磁盘。 */
@@ -529,6 +531,25 @@ export async function mutateDraftSnapshot<T>(versionId: string, mutation: (snaps
     const result = await mutation(snapshot);
     await writeSnapshotFiles(row, snapshot);
     return result;
+  });
+}
+
+/** 发布提交成功后清空版本的活跃覆盖层；定义与版本状态不动。 */
+export async function clearVersionOverlay(versionId: string) {
+  return withSnapshotLock(versionId, async () => {
+    const row = await getVersionRecord(versionId);
+    if (!row) throw new Error("本体版本不存在。");
+    const snapshot = await readSnapshotFiles(row);
+    const counts = {
+      nodes: snapshot.nodes.length,
+      relationships: snapshot.relationships.length,
+      objectEdits: Object.keys(snapshot.objectEdits ?? {}).length,
+    };
+    snapshot.nodes = [];
+    snapshot.relationships = [];
+    snapshot.objectEdits = {};
+    await writeSnapshotFiles(row, snapshot);
+    return counts;
   });
 }
 

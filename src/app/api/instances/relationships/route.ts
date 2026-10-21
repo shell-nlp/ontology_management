@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorStatus, apiErrorMessage } from "@/lib/platform/auth";
-import { getGraphStore } from "@/lib/platform/graph-store";
 import { getTarget } from "@/lib/platform/targets";
 import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { createSnapshotRelationship } from "@/lib/instance/snapshot-editing";
-import { ensureVersionSnapshot, listSnapshotRelationships } from "@/lib/versioning/snapshot";
+import { ensureVersionSnapshot, getVersionRecord, listSnapshotRelationships } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { resolveObjectContext } from "@/lib/instance/object-service";
+import { queryLinks } from "@/lib/instance/object-service/links";
 
 const relationshipCreateInput = z.object({
   targetId: z.string().uuid(),
@@ -34,11 +35,28 @@ export const GET = withPermission("instance.read", async (request: NextRequest) 
     const target = await getTarget(targetId);
     if (!target) return NextResponse.json({ error: "本体存储不存在。" }, { status: 404 });
     if (versionId) {
-      const snapshot = await ensureVersionSnapshot(versionId, target);
-      return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search, limit }) });
+      const version = await getVersionRecord(versionId);
+      if (!version) return NextResponse.json({ error: "本体版本不存在。" }, { status: 404 });
+      if (version.status === "DRAFT") {
+        const snapshot = await ensureVersionSnapshot(versionId, target);
+        return NextResponse.json({ rows: listSnapshotRelationships(snapshot, { type, search, limit }) });
+      }
     }
-    const rows = await getGraphStore(target).listRelationships({ type: type || null, search: search || null, limit });
-    return NextResponse.json({ rows });
+    const context = await resolveObjectContext(target.id, versionId ?? undefined);
+    const result = await queryLinks(context, { relationshipType: type || undefined, limit });
+    const needle = search?.trim().toLowerCase() ?? "";
+    const rows = result.links
+      .filter((link) => !needle || [link.relationshipType, link.source.objectRef, link.target.objectRef, ...Object.values(link.properties).map(String)].some((value) => value.toLowerCase().includes(needle)))
+      .map((link) => ({
+        id: link.linkRef,
+        type: link.relationshipType,
+        sourceId: link.source.objectId,
+        targetId: link.target.objectId,
+        properties: link.properties,
+        sourceLabels: [link.source.entityType],
+        targetLabels: [link.target.entityType],
+      }));
+    return NextResponse.json({ rows, warnings: result.warnings, truncated: result.truncated });
   } catch (error) {
     return NextResponse.json({ error: apiErrorMessage(error, "无法读取关系。") }, { status: apiErrorStatus(error) });
   }

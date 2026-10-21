@@ -45,6 +45,8 @@ export type ActionOutcome = {
   /** 这次动作会做哪些事，按顺序。 */
   steps: string[];
   createdEntities: { id: string; label: string; display: string }[];
+  /** 这次动作从执行结果里删除的对象。 */
+  deletedEntities: { id: string; label: string; display: string }[];
   /** 动作作用的主对象；没配作用的类时为 null。 */
   subject: { id: string; label: string; display: string } | null;
   /** 要落盘的图：通过时是执行后的结果，被拦截时是原图。 */
@@ -75,7 +77,7 @@ type InvolvementDefinition = {
 type InvolvementAction = {
   scopeEntityTypeId: string;
   params: { code: string; kind: "ENTITY_REF" | "VALUE"; entityTypeId: string }[];
-  edits: { op: "CREATE_ENTITY" | "SET_PROPERTY" | "CREATE_RELATIONSHIP"; alias: string; entityTypeId: string; relationshipTypeId: string; entityRef: { kind: "SUBJECT" | "PARAM" | "EDIT"; code: string } }[];
+  edits: { op: "CREATE_ENTITY" | "SET_PROPERTY" | "DELETE_ENTITY" | "CREATE_RELATIONSHIP"; alias: string; entityTypeId: string; relationshipTypeId: string; entityRef: { kind: "SUBJECT" | "PARAM" | "EDIT"; code: string } }[];
 };
 
 /**
@@ -104,11 +106,11 @@ export function actionInvolvement(definition: InvolvementDefinition, action: Inv
       if (edit.alias) aliasType.set(edit.alias, edit.entityTypeId);
       continue;
     }
-    if (edit.op === "SET_PROPERTY") {
+    if (edit.op === "SET_PROPERTY" || edit.op === "DELETE_ENTITY") {
       const targetId = edit.entityRef.kind === "SUBJECT"
         ? action.scopeEntityTypeId
         : edit.entityRef.kind === "PARAM" ? paramType.get(edit.entityRef.code) ?? "" : aliasType.get(edit.entityRef.code) ?? "";
-      add(entityTypes, targetId, "改属性");
+      add(entityTypes, targetId, edit.op === "SET_PROPERTY" ? "改属性" : "删除");
       continue;
     }
     add(relationshipTypes, edit.relationshipTypeId, "建立关系");
@@ -197,6 +199,7 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
   const params = new Map<string, ParameterResolution>();
   const steps: string[] = [];
   const createdEntities: { id: string; label: string; display: string }[] = [];
+  const deletedEntities: { id: string; label: string; display: string }[] = [];
 
   // 主对象：动作定义在哪个类上，也只能在这个类的对象上执行。
   // 它是 Palantir 里的 object context，规则的 SUBJECT 与操作的 SUBJECT 引用都指向它。
@@ -275,6 +278,25 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
       steps.push(`修改${type.name}「${actionNodeDisplay(definition, node)}」：${detail}`);
       continue;
     }
+    if (edit.op === "DELETE_ENTITY") {
+      const id = resolveRef(edit.entityRef);
+      const index = nodes.findIndex((item) => item.id === id);
+      const node = nodes[index];
+      if (!node) throw new Error("动作要删除的对象不存在，可能已在前面步骤删除。");
+      const type = definition.entityTypes.find((item) => item.name === managedLabel(definition, node));
+      if (!type) throw new Error("动作要删除的对象没有对应的对象类型。");
+      const display = actionNodeDisplay(definition, node);
+      nodes.splice(index, 1);
+      const relationshipCount = relationships.length;
+      for (let relationshipIndex = relationships.length - 1; relationshipIndex >= 0; relationshipIndex -= 1) {
+        const relationship = relationships[relationshipIndex];
+        if (relationship.sourceId === id || relationship.targetId === id) relationships.splice(relationshipIndex, 1);
+      }
+      deletedEntities.push({ id, label: type.name, display });
+      const removedRelationships = relationshipCount - relationships.length;
+      steps.push(`删除${type.name}「${display}」${removedRelationships ? `，同时删除 ${removedRelationships} 条相连关系` : ""}`);
+      continue;
+    }
     const type = definition.relationshipTypes.find((item) => item.id === edit.relationshipTypeId);
     if (!type) throw new Error("动作要建立的关系类型不存在。");
     const sourceId = resolveRef(edit.sourceRef);
@@ -297,7 +319,7 @@ function planAction(definition: OntologyDefinition, graph: ActionGraph, actionId
     steps.push(`建立关系：${actionNodeDisplay(definition, source)} —${type.name}→ ${actionNodeDisplay(definition, target)}`);
   }
 
-  return { action, nodes, relationships, refs, steps, createdEntities, subject };
+  return { action, nodes, relationships, refs, steps, createdEntities, deletedEntities, subject };
 }
 
 /**
@@ -310,7 +332,17 @@ export function runAction(definition: OntologyDefinition, graph: ActionGraph, ac
   const warnings: ActionFinding[] = [];
   const hidden: ActionFinding[] = [];
 
-  const context: RuleContext = { nodes: plan.nodes, relationships: plan.relationships, refs: plan.refs };
+  /*
+   * 删除后对象已不在结果图里，但规则仍然要看得到"准备删除的是谁"。
+   * 因此规则上下文补回执行前的节点与关系；新建/修改过的节点仍以执行后的结果为准。
+   */
+  const resultNodeIds = new Set(plan.nodes.map((node) => node.id));
+  const resultRelationshipIds = new Set(plan.relationships.map((relationship) => relationship.id));
+  const context: RuleContext = {
+    nodes: [...plan.nodes, ...graph.nodes.filter((node) => !resultNodeIds.has(node.id))],
+    relationships: [...plan.relationships, ...graph.relationships.filter((relationship) => !resultRelationshipIds.has(relationship.id))],
+    refs: plan.refs,
+  };
   for (const rule of rulesFor(definition, plan.action.id)) {
     const finding = evaluateRule(definition, context, rule);
     if (!finding) continue;
@@ -331,6 +363,7 @@ export function runAction(definition: OntologyDefinition, graph: ActionGraph, ac
     hidden,
     steps: plan.steps,
     createdEntities: plan.createdEntities,
+    deletedEntities: plan.deletedEntities,
     subject: plan.subject ? { id: plan.subject.id, label: managedLabel(definition, plan.subject), display: actionNodeDisplay(definition, plan.subject) } : null,
     graph: verdict === "PASSED" ? { nodes: plan.nodes, relationships: plan.relationships } : { nodes: graph.nodes, relationships: graph.relationships },
   };
@@ -454,8 +487,8 @@ export function validateActionDefinition(definition: OntologyDefinition) {
         if (edit.alias) aliases.add(edit.alias);
         continue;
       }
-      if (edit.op === "SET_PROPERTY") {
-        assertRef(edit.entityRef, "修改目标");
+      if (edit.op === "SET_PROPERTY" || edit.op === "DELETE_ENTITY") {
+        assertRef(edit.entityRef, edit.op === "SET_PROPERTY" ? "修改目标" : "删除目标");
         continue;
       }
       const type = relationshipTypeById.get(edit.relationshipTypeId);

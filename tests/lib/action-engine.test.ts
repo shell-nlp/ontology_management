@@ -196,6 +196,50 @@ describe("动作引擎", () => {
     expect(outcome.graph.nodes.find((node) => node.id === passengerId)?.properties["学生资质"]).toBe(true);
   });
 
+  it("删除对象：移除对象及其相连关系，并返回删除清单", () => {
+    const scoped = withScope(definition({ studentQualified: false }));
+    scoped.actionTypes[0].edits = [
+      { op: "DELETE_ENTITY", alias: "", entityTypeId: "", relationshipTypeId: "", entityRef: { kind: "PARAM", code: "passenger" }, sourceRef: { kind: "PARAM", code: "" }, targetRef: { kind: "PARAM", code: "" }, assignments: [] },
+    ];
+    const before = graph();
+    const ticketId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    before.nodes.push({ id: ticketId, labels: ["车票"], properties: { 票号: "TK-OLD", 票种: "全价票" } });
+    before.relationships.push({ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", sourceId: ticketId, targetId: passengerId, type: "归属于", properties: {} });
+
+    const outcome = runAction(scoped, before, buyActionId, [...inputs, { code: "ticketType", value: "全价票" }], { subjectEntityId: passengerId });
+
+    expect(outcome.verdict).toBe("PASSED");
+    expect(outcome.graph.nodes.some((node) => node.id === passengerId)).toBe(false);
+    expect(outcome.graph.relationships).toHaveLength(0);
+    expect(outcome.deletedEntities).toEqual([{ id: passengerId, label: "乘客", display: "张三" }]);
+    expect(outcome.steps[0]).toContain("同时删除 1 条相连关系");
+  });
+
+  it("删除对象：拦截规则仍能检查被删除对象执行前的属性", () => {
+    const scoped = withScope(definition({ studentQualified: false }));
+    scoped.actionTypes[0].edits = [
+      { op: "DELETE_ENTITY", alias: "", entityTypeId: "", relationshipTypeId: "", entityRef: { kind: "PARAM", code: "passenger" }, sourceRef: { kind: "PARAM", code: "" }, targetRef: { kind: "PARAM", code: "" }, assignments: [] },
+    ];
+    scoped.rules[0].conditions = [
+      { subject: { kind: "PARAM", code: "passenger", relationshipTypeId: "", direction: "OUT" }, property: "学生资质", operator: "IS_FALSY", compareValue: "" },
+    ];
+
+    const outcome = runAction(scoped, graph(), buyActionId, [...inputs, { code: "ticketType", value: "全价票" }], { subjectEntityId: passengerId });
+
+    expect(outcome.verdict).toBe("BLOCKED");
+    expect(outcome.blockers[0].evidence[0]).toContain("入参·乘客");
+    expect(outcome.graph.nodes.some((node) => node.id === passengerId)).toBe(true);
+  });
+
+  it("定义体检：删除对象必须选目标", () => {
+    const scoped = withScope(definition({ studentQualified: false }));
+    scoped.actionTypes[0].edits = [
+      { op: "DELETE_ENTITY", alias: "", entityTypeId: "", relationshipTypeId: "", entityRef: { kind: "PARAM", code: "missing" }, sourceRef: { kind: "PARAM", code: "" }, targetRef: { kind: "PARAM", code: "" }, assignments: [] },
+    ];
+
+    expect(validateActionDefinition(scoped).some((item) => item.message.includes("删除目标引用了不存在的参数「missing」"))).toBe(true);
+  });
+
   it("定义体检：动作没选作用的类会被报出来", () => {
     const violations = validateActionDefinition(definition({ studentQualified: false }));
     expect(violations.some((item) => item.message.includes("需要选择作用的对象类型"))).toBe(true);

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, CircleSlash, Pencil, Play, Plus, ShieldAlert, ShieldCheck, Trash2, X } from "lucide-react";
 import { api } from "@/lib/shared/client/api-client";
-import { OutcomePanel, WritebackRefusedPanel, type ActionFinding, type ActionRunOutcome, type WritebackReport } from "@/components/action-studio/run-panels";
-export type { ActionFinding, ActionRunOutcome, WritebackReport } from "@/components/action-studio/run-panels";
+import { OutcomePanel, type ActionFinding, type ActionRunOutcome } from "@/components/action-studio/run-panels";
+export type { ActionFinding, ActionRunOutcome } from "@/components/action-studio/run-panels";
 import { EntitySearchPicker, type EntitySearchResult } from "@/components/entity-search-picker";
 import { actionInvolvement, validateActionDefinition } from "@/lib/instance/action-engine";
 import { graphColor } from "@/lib/shared/common/graph-palette";
@@ -32,8 +32,6 @@ type DecisionEntry = {
     verdict?: string;
     subject?: { label?: string; display?: string } | null;
     blockers?: { ruleName: string; message: string; evidence?: string[] }[];
-    /** 写回业务库的结果：留痕里要能看出"这次到底动没动源表"。 */
-    writeback?: { executions?: { table?: string }[]; refusals?: { reason?: string }[] };
   };
 };
 
@@ -151,6 +149,7 @@ function describeEdit(definition: Definition, action: ActionType, edit: ActionEd
   const assignments = edit.assignments.map((item) => `${item.property} ← ${describeValue(action, item.value)}`).join("、");
   if (edit.op === "CREATE_ENTITY") return `新建 ${typeName(definition, edit.entityTypeId) || "（未选对象类型）"}${edit.alias ? `（记为 ${edit.alias}）` : ""}${assignments ? `：${assignments}` : ""}`;
   if (edit.op === "SET_PROPERTY") return `修改 ${describeRef(definition, action, edit.entityRef)}：${assignments || "（未配置）"}`;
+  if (edit.op === "DELETE_ENTITY") return `删除 ${describeRef(definition, action, edit.entityRef)}及其相连关系`;
   return `建立 ${describeRef(definition, action, edit.sourceRef)} —${relationName(definition, edit.relationshipTypeId) || "（未选关系类型）"}→ ${describeRef(definition, action, edit.targetRef)}`;
 }
 
@@ -200,10 +199,6 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
   const [ruleDialog, setRuleDialog] = useState<{ mode: "create" | "edit"; rule: OntologyRule } | null>(null);
   const [values, setValues] = useState<Record<string, { entity: EntitySearchResult | null; text: string }>>({});
   const [outcome, setOutcome] = useState<ActionRunOutcome | null>(null);
-  /** 勾上「写回业务库」：执行时把改动真的写进源表；干跑只出计划。 */
-  const [writeback, setWriteback] = useState(false);
-  /** 整批被拒（有一处写不回）时，服务端把逐条原因一起回来 —— 页面要把它摊开，不能只剩一句 toast。 */
-  const [runFailure, setRunFailure] = useState<{ message: string; writeback?: WritebackReport } | null>(null);
   const [busy, setBusy] = useState(false);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
   // 从对象详情跳进来时直接落在「运行」：用户是带着一个对象来执行动作的。
@@ -263,23 +258,15 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
         // entityRef 让服务端在"这个对象只存在于数据源"时先按主键把它取进草稿，再执行。
         ? { code: parameter.code, entityId: values[parameter.code]?.entity?.id ?? "", entityRef: values[parameter.code]?.entity?.objectRef }
         : { code: parameter.code, value: values[parameter.code]?.text ?? "" });
-      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, subjectRef: subject?.objectRef, dryRun, writeback, inputs }) });
+      const result = await api<ActionRunOutcome>(`/api/ontology/${versionId}/actions`, { method: "POST", body: JSON.stringify({ actionId: selected.id, subjectEntityId: subject?.id, subjectRef: subject?.objectRef, dryRun, inputs }) });
       setOutcome(result);
-      setRunFailure(null);
       if (result.applied) {
-        const written = result.writeback?.executions.length ?? 0;
-        notify(written ? `动作「${result.actionName}」已写入草稿快照，并写回了业务库 ${written} 处。` : `动作「${result.actionName}」已写入草稿快照。`);
+        notify(`动作「${result.actionName}」已写入草稿快照；发布后会合并到 ODS。`);
         onRan();
       } else if (result.verdict === "BLOCKED") notify(`动作「${result.actionName}」被规则拦截，没有写入任何数据。`);
       await refreshDecisions();
     } catch (reason) {
-      /*
-       * 写回被拒（409）时服务端回的不只是"失败了"：每一处「哪张表 / 为什么 / 去哪儿改」都在 payload 里。
-       * 整批没执行是个好结果（不是异常状态），所以不弹错误，直接在结论区摊开。
-       */
-      const payload = (reason as { payload?: { error?: string; writeback?: WritebackReport } } | null)?.payload;
-      if (payload?.writeback) { setOutcome(null); setRunFailure({ message: payload.error ?? "写回被拒。", writeback: payload.writeback }); await refreshDecisions(); }
-      else fail(reason);
+      fail(reason);
     } finally { setBusy(false); }
   };
 
@@ -289,7 +276,7 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
         <div className="as-topbar-text">
           <span className="eyebrow">动作</span>
           <h2>动作工作台</h2>
-          <p>动作是平台里唯一的业务写入口：把「一次业务动作的正确做法」固定成模板，规则再挂到动作上决定它什么时候出现、什么时候被拦。平台上没有的动作，就没有对应的写入口。</p>
+          <p>动作是本体数据的唯一写入口：把「一次业务动作的正确做法」固定成模板，规则再挂到动作上决定它什么时候出现、什么时候被拦。执行结果先写草稿，发布时合并到 ODS；源业务库保持只读。</p>
         </div>
         <div className="as-topbar-side">
           <span className="as-stat"><b>{actions.length}</b>个动作</span>
@@ -534,25 +521,12 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
                   </div>
                   <div className="as-run-actions">
                     <button className="action" disabled={!canRun || busy || !versionId} onClick={() => void run(true)}><Play size={15} />{busy ? "运行中…" : "干跑"}</button>
-                    <button className="action primary" disabled={!canRun || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />{writeback ? "执行并写回业务库" : "执行"}</button>
-                    {/*
-                     * 写回是**显式**的：默认只写草稿快照（本体里的副本），勾上才会改业务库那一行。
-                     * 不勾也能干跑，但干跑就不出写回计划 —— 想知道"会写哪张表"就先勾上再干跑。
-                     */}
-                    <label className="as-writeback">
-                      <input type="checkbox" checked={writeback} disabled={!canRun || busy} onChange={(event) => setWriteback(event.target.checked)} />
-                      <span>
-                        写回业务库
-                        <small>{writeback ? "执行会改源表的那一行；干跑只出计划" : "只写草稿快照，源表不动"}</small>
-                      </span>
-                    </label>
+                    <button className="action primary" disabled={!canRun || busy || !versionId} onClick={() => void run(false)}><ShieldAlert size={15} />执行</button>
                   </div>
                   {!canRun && <p className="as-quiet">当前角色没有「编辑对象与关系」权限，不能干跑或执行动作。</p>}
-                  {runFailure
-                    ? <WritebackRefusedPanel failure={runFailure} />
-                    : outcome
-                      ? <OutcomePanel outcome={outcome} />
-                      : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
+                  {outcome
+                    ? <OutcomePanel outcome={outcome} />
+                    : <p className="as-quiet">还没有跑过这个动作。点「干跑」先看结论，不会写库。</p>}
                 </div>
               )}
 
@@ -571,14 +545,12 @@ export function ActionStudio({ definition, versionId, targetId, canEdit, canRun,
                         const blocked = entry.action === "ACTION_BLOCKED";
                         const dryRun = entry.action === "ACTION_DRY_RUN";
                         const hits = blocked ? entry.details?.blockers ?? [] : [];
-                        const writtenCount = entry.details?.writeback?.executions?.length ?? 0;
                         return (
                           <article key={entry.id} className={blocked ? "as-ledger-row blocked" : "as-ledger-row"}>
                             <div className="as-ledger-top">
                               <span className={blocked ? "as-chip blocker" : dryRun ? "as-chip muted" : "as-chip passed"}>{blocked ? "拦截" : dryRun ? "干跑" : "已执行"}</span>
                               <b>{entry.details?.actionName ?? "（动作）"}</b>
                               {entry.details?.actionCode ? <code>{entry.details.actionCode}</code> : null}
-                              {writtenCount > 0 && <span className="as-chip passed">已写库 {writtenCount} 处</span>}
                               <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
                             </div>
                             <p className="as-ledger-line">
@@ -795,6 +767,7 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                       <option value="CREATE_ENTITY">新建对象</option>
                       <option value="CREATE_RELATIONSHIP">建立关系</option>
                       <option value="SET_PROPERTY">修改属性</option>
+                      <option value="DELETE_ENTITY">删除对象</option>
                     </select>
                     <div className="as-card-actions"><button type="button" className="ted-icon-button danger" title="删除这一步" onClick={() => patch({ edits: draft.edits.filter((_, i) => i !== index) })}><Trash2 size={13} /></button></div>
                   </div>
@@ -819,6 +792,12 @@ function ActionEditDialog({ definition, action, mode, onClose, onSave }: { defin
                       </label>
                       <AssignmentList action={draft} properties={[]} rows={edit.assignments} freeText onChange={(rows) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, assignments: rows } : item) })} />
                     </>
+                  )}
+                  {edit.op === "DELETE_ENTITY" && (
+                    <label className="ted-field"><span>删除哪个对象</span>
+                      <RefSelect value={edit.entityRef} options={refOptions(definition, draft, { beforeIndex: index })} onChange={(ref) => patch({ edits: draft.edits.map((item, i) => i === index ? { ...item, entityRef: ref } : item) })} placeholder="选择对象" />
+                      <small>删除的是草稿里的对象；与它相连的草稿关系会一并删除。</small>
+                    </label>
                   )}
                   {edit.op === "CREATE_RELATIONSHIP" && (
                     <>

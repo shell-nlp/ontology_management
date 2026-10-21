@@ -2,7 +2,7 @@ import { listDataSources } from "@/lib/datasource/sources";
 import { getGraphStore } from "@/lib/platform/graph-store";
 import { MCP_PROTOCOL_VERSION } from "@/lib/mcp/protocol";
 import { getOntology, listOntologies } from "@/lib/platform/ontologies";
-import { getPublishedOntology } from "@/lib/versioning/published-ontology";
+import { getPublishedVersion } from "@/lib/versioning/published-ontology";
 import { REASONING_TOOLS, runReasoningTool, type ToolContext } from "@/lib/reasoning/tools";
 import { toolTitle } from "@/lib/reasoning/tool-labels";
 import type { ToolOutcome } from "@/lib/reasoning/types";
@@ -130,7 +130,7 @@ async function listOntologySummaries() {
     const records = await listVersionRecords(ontology.target_id).catch(() => []);
     const draft = records.find((record) => record.status === "DRAFT");
     const published = records.find((record) => record.status === "PUBLISHED");
-    const definition = published?.definition ?? draft?.definition ?? null;
+    const definition = published?.definition ?? null;
     return {
       ontology_id: ontology.id,
       name: ontology.name,
@@ -155,8 +155,11 @@ async function contextFor(ontologyId: string): Promise<ToolContext> {
   const target = await getTarget(ontology.target_id);
   if (!target) throw new Error(`本体「${ontology.name}」的落点不存在，可能已被删除。`);
   let definition;
+  let publishedVersionId: string;
   try {
-    definition = await getPublishedOntology(target.id);
+    const published = await getPublishedVersion(target.id);
+    definition = published.definition;
+    publishedVersionId = published.id;
   } catch {
     throw new Error(`本体「${ontology.name}」还没有发布版本，先把草稿发布一次再查。`);
   }
@@ -164,7 +167,7 @@ async function contextFor(ontologyId: string): Promise<ToolContext> {
   const runtimeTypes = await store.readRuntimeTypes().catch(() => null);
   // 对象类型绑了哪些表，模型自己看不到（绑定里只有资源 id），这里一并交给工具集翻译成可读文本。
   const dataSources = await listDataSources().catch(() => []);
-  return { store, definition, runtimeTypes, dataSources };
+  return { store, definition, publishedVersionId, runtimeTypes, dataSources };
 }
 
 export async function callMcpTool(name: string, args: Record<string, unknown>, disabledTools: readonly string[] = []): Promise<ToolOutcome> {

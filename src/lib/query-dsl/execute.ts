@@ -21,6 +21,8 @@ export type QueryDslExecutionDeps = {
   listDataSources?: () => Promise<readonly DataSourceRecord[]>;
   /** 可选 ODS 源表执行器：完整 READY 时直接在 ClickHouse 过滤 / 聚合。 */
   odsQuery?: OdsQueryExecutor;
+  /** 发布版本 id；用于叠加版本级稀疏 CRUD 变更集。 */
+  versionId?: string;
   assertReadConsistency?: (plan: LogicalPlan) => Promise<void>;
 };
 
@@ -75,7 +77,7 @@ async function runQuery(
   const bound = await withInferredDataSources(definition, deps.listDataSources ?? defaultListDataSources);
   const plan = resolveQueryDsl(bound.definition, query);
   await deps.assertReadConsistency?.(plan);
-  const ods = deps.odsQuery ? await deps.odsQuery.executeLogicalQuery(plan) : null;
+  const ods = deps.odsQuery ? await deps.odsQuery.executeLogicalQuery(plan, { versionId: deps.versionId }) : null;
   if (ods) return ods;
   const explicitOds = [...plan.entities.values()].flatMap((entity) => entity.sources).filter((source) => source.readMode === "ODS");
   if (explicitOds.length) {

@@ -5,6 +5,7 @@ import { writeAuditEntry } from "@/lib/platform/platform-db";
 import { getTarget } from "@/lib/platform/targets";
 import { deleteVersionRecord, ensureVersionSnapshot, getVersionRecord, updateSnapshotDefinition, withTargetLock } from "@/lib/versioning/snapshot";
 import { withPermission } from "@/lib/platform/route-guard";
+import { getOdsStore } from "@/lib/infrastructure/ods";
 
 export const PATCH = withPermission("ontology.write", async (request: NextRequest, context: { params: Promise<{ versionId: string }> }, user) => {
   try {
@@ -40,6 +41,7 @@ export const DELETE = withPermission("ontology.version.delete", async (_request:
         );
       }
 
+      await getOdsStore().deleteVersionChanges(versionId);
       await deleteVersionRecord(versionId);
       await writeAuditEntry({
         actorId: user.id,

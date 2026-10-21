@@ -61,6 +61,49 @@ export type OdsWriteResult = {
   warnings: string[];
 };
 
+export type OdsObjectChangeOperation = "CREATE" | "UPDATE" | "DELETE";
+
+/**
+ * 发布版本中的一个稀疏对象变更。
+ *
+ * UPDATE 同时保留 `base`（发布时的源基线）和 `properties`（完整有效对象），
+ * 查询时只应用相对 base 真正变化的字段，未修改字段继续跟随当前 ODS 基础镜像。
+ */
+export type OdsPublishedObjectChange = {
+  versionId: string;
+  entityTypeId: string;
+  entityType: string;
+  objectId: string;
+  primaryKey: Record<string, string>;
+  operation: OdsObjectChangeOperation;
+  base: Record<string, unknown> | null;
+  properties: Record<string, unknown>;
+  changedProperties: string[];
+};
+
+export type OdsRelationshipChangeOperation = "CREATE" | "UPDATE" | "DELETE";
+
+/** 发布版本中的一个稀疏关系变更。 */
+export type OdsPublishedRelationshipChange = {
+  versionId: string;
+  relationshipTypeId: string;
+  relationshipType: string;
+  relationshipId: string;
+  sourceEntityTypeId: string;
+  targetEntityTypeId: string;
+  sourceObjectId: string;
+  targetObjectId: string;
+  sourcePrimaryKey: Record<string, string>;
+  targetPrimaryKey: Record<string, string>;
+  operation: OdsRelationshipChangeOperation;
+  properties: Record<string, unknown>;
+};
+
+export type OdsVersionChanges = {
+  objects: OdsPublishedObjectChange[];
+  relationships: OdsPublishedRelationshipChange[];
+};
+
 /**
  * ODS 存储契约。
  *
@@ -84,4 +127,9 @@ export interface OdsStore {
   read(query: OdsReadQuery): Promise<OdsReadResult>;
   count(spec: OdsTableSpec): Promise<number>;
   drop(sourceId: string, tableName: string): Promise<void>;
+  /** 原子替换一个发布版本的稀疏对象/关系变更集；版本未发布前可安全重试。 */
+  replaceVersionChanges(versionId: string, changes: OdsVersionChanges): Promise<void>;
+  readVersionChanges(versionId: string): Promise<OdsVersionChanges>;
+  /** 删除本体版本时清理该版本的稀疏变更集。 */
+  deleteVersionChanges(versionId: string): Promise<void>;
 }

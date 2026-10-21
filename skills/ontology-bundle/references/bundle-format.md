@@ -172,7 +172,7 @@ metrics[].entityTypeId               → entityTypes[].id
 | `description` | ≤500 |
 | `scopeEntityTypeId` | **作用的对象类型**：动作定义在这个类型上，也只能在这个类型的对象上执行。空值会被拦 |
 | `params[]` | 入参：`code`(1–80，同动作内不重复) / `name`(1–120) / `kind`(`ENTITY_REF` \| `VALUE`) / `entityTypeId`（`ENTITY_REF` 必填）/ `dataType` / `required` |
-| `edits[]` | 写操作，三种 `op`：`CREATE_ENTITY` / `SET_PROPERTY` / `CREATE_RELATIONSHIP` |
+| `edits[]` | 写操作，四种 `op`：`CREATE_ENTITY` / `SET_PROPERTY` / `DELETE_ENTITY` / `CREATE_RELATIONSHIP` |
 
 `edits[]` 的公共字段：`alias`（`CREATE_ENTITY` 必填，供后续步骤引用）、`entityTypeId`、`relationshipTypeId`、
 `entityRef` / `sourceRef` / `targetRef`（`{ "kind": "SUBJECT" | "PARAM" | "EDIT", "code": "..." }`）、
@@ -182,6 +182,7 @@ metrics[].entityTypeId               → entityTypes[].id
 - `PARAM` = 引用某个入参，`code` 写参数 `code`。
 - `EDIT` = 引用前面某一步 `CREATE_ENTITY` 的 `alias`。
 - `SET_PROPERTY` 的赋值属性必须在目标对象类型上存在；关系的赋值同理要在关系类型上存在。
+- `DELETE_ENTITY` 用 `entityRef` 指向要删除的对象；执行时同时删除与它相连的关系。
 
 ### 2.6 `rules[]`（规则）
 

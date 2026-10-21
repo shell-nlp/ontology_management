@@ -148,6 +148,19 @@ describe("清单 → 本体包的编译脚本", () => {
       await rm(file, { force: true });
     }
   });
+
+  it("清单编译接受删除对象动作", async () => {
+    const file = tempFile("ontology-blueprint-delete-action");
+    const raw = JSON.parse(await readFile(blueprint(), "utf8"));
+    raw.actionTypes[0].edits = [{ op: "DELETE_ENTITY", entityRef: { kind: "SUBJECT" } }];
+    try {
+      await writeFile(file, JSON.stringify(raw), "utf8");
+      const run = spawnSync(process.execPath, [script(), file, "--check"], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    } finally {
+      await rm(file, { force: true });
+    }
+  });
 });
 
 describe("技能自带的示例本体包", () => {

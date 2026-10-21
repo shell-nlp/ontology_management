@@ -84,8 +84,9 @@ description: >-
 - 动作**定义在某个对象类型上**（`scopeEntityTypeId`），表示"这个动作只在这个类型的对象上执行"。
   对象类型的每个对象都能用它，也在平台里用规则（HIDE）控制"这个对象上出不出现"。
 - `params`：`kind` 要么是 `ENTITY_REF`（要选对象类型）要么是 `VALUE`（字面量参数）。
-- `edits` 的三种写法：`CREATE_ENTITY`（新建对象，给 `alias` 供后续引用）、
-  `SET_PROPERTY`（改主体属性）、`CREATE_RELATIONSHIP`（连关系）。
+- `edits` 的四种写法：`CREATE_ENTITY`（新建对象，给 `alias` 供后续引用）、
+  `SET_PROPERTY`（改主体属性）、`DELETE_ENTITY`（删除草稿对象及相连关系）、
+  `CREATE_RELATIONSHIP`（连关系）。
 - 规则 `effect` 三档：`BLOCK` 拒绝执行、`WARN` 只提示、`HIDE` 让动作在这个对象上不出现；
   `HIDE` 必须绑定具体动作，且条件只能看主对象自身属性。
 
@@ -107,7 +108,7 @@ description: >-
 - [ ] 关系的两端类型与业务方向一致；没有把关系写反。
 - [ ] 实现接口的对象类型：接口里 `required` 的属性都有**同名**属性；`required` 的关系约束都有一条满足它的关系类型。
 - [ ] 动作都选了 `scopeEntityTypeId`；入参 `code` 不重复；`ENTITY_REF` 参数选了对象类型；
-      `CREATE_ENTITY` 都有 `alias`；赋值的属性在目标类型上存在。
+      `CREATE_ENTITY` 都有 `alias`；`DELETE_ENTITY` 选了删除目标；赋值的属性在目标类型上存在。
 - [ ] 规则都有条件；绑定动作的规则 `actionId` 指得到；`HIDE` 规则有动作。
 - [ ] 名称没有重复（对象类型 / 关系类型 / 接口 / 动作各自内部不能重名）。
 

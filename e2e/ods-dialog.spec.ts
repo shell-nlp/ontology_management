@@ -169,3 +169,74 @@ test("表清单优先显示对象类型和 ODS 使用的表，并标注用途", 
 
   await page.screenshot({ path: test.info().outputPath("catalog-priority.png"), fullPage: true });
 });
+
+test("发布缺少 READY ODS 时弹出阻塞项并可跳转到目标表", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let json: unknown = {};
+    if (path === "/api/auth/session") {
+      json = { user: { id: "user", email: "fixture@example.test", roleId: "admin", roleName: "管理员", permissions: ["ontology.read", "ontology.write", "ontology.publish", "datasource.read", "datasource.write", "instance.read", "target.read"] } };
+    } else if (path === "/api/targets") {
+      json = [{ id: targetId, name: "验收", kind: "EMBEDDED", uri: "", options: {} }];
+    } else if (path === "/api/ontologies") {
+      json = [{ id: targetId, name: "验收本体", target_id: targetId, color: "#2563eb", tags: [], storage: { id: targetId, name: "验收", kind: "EMBEDDED", uri: "", managed: true }, versions: { published: 1, draft: 1 }, statistics: { objectTypes: 1, relationTypes: 0, objects: 0, relationships: 0 } }];
+    } else if (path === "/api/ontology") {
+      json = [{
+        id: versionId,
+        target_id: targetId,
+        version_number: 2,
+        status: "DRAFT",
+        definition: {
+          groups: [], interfaces: [], metrics: [],
+          entityTypes: [{ id: "44444444-4444-4444-8444-444444444444", name: "客户", properties: [], sources: [{ id: "primary", dataSourceId: sourceId, schema: "GISTOOLS", view: "CUSTOMER", primaryKey: ["CUST_ID"] }] }],
+          relationshipTypes: [], actionTypes: [], rules: [],
+        },
+      }];
+    } else if (path === `/api/ontology/${versionId}/publish`) {
+      json = {
+        error: "有 1 个对象类型缺少可发布的 READY ODS 镜像。",
+        blockers: [{
+          entityTypeId: "44444444-4444-4444-8444-444444444444",
+          entityType: "客户",
+          dataSourceId: sourceId,
+          schema: "GISTOOLS",
+          table: "CUSTOMER",
+          reason: "还没有配置 ODS 镜像。",
+        }],
+      };
+      await route.fulfill({ status: 409, json });
+      return;
+    } else if (path === "/api/instances/types") {
+      json = { labels: [], relationshipTypes: [], propertyKeys: [] };
+    } else if (path === "/api/data-sources") {
+      json = [{ id: sourceId, name: "oracle-test", kind: "ORACLE", kindLabel: "Oracle", modelLabel: "关系库", host: "39.164.136.34", port: 1251, databaseName: "orcl", schemaName: "GISTOOLS", username: "sk_ws", options: {}, enabled: true, createdAt: "2026-10-20T00:00:00Z", address: "oracle-test · orcl / GISTOOLS" }];
+    } else if (path === `/api/data-sources/${sourceId}/views`) {
+      json = { views: [{ schema: "GISTOOLS", name: "OTHER", kind: "table", columnCount: 1, comment: "其他表" }, { schema: "GISTOOLS", name: "CUSTOMER", kind: "table", columnCount: 2, comment: "目标表" }], fetched_at: "2026-10-20T00:00:00Z", from_cache: false };
+    } else if (path.startsWith(`/api/data-sources/${sourceId}/views/`)) {
+      json = {
+        fields: [{ name: "CUST_ID", dataType: "VARCHAR2", typeDetail: "VARCHAR2(20)", nullable: false, primaryKey: true, unique: true, comment: "客户编号", position: 0 }],
+        preview: { columns: ["CUST_ID"], rows: [{ CUST_ID: "A" }], truncated: false },
+        fetched_at: "2026-10-20T00:00:00Z", from_cache: false,
+      };
+    } else if (path === "/api/ods") {
+      json = { sources: [] };
+    } else if (path === "/api/ods/jobs") {
+      json = { jobs: [] };
+    }
+    await route.fulfill({ json });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "本体建模", exact: true }).click();
+  await page.getByRole("button", { name: "发布", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "先补齐 READY 的 ODS 镜像" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("客户", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("GISTOOLS.CUSTOMER", { exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("ods-publish-blocker-dialog.png"), fullPage: true });
+  await dialog.getByRole("button", { name: /去配置 ODS/ }).click();
+  await expect(page.locator(".drs-list-row.active")).toContainText("CUSTOMER");
+  await expect(page.getByText("GISTOOLS.CUSTOMER", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("ods-publish-blocker.png"), fullPage: true });
+});

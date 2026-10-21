@@ -71,8 +71,9 @@
 
 - 动作定义在**某个对象类型**上（`scopeEntityTypeId`）。所以"系统里通用的一个动作"这种说法是不成立的：
   先回答"这个动作作用在哪种对象上"。
-- 三类写操作覆盖了绝大多数场景：
-  `CREATE_ENTITY`（新建，给 alias）、`SET_PROPERTY`（改属性）、`CREATE_RELATIONSHIP`（连关系）。
+- 四类写操作覆盖对象 CRUD 与关系创建：
+  `CREATE_ENTITY`（新建，给 alias）、`SET_PROPERTY`（改属性）、`DELETE_ENTITY`（删除对象及相连关系）、
+  `CREATE_RELATIONSHIP`（连关系）。
 - 规则是**动作上的闸门**，不是数据质检：
   - `BLOCK`：条件命中就不许执行，要给人看原因（"这个用户已经是停机状态"）。
   - `WARN`：提示但放行。

@@ -19,5 +19,5 @@ export type QueryDslExecutionResult = {
 
 /** 源表 ODS 查询执行端口；没有完整 READY ODS 时返回 null，由查询层回退源库。 */
 export interface OdsQueryExecutor {
-  executeLogicalQuery(plan: LogicalPlan): Promise<QueryDslExecutionResult | null>;
+  executeLogicalQuery(plan: LogicalPlan, options?: { versionId?: string }): Promise<QueryDslExecutionResult | null>;
 }

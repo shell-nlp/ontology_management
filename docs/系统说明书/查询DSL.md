@@ -118,6 +118,7 @@ SQL 编译器
 执行路由只换“从哪里读”，不换解析、校验、指标口径、JOIN 语义或基数保护：
 
 - 旧对象类型策略 `INDEXED / FEDERATED / AUTO` 不再控制普通查询路由，也不检查对象物化清单；
+- 当前发布版本的手工/动作对象 CRUD 与关系 CRUD 会从 ClickHouse 版本变更集叠加到 ODS 基础镜像，不写源业务库；
 - 对象来源设为 `AUTO / ODS` 时，若所有参与对象来源和关系连接表都有完整 READY ODS，会编译到 ClickHouse ODS；`AUTO` 缺镜像时回源，显式 `ODS` 缺镜像时返回 `ODS_QUERY_ROUTING_UNAVAILABLE`，不会静默回源；
 - ODS 只校验本次查询实际引用的列、主键和关系连接列；未用到的属性不必进入裁剪镜像。
 - 路由结果通过 `data_source` / `data_source_kind` 返回（例如 `ClickHouse ODS` / `CLICKHOUSE`，或 `oracle-test` / `ORACLE`），不把实际来源藏起来。
